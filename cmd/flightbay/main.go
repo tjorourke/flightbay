@@ -119,7 +119,7 @@ func clients(cfg *rest.Config) (collect.Clients, error) {
 	if err != nil {
 		return collect.Clients{}, err
 	}
-	return collect.Clients{Discovery: disc, Dynamic: dyn, Metadata: meta, Logs: logSource{cs}}, nil
+	return collect.Clients{Discovery: disc, Dynamic: dyn, Metadata: meta, Logs: logSource{cs}, Forward: &forwarder{cfg: cfg, cs: cs}}, nil
 }
 
 func recipients(specs []string) ([]age.Recipient, error) {
@@ -233,6 +233,14 @@ func printPlan(w io.Writer, pl *collect.DryRunPlan, showRBAC bool) {
 		fmt.Fprintf(w, "  Logs: streams %s, since %s, up to %d bytes per stream (newest kept)\n", strings.Join(pl.LogStreams, ","), pl.LogSince, pl.LogMaxBytes)
 	}
 	fmt.Fprintf(w, "  Resource types (%d): %s\n", len(pl.Resources), strings.Join(pl.Resources, ", "))
+	for _, c := range pl.Categories {
+		if c == "proxies" || c == "control-plane" || c == "metrics" {
+			fmt.Fprintln(w, "  Diagnostics: port-forward to Solo component pods in the selected namespaces (ztunnel, Envoy,\n"+
+				"    agentgateway, istiod, gateway controllers) to read their admin endpoints. Output naming other\n"+
+				"    namespaces is removed before writing; Envoy SDS secrets and controller krt snapshots are never kept.")
+			break
+		}
+	}
 	fmt.Fprintln(w, "  Secret values are never collected. A dry run reads discovery only, no objects or logs.")
 	if showRBAC {
 		fmt.Fprintf(w, "\nRequired RBAC:\n%s\n", pl.RBAC)

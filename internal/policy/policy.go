@@ -32,7 +32,7 @@ const (
 var AllCategories = []Category{CatObjects, CatLogs, CatEvents, CatNodes, CatHelm, CatProxies, CatControlPlane, CatMetrics}
 
 // NotYetImplemented lists categories this build cannot collect yet.
-var NotYetImplemented = map[Category]bool{CatProxies: true, CatControlPlane: true, CatMetrics: true}
+var NotYetImplemented = map[Category]bool{}
 
 // Object detail levels.
 const (
@@ -403,6 +403,7 @@ func (p *Policy) RBAC(discovered []APIResource) string {
 		clusterRules.add("", "nodes")
 	}
 	if p.PortForward && (p.Has(CatProxies) || p.Has(CatControlPlane) || p.Has(CatMetrics)) {
+		nsRules.add("", "pods") // to find the Solo components among the selected pods
 		pfRules.add("", "pods/portforward")
 	}
 	namespaces := p.ExplicitNamespaces()

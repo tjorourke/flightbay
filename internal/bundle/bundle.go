@@ -62,6 +62,8 @@ const (
 	CoverageResource = "resource"
 	CoverageLogs     = "logs"
 	CoverageEvents   = "events"
+	// CoverageDiagnostic is a proxy dump, control-plane debug output or metrics scrape.
+	CoverageDiagnostic = "diagnostic"
 
 	StateComplete  = "complete"
 	StateFailed    = "failed"
@@ -530,12 +532,13 @@ const (
 	PathDiscovery  = "discovery"
 	PathRedaction  = "redaction"
 	PathCollection = "collection-log"
+	PathSolo       = "solo"
 )
 
 // PathInfo classifies a member name.
 type PathInfo struct {
-	Kind, Cluster, Group, Version, Resource, Namespace, Pod, Container, Stream, ID, File string
-	Part                                                                                 int
+	Kind, Cluster, Group, Version, Resource, Namespace, Pod, Container, Stream, ID, File, Sub string
+	Part                                                                                      int
 }
 
 func groupDir(g string) string {
@@ -572,6 +575,15 @@ func EventsPath(cluster string, part int) string {
 
 func CoveragePath(cluster, id string) string {
 	return fmt.Sprintf("clusters/%s/coverage/%s.json", cluster, id)
+}
+
+// SoloPath is clusters/<c>/solo/<kind>/<ns>/<pod>/<file>, or
+// clusters/<c>/solo/<file> when kind is empty. kind is proxies or control-plane.
+func SoloPath(cluster, kind, ns, pod, file string) string {
+	if kind == "" {
+		return "clusters/" + SafeID(cluster) + "/solo/" + file
+	}
+	return "clusters/" + SafeID(cluster) + "/solo/" + kind + "/" + SafeID(ns) + "/" + SafeID(pod) + "/" + file
 }
 
 func DiscoveryPath(cluster, file string) string {
@@ -638,6 +650,17 @@ func ParsePath(name string) (PathInfo, bool) {
 		info.Kind, info.ID = PathCoverage, strings.TrimSuffix(s[3], ".json")
 	case "discovery":
 		info.Kind, info.File = PathDiscovery, strings.Join(s[3:], "/")
+	case "solo":
+		// solo/summary.json or solo/<kind>/<ns>/<pod>/<file>
+		info.Kind = PathSolo
+		switch len(s) {
+		case 4:
+			info.File = s[3]
+		case 7:
+			info.Sub, info.Namespace, info.Pod, info.File = s[3], s[4], s[5], s[6]
+		default:
+			return PathInfo{}, false
+		}
 	default:
 		return PathInfo{}, false
 	}

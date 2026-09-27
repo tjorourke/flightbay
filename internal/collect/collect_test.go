@@ -150,6 +150,7 @@ func metaObjects() []runtime.Object {
 }
 
 type harness struct {
+	fwd  PortForwarder
 	dyn  *dynfake.FakeDynamicClient
 	meta *metafake.FakeMetadataClient
 	logs *fakeLogs
@@ -172,7 +173,7 @@ func newHarness() *harness {
 }
 
 func (h *harness) clients() Clients {
-	return Clients{Discovery: h.disc, Dynamic: h.dyn, Metadata: h.meta, Logs: h.logs}
+	return Clients{Discovery: h.disc, Dynamic: h.dyn, Metadata: h.meta, Logs: h.logs, Forward: h.fwd}
 }
 
 func run(t *testing.T, p *policy.Policy, h *harness, tweak func(*Collector)) (map[string][]byte, []string, *bundle.Reader) {

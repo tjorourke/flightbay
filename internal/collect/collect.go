@@ -44,6 +44,7 @@ type Clients struct {
 	Dynamic   dynamic.Interface
 	Metadata  metadata.Interface
 	Logs      LogSource
+	Forward   PortForwarder // nil when port-forward is not available
 }
 
 // LogEntry is one line of collection-log.jsonl.
@@ -68,6 +69,7 @@ type Collector struct {
 	LogChunkBytes int           // bytes per log chunk
 	LogRetries    int           // retries when the kubelet cannot return a stream (container restarting)
 	LogRetryDelay time.Duration // wait between those retries
+	MaxDiagBytes  int64         // largest single diagnostic response kept
 	Progress      func(string)
 
 	mu         sync.Mutex
@@ -88,6 +90,9 @@ func (c *Collector) defaults() {
 	}
 	if c.LogRetries == 0 {
 		c.LogRetries = 3
+	}
+	if c.MaxDiagBytes <= 0 {
+		c.MaxDiagBytes = 32 << 20
 	}
 	if c.LogRetryDelay == 0 {
 		c.LogRetryDelay = 1500 * time.Millisecond
@@ -296,11 +301,15 @@ func (c *Collector) DryRun(_ context.Context, cluster string, cl Clients) (*DryR
 // podInfo is what log collection needs from a pod.
 type podInfo struct {
 	ns, name   string
+	node       string
+	running    bool
+	images     map[string]string // container -> image
 	containers []containerInfo
 }
 
 type containerInfo struct {
 	name     string
+	image    string
 	init     bool
 	restarts int64
 }
@@ -334,7 +343,7 @@ func (c *Collector) CollectCluster(ctx context.Context, cluster string, cl Clien
 		return err
 	}
 	var pods []podInfo
-	wantPods := plan.Selected(policy.CatLogs)
+	wantPods := plan.Selected(policy.CatLogs) || c.diagSelected()
 	collectedPods := false
 	early, late := split(selected)
 	for _, r := range early {
@@ -354,10 +363,10 @@ func (c *Collector) CollectCluster(ctx context.Context, cluster string, cl Clien
 			return err
 		}
 	}
-	if wantPods {
-		if !collectedPods {
-			pods = c.listPodsForLogs(ctx, cluster, cl)
-		}
+	if wantPods && !collectedPods {
+		pods = c.listPodsForLogs(ctx, cluster, cl)
+	}
+	if plan.Selected(policy.CatLogs) {
 		if err := c.collectLogs(ctx, cluster, cl, pods); err != nil {
 			return err
 		}
@@ -367,6 +376,16 @@ func (c *Collector) CollectCluster(ctx context.Context, cluster string, cl Clien
 			return err
 		}
 		if _, err := c.collectResource(ctx, cluster, cl, r, false); err != nil {
+			return err
+		}
+	}
+	// Bulky diagnostics go last so objects and logs reach the desk first.
+	if c.diagSelected() {
+		kinds := map[string]string{}
+		for _, r := range all {
+			kinds[r.Group+"/"+r.Kind] = r.Resource
+		}
+		if err := c.collectDiagnostics(ctx, cluster, cl, pods, kinds); err != nil {
 			return err
 		}
 	}
@@ -668,9 +687,12 @@ func parsePod(obj map[string]any) podInfo {
 	md, _ := obj["metadata"].(map[string]any)
 	spec, _ := obj["spec"].(map[string]any)
 	status, _ := obj["status"].(map[string]any)
-	p := podInfo{}
+	p := podInfo{images: map[string]string{}}
 	p.ns, _ = md["namespace"].(string)
 	p.name, _ = md["name"].(string)
+	p.node, _ = spec["nodeName"].(string)
+	phase, _ := status["phase"].(string)
+	p.running = phase == "Running"
 	restarts := map[string]int64{}
 	for _, key := range []string{"containerStatuses", "initContainerStatuses"} {
 		list, _ := status[key].([]any)
@@ -692,10 +714,13 @@ func parsePod(obj map[string]any) podInfo {
 		for _, cc := range list {
 			m, _ := cc.(map[string]any)
 			n, _ := m["name"].(string)
+			img, _ := m["image"].(string)
 			if key == "ephemeralContainers" {
 				n = "ephemeral:" + n
+			} else {
+				p.images[n] = img
 			}
-			p.containers = append(p.containers, containerInfo{name: n, init: init, restarts: restarts[strings.TrimPrefix(n, "ephemeral:")]})
+			p.containers = append(p.containers, containerInfo{name: n, image: img, init: init, restarts: restarts[strings.TrimPrefix(n, "ephemeral:")]})
 		}
 	}
 	sort.Slice(p.containers, func(i, j int) bool { return p.containers[i].name < p.containers[j].name })
