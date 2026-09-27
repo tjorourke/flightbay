@@ -48,7 +48,7 @@ func TestParseFormats(t *testing.T) {
 }
 
 func rec(level, ns, pod, msg string, fields map[string]string) *Record {
-	return &Record{TS: time.Date(2026, 9, 27, 10, 8, 0, 0, time.UTC), Cluster: "mesh1", Namespace: ns, Pod: pod, Container: "app", Stream: "current", Level: level, Msg: msg, Raw: msg, Fields: fields}
+	return &Record{TS: time.Date(2026, 9, 27, 10, 8, 0, 0, time.UTC), Source: &Source{Cluster: "mesh1", Namespace: ns, Pod: pod, Container: "app", Stream: "current"}, Level: level, Msg: msg, Raw: msg, Fields: NewFields(fields)}
 }
 
 func TestQuery(t *testing.T) {
@@ -118,5 +118,23 @@ func TestSignature(t *testing.T) {
 	b := Signature("connection refused destination=10.42.1.9:5432 after 88ms id=0b91c")
 	if a != b {
 		t.Fatalf("signatures differ:\n%s\n%s", a, b)
+	}
+}
+
+func TestContainsFold(t *testing.T) {
+	for _, c := range []struct {
+		s, sub string
+		want   bool
+	}{
+		{"ERROR Database Connection timed out", "connection timed", true},
+		{"abc", "", true},
+		{"short", "longer than s", false},
+		{"Grüße aus Köln", "köln", true},
+		{"no match here", "timeout", false},
+		{"xxTIMEOUT", "timeout", true},
+	} {
+		if got := ContainsFold(c.s, c.sub); got != c.want {
+			t.Errorf("ContainsFold(%q, %q) = %v", c.s, c.sub, got)
+		}
 	}
 }

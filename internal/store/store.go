@@ -6,6 +6,7 @@ package store
 import (
 	"encoding/json"
 	"fmt"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -43,6 +44,7 @@ type ImportState struct {
 	Members       int       `json:"members"`
 	Objects       int       `json:"objects"`
 	LogLines      int       `json:"logLines"`
+	LogsSkipped   int       `json:"logsSkipped,omitempty"` // lines not indexed because of the memory budget
 	Events        int       `json:"events"`
 	CoverageSeen  int       `json:"coverageSeen"`
 	Verified      bool      `json:"verified"`
@@ -109,6 +111,8 @@ type Workspace struct {
 	subID      int
 	chunks     map[string]bool
 	crds       map[string]map[string]map[string]any // cluster -> crd name -> slim CRD
+	logEnd     time.Time                            // newest log timestamp, the "now" for since: queries
+	maxLines   int                                  // log lines to index before skipping (0 = no limit)
 	diags      map[string]*Diagnostic               // cluster/kind/ns/pod -> captured diagnostics
 	soloSum    map[string]json.RawMessage           // cluster -> solo/summary.json
 }
@@ -618,6 +622,14 @@ func streamKey(cluster, ns, pod, container, stream string) string {
 	return cluster + "/" + ns + "/" + pod + "/" + container + "/" + stream
 }
 
+// SetMaxLogLines limits how many log lines are held in memory. Lines beyond it
+// are verified but not indexed, and searches say so.
+func (w *Workspace) SetMaxLogLines(n int) {
+	w.mu.Lock()
+	w.maxLines = n
+	w.mu.Unlock()
+}
+
 // AddLogLines parses and commits one log chunk.
 func (w *Workspace) AddLogLines(cluster, ns, pod, container, stream string, lines []string, chunk string) {
 	w.mu.Lock()
@@ -629,16 +641,23 @@ func (w *Workspace) AddLogLines(cluster, ns, pod, container, stream string, line
 		spec, _ := o.Obj["spec"].(map[string]any)
 		node, _ = spec["nodeName"].(string)
 	}
+	src := &logs.Source{Cluster: cluster, Namespace: ns, Pod: pod, Container: container, Stream: stream, Node: node, Chunk: chunk}
 	for _, l := range lines {
 		if l == "" {
+			continue
+		}
+		if w.maxLines > 0 && len(w.records) >= w.maxLines {
+			w.state.LogsSkipped++
 			continue
 		}
 		ts, rest := logs.SplitTimestamp(l)
 		p := logs.Parse(rest)
 		w.nextID++
-		rec := &logs.Record{ID: w.nextID, Seq: seq, TS: ts, Cluster: cluster, Namespace: ns, Pod: pod, Container: container, Stream: stream,
-			Node: node, Level: p.Level, Scope: p.Scope, Msg: p.Msg, Fields: p.Fields, Raw: rest, Chunk: chunk}
+		rec := &logs.Record{ID: w.nextID, Seq: seq, TS: ts, Source: src, Level: p.Level, Scope: p.Scope, Msg: p.Msg, Fields: logs.NewFields(p.Fields), Raw: rest}
 		seq++
+		if ts.After(w.logEnd) {
+			w.logEnd = ts
+		}
 		w.records = append(w.records, rec)
 		w.streamRecs[key] = append(w.streamRecs[key], rec)
 	}
@@ -710,54 +729,99 @@ func (w *Workspace) SearchLogs(f LogFilter) (*LogResult, error) {
 	}
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	var end time.Time
-	for _, r := range w.records {
-		if r.TS.After(end) {
-			end = r.TS
-		}
-	}
-	q.Reference = end
+	q.Reference = w.logEnd
 	res := &LogResult{Facets: map[string]map[string]int{"level": {}, "namespace": {}, "pod": {}, "container": {}, "stream": {}, "cluster": {}},
 		Revision: w.rev, Scanned: len(w.records), Loading: w.state.Phase == PhaseLoading || w.state.Phase == PhaseWaiting}
-	var matched, inRange []*logs.Record
-	for _, r := range w.records {
-		if f.Cluster != "" && r.Cluster != f.Cluster {
-			continue
-		}
-		if !q.Match(r) {
-			continue
-		}
-		// Facets ignore the facet filters themselves so users can widen a selection.
-		res.Facets["level"][r.Level]++
-		res.Facets["namespace"][r.Namespace]++
-		res.Facets["pod"][r.Pod]++
-		res.Facets["container"][r.Container]++
-		res.Facets["stream"][r.Stream]++
-		res.Facets["cluster"][r.Cluster]++
-		if (f.Namespace != "" && r.Namespace != f.Namespace) || (f.Pod != "" && r.Pod != f.Pod) || (f.Container != "" && r.Container != f.Container) ||
-			(f.Level != "" && r.Level != f.Level) || (f.Stream != "" && r.Stream != f.Stream) {
-			continue
-		}
-		matched = append(matched, r)
-		if (!f.From.IsZero() && r.TS.Before(f.From)) || (!f.To.IsZero() && r.TS.After(f.To)) {
-			continue
-		}
-		inRange = append(inRange, r)
-	}
-	res.Histogram, res.From, res.To = histogram(matched, 48)
-	logs.SortNewestFirst(inRange)
-	res.Total = len(inRange)
 	if f.Limit <= 0 {
 		f.Limit = 200
 	}
-	if f.Offset < len(inRange) {
-		endIdx := f.Offset + f.Limit
-		if endIdx > len(inRange) {
-			endIdx = len(inRange)
-		}
-		res.Records = inRange[f.Offset:endIdx]
+	if f.Offset < 0 {
+		f.Offset = 0
 	}
-	if res.Total == 0 {
+	keep := f.Offset + f.Limit
+
+	// Scan shards in parallel. Each keeps its own facets, the timestamps of
+	// matches for the histogram, a count, and only its newest keep matches.
+	recs := w.records
+	shards := runtime.GOMAXPROCS(0)
+	if len(recs) < 50000 {
+		shards = 1
+	}
+	size := (len(recs) + shards - 1) / max(shards, 1)
+	type part struct {
+		facets [6]map[string]int
+		ts     []int64
+		total  int
+		newest newestHeap
+		lo, hi int64
+	}
+	parts := make([]*part, shards)
+	var wg sync.WaitGroup
+	for i := 0; i < shards; i++ {
+		lo, hi := i*size, min((i+1)*size, len(recs))
+		p := &part{}
+		for k := range p.facets {
+			p.facets[k] = map[string]int{}
+		}
+		parts[i] = p
+		if lo >= hi {
+			continue
+		}
+		wg.Add(1)
+		go func(chunk []*logs.Record) {
+			defer wg.Done()
+			for _, r := range chunk {
+				if f.Cluster != "" && r.Cluster != f.Cluster {
+					continue
+				}
+				if !q.Match(r) {
+					continue
+				}
+				// Facets ignore the facet filters themselves so users can widen a selection.
+				p.facets[0][r.Level]++
+				p.facets[1][r.Namespace]++
+				p.facets[2][r.Pod]++
+				p.facets[3][r.Container]++
+				p.facets[4][r.Stream]++
+				p.facets[5][r.Cluster]++
+				if (f.Namespace != "" && r.Namespace != f.Namespace) || (f.Pod != "" && r.Pod != f.Pod) || (f.Container != "" && r.Container != f.Container) ||
+					(f.Level != "" && r.Level != f.Level) || (f.Stream != "" && r.Stream != f.Stream) {
+					continue
+				}
+				if !r.TS.IsZero() {
+					p.ts = append(p.ts, r.TS.UnixNano())
+				}
+				if (!f.From.IsZero() && r.TS.Before(f.From)) || (!f.To.IsZero() && r.TS.After(f.To)) {
+					continue
+				}
+				p.total++
+				p.newest.offer(r, keep)
+			}
+		}(recs[lo:hi])
+	}
+	wg.Wait()
+	names := [6]string{"level", "namespace", "pod", "container", "stream", "cluster"}
+	var top []*logs.Record
+	var allTS [][]int64
+	for _, p := range parts {
+		for k, name := range names {
+			for v, n := range p.facets[k] {
+				res.Facets[name][v] += n
+			}
+		}
+		res.Total += p.total
+		top = append(top, p.newest...)
+		allTS = append(allTS, p.ts)
+	}
+	res.Histogram, res.From, res.To = histogramTS(allTS, 48)
+	logs.SortNewestFirst(top)
+	if f.Offset < len(top) {
+		res.Records = top[f.Offset:min(f.Offset+f.Limit, len(top))]
+	}
+	if w.state.LogsSkipped > 0 {
+		res.Message = fmt.Sprintf("Only the first %d log lines were loaded; %d more were verified but not indexed (memory budget, raise with --max-log-lines).", len(w.records), w.state.LogsSkipped)
+	}
+	if res.Total == 0 && w.state.LogsSkipped == 0 {
 		switch {
 		case w.policy != nil && !w.policy.Plan().Selected(policy.CatLogs):
 			res.Message = "Logs were excluded by the customer's collection policy."
@@ -770,23 +834,69 @@ func (w *Workspace) SearchLogs(f LogFilter) (*LogResult, error) {
 	return res, nil
 }
 
-func histogram(rs []*logs.Record, n int) ([]Bucket, time.Time, time.Time) {
-	var lo, hi time.Time
-	for _, r := range rs {
-		if r.TS.IsZero() {
-			continue
+// newestHeap keeps the newest records seen, as a min-heap on (TS, ID) so the
+// oldest kept record is at the root and is replaced first.
+type newestHeap []*logs.Record
+
+func older(a, b *logs.Record) bool {
+	if !a.TS.Equal(b.TS) {
+		return a.TS.Before(b.TS)
+	}
+	return a.ID < b.ID
+}
+
+func (h *newestHeap) offer(r *logs.Record, keep int) {
+	if len(*h) < keep {
+		*h = append(*h, r)
+		for i := len(*h) - 1; i > 0; {
+			p := (i - 1) / 2
+			if !older((*h)[i], (*h)[p]) {
+				break
+			}
+			(*h)[i], (*h)[p] = (*h)[p], (*h)[i]
+			i = p
 		}
-		if lo.IsZero() || r.TS.Before(lo) {
-			lo = r.TS
+		return
+	}
+	if keep == 0 || !older((*h)[0], r) {
+		return
+	}
+	(*h)[0] = r
+	for i, n := 0, len(*h); ; {
+		l, rt, s := 2*i+1, 2*i+2, i
+		if l < n && older((*h)[l], (*h)[s]) {
+			s = l
 		}
-		if r.TS.After(hi) {
-			hi = r.TS
+		if rt < n && older((*h)[rt], (*h)[s]) {
+			s = rt
+		}
+		if s == i {
+			break
+		}
+		(*h)[i], (*h)[s] = (*h)[s], (*h)[i]
+		i = s
+	}
+}
+
+func histogramTS(parts [][]int64, n int) ([]Bucket, time.Time, time.Time) {
+	var lo, hi int64
+	first := true
+	for _, p := range parts {
+		for _, t := range p {
+			if first || t < lo {
+				lo = t
+			}
+			if first || t > hi {
+				hi = t
+			}
+			first = false
 		}
 	}
-	if lo.IsZero() {
-		return nil, lo, hi
+	if first {
+		return nil, time.Time{}, time.Time{}
 	}
-	span := hi.Sub(lo)
+	lt, ht := time.Unix(0, lo).UTC(), time.Unix(0, hi).UTC()
+	span := ht.Sub(lt)
 	if span < time.Minute {
 		span = time.Minute
 	}
@@ -796,26 +906,27 @@ func histogram(rs []*logs.Record, n int) ([]Bucket, time.Time, time.Time) {
 	}
 	out := make([]Bucket, n)
 	for i := range out {
-		out[i].Start = lo.Add(time.Duration(i) * step)
+		out[i].Start = lt.Add(time.Duration(i) * step)
 	}
-	for _, r := range rs {
-		if r.TS.IsZero() {
-			continue
+	for _, p := range parts {
+		for _, t := range p {
+			i := int(time.Duration(t-lo) / step)
+			if i >= n {
+				i = n - 1
+			}
+			out[i].Count++
 		}
-		i := int(r.TS.Sub(lo) / step)
-		if i >= n {
-			i = n - 1
-		}
-		out[i].Count++
 	}
-	return out, lo, hi
+	return out, lt, ht
 }
 
 // LogContext returns up to n lines either side of a record in its stream.
 func (w *Workspace) LogContext(id int64, n int) []*logs.Record {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	for _, r := range w.records {
+	// Records are appended in ID order.
+	i := sort.Search(len(w.records), func(i int) bool { return w.records[i].ID >= id })
+	for _, r := range w.records[i:min(i+1, len(w.records))] {
 		if r.ID != id {
 			continue
 		}

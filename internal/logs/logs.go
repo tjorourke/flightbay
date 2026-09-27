@@ -12,23 +12,84 @@ import (
 	"time"
 )
 
-// Record is one parsed log line.
+// Source is where a line came from. Every line of a log chunk shares one, so
+// the identity strings are stored once per chunk rather than once per line.
+type Source struct {
+	Cluster   string `json:"cluster"`
+	Namespace string `json:"namespace"`
+	Pod       string `json:"pod"`
+	Container string `json:"container"`
+	Stream    string `json:"stream"`
+	Node      string `json:"node,omitempty"`
+	Chunk     string `json:"-"`
+}
+
+// Record is one parsed log line. Source is embedded, so r.Pod and the JSON
+// shape are unchanged.
 type Record struct {
-	ID        int64             `json:"id"`
-	Seq       int               `json:"seq"`
-	TS        time.Time         `json:"ts"`
-	Cluster   string            `json:"cluster"`
-	Namespace string            `json:"namespace"`
-	Pod       string            `json:"pod"`
-	Container string            `json:"container"`
-	Stream    string            `json:"stream"`
-	Node      string            `json:"node,omitempty"`
-	Level     string            `json:"level"`
-	Scope     string            `json:"scope,omitempty"`
-	Msg       string            `json:"msg"`
-	Fields    map[string]string `json:"fields,omitempty"`
-	Raw       string            `json:"raw"`
-	Chunk     string            `json:"-"`
+	ID  int64     `json:"id"`
+	Seq int       `json:"seq"`
+	TS  time.Time `json:"ts"`
+	*Source
+	Level  string `json:"level"`
+	Scope  string `json:"scope,omitempty"`
+	Msg    string `json:"msg"`
+	Fields Fields `json:"fields,omitempty"`
+	Raw    string `json:"raw"`
+}
+
+// Fields are parsed key/value pairs, stored as a sorted flat slice
+// (k0, v0, k1, v1...). A map per line costs several hundred bytes; most lines
+// have a handful of fields.
+type Fields []string
+
+// NewFields converts a parsed map.
+func NewFields(m map[string]string) Fields {
+	if len(m) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	f := make(Fields, 0, 2*len(m))
+	for _, k := range keys {
+		f = append(f, k, m[k])
+	}
+	return f
+}
+
+// Get returns a field's value.
+func (f Fields) Get(k string) (string, bool) {
+	for i := 0; i+1 < len(f); i += 2 {
+		if f[i] == k {
+			return f[i+1], true
+		}
+	}
+	return "", false
+}
+
+// Map returns the fields as a map.
+func (f Fields) Map() map[string]string {
+	m := make(map[string]string, len(f)/2)
+	for i := 0; i+1 < len(f); i += 2 {
+		m[f[i]] = f[i+1]
+	}
+	return m
+}
+
+// MarshalJSON writes the fields as a JSON object.
+func (f Fields) MarshalJSON() ([]byte, error) { return json.Marshal(f.Map()) }
+
+// UnmarshalJSON reads a JSON object.
+func (f *Fields) UnmarshalJSON(b []byte) error {
+	var m map[string]string
+	if err := json.Unmarshal(b, &m); err != nil {
+		return err
+	}
+	*f = NewFields(m)
+	return nil
 }
 
 // SplitTimestamp removes the RFC 3339 timestamp the kubelet adds with timestamps=true.
@@ -240,7 +301,48 @@ type clause interface{ match(*Record) bool }
 type textClause struct{ text string }
 
 func (c textClause) match(r *Record) bool {
-	return strings.Contains(strings.ToLower(r.Msg+" "+r.Raw), c.text)
+	return ContainsFold(r.Raw, c.text) || (r.Msg != r.Raw && ContainsFold(r.Msg, c.text))
+}
+
+// ContainsFold reports whether s contains the lower-case needle, ignoring
+// ASCII case, without allocating. Searches run over every captured line, so
+// lower-casing each line per query (the obvious way) costs gigabytes of
+// garbage on a large bundle.
+func ContainsFold(s, lower string) bool {
+	n := len(lower)
+	if n == 0 {
+		return true
+	}
+	for i := 0; i < n; i++ {
+		if lower[i] >= 0x80 {
+			return strings.Contains(strings.ToLower(s), lower) // non-ASCII needle
+		}
+	}
+	first := lower[0]
+	upper := first
+	if 'a' <= first && first <= 'z' {
+		upper = first - 32
+	}
+	for i := 0; i+n <= len(s); i++ {
+		b := s[i]
+		if b != first && b != upper {
+			continue
+		}
+		j := 1
+		for ; j < n; j++ {
+			c := s[i+j]
+			if 'A' <= c && c <= 'Z' {
+				c += 32
+			}
+			if c != lower[j] {
+				break
+			}
+		}
+		if j == n {
+			return true
+		}
+	}
+	return false
 }
 
 type fieldClause struct{ key, val string }
@@ -265,7 +367,7 @@ func (c fieldClause) match(r *Record) bool {
 	case "node":
 		have = r.Node
 	default:
-		v, ok := r.Fields[c.key]
+		v, ok := r.Fields.Get(c.key)
 		if !ok {
 			return false
 		}
@@ -275,11 +377,11 @@ func (c fieldClause) match(r *Record) bool {
 }
 
 func valueMatch(have, want string) bool {
-	have, want = strings.ToLower(have), strings.ToLower(want)
 	if strings.HasSuffix(want, "*") {
-		return strings.HasPrefix(have, strings.TrimSuffix(want, "*"))
+		p := strings.TrimSuffix(want, "*")
+		return len(have) >= len(p) && strings.EqualFold(have[:len(p)], p)
 	}
-	return have == want
+	return strings.EqualFold(have, want)
 }
 
 type notClause struct{ c clause }

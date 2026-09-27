@@ -113,6 +113,7 @@ func openCmd() *cobra.Command {
 	var listen, workdir, throttle, shell, baseline string
 	var identities, deferCats []string
 	var noBrowser, noTerminal bool
+	var maxLogLines int
 	c := &cobra.Command{
 		Use:   "open BUNDLE",
 		Short: "Open a bundle (file or - for stdin) and start investigating while it loads",
@@ -151,6 +152,7 @@ func openCmd() *cobra.Command {
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 			ws := store.New()
+			ws.SetMaxLogLines(maxLogLines)
 			skip := map[string]bool{}
 			for _, d := range deferCats {
 				skip[strings.TrimSpace(d)] = true
@@ -278,6 +280,7 @@ func openCmd() *cobra.Command {
 	c.Flags().BoolVar(&noBrowser, "no-browser", false, "do not open a browser")
 	c.Flags().BoolVar(&noTerminal, "no-terminal", false, "disable the in-browser terminal")
 	c.Flags().StringVar(&shell, "shell", "", "shell for the terminal (default /bin/bash)")
+	c.Flags().IntVar(&maxLogLines, "max-log-lines", 20_000_000, "log lines to hold in memory (about 400 bytes each); 0 for no limit")
 	c.Flags().StringVar(&baseline, "baseline", "", "an earlier bundle from the same customer to compare against (Compare view)")
 	return c
 }
