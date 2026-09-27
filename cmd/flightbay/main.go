@@ -38,7 +38,7 @@ var version = "0.1.0-dev"
 
 func main() {
 	root := &cobra.Command{Use: "flightbay", Short: "Flightbay by Solo: collect an offline, redacted snapshot of Kubernetes clusters", SilenceUsage: true}
-	root.AddCommand(collectCmd(), inspectCmd(), extractCmd(), rbacCmd(), uploadCmd(), &cobra.Command{
+	root.AddCommand(collectCmd(), inspectCmd(), extractCmd(), rbacCmd(), uploadCmd(), docsCmd(), &cobra.Command{
 		Use: "version", Short: "Print the version", Run: func(*cobra.Command, []string) { fmt.Println("flightbay", version) },
 	})
 	if err := root.Execute(); err != nil {
@@ -510,4 +510,13 @@ func rbacCmd() *cobra.Command {
 	kf.register(c)
 	c.Flags().BoolVar(&discover, "discover", false, "use cluster discovery to list resources explicitly instead of a wildcard")
 	return c
+}
+
+func docsCmd() *cobra.Command {
+	d := &cobra.Command{Use: "docs", Short: "Print documentation generated from the collector"}
+	d.AddCommand(&cobra.Command{
+		Use: "collects", Short: "What Flightbay collects and what it never collects (Markdown)",
+		Run: func(cmd *cobra.Command, _ []string) { fmt.Fprint(cmd.OutOrStdout(), collect.InventoryMarkdown()) },
+	})
+	return d
 }

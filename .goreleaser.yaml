@@ -1,0 +1,100 @@
+# goreleaser v2. Release: tag vX.Y.Z and push; CI runs `goreleaser release --clean`.
+# Customers' security teams ask for these: static binaries, SHA-256 checksums,
+# SBOMs, keyless cosign signatures and SLSA provenance (see the release workflow).
+version: 2
+project_name: flightbay
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./...
+
+builds:
+  - id: flightbay
+    main: ./cmd/flightbay
+    binary: flightbay
+    env: [CGO_ENABLED=0]
+    flags: [-trimpath]
+    ldflags: ["-s -w -X main.version={{ .Version }}"]
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+  - id: flightbay-desk
+    main: ./cmd/flightbay-desk
+    binary: flightbay-desk
+    env: [CGO_ENABLED=0]
+    flags: [-trimpath]
+    ldflags: ["-s -w -X main.version={{ .Version }}"]
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+
+archives:
+  - id: flightbay
+    ids: [flightbay]
+    name_template: "flightbay_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files: [LICENSE*, README.md, docs/COLLECTS.md]
+  - id: flightbay-desk
+    ids: [flightbay-desk]
+    name_template: "flightbay-desk_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    files: [LICENSE*, README.md]
+
+checksum:
+  name_template: checksums.txt
+
+sboms:
+  - artifacts: archive
+
+signs:
+  - cmd: cosign
+    signature: "${artifact}.sig"
+    certificate: "${artifact}.pem"
+    args: ["sign-blob", "--yes", "--output-signature=${signature}", "--output-certificate=${certificate}", "${artifact}"]
+    artifacts: checksum
+
+dockers_v2:
+  - id: flightbay-desk
+    images: ["ghcr.io/tjorourke/flightbay-desk"]
+    tags: ["{{ .Version }}", "latest"]
+    dockerfile: Dockerfile.release
+    platforms: [linux/amd64, linux/arm64]
+    ids: [flightbay, flightbay-desk]
+
+docker_signs:
+  - cmd: cosign
+    args: ["sign", "--yes", "${artifact}@${digest}"]
+    artifacts: manifests
+
+homebrew_casks:
+  - name: flightbay
+    ids: [flightbay]
+    repository: {owner: tjorourke, name: homebrew-tap}
+    homepage: https://github.com/tjorourke/flightbay
+    description: Collect an offline, redacted snapshot of Kubernetes clusters for Solo support
+  - name: flightbay-desk
+    ids: [flightbay-desk]
+    repository: {owner: tjorourke, name: homebrew-tap}
+    homepage: https://github.com/tjorourke/flightbay
+    description: Investigate a Flightbay snapshot offline with kubectl, k9s, logs and findings
+
+krews:
+  - name: flightbay
+    ids: [flightbay]
+    repository: {owner: tjorourke, name: krew-index}
+    homepage: https://github.com/tjorourke/flightbay
+    short_description: Collect a redacted, offline cluster snapshot for Solo support
+    description: |
+      kubectl flightbay collect writes a redacted tar.zst bundle of the objects,
+      logs, events and (optionally) Solo proxy and control-plane diagnostics you
+      choose. Secret values are never collected. Run kubectl flightbay collect
+      --dry-run to see what would be read and the RBAC it needs.
+    caveats: |
+      Review a bundle before sending it:
+        kubectl flightbay inspect BUNDLE --contents --redactions
+
+release:
+  github: {owner: tjorourke, name: flightbay}
+  draft: true

@@ -1,0 +1,5 @@
+bin/
+dist/
+.git/
+*.tar.zst
+*.tar.zst.age

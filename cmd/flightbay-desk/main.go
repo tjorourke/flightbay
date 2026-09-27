@@ -118,7 +118,7 @@ func parseSize(s string) (int64, error) {
 func openCmd() *cobra.Command {
 	var listen, workdir, throttle, shell, baseline string
 	var identities, deferCats []string
-	var noBrowser, noTerminal bool
+	var noBrowser, noTerminal, allowRemote bool
 	var maxLogLines int
 	c := &cobra.Command{
 		Use:   "open BUNDLE",
@@ -129,8 +129,11 @@ func openCmd() *cobra.Command {
   flightbay-desk open bundle.tar.zst --defer logs      # load logs later from the UI`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if !loopback(listen) && !allowRemote {
+				return fmt.Errorf("--listen must be a loopback address in local mode; use --allow-remote in a container, or flightbay-desk serve for a shared desk")
+			}
 			if !loopback(listen) {
-				return fmt.Errorf("--listen must be a loopback address in local mode (hosted mode is not part of this build)")
+				fmt.Fprintln(cmd.ErrOrStderr(), "warning: listening beyond loopback. Anyone who can reach this port and has the token can read the snapshot.")
 			}
 			ids, err := cli.LoadIdentities(identities)
 			if err != nil {
@@ -285,6 +288,7 @@ func openCmd() *cobra.Command {
 	c.Flags().StringVar(&workdir, "workdir", "", "workspace directory (default ~/.flightbay/workspaces/ws-*)")
 	c.Flags().BoolVar(&noBrowser, "no-browser", false, "do not open a browser")
 	c.Flags().BoolVar(&noTerminal, "no-terminal", false, "disable the in-browser terminal")
+	c.Flags().BoolVar(&allowRemote, "allow-remote", false, "allow a non-loopback --listen (for containers); the token is still required")
 	c.Flags().StringVar(&shell, "shell", "", "shell for the terminal (default /bin/bash)")
 	c.Flags().IntVar(&maxLogLines, "max-log-lines", 20_000_000, "log lines to hold in memory (about 400 bytes each); 0 for no limit")
 	c.Flags().StringVar(&baseline, "baseline", "", "an earlier bundle from the same customer to compare against (Compare view)")

@@ -68,6 +68,18 @@ var (
 	digitsOnly   = regexp.MustCompile(`^[0-9]{1,7}$`)
 )
 
+// Rules describes the built-in scrubbers, in the order they run. The customer
+// document (flightbay docs collects) is generated from this list.
+var Rules = []struct{ Name, Description string }{
+	{"private-key", "PEM private keys (certificates are kept for expiry and SAN checks)"},
+	{"authorization", "Authorization: Bearer / Basic header values"},
+	{"jwt", "JSON Web Tokens"},
+	{"aws-access-key", "AWS access key IDs (AKIA..., ASIA...)"},
+	{"api-key", "sk-... and sk-ant-... style API keys"},
+	{"url-credentials", "user:password@ in URLs"},
+	{"sensitive-key", "the value of any key or variable whose name contains password, passwd, secret, token, api_key or credential"},
+}
+
 // New builds a Redactor. Extra patterns are Go regular expressions; any match is replaced.
 func New(extra []string) (*Redactor, error) {
 	r := &Redactor{locs: map[string]map[string]int{}}
