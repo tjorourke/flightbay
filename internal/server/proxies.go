@@ -75,6 +75,7 @@ func (s *Server) diagRow(d store.Diagnostic, cov []bundle.Coverage, withCounts b
 		row.Counts = sum.Counts
 		for _, c := range sum.Certs {
 			switch {
+			case c.NotAfter.IsZero():
 			case c.HoursLeft <= 0:
 				row.Expired++
 			case c.Root && c.DaysLeft < 30:

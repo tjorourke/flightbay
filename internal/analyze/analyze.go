@@ -75,6 +75,12 @@ func Run(ws *store.Workspace) []Finding {
 		out = append(out, gatewayRules(ws, cluster)...)
 		out = append(out, policies(ws, cluster)...)
 		out = append(out, mesh(ws, cluster)...)
+		out = append(out, certificates(ws, cluster)...)
+		out = append(out, xds(ws, cluster)...)
+		out = append(out, waypoints(ws, cluster)...)
+		out = append(out, cni(ws, cluster)...)
+		out = append(out, agentgatewaySkew(ws, cluster)...)
+		out = append(out, gatewayAPI(ws, cluster)...)
 	}
 	out = append(out, signatures(ws)...)
 	for _, c := range ws.Coverage() {

@@ -100,10 +100,18 @@ func ZtunnelCerts(doc any, ref time.Time) []Cert {
 			if err != nil {
 				return
 			}
-			out = append(out, Cert{Identity: s(cm["identity"]), Serial: s(em["serialNumber"]), Root: root, State: s(cm["state"]), NotAfter: t, DaysLeft: days(t, ref), HoursLeft: hours(t, ref)})
+			id, state := s(cm["identity"]), s(cm["state"])
+			if root {
+				// Roots are the trust bundle shared by every identity, not the workload's own.
+				id, state = "root CA serial "+s(em["serialNumber"]), ""
+			}
+			out = append(out, Cert{Identity: id, Serial: s(em["serialNumber"]), Root: root, State: state, NotAfter: t, DaysLeft: days(t, ref), HoursLeft: hours(t, ref)})
 		}
 		if chain := l(cm["certChain"]); len(chain) > 0 {
 			add(chain[0], false) // the leaf; intermediates share the root's lifetime
+		} else if st := s(cm["state"]); st != "" {
+			// No certificate yet (or signing failed): keep the state, no expiry.
+			out = append(out, Cert{Identity: s(cm["identity"]), State: st})
 		}
 		for _, r := range l(cm["rootCerts"]) {
 			add(r, true)

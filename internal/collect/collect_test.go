@@ -499,3 +499,16 @@ func TestKubeletErrorBodyIsRetriedNotArchived(t *testing.T) {
 		t.Fatalf("normal log dropped: %s", cur)
 	}
 }
+
+func TestSlimCRDKeepsVersionAnnotationsOnly(t *testing.T) {
+	out := SlimCRD(map[string]any{"metadata": map[string]any{"name": "gateways.gateway.networking.k8s.io", "annotations": map[string]any{
+		"gateway.networking.k8s.io/bundle-version": "v1.5.1", "kubectl.kubernetes.io/last-applied-configuration": "{huge}"}},
+		"spec": map[string]any{"versions": []any{map[string]any{"name": "v1", "schema": map[string]any{"openAPIV3Schema": map[string]any{}}}}}})
+	ann := out["metadata"].(map[string]any)["annotations"].(map[string]any)
+	if ann["gateway.networking.k8s.io/bundle-version"] != "v1.5.1" || ann["kubectl.kubernetes.io/last-applied-configuration"] != nil {
+		t.Fatalf("annotations %v", ann)
+	}
+	if _, ok := out["spec"].(map[string]any)["versions"].([]any)[0].(map[string]any)["schema"]; ok {
+		t.Fatal("schema kept")
+	}
+}

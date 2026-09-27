@@ -443,13 +443,23 @@ func SlimCRD(obj map[string]any) map[string]any {
 		}
 		versions = append(versions, keep)
 	}
+	// Keep only the version-describing annotations (Gateway API records its
+	// release there); others can hold last-applied copies of the whole CRD.
+	ann := map[string]any{}
+	for k, v := range asMap(md["annotations"]) {
+		if strings.HasPrefix(k, "gateway.networking.k8s.io/") || k == "api-approved.kubernetes.io" {
+			ann[k] = v
+		}
+	}
 	return map[string]any{
 		"apiVersion": "apiextensions.k8s.io/v1", "kind": "CustomResourceDefinition",
-		"metadata":    map[string]any{"name": md["name"], "creationTimestamp": md["creationTimestamp"], "uid": md["uid"], "labels": md["labels"]},
+		"metadata":    map[string]any{"name": md["name"], "creationTimestamp": md["creationTimestamp"], "uid": md["uid"], "labels": md["labels"], "annotations": ann},
 		"spec":        map[string]any{"group": spec["group"], "names": spec["names"], "scope": spec["scope"], "versions": versions},
 		"x-flightbay": map[string]any{"schemaCollected": false},
 	}
 }
+
+func asMap(v any) map[string]any { m, _ := v.(map[string]any); return m }
 
 func split(rs []bundle.APIResource) (early, late []bundle.APIResource) {
 	for _, r := range rs {

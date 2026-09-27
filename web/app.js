@@ -442,6 +442,7 @@ const compLabel = {ztunnel: 'ztunnel', envoy: 'Envoy', agentgateway: 'agentgatew
 const pxKey = c => [c.cluster, c.kind, c.namespace, c.pod].join('/');
 
 function certCell(c) {
+  if (!c.notAfter || c.notAfter.startsWith('0001')) return `<span class="amber">${esc(c.state || 'no certificate')}</span>`;
   const cls = c.hoursLeft <= 0 ? 'red' : (c.root && c.daysLeft < 30) ? 'amber' : '';
   const left = c.hoursLeft <= 0 ? 'expired' : c.daysLeft >= 2 ? `${c.daysLeft} days` : `${c.hoursLeft} h`;
   return `<span class="${cls}">${esc(left)}</span>`;
