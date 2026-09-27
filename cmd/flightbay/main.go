@@ -38,7 +38,7 @@ var version = "0.1.0-dev"
 
 func main() {
 	root := &cobra.Command{Use: "flightbay", Short: "Flightbay by Solo: collect an offline, redacted snapshot of Kubernetes clusters", SilenceUsage: true}
-	root.AddCommand(collectCmd(), inspectCmd(), extractCmd(), rbacCmd(), uploadCmd(), docsCmd(), &cobra.Command{
+	root.AddCommand(collectCmd(), inspectCmd(), extractCmd(), rbacCmd(), docsCmd(), uiCmd(), &cobra.Command{
 		Use: "version", Short: "Print the version", Run: func(*cobra.Command, []string) { fmt.Println("flightbay", version) },
 	})
 	if err := root.Execute(); err != nil {
@@ -255,8 +255,9 @@ func collectCmd() *cobra.Command {
 	var dryRun, interactiveMode, assumeYes, quiet, jsonOut bool
 	var window int
 	c := &cobra.Command{
-		Use:   "collect",
-		Short: "Collect a redacted snapshot bundle",
+		Use:     "collect",
+		Aliases: []string{"capture"},
+		Short:   "Collect a redacted snapshot bundle",
 		Example: `  flightbay collect --context mesh1,mesh2 --case 01234567 --since 24h
   flightbay collect --namespaces payments,istio-system --exclude-resources configmaps,secrets --no-portforward
   flightbay collect --config collection.yaml --dry-run

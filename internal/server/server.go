@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"github.com/tjorourke/flightbay/internal/diff"
 	"github.com/tjorourke/flightbay/internal/mcp"
+	"io"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -104,7 +105,7 @@ func (s *Server) Prepare() error {
 	if err := os.WriteFile(s.KubeconfigPath(), kc, 0o600); err != nil {
 		return err
 	}
-	helpers := map[string]string{"fbq": "query", "fbfind": "findings", "fbpc": "proxy-config"}
+	helpers := map[string]string{"fbq": "query", "fbfind": "findings", "fbpc": "proxy-config", "fbsearch": "search", "fbsql": "sql"}
 	for name, sub := range helpers {
 		script := fmt.Sprintf("#!/bin/sh\n# Flightbay helper: runs `flightbay-desk %s` against this workspace.\nexec %q %s \"$@\"\n", sub, s.DeskBinary, sub)
 		if err := os.WriteFile(filepath.Join(s.WorkDir, "bin", name), []byte(script), 0o700); err != nil {
@@ -204,6 +205,8 @@ func (s *Server) Handler() http.Handler {
 	api("/api/timeline", s.timeline)
 	api("/api/diff", s.diff)
 	api("/api/search", s.search)
+	api("/api/objects/search", s.objectSearch)
+	api("/api/sql", s.sqlQuery)
 	api("/api/coverage", s.coverage)
 	api("/api/terminal", s.terminal)
 	api("/api/load", s.load)
@@ -535,25 +538,59 @@ func (s *Server) diff(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"clusters": out})
 }
 
+// search is the quick jump used by the ⌘K palette: the same engine as the
+// Search page, limited to the best matches.
 func (s *Server) search(w http.ResponseWriter, r *http.Request) {
-	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
-	type hit struct {
-		Cluster, Group, Resource, Kind, Namespace, Name string
-	}
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	out := []map[string]string{}
 	if q == "" {
 		writeJSON(w, 200, out)
 		return
 	}
-	for _, o := range s.WS.AllObjects("") {
-		if strings.Contains(strings.ToLower(o.Name), q) || strings.Contains(strings.ToLower(o.Kind+"/"+o.Name), q) {
-			out = append(out, map[string]string{"cluster": o.Cluster, "group": o.Group, "resource": o.Resource, "kind": o.Kind, "namespace": o.Namespace, "name": o.Name})
-			if len(out) >= 50 {
-				break
-			}
-		}
+	res, err := s.WS.SearchObjects(q, "", 30)
+	if err != nil {
+		writeJSON(w, 200, out)
+		return
+	}
+	for _, h := range res.Results {
+		out = append(out, map[string]string{"cluster": h.Cluster, "group": h.Group, "resource": h.Resource, "kind": h.Kind, "namespace": h.Namespace, "name": h.Name, "match": h.Match, "snippet": h.Snippet})
 	}
 	writeJSON(w, 200, out)
+}
+
+// objectSearch serves the Search page.
+func (s *Server) objectSearch(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	res, err := s.WS.SearchObjects(q.Get("q"), q.Get("cluster"), limit)
+	if err != nil {
+		jerr(w, 400, err.Error())
+		return
+	}
+	writeJSON(w, 200, res)
+}
+
+// sqlQuery runs one read-only SQL statement against the workspace database.
+func (s *Server) sqlQuery(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query().Get("q")
+	if r.Method == http.MethodPost {
+		var body struct {
+			Query string `json:"query"`
+			Limit int    `json:"limit"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil {
+			jerr(w, 400, "body must be {\"query\": \"SELECT ...\"}")
+			return
+		}
+		query = body.Query
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	res, err := s.WS.SQL(query, limit)
+	if err != nil {
+		jerr(w, 400, err.Error())
+		return
+	}
+	writeJSON(w, 200, res)
 }
 
 func (s *Server) coverage(w http.ResponseWriter, r *http.Request) {

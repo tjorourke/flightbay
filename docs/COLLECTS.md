@@ -75,6 +75,8 @@ Runs in memory before anything is written, over object specs, ConfigMap data, en
 - `sensitive-key`: the value of any key or variable whose name contains password, passwd, secret, token, api_key or credential
 - your own patterns from `--redact-extra` (one Go regular expression per line)
 
+JSON held inside a string, such as the `kubectl.kubernetes.io/last-applied-configuration` annotation or a JSON file in a ConfigMap, is parsed and redacted with the same rules, so an environment variable or key inside an embedded manifest is caught too.
+
 `redaction-report.json` in the bundle records how many replacements were made in each file, never the values. Review it with `flightbay inspect BUNDLE --redactions` before sending.
 
 ## In every bundle

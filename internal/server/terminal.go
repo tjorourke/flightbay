@@ -51,7 +51,7 @@ func (s *Server) session() (*termSession, error) {
 	}
 	t := &termSession{ptmx: ptmx, cmd: cmd, clients: map[*websocket.Conn]context.Context{}, done: make(chan struct{})}
 	intro := "\x1b[36mFlightbay snapshot shell.\x1b[0m kubectl, k9s and stern read the snapshot through KUBECONFIG.\r\n" +
-		"Helpers: fbq '<log query>', fbfind, fbpc [pod]. Contexts: kubectl config get-contexts. Writes are rejected: this is a read-only snapshot.\r\n"
+		"Helpers: fbsearch '<objects>', fbq '<logs>', fbsql, fbfind, fbpc [pod]. Contexts: kubectl config get-contexts. Writes are rejected: this is a read-only snapshot.\r\n"
 	t.buf = append(t.buf, intro...)
 	go t.pump()
 	s.term = t

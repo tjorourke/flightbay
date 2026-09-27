@@ -4,6 +4,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -18,7 +19,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -29,7 +29,6 @@ import (
 	"github.com/tjorourke/flightbay/internal/apiserver"
 	"github.com/tjorourke/flightbay/internal/cli"
 	"github.com/tjorourke/flightbay/internal/diff"
-	"github.com/tjorourke/flightbay/internal/hosted"
 	"github.com/tjorourke/flightbay/internal/importer"
 	"github.com/tjorourke/flightbay/internal/mcp"
 	"github.com/tjorourke/flightbay/internal/server"
@@ -40,7 +39,7 @@ var version = "0.1.0-dev"
 
 func main() {
 	root := &cobra.Command{Use: "flightbay-desk", Short: "Flightbay by Solo: investigate a snapshot bundle offline", SilenceUsage: true}
-	root.AddCommand(openCmd(), shellCmd(), queryCmd(), findingsCmd(), proxyConfigCmd(), diffCmd(), mcpCmd(), serveCmd(), keygenCmd(), &cobra.Command{
+	root.AddCommand(openCmd(), shellCmd(), queryCmd(), findingsCmd(), proxyConfigCmd(), searchCmd(), sqlCmd(), diffCmd(), mcpCmd(), keygenCmd(), &cobra.Command{
 		Use: "version", Short: "Print the version", Run: func(*cobra.Command, []string) { fmt.Println("flightbay-desk", version) },
 	})
 	if err := root.Execute(); err != nil {
@@ -118,19 +117,19 @@ func parseSize(s string) (int64, error) {
 func openCmd() *cobra.Command {
 	var listen, workdir, throttle, shell, baseline string
 	var identities, deferCats []string
-	var noBrowser, noTerminal, allowRemote bool
-	var maxLogLines int
+	var noBrowser, noTerminal, allowRemote, keep bool
 	c := &cobra.Command{
-		Use:   "open BUNDLE",
-		Short: "Open a bundle (file or - for stdin) and start investigating while it loads",
-		Example: `  flightbay-desk open flightbay-01234567-20260927T1012Z.tar.zst
+		Use:   "open [BUNDLE | DIR | -]",
+		Short: "Open a bundle and start investigating while it loads (default: the newest bundle here)",
+		Example: `  flightbay-desk open                                  # the newest flightbay-*.tar.zst in this directory
+  flightbay-desk open flightbay-01234567-20260927T1012Z.tar.zst
   flightbay collect -o - | flightbay-desk open -
   flightbay-desk open bundle.tar.zst.age -i ~/.flightbay/support.key
   flightbay-desk open bundle.tar.zst --defer logs      # load logs later from the UI`,
-		Args: cobra.ExactArgs(1),
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !loopback(listen) && !allowRemote {
-				return fmt.Errorf("--listen must be a loopback address in local mode; use --allow-remote in a container, or flightbay-desk serve for a shared desk")
+				return fmt.Errorf("--listen must be a loopback address in local mode; use --allow-remote in a container")
 			}
 			if !loopback(listen) {
 				fmt.Fprintln(cmd.ErrOrStderr(), "warning: listening beyond loopback. Anyone who can reach this port and has the token can read the snapshot.")
@@ -143,7 +142,15 @@ func openCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			path := args[0]
+			path := "."
+			if len(args) == 1 {
+				path = args[0]
+			}
+			if path != "-" {
+				if path, err = resolveBundle(path); err != nil {
+					return err
+				}
+			}
 			var src io.ReadCloser
 			if path == "-" {
 				src = io.NopCloser(os.Stdin)
@@ -151,17 +158,29 @@ func openCmd() *cobra.Command {
 				return err
 			}
 			if workdir == "" {
-				if err := os.MkdirAll(filepath.Join(home(), "workspaces"), 0o700); err != nil {
+				wsRoot := filepath.Join(home(), "workspaces")
+				if err := os.MkdirAll(wsRoot, 0o700); err != nil {
 					return err
 				}
-				if workdir, err = os.MkdirTemp(filepath.Join(home(), "workspaces"), "ws-"); err != nil {
+				sweepWorkspaces(wsRoot, 7*24*time.Hour)
+				if workdir, err = os.MkdirTemp(wsRoot, "ws-"); err != nil {
 					return err
+				}
+				if !keep {
+					// Runs after ws.Close (deferred later, so it runs first).
+					defer os.RemoveAll(workdir)
 				}
 			}
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
-			ws := store.New()
-			ws.SetMaxLogLines(maxLogLines)
+			if err := os.MkdirAll(workdir, 0o700); err != nil {
+				return err
+			}
+			ws, err := store.Open(filepath.Join(workdir, "workspace.duckdb"))
+			if err != nil {
+				return fmt.Errorf("cannot create the workspace database: %w", err)
+			}
+			defer ws.Close()
 			skip := map[string]bool{}
 			for _, d := range deferCats {
 				skip[strings.TrimSpace(d)] = true
@@ -255,7 +274,7 @@ func openCmd() *cobra.Command {
 				fmt.Fprintf(errOut, "warning: could not record the open workspace for helpers: %v\n", err)
 			}
 			url := base + "/?token=" + srv.Token
-			fmt.Fprintf(errOut, "\nFlightbay desk is ready while the bundle loads.\n  UI:          %s\n  kubectl:     export KUBECONFIG=%s   (snapshot API on %s)\n  Shell:       flightbay-desk shell   (kubectl, k9s, stern, fbq, fbfind, fbpc)\n  Press Ctrl+C to close the workspace.\n\n", url, srv.KubeconfigPath(), srv.KubeURL)
+			fmt.Fprintf(errOut, "\nFlightbay desk is ready while the bundle loads.\n  UI:          %s\n  kubectl:     export KUBECONFIG=%s   (snapshot API on %s)\n  Shell:       flightbay-desk shell   (kubectl, k9s, stern, fbq, fbsearch, fbsql, fbfind, fbpc)\n  Press Ctrl+C to close the workspace.\n\n", url, srv.KubeconfigPath(), srv.KubeURL)
 			if !noBrowser {
 				openBrowser(url)
 			}
@@ -288,11 +307,51 @@ func openCmd() *cobra.Command {
 	c.Flags().StringVar(&workdir, "workdir", "", "workspace directory (default ~/.flightbay/workspaces/ws-*)")
 	c.Flags().BoolVar(&noBrowser, "no-browser", false, "do not open a browser")
 	c.Flags().BoolVar(&noTerminal, "no-terminal", false, "disable the in-browser terminal")
+	c.Flags().BoolVar(&keep, "keep", false, "keep the workspace directory (DuckDB file, kubeconfig) after closing")
 	c.Flags().BoolVar(&allowRemote, "allow-remote", false, "allow a non-loopback --listen (for containers); the token is still required")
 	c.Flags().StringVar(&shell, "shell", "", "shell for the terminal (default /bin/bash)")
-	c.Flags().IntVar(&maxLogLines, "max-log-lines", 20_000_000, "log lines to hold in memory (about 400 bytes each); 0 for no limit")
 	c.Flags().StringVar(&baseline, "baseline", "", "an earlier bundle from the same customer to compare against (Compare view)")
 	return c
+}
+
+// sweepWorkspaces removes workspace directories left behind by desks that
+// were killed rather than closed.
+func sweepWorkspaces(root string, olderThan time.Duration) {
+	ents, _ := os.ReadDir(root)
+	for _, e := range ents {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), "ws-") {
+			continue
+		}
+		if fi, err := e.Info(); err == nil && time.Since(fi.ModTime()) > olderThan {
+			_ = os.RemoveAll(filepath.Join(root, e.Name()))
+		}
+	}
+}
+
+// resolveBundle accepts a bundle file, or a directory in which it picks the
+// newest flightbay-*.tar.zst(.age).
+func resolveBundle(p string) (string, error) {
+	st, err := os.Stat(p)
+	if err != nil {
+		return "", err
+	}
+	if !st.IsDir() {
+		return p, nil
+	}
+	var best string
+	var bestT time.Time
+	for _, pat := range []string{"flightbay-*.tar.zst", "flightbay-*.tar.zst.age"} {
+		ms, _ := filepath.Glob(filepath.Join(p, pat))
+		for _, m := range ms {
+			if fi, err := os.Stat(m); err == nil && fi.Mode().IsRegular() && fi.ModTime().After(bestT) {
+				best, bestT = m, fi.ModTime()
+			}
+		}
+	}
+	if best == "" {
+		return "", fmt.Errorf("no flightbay-*.tar.zst bundle in %s; capture one with flightbay collect, or pass the file", p)
+	}
+	return best, nil
 }
 
 func currentDesk() (deskInfo, error) {
@@ -314,7 +373,7 @@ func deskEnv() (string, string, error) {
 
 func shellCmd() *cobra.Command {
 	return &cobra.Command{
-		Use: "shell", Short: "Start a shell wired to the open workspace (kubectl, k9s, stern, fbq, fbfind, fbpc)",
+		Use: "shell", Short: "Start a shell wired to the open workspace (kubectl, k9s, stern, fbq, fbsearch, fbsql, fbfind, fbpc)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			d, err := currentDesk()
 			if err != nil {
@@ -451,8 +510,8 @@ func mcpCmd() *cobra.Command {
 		Use:   "mcp",
 		Short: "Serve the open workspace to AI agents over MCP (stdio), read-only",
 		Long: `Serves the open workspace as a Model Context Protocol server on stdin/stdout.
-Tools: workspace_summary, list_findings, search_logs, log_context, list_resource_types,
-list_objects, get_object, proxy_config, compare_baseline. Prompt: triage.
+Tools: workspace_summary, list_findings, search_logs, log_context, search_objects, run_sql,
+list_resource_types, list_objects, get_object, proxy_config, compare_baseline. Prompt: triage.
 
 The server only talks to the local desk. Snapshot data reaches a model only if the
 agent you connect is configured to use one.`,
@@ -469,91 +528,72 @@ agent you connect is configured to use one.`,
 	}
 }
 
-func serveCmd() *cobra.Command {
-	var cfg hosted.Config
-	var listen, retention, maxBundle string
-	var identities []string
+func searchCmd() *cobra.Command {
+	var limit int
 	c := &cobra.Command{
-		Use:   "serve",
-		Short: "Run the hosted desk: many bundles, per-case access, uploads that open while they arrive",
-		Long: `Runs flightbay-desk as a shared service behind an SSO proxy (oauth2-proxy, Solo SSO).
-The proxy authenticates engineers and passes their identity in --user-header and
---groups-header. This server trusts those headers, so it must only be reachable
-through the proxy (bind to the pod network and restrict it with a NetworkPolicy).
-
-Members of --support-group can open every case. --acl grants named users or groups
-specific cases. There is no terminal in hosted mode.`,
-		Example: `  flightbay-desk serve --listen :8080 --data-dir /data \
-    --user-header X-Forwarded-Email --groups-header X-Forwarded-Groups \
-    --support-group solo-support --retention 30d -i /secrets/support.key`,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			var err error
-			if cfg.Identities, err = cli.LoadIdentities(identities); err != nil {
-				return err
-			}
-			if retention != "" {
-				d, err := parseDays(retention)
-				if err != nil {
-					return err
-				}
-				cfg.Retention = d
-			}
-			if cfg.MaxBundle, err = parseSize(maxBundle); err != nil {
-				return err
-			}
-			h, err := hosted.New(cfg)
+		Use: "search QUERY", Short: "Find objects of any kind in the open workspace (the fbsearch helper)", Args: cobra.MinimumNArgs(1),
+		Example: `  fbsearch checkout                              # names, labels and content of every captured object
+  fbsearch 'kind:pod ns:payments CrashLoopBackOff'
+  fbsearch 'label:app=checkout -kind:event'
+  fbsearch '"shop.example.com"'                  # e.g. which routes use a hostname`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			u, t, err := deskEnv()
 			if err != nil {
 				return err
 			}
-			defer h.Close()
-			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
-			defer stop()
-			go func() {
-				t := time.NewTicker(5 * time.Minute)
-				defer t.Stop()
-				for {
-					select {
-					case <-ctx.Done():
-						return
-					case <-t.C:
-						h.Sweep()
-					}
-				}
-			}()
-			h.Sweep()
-			hs := &http.Server{Addr: listen, Handler: h.Handler(), ReadHeaderTimeout: 15 * time.Second}
-			go func() { <-ctx.Done(); _ = hs.Close() }()
-			fmt.Fprintf(cmd.ErrOrStderr(), "Flightbay hosted desk on %s (data %s). Identity from %s.\n", listen, cfg.DataDir, cfg.UserHeader)
-			if err := hs.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				return err
-			}
-			return nil
+			return cli.Search(cmd.OutOrStdout(), u, t, strings.Join(args, " "), limit)
 		},
 	}
-	f := c.Flags()
-	f.StringVar(&listen, "listen", ":8080", "address to listen on (reachable only through the SSO proxy)")
-	f.StringVar(&cfg.DataDir, "data-dir", "/data", "bundles, metadata and the audit log")
-	f.StringVar(&cfg.UserHeader, "user-header", "", "header carrying the authenticated user, set by the SSO proxy")
-	f.StringVar(&cfg.GroupsHeader, "groups-header", "", "header carrying the user's groups (comma separated)")
-	f.StringSliceVar(&cfg.SupportGroups, "support-group", nil, "groups that can open every case")
-	f.StringVar(&cfg.ACLFile, "acl", "", "YAML granting cases to users or groups")
-	f.StringVar(&retention, "retention", "", "delete bundles this long after upload, e.g. 30d")
-	f.StringSliceVarP(&identities, "identity", "i", nil, "age identity for encrypted bundles")
-	f.IntVar(&cfg.MaxLogLines, "max-log-lines", 20_000_000, "log lines to hold in memory per workspace")
-	f.StringVar(&maxBundle, "max-bundle", "10GiB", "largest accepted upload")
-	f.StringVar(&cfg.Region, "region", "", "data residency label shown to users, e.g. eu-west-1")
+	c.Flags().IntVar(&limit, "limit", 50, "maximum results")
 	return c
 }
 
-func parseDays(s string) (time.Duration, error) {
-	if strings.HasSuffix(s, "d") {
-		n, err := strconv.Atoi(strings.TrimSuffix(s, "d"))
-		if err != nil {
-			return 0, fmt.Errorf("bad duration %q", s)
-		}
-		return time.Duration(n) * 24 * time.Hour, nil
+func sqlCmd() *cobra.Command {
+	var limit int
+	c := &cobra.Command{
+		Use: "sql [QUERY]", Short: "Run read-only SQL over logs, objects and events (the fbsql helper); no query starts a prompt",
+		Example: `  fbsql "SELECT pod, count(*) FROM logs WHERE level = 'error' GROUP BY ALL ORDER BY 2 DESC"
+  fbsql            # interactive; type help for the tables`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			u, t, err := deskEnv()
+			if err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+			if len(args) > 0 {
+				return cli.SQL(out, u, t, strings.Join(args, " "), limit)
+			}
+			fmt.Fprintln(out, "Flightbay SQL (read-only DuckDB). End statements with ; and type help or exit.")
+			in := bufio.NewScanner(cmd.InOrStdin())
+			var buf strings.Builder
+			fmt.Fprint(out, "fbsql> ")
+			for in.Scan() {
+				line := strings.TrimSpace(in.Text())
+				switch {
+				case buf.Len() == 0 && (line == "exit" || line == "quit" || line == `\q`):
+					return nil
+				case buf.Len() == 0 && (line == "help" || line == `\?`):
+					fmt.Fprintln(out, cli.SQLHelp)
+				default:
+					buf.WriteString(line + " ")
+					if strings.HasSuffix(line, ";") {
+						if err := cli.SQL(out, u, t, buf.String(), limit); err != nil {
+							fmt.Fprintln(out, "error:", err)
+						}
+						buf.Reset()
+					}
+				}
+				if buf.Len() == 0 {
+					fmt.Fprint(out, "fbsql> ")
+				} else {
+					fmt.Fprint(out, "   ... ")
+				}
+			}
+			return in.Err()
+		},
 	}
-	return time.ParseDuration(s)
+	c.Flags().IntVar(&limit, "limit", 200, "maximum rows")
+	return c
 }
 
 func keygenCmd() *cobra.Command {

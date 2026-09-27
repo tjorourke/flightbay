@@ -5,15 +5,17 @@
 #   docker build -t flightbay-desk .
 #   docker run --rm -p 8484:8484 -v $PWD:/bundles flightbay-desk open /bundles/b.tar.zst --listen 0.0.0.0:8484
 #
-# Both binaries are pure Go (CGO_ENABLED=0), so they run on a minimal base.
+# The collector is pure Go and static. The desk links DuckDB through cgo, so
+# it is built natively for each platform (buildx runs this stage per arch).
 
-FROM --platform=$BUILDPLATFORM golang:1.27 AS build
-ARG TARGETOS TARGETARCH VERSION=dev
+FROM golang:1.27-bookworm AS build
+ARG VERSION=dev
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/ ./cmd/flightbay ./cmd/flightbay-desk
+RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/ ./cmd/flightbay \
+ && CGO_ENABLED=1 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/ ./cmd/flightbay-desk
 
 FROM debian:bookworm-slim AS tools
 ARG TARGETARCH

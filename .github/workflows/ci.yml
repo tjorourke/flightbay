@@ -1,0 +1,23 @@
+name: ci
+on:
+  push: {branches: [main]}
+  pull_request:
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version-file: go.mod}
+      - run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+      - run: go vet ./...
+      - run: go test -race ./...
+      - name: collector builds static
+        run: CGO_ENABLED=0 go build -o /tmp/flightbay ./cmd/flightbay
+      - name: desk builds
+        run: go build -o /tmp/flightbay-desk ./cmd/flightbay-desk && /tmp/flightbay-desk version
+      - name: sample bundle opens and verifies
+        run: /tmp/flightbay inspect examples/sample-bundle.tar.zst | grep -q "Verified: yes"

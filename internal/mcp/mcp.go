@@ -132,6 +132,26 @@ func tools() []tool {
 				}
 				return s.get("/api/logs/context", url.Values{"id": {arg(a, "id")}, "n": {n}})
 			}},
+		{Name: "search_objects", Title: "Search objects",
+			Description: `Find captured objects of any kind by name, namespace, labels or anything in their spec and status (images, hostnames, status reasons). Syntax: kind:pod ns:payments name:checkout* label:app=checkout "CrashLoopBackOff" -kind:event. Returns matches ranked by name, then label, then content, with a snippet and counts per kind.`,
+			InputSchema: obj(map[string]any{"query": str("object query"), "cluster": str("cluster"), "limit": integer("max results, default 50")}, "query"),
+			call: func(s *Server, a map[string]any) (string, error) {
+				limit := arg(a, "limit")
+				if limit == "" {
+					limit = "50"
+				}
+				return s.get("/api/objects/search", url.Values{"q": {arg(a, "query")}, "cluster": {arg(a, "cluster")}, "limit": {limit}})
+			}},
+		{Name: "run_sql", Title: "Read-only SQL",
+			Description: "Run one read-only DuckDB SQL statement. Tables: logs (id, time, cluster, namespace, pod, container, stream, node, level, scope, msg, fields map, raw), objects (cluster, api_group, version, resource, kind, namespace, name, labels map, object JSON text: use object->>'$.status.phase'), events (cluster, namespace, type, reason, object_kind, object_name, message, count, last_seen). Use it for counts, grouping and joins the other tools cannot do.",
+			InputSchema: obj(map[string]any{"query": str("SELECT ..."), "limit": integer("max rows, default 200")}, "query"),
+			call: func(s *Server, a map[string]any) (string, error) {
+				limit := arg(a, "limit")
+				if limit == "" {
+					limit = "200"
+				}
+				return s.get("/api/sql", url.Values{"q": {arg(a, "query")}, "limit": {limit}})
+			}},
 		{Name: "list_resource_types", Title: "Resource types",
 			Description: "Captured resource types with counts and collection state (complete, excluded by customer, failed, truncated, loading). A type that is excluded or failed says nothing about whether objects exist.",
 			InputSchema: obj(map[string]any{"cluster": str("cluster")}),
@@ -177,7 +197,7 @@ const triagePrompt = `You are triaging a Solo.io support case from a Flightbay s
 
 1. Call workspace_summary. Note what the customer excluded, anything still loading, and whether the bundle verified. Never treat excluded or uncollected data as evidence of absence.
 2. Call list_findings. Start from critical, then warning findings. Findings are signals, not conclusions.
-3. For each promising finding, gather evidence: search_logs with its logQuery, then log_context around the key lines; get_object for the objects involved and their related objects and events; proxy_config for the proxies, ztunnel or istiod involved (listeners, routes, certificates, xDS sync).
+3. For each promising finding, gather evidence (search_objects finds any object by name, label or content; run_sql answers counting and grouping questions): search_logs with its logQuery, then log_context around the key lines; get_object for the objects involved and their related objects and events; proxy_config for the proxies, ztunnel or istiod involved (listeners, routes, certificates, xDS sync).
 4. Follow identifiers across pods (trace_id, request id, connection id) with search_logs.
 5. If compare_baseline has data, check whether the problem started with a change.
 

@@ -14,6 +14,8 @@ const S = {
   res: {group: null, resource: null, ns: '', q: '', nsOptions: []},
   logs: {q: '', namespace: '', pod: '', container: '', level: '', stream: '', from: '', to: '', limit: 200, expanded: null, follow: false, total: 0, rev: 0, result: null},
   compare: null, findingSev: '', term: null,
+  search: {q: '', limit: 200},
+  sql: {q: "SELECT kind, count(*) AS objects FROM objects GROUP BY kind ORDER BY objects DESC", result: null, error: ''},
 };
 
 async function api(path, params) {
@@ -49,6 +51,7 @@ function parseHash() {
   if (view === 'logs') {
     for (const k of ['q', 'namespace', 'pod', 'container', 'level', 'stream', 'from', 'to']) if (p.has(k)) S.logs[k] = p.get(k);
   }
+  if (view === 'search' && p.has('q')) S.search.q = p.get('q');
   if (view === 'resources' && p.has('resource')) { S.res.resource = p.get('resource'); S.res.group = p.get('group') || ''; }
   S.view = view;
 }
@@ -66,7 +69,7 @@ function openLogs(filters) {
 async function render() {
   const seq = ++S.renderSeq;
   document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('active', a.dataset.view === S.view));
-  const views = {overview, resources, logs, timeline, findings, compare, proxies, coverage};
+  const views = {search, sql, overview, resources, logs, timeline, findings, compare, proxies, coverage};
   const fn = views[S.view] || overview;
   $('#crumb').textContent = S.ws ? `Workspace / ${S.ws.case ? 'Case ' + S.ws.case : 'Snapshot'} / ${S.view}` : 'Workspace';
   try {
@@ -191,6 +194,109 @@ after.overview = () => {
 function wireFindings() {
   document.querySelectorAll('[data-finding]').forEach(b => b.onclick = () => openFinding(JSON.parse(b.dataset.finding)));
 }
+
+// ---------- search ----------
+function hl(text, q) {
+  // Quoted phrases highlight as a whole; key:value filters and -exclusions do not.
+  const words = ((q || '').match(/-?"[^"]+"|\S+/g) || []).filter(w => !w.startsWith('-') && (w.startsWith('"') || !/^\w+:/.test(w))).map(w => w.replace(/"/g, '')).filter(Boolean);
+  let out = esc(text);
+  for (const w of words) out = out.replace(new RegExp(w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), m => `<mark>${m}</mark>`);
+  return out;
+}
+
+function whyMatched(h, q) {
+  if (h.snippet) return `<span class="mono muted" style="font-size:11px;word-break:break-all">…${hl(h.snippet, q)}…</span>`;
+  if (h.match === 'label') {
+    const words = q.toLowerCase().split(/\s+/).filter(w => w && !w.includes(':')).map(w => w.replace(/"/g, ''));
+    const hits = Object.entries(h.labels || {}).filter(([k, v]) => words.some(w => (k + '=' + v).toLowerCase().includes(w)));
+    return hits.slice(0, 3).map(([k, v]) => `<span class="tag">${hl(k + '=' + v, q)}</span>`).join(' ');
+  }
+  return `<small class="muted">${esc(h.match === 'filter' ? 'matches the filters' : h.match)}</small>`;
+}
+
+async function search() {
+  const Q = S.search;
+  const examples = ['kind:pod', 'CrashLoopBackOff', 'kind:httproute', 'label:app', 'kind:deployment ns:istio-system', '"image"'];
+  const bar = `<form class="query" id="obj-form"><span class="green">⌕</span><input id="obj-q" value="${esc(Q.q)}" placeholder='Search every object: checkout, kind:pod ns:payments, label:app=checkout, "CrashLoopBackOff"' autocomplete="off" spellcheck="false" aria-label="Object search"><button class="primary">Search ↵</button></form>
+    <div class="help-row"><span>Try</span>${examples.map(x => `<button data-otry="${esc(x)}">${esc(x)}</button>`).join('')}</div>`;
+  const header = head('Search', 'Every captured object of every kind: names, namespaces, labels, and anything in spec and status (images, hostnames, status reasons).');
+  if (!Q.q.trim()) {
+    const types = await api('api/resources', {cluster: S.cluster});
+    return header + bar + `<section class="panel mt"><div class="panel-head"><h2>Captured kinds</h2><small>Click a kind to list it</small></div><div class="panel-body row wrap">
+      ${types.map(t => `<button class="chip" data-okind="${esc(t.kind || t.resource)}">${esc(t.kind || t.resource)} <small>${t.count}</small></button>`).join('') || '<span class="muted">No objects loaded yet.</span>'}</div></section>
+      <div class="notice info mt"><div><strong>Syntax</strong>: <code>kind:pod</code> (or po, deploy, svc, httproute) · <code>ns:payments</code> · <code>name:checkout*</code> · <code>label:app=checkout</code> · <code>"free text"</code> in names, labels, spec and status · <code>-</code> to exclude, e.g. <code>-kind:event</code>. Space means AND.</div></div>`;
+  }
+  const r = await api('api/objects/search', {q: Q.q, cluster: S.cluster, limit: Q.limit}).catch(e => ({error: e.message, results: [], byKind: {}, total: 0}));
+  S.lastObj = r;
+  const kinds = Object.entries(r.byKind || {}).sort((a, b) => b[1] - a[1]);
+  return header + bar + (r.error ? `<div class="notice bad">${esc(r.error)}</div>` : '') + `
+    <div class="chips">${kinds.map(([k, n]) => `<button class="chip" data-okind="${esc(k)}">${esc(k)} <small>${n}</small></button>`).join('')}</div>
+    <section class="panel"><div class="panel-head"><span><strong>${num(r.total)}</strong> <span class="muted">objects${r.loading ? ' · <span class="blue">bundle still loading</span>' : ''}</span></span>
+      <button class="link" id="obj-logs">Search the logs for this instead →</button></div>
+    <div class="table-scroll" style="max-height:66vh">${r.results.length ? `<table><thead><tr><th>Kind</th><th>Namespace</th><th>Name</th>${!S.cluster ? '<th>Cluster</th>' : ''}<th>Why it matched</th></tr></thead><tbody>
+      ${r.results.map((h, i) => `<tr data-ohit="${i}" style="cursor:pointer"><td><span class="badge">${esc(h.kind)}</span></td><td class="muted">${esc(h.namespace || '—')}</td><td class="mono blue">${hl(h.name, Q.q)}</td>${!S.cluster ? `<td><span class="tag">${esc(h.cluster)}</span></td>` : ''}
+        <td style="white-space:normal;min-width:260px;max-width:560px">${whyMatched(h, Q.q)}</td></tr>`).join('')}
+    </tbody></table>` : `<div class="empty"><strong>${esc(r.message || 'No matches')}</strong></div>`}</div>
+    ${r.total > r.results.length ? `<div class="table-foot"><span>Showing ${r.results.length} of ${num(r.total)}</span><button id="obj-more">Show more</button></div>` : ''}</section>`;
+}
+after.search = () => {
+  const Q = S.search;
+  const go = q => { Q.q = q; Q.limit = 200; history.replaceState(null, '', '#search' + (q ? '?q=' + encodeURIComponent(q) : '')); render(); };
+  $('#obj-form').onsubmit = e => { e.preventDefault(); go($('#obj-q').value.trim()); };
+  document.querySelectorAll('[data-otry]').forEach(b => b.onclick = () => go(b.dataset.otry));
+  document.querySelectorAll('[data-okind]').forEach(b => b.onclick = () => go(`kind:${b.dataset.okind.toLowerCase()} ${Q.q.replace(/-?kind:\S+/g, '')}`.trim()));
+  const more = $('#obj-more'); if (more) more.onclick = () => { Q.limit += 500; render(); };
+  const lg = $('#obj-logs'); if (lg) lg.onclick = () => openLogs({q: Q.q.split(/\s+/).filter(w => !/^-?(kind|label|name|ns|namespace|cluster):/.test(w)).join(' ')});
+  document.querySelectorAll('[data-ohit]').forEach(tr => tr.onclick = () => {
+    const h = S.lastObj.results[+tr.dataset.ohit];
+    openObject({cluster: h.cluster, group: h.group, resource: h.resource, namespace: h.namespace, name: h.name});
+  });
+  const i = $('#obj-q'); if (i && !Q.q) i.focus();
+};
+
+// ---------- sql ----------
+const sqlExamples = [
+  ['Objects per kind', "SELECT kind, count(*) AS objects FROM objects GROUP BY kind ORDER BY objects DESC"],
+  ['Pods and their phase', "SELECT namespace, name, object->>'$.status.phase' AS phase, object->>'$.spec.nodeName' AS node FROM objects WHERE kind = 'Pod' ORDER BY namespace, name"],
+  ['Noisiest error pods', "SELECT namespace, pod, count(*) AS errors FROM logs WHERE level = 'error' GROUP BY ALL ORDER BY errors DESC LIMIT 20"],
+  ['Warning events', "SELECT namespace, reason, object_kind, object_name, message FROM events WHERE type = 'Warning' ORDER BY namespace"],
+  ['Log lines per minute', "SELECT date_trunc('minute', time) AS minute, count(*) AS lines, count(*) FILTER (WHERE level = 'error') AS errors FROM logs GROUP BY ALL ORDER BY minute"],
+  ['Images in use', "SELECT DISTINCT namespace, c->>'$.image' AS image FROM objects, unnest(CAST(object->'$.spec.containers' AS JSON[])) AS t(c) WHERE kind = 'Pod' ORDER BY image"],
+];
+
+async function sql() {
+  const Q = S.sql;
+  const r = Q.result;
+  return head('SQL', 'Read-only DuckDB SQL over every log line, object and event in the snapshot. Nothing you run can change the workspace or touch local files.') + `
+  <div class="grid2" style="grid-template-columns:minmax(0,3fr) minmax(260px,1fr)"><div>
+    <textarea id="sql-q" spellcheck="false" style="width:100%;min-height:140px;font:12px/1.5 ui-monospace,Menlo,monospace;padding:12px;background:#0d1215;color:#dde7ee;border:1px solid #2c3a43;border-radius:8px">${esc(Q.q)}</textarea>
+    <div class="row between mt"><small class="muted">⌘/Ctrl + Enter to run</small><button class="primary" id="sql-run">Run ↵</button></div>
+    ${Q.error ? `<div class="notice bad mt">${esc(Q.error)}</div>` : ''}
+    ${r ? `<section class="panel mt"><div class="panel-head"><span><strong>${num(r.rows.length)}</strong> <span class="muted">rows${r.truncated ? ' (truncated)' : ''} · ${r.ms} ms</span></span></div>
+      <div class="table-scroll" style="max-height:60vh"><table><thead><tr>${r.columns.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>
+      ${r.rows.map(row => `<tr>${row.map(v => `<td class="mono" style="white-space:normal;max-width:520px;font-size:11px">${v === null ? '<span class="muted">NULL</span>' : esc(typeof v === 'object' ? JSON.stringify(v) : v)}</td>`).join('')}</tr>`).join('')}
+      </tbody></table></div></section>` : ''}
+  </div><div>
+    <section class="panel"><div class="panel-head"><h2>Examples</h2></div><div class="panel-body">${sqlExamples.map(([t], i) => `<button class="link" data-sqlex="${i}" style="display:block;margin-bottom:8px;text-align:left">${esc(t)}</button>`).join('')}</div></section>
+    <section class="panel mt"><div class="panel-head"><h2>Tables</h2></div><div class="panel-body mono" style="font-size:11px;line-height:1.7">
+      <strong>logs</strong> id, time, cluster, namespace, pod, container, stream, node, level, scope, msg, fields (map), raw<br><br>
+      <strong>objects</strong> cluster, api_group, version, resource, kind, namespace, name, labels (map), object (JSON: <code>object-&gt;&gt;'$.status.phase'</code>)<br><br>
+      <strong>events</strong> cluster, namespace, type, reason, object_kind, object_name, message, count, last_seen, event<br><br>
+      <strong>log_lines</strong> logs with ts in Unix ns, seq, chunk</div></section>
+  </div></div>`;
+}
+after.sql = () => {
+  const Q = S.sql;
+  const run = async (text) => {
+    Q.q = typeof text === 'string' ? text : $('#sql-q').value;
+    try { Q.result = await fetch('api/sql', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({query: Q.q})}).then(async r => { const b = await r.json(); if (!r.ok) throw new Error(b.error); return b; }); Q.error = ''; }
+    catch (e) { Q.error = e.message; Q.result = null; }
+    render();
+  };
+  $('#sql-run').onclick = () => run();
+  $('#sql-q').onkeydown = e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); run(); } };
+  document.querySelectorAll('[data-sqlex]').forEach(b => b.onclick = () => run(sqlExamples[+b.dataset.sqlex][1]));
+};
 
 // ---------- resources ----------
 async function resources() {
@@ -593,19 +699,19 @@ function modal(title, body) {
 function closeModal() { $('#modal-root').innerHTML = ''; }
 
 function openSearch() {
-  modal('Jump to an object or view', `<input id="gs" style="width:100%" placeholder="Pods, routes, services…" autocomplete="off"><div id="gs-res" class="search-results"></div>`);
-  const views = ['overview', 'resources', 'logs', 'timeline', 'findings', 'compare', 'proxies', 'coverage'];
+  modal('Jump to an object or view', `<input id="gs" style="width:100%" placeholder="Any object: name, label, image, hostname, kind:pod…" autocomplete="off"><div id="gs-res" class="search-results"></div>`);
+  const views = ['search', 'sql', 'overview', 'resources', 'logs', 'timeline', 'findings', 'compare', 'proxies', 'coverage'];
   let hits = [], sel = 0;
   const draw = () => {
-    $('#gs-res').innerHTML = hits.map((h, i) => `<button class="${i === sel ? 'sel' : ''}" data-i="${i}">${h.view ? `<span class="green">↗</span> ${esc(h.view)}<small>view</small>` : `<span class="badge">${esc(h.kind)}</span>${esc(h.namespace ? h.namespace + '/' : '')}${esc(h.name)}<small>${esc(h.cluster)}</small>`}</button>`).join('');
+    $('#gs-res').innerHTML = hits.map((h, i) => `<button class="${i === sel ? 'sel' : ''}" data-i="${i}">${h.all ? `<span class="green">⌕</span> Search everything for “${esc(h.all)}”<small>Search page</small>` : h.view ? `<span class="green">↗</span> ${esc(h.view)}<small>view</small>` : `<span class="badge">${esc(h.kind)}</span>${esc(h.namespace ? h.namespace + '/' : '')}${esc(h.name)}${h.snippet ? ` <span class="muted mono" style="font-size:10px">…${esc(h.snippet.slice(0, 70))}…</span>` : ''}<small>${esc(h.cluster)}</small>`}</button>`).join('');
     document.querySelectorAll('#gs-res [data-i]').forEach(b => b.onclick = () => pick(hits[+b.dataset.i]));
   };
-  const pick = h => { closeModal(); if (h.view) nav(h.view); else openObject(h); };
+  const pick = h => { closeModal(); if (h.all) { S.search.q = h.all; nav('search'); } else if (h.view) nav(h.view); else openObject(h); };
   let t;
   const input = $('#gs');
   input.oninput = () => { clearTimeout(t); t = setTimeout(async () => {
     const q = input.value.toLowerCase();
-    hits = views.filter(v => q && v.includes(q)).map(v => ({view: v})).concat(q ? await api('api/search', {q}) : []); sel = 0; draw();
+    hits = views.filter(v => q && v.includes(q)).map(v => ({view: v})).concat(q ? (await api('api/search', {q: input.value})).slice(0, 12) : []).concat(q ? [{all: input.value}] : []); sel = 0; draw();
   }, 150); };
   input.onkeydown = e => {
     if (e.key === 'ArrowDown') { sel = Math.min(sel + 1, hits.length - 1); draw(); e.preventDefault(); }
@@ -669,7 +775,7 @@ function boot() {
     if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); openSearch(); }
     else if (e.ctrlKey && e.key === '`') { e.preventDefault(); toggleTerminal(); }
     else if (e.key === 'Escape') { closeModal(); closeDrawer(); }
-    else if (!typing && e.key === '/') { e.preventDefault(); ($('#log-q') || $('#res-q'))?.focus(); }
+    else if (!typing && e.key === '/') { e.preventDefault(); ($('#log-q') || $('#res-q') || $('#obj-q'))?.focus(); }
   });
   addEventListener('hashchange', () => { parseHash(); closeDrawer(); render(); });
   parseHash();

@@ -734,9 +734,8 @@ func (s *Server) logs(w http.ResponseWriter, r *http.Request, cluster, ns, pod s
 			return
 		case <-ch:
 		}
-		now := s.WS.LogStream(cluster, ns, pod, container, stream)
-		for i := sent; i < len(now); i++ {
-			rec := now[i]
+		now := s.WS.LogStreamFrom(cluster, ns, pod, container, stream, sent)
+		for _, rec := range now {
 			out := rec.Raw + "\n"
 			if timestamps {
 				out = rec.TS.Format(time.RFC3339Nano) + " " + out
@@ -745,7 +744,7 @@ func (s *Server) logs(w http.ResponseWriter, r *http.Request, cluster, ns, pod s
 				return
 			}
 		}
-		sent = len(now)
+		sent += len(now)
 		if fl != nil {
 			fl.Flush()
 		}

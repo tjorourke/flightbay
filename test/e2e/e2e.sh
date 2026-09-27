@@ -85,8 +85,9 @@ B=$(ls "$WORK"/flightbay-E2E-1-*.tar.zst)
 [ -f "$B" ] || fail "bundle not written"
 [ ! -e "$B.partial" ] || fail "partial file left behind"
 pass "bundle written: $(basename "$B") ($(wc -c <"$B" | tr -d ' ') bytes)"
-raw=$(zstd -dc "$B" | strings)
-absent "$raw" "$CANARY" "canary must never appear in the bundle"
+# Grep the raw bytes: macOS strings(1) does not reliably scan non-object input.
+if zstd -dc "$B" | grep -aq -- "$CANARY"; then fail "canary must never appear in the bundle (found in the decompressed bytes)"; fi
+raw=$(zstd -dc "$B" | tr -c '[:print:]\n' ' ')
 absent "$raw" "EXCLUDED-NAMESPACE-MARKER" "excluded namespace logs must not be collected"
 absent "$raw" "should-not-appear" "excluded namespace objects must not be collected"
 pass "redaction canary absent from the decompressed bundle; namespace scope honoured"
@@ -211,7 +212,33 @@ contains "$fbq" "database connection timed out" "fbq helper"
 contains "$(FLIGHTBAY_URL=$URL FLIGHTBAY_TOKEN=$TOKEN "$WORK/ws/bin/fbfind")" "CRITICAL" "fbfind helper"
 contains "$(curl -sf -H "Authorization: Bearer $TOKEN" "$URL/")" "flightbay" "UI served"
 pass "findings, trace pivot, fbq/fbfind helpers and UI"
+srch=$(env FLIGHTBAY_URL=$URL FLIGHTBAY_TOKEN=$TOKEN "$WORK/ws/bin/fbsearch" 'kind:pod ns:payments "connection pool"')
+contains "$srch" "checkout-" "fbsearch finds a pod by text inside its spec"
+contains "$(env FLIGHTBAY_URL=$URL FLIGHTBAY_TOKEN=$TOKEN "$WORK/ws/bin/fbsearch" 'busybox')" "Deployment" "object search matches content (images) across kinds"
+contains "$(api '/api/search?q=checkout')" '"kind":"Service"' "the jump palette searches every kind"
+sq=$(env FLIGHTBAY_URL=$URL FLIGHTBAY_TOKEN=$TOKEN "$WORK/ws/bin/fbsql" "SELECT count(*) AS n FROM logs WHERE msg ILIKE '%timed out%'")
+grep -Eq "^[1-9]" <<<"$(sed -n 2p <<<"$sq")" || fail "fbsql counted no lines: $sq"
+if env FLIGHTBAY_URL=$URL FLIGHTBAY_TOKEN=$TOKEN "$WORK/ws/bin/fbsql" "DELETE FROM log_lines" >/dev/null 2>&1; then fail "SQL write accepted"; fi
+contains "$(env FLIGHTBAY_URL=$URL FLIGHTBAY_TOKEN=$TOKEN "$WORK/ws/bin/fbsql" "SELECT kind FROM objects WHERE name = 'checkout-db'")" "Secret" "objects are queryable in SQL"
+absent "$(api "/api/sql?q=SELECT%20string_agg(object,'')%20FROM%20objects")" "$CANARY" "no canary reachable through SQL"
+[ -f "$WORK/ws/workspace.duckdb" ] || fail "no DuckDB workspace file"
+pass "resource search (CLI, API), read-only SQL over logs and objects, DuckDB workspace"
 kill "$DESK_PID"; wait "$DESK_PID" 2>/dev/null || true; DESK_PID=""
+
+step "Desk: open with no argument, workspace cleaned up on exit"
+mkdir -p "$WORK/cwd" && cp "$B" "$WORK/cwd/"
+(cd "$WORK/cwd" && FLIGHTBAY_HOME=$WORK/home2 "$BIN/flightbay-desk" open --no-browser --listen 127.0.0.1:0 >"$WORK/desk-cwd.log" 2>&1) &
+DESK_PID=$!
+for i in $(seq 1 100); do grep -q "Import complete" "$WORK/desk-cwd.log" 2>/dev/null && break; sleep 0.1; done
+contains "$(cat "$WORK/desk-cwd.log")" "Opening flightbay-E2E-1" "picked the bundle in the current directory"
+[ -n "$(ls "$WORK/home2/workspaces")" ] || fail "no workspace while open"
+pkill -INT -f "flightbay-desk open --no-browser --listen 127.0.0.1:0$" 2>/dev/null || kill -INT "$DESK_PID"
+for i in $(seq 1 50); do [ -z "$(ls "$WORK/home2/workspaces")" ] && break; sleep 0.1; done
+[ -z "$(ls "$WORK/home2/workspaces")" ] || fail "workspace left behind after closing"
+DESK_PID=""
+pass "flightbay-desk open with no argument; workspace removed on close"
+contains "$("$BIN/flightbay" inspect "$ROOT/examples/sample-bundle.tar.zst")" "Verified: yes" "sample bundle verifies"
+pass "the shipped sample bundle verifies"
 
 step "Desk: progressive loading (throttled to rehearse a slow upload)"
 SIZE=$(wc -c <"$B" | tr -d ' ')

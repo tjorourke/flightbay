@@ -131,13 +131,8 @@ func xds(ws *store.Workspace, cluster string) []Finding {
 	type key struct{ pod, proxy string }
 	nacks := map[key]int{}
 	sample := map[key]string{}
-	for _, rec := range ws.AllLogs() {
-		if rec.Cluster != cluster || !strings.HasPrefix(rec.Pod, "istiod") {
-			continue
-		}
-		if !strings.Contains(rec.Msg, "NACK") && !strings.Contains(rec.Msg, "ACK ERROR") {
-			continue
-		}
+	nackLines, _ := ws.FindLogs(`cluster:`+cluster+` pod:istiod* NACK OR "ACK ERROR"`, 50000)
+	for _, rec := range nackLines {
 		// Proxy IDs look like sidecar~10.244.1.5~checkout-6d8b9c-f2k7p.payments~payments.svc.cluster.local-12
 		proxy := ""
 		for _, f := range strings.Fields(rec.Msg) {

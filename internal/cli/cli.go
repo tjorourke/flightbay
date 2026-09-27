@@ -649,3 +649,100 @@ func ProxyConfig(w io.Writer, base, token string, o ProxyConfigOptions) error {
 	fmt.Fprintf(w, "Raw file: fbpc %s --file config_dump.json | jq\n", c.Pod)
 	return nil
 }
+
+// Search prints objects of any kind matching a query (the fbsearch helper).
+func Search(w io.Writer, base, token, q string, limit int) error {
+	var res struct {
+		Total   int            `json:"total"`
+		ByKind  map[string]int `json:"byKind"`
+		Message string         `json:"message"`
+		Results []struct {
+			Cluster, Kind, Namespace, Name, Match, Snippet string
+		} `json:"results"`
+	}
+	if err := deskGet(base, token, "/api/objects/search", url.Values{"q": {q}, "limit": {fmt.Sprint(limit)}}, &res); err != nil {
+		return err
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "KIND\tNAMESPACE\tNAME\tCLUSTER\tMATCH")
+	for _, r := range res.Results {
+		m := r.Match
+		if r.Snippet != "" {
+			s := strings.Join(strings.Fields(r.Snippet), " ")
+			if len(s) > 80 {
+				s = s[:80] + "…"
+			}
+			m += ": " + s
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", r.Kind, r.Namespace, r.Name, r.Cluster, m)
+	}
+	_ = tw.Flush()
+	var kinds []string
+	for k, n := range res.ByKind {
+		kinds = append(kinds, fmt.Sprintf("%s %d", k, n))
+	}
+	sort.Strings(kinds)
+	fmt.Fprintf(w, "-- %d objects (showing %d)", res.Total, len(res.Results))
+	if len(kinds) > 0 {
+		fmt.Fprintf(w, ": %s", strings.Join(kinds, ", "))
+	}
+	if res.Message != "" {
+		fmt.Fprintf(w, "\n%s", res.Message)
+	}
+	fmt.Fprintln(w)
+	return nil
+}
+
+// SQL runs one read-only query and prints a table (the fbsql helper).
+func SQL(w io.Writer, base, token, q string, limit int) error {
+	var res struct {
+		Columns   []string `json:"columns"`
+		Rows      [][]any  `json:"rows"`
+		Truncated bool     `json:"truncated"`
+		Ms        int64    `json:"ms"`
+	}
+	if err := deskGet(base, token, "/api/sql", url.Values{"q": {q}, "limit": {fmt.Sprint(limit)}}, &res); err != nil {
+		return err
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, strings.Join(res.Columns, "\t"))
+	for _, r := range res.Rows {
+		cells := make([]string, len(r))
+		for i, v := range r {
+			switch t := v.(type) {
+			case nil:
+				cells[i] = "NULL"
+			case string:
+				cells[i] = t
+			default:
+				b, _ := json.Marshal(t)
+				cells[i] = string(b)
+			}
+			cells[i] = strings.ReplaceAll(cells[i], "\n", " ")
+			if len(cells[i]) > 120 {
+				cells[i] = cells[i][:120] + "…"
+			}
+		}
+		fmt.Fprintln(tw, strings.Join(cells, "\t"))
+	}
+	_ = tw.Flush()
+	more := ""
+	if res.Truncated {
+		more = fmt.Sprintf(" (first %d; raise --limit)", len(res.Rows))
+	}
+	fmt.Fprintf(w, "-- %d rows%s in %d ms\n", len(res.Rows), more, res.Ms)
+	return nil
+}
+
+// SQLHelp describes the database for the fbsql prompt.
+const SQLHelp = `Tables (read-only, DuckDB SQL):
+  logs        id, time, cluster, namespace, pod, container, stream, node, level, scope, msg, fields (map), raw
+  log_lines   the same with ts as Unix nanoseconds, seq and chunk
+  objects     cluster, api_group, version, resource, kind, namespace, name, labels (map), object (JSON text)
+  events      cluster, namespace, type, reason, object_kind, object_name, message, count, last_seen, event (JSON text)
+Examples:
+  SELECT level, count(*) FROM logs GROUP BY ALL ORDER BY 2 DESC;
+  SELECT namespace, name, object->>'$.status.phase' AS phase FROM objects WHERE kind = 'Pod';
+  SELECT pod, count(*) FROM logs WHERE level = 'error' GROUP BY ALL ORDER BY 2 DESC LIMIT 10;
+  SELECT reason, object_name, message FROM events WHERE type = 'Warning';
+  SELECT fields['trace_id'] AS trace, count(*) FROM logs WHERE fields['trace_id'] IS NOT NULL GROUP BY ALL;`

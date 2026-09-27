@@ -407,6 +407,9 @@ type Query struct {
 	Reference time.Time // "now" for since:, normally the end of the capture
 }
 
+// Tokenize splits a query on spaces, keeping quoted phrases together.
+func Tokenize(s string) ([]string, error) { return tokenize(s) }
+
 func tokenize(s string) ([]string, error) {
 	var toks []string
 	var cur strings.Builder
@@ -514,4 +517,73 @@ func SortNewestFirst(rs []*Record) {
 		}
 		return rs[i].ID > rs[j].ID
 	})
+}
+
+// SQL translates the query into a DuckDB WHERE clause over the log_lines
+// table (ts is Unix nanoseconds). ref is "now" for since:. The same query
+// language drives the in-memory matcher and SQL, and a test keeps them equal.
+func (q *Query) SQL(ref time.Time) (string, []any) {
+	var parts []string
+	var args []any
+	for _, c := range q.clauses {
+		s, a := clauseSQL(c)
+		parts = append(parts, s)
+		args = append(args, a...)
+	}
+	if q.Since > 0 && !ref.IsZero() {
+		parts = append(parts, "ts >= ?")
+		args = append(args, ref.Add(-q.Since).UnixNano())
+	}
+	if len(parts) == 0 {
+		return "TRUE", nil
+	}
+	return strings.Join(parts, " AND "), args
+}
+
+func likeEscape(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
+}
+
+var fieldColumns = map[string]string{"ns": "namespace", "namespace": "namespace", "pod": "pod", "container": "container",
+	"cluster": "cluster", "stream": "stream", "scope": "scope", "node": "node"}
+
+func valueSQL(col, want string) (string, []any) {
+	if strings.HasSuffix(want, "*") {
+		return "lower(" + col + ") LIKE ? ESCAPE '\\'", []any{likeEscape(strings.ToLower(strings.TrimSuffix(want, "*"))) + "%"}
+	}
+	return "lower(" + col + ") = ?", []any{strings.ToLower(want)}
+}
+
+// clauseSQL returns a predicate that is never NULL, so NOT behaves like the
+// in-memory matcher when a field is missing.
+func clauseSQL(c clause) (string, []any) {
+	switch t := c.(type) {
+	case textClause:
+		// msg is a substring of raw except for JSON lines, where it is the
+		// decoded message, so only those need the second test.
+		return "(contains(lower(raw), ?) OR (starts_with(raw, '{') AND contains(lower(msg), ?)))", []any{t.text, t.text}
+	case fieldClause:
+		switch {
+		case t.key == "level":
+			return valueSQL("level", NormalizeLevel(t.val))
+		case fieldColumns[t.key] != "":
+			return valueSQL(fieldColumns[t.key], t.val)
+		default:
+			s, a := valueSQL("map_extract(fields, ?)[1]", t.val)
+			return "coalesce(" + s + ", false)", append([]any{t.key}, a...)
+		}
+	case notClause:
+		s, a := clauseSQL(t.c)
+		return "NOT coalesce(" + s + ", false)", a
+	case orClause:
+		var ps []string
+		var as []any
+		for _, x := range t.cs {
+			s, a := clauseSQL(x)
+			ps = append(ps, "coalesce("+s+", false)")
+			as = append(as, a...)
+		}
+		return "(" + strings.Join(ps, " OR ") + ")", as
+	}
+	return "TRUE", nil
 }

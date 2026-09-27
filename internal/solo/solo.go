@@ -143,6 +143,9 @@ func EnvoyCerts(b []byte, ref time.Time) []Cert {
 				if id == "" {
 					id = s(em["subject"])
 				}
+				if id == "" && root {
+					id = "root CA serial " + s(em["serial_number"])
+				}
 				out = append(out, Cert{Identity: id, Serial: s(em["serial_number"]), Root: root, NotAfter: t, DaysLeft: days(t, ref), HoursLeft: hours(t, ref)})
 			}
 		}
@@ -343,7 +346,7 @@ func envoy(sum *Summary, files map[string][]byte, ref time.Time) {
 	sum.Counts["listeners"], sum.Counts["clusters"], sum.Counts["routes"] = len(lt.Rows), len(ct.Rows), len(rt.Rows)
 	sum.Tables = append(sum.Tables, lt, ct, rt)
 	if si := m(decode(files["server_info.json"])); si != nil {
-		sum.Notes = append(sum.Notes, fmt.Sprintf("Envoy %s, state %s, uptime %ss", s(si["version"]), s(si["state"]), s(si["uptime_current_epoch"])))
+		sum.Notes = append(sum.Notes, fmt.Sprintf("Envoy %s, state %s, uptime %s", s(si["version"]), s(si["state"]), s(si["uptime_current_epoch"])))
 	}
 	sum.Certs = EnvoyCerts(files["certs.json"], ref)
 	sum.Counts["certificates"] = len(sum.Certs)

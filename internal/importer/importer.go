@@ -99,6 +99,7 @@ func Run(ctx context.Context, src io.Reader, ws *store.Workspace, o Options) err
 	})
 	deferred := map[string]bool{}
 	fail := func(err error) error {
+		ws.WaitLogs()
 		ws.SetState(func(s *store.ImportState) {
 			s.BytesReceived = cr.n.Load()
 			s.Finished = time.Now().UTC()
@@ -147,6 +148,10 @@ func Run(ctx context.Context, src io.Reader, ws *store.Workspace, o Options) err
 	}
 	if err := r.Verify(); err != nil {
 		return fail(err)
+	}
+	ws.WaitLogs() // every queued log chunk is committed before "complete"
+	if e := ws.State().Error; strings.HasPrefix(e, "log store") {
+		return fail(errors.New(e))
 	}
 	ws.SetState(func(s *store.ImportState) {
 		s.Phase, s.Verified, s.Finished, s.BytesReceived = store.PhaseComplete, true, time.Now().UTC(), cr.n.Load()
@@ -216,7 +221,7 @@ func apply(ws *store.Workspace, m *bundle.Member, r *bundle.Reader) error {
 		ws.AddEvents(info.Cluster, l.Items)
 	case bundle.PathLog:
 		lines := strings.Split(strings.TrimRight(string(m.Data), "\n"), "\n")
-		ws.AddLogLines(info.Cluster, info.Namespace, info.Pod, info.Container, info.Stream, lines, m.Name)
+		ws.QueueLogLines(info.Cluster, info.Namespace, info.Pod, info.Container, info.Stream, lines, m.Name, nil)
 	case bundle.PathCoverage:
 		var c bundle.Coverage
 		if err := json.Unmarshal(m.Data, &c); err != nil {

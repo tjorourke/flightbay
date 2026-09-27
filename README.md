@@ -1,80 +1,188 @@
 # Flightbay by Solo
 
-Flightbay takes an offline, redacted snapshot of one or more Kubernetes clusters and lets Solo support investigate it as if it were live: `kubectl`, `k9s` and `stern` against the snapshot, a log explorer, findings that know about Istio ambient, agentgateway and kgateway, and the Envoy, ztunnel and agentgateway config dumps.
+Flightbay takes a redacted snapshot of a Kubernetes cluster and lets you investigate it offline as if it were live. You can browse every object, search every log line, run `kubectl` and `k9s` against it, read the Envoy, ztunnel and agentgateway config dumps, and get findings that know about Istio ambient, agentgateway and kgateway.
 
-There are two binaries:
+![Overview of a snapshot](docs/images/overview.png)
 
-- **`flightbay`**, the collector the customer runs. It's a single static Go binary with no runtime dependencies. The customer chooses what it reads, it redacts in memory, and it writes one `tar.zst` bundle.
-- **`flightbay-desk`**, where support opens a bundle. You can start browsing and searching before the bundle has finished loading.
-
-## Collecting (customer side)
+It is two commands:
 
 ```bash
-flightbay collect --context mesh1 --namespaces payments,istio-system --case 01234567 --dry-run   # what it would read, and the RBAC it needs
-flightbay collect --context mesh1 --namespaces payments,istio-system --case 01234567              # writes flightbay-01234567-<time>.tar.zst
-flightbay inspect flightbay-01234567-*.tar.zst --contents --redactions                             # review before sending
+flightbay collect --context my-cluster      # capture: writes flightbay-<time>.tar.zst
+flightbay ui                                # open the newest capture in your browser
 ```
 
-Useful options:
+## Install
 
-- `--profile minimal|standard|custom`, `--config collection.yaml`, `--interactive`: start from a profile, a saved policy, or prompts. `--save-config` writes the resolved policy for repeat runs.
-- `--collect objects,logs,events,...`, `--exclude-resources configmaps,secrets`, `--namespaces` / `--exclude-namespaces` (globs), `--label-selector`, `--cluster-scoped`.
-- `--since 2h`, `--max-log-bytes 10MiB`, `--log-streams current,previous`, `--no-logs`.
-- `--solo-diagnostics`: adds proxy config dumps, control-plane debug output and metrics from ztunnel, Envoy, agentgateway, istiod and gateway controllers. These need port-forward, and this flag is what allows it. `--no-portforward` refuses port-forward outright.
-- `--encrypt-to age1...`: only Solo support's identity can open the bundle.
-- `flightbay rbac --namespaces payments` prints least-privilege RBAC for the same policy.
-- `flightbay upload BUNDLE --server URL --case 01234567` uploads to a hosted desk and resumes after interruptions.
-
-[docs/COLLECTS.md](docs/COLLECTS.md) lists exactly what is collected and what never is. It's generated from the collector's own tables (`flightbay docs collects`), and a test fails if the two drift apart.
-
-Secret values are never collected. Output from proxies and the control plane is filtered to the selected namespaces before anything is written. A category that can't honour an exclusion is skipped, with the reason recorded, instead of collecting a second copy through another endpoint.
-
-## Investigating (support side)
+From source (Go 1.27, and a C compiler for the UI, which embeds DuckDB):
 
 ```bash
-flightbay-desk open flightbay-01234567-20260927T1012Z.tar.zst      # UI in the browser, while it loads
-flightbay-desk open bundle.tar.zst.age -i ~/.flightbay/support.key
-flightbay collect -o - | flightbay-desk open -                       # straight from the collector
-flightbay-desk open after.tar.zst --baseline before.tar.zst          # compare two bundles from the same customer
+git clone https://github.com/tjorourke/flightbay && cd flightbay
+make install                  # installs flightbay and flightbay-desk into $(go env GOPATH)/bin
 ```
 
-Once it's open:
+Make sure `$(go env GOPATH)/bin` is on your `PATH`. Release builds (Homebrew, `kubectl flightbay` through krew, and a container image) are set up in `.goreleaser.yaml` and `.github/workflows/release.yml`.
 
-- **kubectl, k9s and stern.** `export KUBECONFIG=<printed path>` or `flightbay-desk shell`. Each cluster gets a `<context>@snapshot` context. Writes, `exec` and `port-forward` are refused with the snapshot time. Types that are still loading return a retryable error instead of a misleading empty list.
-- **Helpers.** `fbq 'level:error ns:payments "timed out"'` searches logs, `fbfind` lists findings, and `fbpc ztunnel-abc12` shows a captured proxy or istiod summary (`--file config_dump.json` gives the raw file).
-- **UI.** Overview, resources with the same columns as kubectl, the log explorer (facets, histogram, trace pivots, lines arriving while you read), timeline, findings, proxy configs, compare (across clusters or against a baseline bundle) and coverage. Coverage shows what the customer excluded, what failed and what was truncated.
-- **Diff.** `flightbay-desk diff before.tar.zst after.tar.zst` shows objects added, removed and changed, image changes, and findings that appeared or went away. An object only counts as removed when both bundles covered it.
-- **AI agents.** `flightbay-desk mcp` serves the workspace over MCP (stdio) with read-only tools and a `triage` prompt. For example, `claude mcp add flightbay -- flightbay-desk mcp`. The desk also serves MCP over HTTP at `/mcp`. Snapshot data reaches a model only if the agent you connect uses one.
+## Try it with the sample
 
-Findings are signals, not verdicts. Rules that depend on something being absent, such as a missing backend or a missing waypoint, wait until the relevant data is completely loaded, and report nothing for excluded data.
-
-## Hosted desk
-
-`flightbay-desk serve` runs a shared desk for many bundles behind an SSO proxy. [deploy/hosted/flightbay-hosted.yaml](deploy/hosted/flightbay-hosted.yaml) sets it up with an oauth2-proxy sidecar:
-
-- **Identity** comes only from the proxy's headers. The desk listens on the pod's loopback address, so the sidecar is the only way in.
-- **Access is per case.** `--support-group` members can open every case, and `--acl` grants named users or groups specific cases. Other users get a 404, not a hint that the case exists.
-- **Uploads resume and open while they arrive.** The UI and `flightbay upload` send offset-checked chunks, and the importer reads the growing file, so the workspace is searchable before the upload finishes. The case is fixed at upload time and checked against `bundle.json`.
-- **Storage.** Bundles are stored as uploaded (encrypted if the customer used `--encrypt-to`). Workspaces live in memory, are rebuilt on demand and are evicted when idle.
-- **Audit and retention.** Uploads, opens, downloads, deletions and denied requests go to `audit.jsonl`. `--retention 30d` deletes bundles after that long.
-- **No terminal.** A hosted shell needs a sandboxed pod per session, so engineers download the bundle and use `flightbay-desk open` for kubectl and k9s.
-
-## Building and testing
+`examples/sample-bundle.tar.zst` is a capture of a small kind cluster running Istio ambient, a waypoint and a shop app with faults planted in it: a crash loop, an image that won't pull, a pod that can't be scheduled, a route to a missing Service and a Service pointing at a waypoint that doesn't exist.
 
 ```bash
-go test ./...                                 # unit tests
-test/e2e/e2e.sh                               # kind cluster with seeded faults: collector, desk, kubectl, k9s, progressive loading
+flightbay ui examples/sample-bundle.tar.zst
+```
+
+Your browser opens on the workspace. If it doesn't, open the `UI:` address it prints, token included. Press Ctrl+C in the terminal to close it; the workspace is deleted when you do.
+
+Things to try:
+
+- **Findings.** The five planted faults, each with its evidence and a next step.
+- **Search.** `checkout`, `kind:pod CrashLoopBackOff`, `label:app=checkout`, `"registry.invalid"`.
+- **Log explorer.** `level:error`, then click a line and follow its `trace_id` across pods.
+- **Proxy configs.** The waypoint's listeners, clusters, routes and certificates, istiod's view of which proxies are in sync, and ztunnel's workloads.
+- **SQL.** Pick an example, or write your own.
+- **Terminal.** Open it at the bottom (Ctrl+\`) and run `kubectl get pods -n payments`, `kubectl logs`, `k9s`, `fbsearch`, `fbq` or `fbsql`.
+
+## Capture a cluster
+
+```bash
+flightbay collect --context mesh1 --dry-run            # what it would read, and the RBAC it needs; reads nothing else
+flightbay collect --context mesh1                      # capture everything the default profile allows
+flightbay collect --context mesh1 --namespaces payments,istio-system --since 2h --case 01234567
+flightbay collect --context mesh1 --solo-diagnostics   # add proxy config dumps, istiod debug output and metrics
+flightbay inspect flightbay-*.tar.zst --redactions     # check what's in it before you share it
+```
+
+The default `standard` profile collects objects, events, the last 24 hours of logs (up to 20 MiB per container, newest kept) and Helm release summaries from every namespace it can read. Useful options:
+
+| Option | What it does |
+|---|---|
+| `--namespaces`, `--exclude-namespaces` | Limit the capture (globs work: `team-*`) |
+| `--since 2h`, `--max-log-bytes 10MiB`, `--no-logs` | Control log volume |
+| `--exclude-resources configmaps,secrets` | Never read these types |
+| `--solo-diagnostics` | Also read the admin endpoints of ztunnel, Envoy, agentgateway, istiod and gateway controllers through port-forward |
+| `--cluster-scoped` | Also capture nodes, CRDs and other cluster-wide objects |
+| `--profile minimal` | Object metadata and events only |
+| `--encrypt-to age1...` | Encrypt the bundle so only the matching key can open it |
+| `--context a,b` | Several clusters in one bundle |
+| `-o -` | Stream to stdout, e.g. `flightbay collect -o - \| flightbay-desk open -` |
+
+`flightbay rbac` prints least-privilege RBAC for the same options, so the collector can run with only what it needs.
+
+### What is and isn't collected
+
+Secret values are never collected: Secrets become names, types, labels and key names. Credentials in object specs, environment variables, ConfigMaps, logs and proxy dumps are replaced before anything is written. That includes JSON embedded inside a field, such as `kubectl.kubernetes.io/last-applied-configuration`. `redaction-report.json` counts what was replaced, and never records the values. [docs/COLLECTS.md](docs/COLLECTS.md) lists everything, and a test regenerates it from the collector's own code so the two can't drift apart.
+
+When you limit namespaces, proxy and control-plane dumps are filtered as well. ztunnel, agentgateway and istiod describe the whole mesh, so any entry that names another namespace is removed before it's written, and the bundle records how many were removed.
+
+One thing is deliberately left out. The agentgateway and kgateway controllers are built on a library called krt, which keeps an in-memory copy of every Kubernetes object the controller watches. That includes Gateways, routes and policies, but also the Secrets it reads, such as TLS keys and API keys for LLM providers. The controller's admin port can dump all of that as one large JSON document. It would be useful for debugging the controller, but it covers every namespace and contains Secret values, so it can't respect "only these namespaces" or "never Secret values". Flightbay collects the controllers' logs, metrics and the objects themselves instead.
+
+## Find things
+
+![Searching every object](docs/images/search.png)
+
+**Search** covers every captured object of every kind: names, namespaces, labels and anything in spec and status, such as images, hostnames and status reasons. ⌘K jumps to an object from anywhere.
+
+```text
+checkout                          name, label or content
+kind:pod ns:payments              kind accepts short names: po, svc, deploy, httproute
+label:app=checkout   name:ist*    labels and name prefixes
+"CrashLoopBackOff"   -kind:event  phrases, and - to exclude
+```
+
+**Log explorer** searches every log line, with facets, a timeline, context around each line and one-click pivots on trace, request and connection IDs. Results arrive while a large bundle is still loading.
+
+```text
+level:error ns:payments "timed out"    pod:checkout*    trace_id:a4e98f02    stream:previous    since:15m    -healthz    a OR b
+```
+
+![Log explorer](docs/images/logs.png)
+
+**SQL** runs DuckDB SQL over the logs, objects and events tables, read-only. Nothing you run can change the workspace or read local files.
+
+```sql
+SELECT namespace, pod, count(*) AS errors FROM logs WHERE level = 'error' GROUP BY ALL ORDER BY errors DESC;
+SELECT namespace, name, object->>'$.status.phase' AS phase FROM objects WHERE kind = 'Pod';
+SELECT reason, object_name, message FROM events WHERE type = 'Warning';
+```
+
+![SQL](docs/images/sql.png)
+
+**Proxy configs** shows what each Envoy, ztunnel and agentgateway had loaded when the snapshot was taken: listeners, routes, clusters, endpoints, workloads, policies and certificates. For istiod it shows which proxies are in sync.
+
+![Proxy configs](docs/images/proxies.png)
+
+**Findings** runs rules over the snapshot: crash loops, image pulls, scheduling failures, routes and policies that weren't accepted, missing backends and waypoints, istio-cni not ready, proxies that haven't picked up config, NACKs, expiring certificates, version skew and repeated error messages. They point you at the evidence; they aren't a verdict. A rule that depends on something being missing waits until that data has fully loaded, and never fires on data the customer chose not to collect.
+
+![Findings](docs/images/findings.png)
+
+### From the terminal
+
+`kubectl`, `k9s` and `stern` work against the snapshot. Each cluster appears as `<context>@snapshot`, and changes are refused.
+
+```bash
+flightbay-desk shell                          # a shell wired to the open workspace (or use the UI's terminal)
+kubectl get pods -A
+kubectl describe pod -n payments checkout-85b9d479d6-cgf5q
+kubectl logs -n payments deploy/checkout --previous
+k9s
+fbsearch 'kind:pod CrashLoopBackOff'          # object search
+fbq 'level:error ns:payments'                 # log search
+fbsql "SELECT kind, count(*) FROM objects GROUP BY ALL"    # or just fbsql for a prompt
+fbpc                                          # captured proxies; fbpc <pod> for one, --file config_dump.json for raw
+fbfind                                        # findings
+```
+
+### Compare two captures
+
+```bash
+flightbay-desk diff before.tar.zst after.tar.zst       # objects added, removed and changed, image changes, new and resolved findings
+flightbay ui after.tar.zst --baseline before.tar.zst   # the same, in the Compare view
+```
+
+An object only counts as removed if both captures covered its type and namespace. Anything else is reported as not comparable.
+
+### AI agents
+
+`flightbay-desk mcp` makes the open workspace available to AI agents over MCP. The tools are read-only: search objects and logs, SQL, findings, objects and proxy configs, plus a `triage` prompt for a guided investigation.
+
+```bash
+claude mcp add flightbay -- flightbay-desk mcp
+```
+
+The MCP server only talks to your local workspace. Snapshot data reaches a model only if the agent you connect uses a hosted one.
+
+## Commands
+
+| Command | |
+|---|---|
+| `flightbay collect` | Capture a cluster (alias `capture`) |
+| `flightbay ui [bundle \| dir]` | Open the UI on a capture (default: the newest in this directory) |
+| `flightbay inspect BUNDLE` | Verify a bundle and show what's in it |
+| `flightbay extract BUNDLE DIR` | Verify and unpack it (it's also a normal `tar.zst`: `tar --zstd -xf`) |
+| `flightbay rbac` | Least-privilege RBAC for your options |
+| `flightbay docs collects` | What is and isn't collected |
+| `flightbay-desk open` | What `flightbay ui` runs; `--keep` keeps the workspace, `-i key` opens encrypted bundles |
+| `flightbay-desk search / query / sql / findings / proxy-config` | The terminal helpers, usable anywhere a workspace is open |
+| `flightbay-desk diff A B` | Compare two captures |
+| `flightbay-desk mcp` | MCP server for agents |
+| `flightbay-desk keygen` | Create a key pair for `--encrypt-to` |
+
+## How it works
+
+- **The bundle** is a plain `tar` stream compressed with zstd. `bundle.json` comes first, with the capture policy; `manifest.json` comes last, with a SHA-256 for every file. Logs are written early and bulky diagnostics late, so the UI can open before the file has finished reading.
+- **The collector** is a single static Go binary with no dependencies. It redacts in memory and never writes unredacted data to disk.
+- **The UI** (`flightbay-desk`) stores logs, objects and events in DuckDB in a temporary workspace. It keeps about 90 bytes per log line on disk: 10 million lines is 0.8 GB and loads in about 35 seconds. Searching 10 million lines takes 20–250 ms for structured queries and under a second for free text. It also serves a read-only Kubernetes API, which is what `kubectl` and `k9s` talk to.
+
+## Development
+
+```bash
+make build                                    # ./bin/flightbay and ./bin/flightbay-desk
+make test                                     # unit tests
+test/e2e/e2e.sh                               # kind cluster with planted faults: collector, UI, kubectl, k9s, search, SQL
 MESH_CONTEXT=kind-mesh1 test/e2e/mesh.sh      # Solo diagnostics against an existing ambient cluster (read-only)
 FLIGHTBAY_SCALE=10000000 go test ./internal/store -run TestScale -v -timeout 60m
-docker build -t flightbay-desk .              # desk image with kubectl, k9s, istioctl, stern, jq, yq
+docker build -t flightbay-desk .              # UI image with kubectl, k9s, istioctl, stern, jq and yq
 ```
-
-Releases use goreleaser (`.goreleaser.yaml`). It builds static binaries for Linux, macOS and Windows, then produces checksums, SBOMs, keyless cosign signatures, the `ghcr.io/…/flightbay-desk` image, Homebrew casks and the `kubectl flightbay` krew plugin.
 
 ## Status
 
-Built against the plan in `flightbay-plan.md`. Still open:
-- the licence;
-- the owner of the Solo support age key and how it's rotated;
-- the hosted cloud and region;
-- a disk-backed log store for bundles beyond about 20 million lines.
+Early and unreleased. Still to decide: the licence, and who owns the key customers encrypt bundles to.

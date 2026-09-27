@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/tjorourke/flightbay/internal/bundle"
 	"github.com/tjorourke/flightbay/internal/policy"
@@ -195,5 +196,26 @@ func TestTwoConsecutiveFailuresAreACrashLoop(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("two consecutive non-zero exits not reported")
+	}
+}
+
+func TestCrashLoopCaughtWhileRunningAgain(t *testing.T) {
+	ws := workspace(t, true)
+	ws.SetHeader(&bundle.Header{Contexts: []string{"mesh1"}, Policy: ws.Header().Policy, CaptureStart: time.Date(2026, 9, 27, 22, 13, 23, 0, time.UTC)})
+	ws.AddObjects("mesh1", pods, []map[string]any{
+		pod("payments", "checkout-9", map[string]any{"phase": "Running", "containerStatuses": []any{
+			cs("app", 4, map[string]any{"running": map[string]any{"startedAt": "2026-09-27T22:13:21Z"}}, map[string]any{"terminated": map[string]any{"reason": "Error", "exitCode": float64(1)}}),
+		}}, nil, nil),
+		// Crashed a few times long ago, stable for hours: not a crash loop.
+		pod("payments", "stable-1", map[string]any{"phase": "Running", "containerStatuses": []any{
+			cs("app", 4, map[string]any{"running": map[string]any{"startedAt": "2026-09-27T08:00:00Z"}}, map[string]any{"terminated": map[string]any{"reason": "Error", "exitCode": float64(1)}}),
+		}}, nil, nil),
+	}, "c9")
+	got := map[string]bool{}
+	for _, f := range byRule(Run(ws))["workload.crashloop"] {
+		got[f.Object.Name] = true
+	}
+	if !got["checkout-9"] || got["stable-1"] {
+		t.Fatalf("crash loop while running again: %v", got)
 	}
 }

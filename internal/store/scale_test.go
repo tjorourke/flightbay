@@ -3,6 +3,7 @@ package store
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"testing"
@@ -18,7 +19,12 @@ func TestScale(t *testing.T) {
 	if n == 0 {
 		t.Skip("set FLIGHTBAY_SCALE to run")
 	}
-	ws := New()
+	dbPath := filepath.Join(t.TempDir(), "scale.duckdb")
+	ws, err := Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
 	base := time.Date(2026, 9, 27, 0, 0, 0, 0, time.UTC)
 	formats := []string{
 		`[%s] "GET /api/v1/orders/%d HTTP/1.1" 200 - via_upstream - "-" 0 1043 12 11 "-" "curl/8.0" "a4e98f02-%d" "checkout.payments.svc:8080" "10.244.1.%d:8080" outbound|8080||checkout.payments.svc.cluster.local`,
@@ -43,14 +49,21 @@ func TestScale(t *testing.T) {
 			f := formats[k%len(formats)]
 			lines = append(lines, ts.Format(time.RFC3339Nano)+" "+fmt.Sprintf(f, ts.Format("15:04:05.000000"), k%9973, k, k%251))
 		}
-		ws.AddLogLines("mesh1", fmt.Sprintf("ns-%d", pod%20), fmt.Sprintf("pod-%d", pod), "app", "current", lines, fmt.Sprintf("c%d", i))
+		ws.QueueLogLines("mesh1", fmt.Sprintf("ns-%d", pod%20), fmt.Sprintf("pod-%d", pod), "app", "current", append([]string(nil), lines...), fmt.Sprintf("c%d", i), nil)
 	}
+	ws.WaitLogs() // as the importer does before reporting complete
 	load := time.Since(start)
 	runtime.GC()
 	var ms1 runtime.MemStats
 	runtime.ReadMemStats(&ms1)
-	t.Logf("loaded %d lines in %s (%.0f lines/s); heap %.2f GiB (%.0f bytes/line)", n, load.Round(time.Millisecond), float64(n)/load.Seconds(),
-		float64(ms1.HeapAlloc-ms0.HeapAlloc)/(1<<30), float64(ms1.HeapAlloc-ms0.HeapAlloc)/float64(n))
+	var disk int64
+	for _, p := range []string{dbPath, dbPath + ".wal"} {
+		if fi, err := os.Stat(p); err == nil {
+			disk += fi.Size()
+		}
+	}
+	t.Logf("loaded %d lines in %s (%.0f lines/s); Go heap %.0f MiB; DuckDB file %.2f GiB (%.0f bytes/line)", n, load.Round(time.Millisecond), float64(n)/load.Seconds(),
+		float64(int64(ms1.HeapAlloc)-int64(ms0.HeapAlloc))/(1<<20), float64(disk)/(1<<30), float64(disk)/float64(n))
 	for _, q := range []string{`"connection timed out"`, `level:error`, `trace_id:t12345`, `ns:ns-3 pod:pod-63 "reconciled"`, ``, `outbound -healthz`} {
 		best := time.Hour
 		var total int

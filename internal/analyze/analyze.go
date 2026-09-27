@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/tjorourke/flightbay/internal/logs"
 	"github.com/tjorourke/flightbay/internal/store"
@@ -106,6 +107,7 @@ func Run(ws *store.Workspace) []Finding {
 
 func workloads(ws *store.Workspace, cluster string) []Finding {
 	var out []Finding
+	snap := snapshotTime(ws)
 	for _, o := range ws.List(cluster, "", "pods", "", nil) {
 		status := m(o.Obj["status"])
 		for _, c := range append(l(status["containerStatuses"]), l(status["initContainerStatuses"])...) {
@@ -118,7 +120,7 @@ func workloads(ws *store.Workspace, cluster string) []Finding {
 			// during a crash loop, leaving the crash output in the current stream.
 			q := fmt.Sprintf("pod:%s container:%s", o.Name, name)
 			next := "Read the container's logs to see why it exited."
-			if len(ws.LogStream(cluster, o.Namespace, o.Name, name, "previous")) > 0 {
+			if ws.HasStream(cluster, o.Namespace, o.Name, name, "previous") {
 				q += " stream:previous"
 				next = "Read the previous container's logs to see why it exited."
 			}
@@ -129,11 +131,22 @@ func workloads(ws *store.Workspace, cluster string) []Finding {
 			failedNow := term != nil && num(term["exitCode"]) != 0
 			failedBefore := last != nil && num(last["exitCode"]) != 0
 			exiting := failedNow && (restarts >= 3 || (restarts >= 1 && failedBefore))
+			// Or caught in the few seconds it runs between crashes: several
+			// restarts, a non-zero last exit, and started just before capture.
+			justRestarted := false
+			if run := m(m(cm["state"])["running"]); run != nil && restarts >= 3 && failedBefore {
+				if t, err := time.Parse(time.RFC3339, s(run["startedAt"])); err == nil && snap.Sub(t) < 5*time.Minute && snap.Sub(t) > -time.Minute {
+					justRestarted = true
+				}
+			}
 			switch reason := s(waiting["reason"]); {
-			case reason == "CrashLoopBackOff" || exiting:
+			case reason == "CrashLoopBackOff" || exiting || justRestarted:
 				ev := "state.waiting.reason: CrashLoopBackOff"
 				detail := fmt.Sprintf("Container %s has restarted %d times and is in CrashLoopBackOff.", name, restarts)
-				if reason != "CrashLoopBackOff" {
+				if justRestarted {
+					ev = fmt.Sprintf("state.running since %s, last exit code %d", s(m(m(cm["state"])["running"])["startedAt"]), num(last["exitCode"]))
+					detail = fmt.Sprintf("Container %s has restarted %d times and had just started again when the snapshot was taken.", name, restarts)
+				} else if reason != "CrashLoopBackOff" {
 					ev = fmt.Sprintf("state.terminated: %s (exit code %d)", s(term["reason"]), num(term["exitCode"]))
 					detail = fmt.Sprintf("Container %s has restarted %d times and had just exited again when the snapshot was taken.", name, restarts)
 				}
@@ -321,10 +334,10 @@ func signatures(ws *store.Workspace) []Finding {
 	type key struct{ cluster, ns, container, sig string }
 	groups := map[key][]*logs.Record{}
 	var order []key
-	for _, r := range ws.AllLogs() {
-		if r.Level != "error" {
-			continue
-		}
+	// Grouping by signature needs the message text, so it samples up to
+	// 200,000 error lines rather than holding every line in memory.
+	errs, _ := ws.FindLogs("level:error", 200000)
+	for _, r := range errs {
 		k := key{r.Cluster, r.Namespace, r.Container, logs.Signature(r.Msg)}
 		if _, ok := groups[k]; !ok {
 			order = append(order, k)

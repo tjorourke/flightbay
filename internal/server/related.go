@@ -267,23 +267,9 @@ func buildTimeline(ws *store.Workspace, cluster string) []TimelineItem {
 		}
 	}
 	// Error spikes: minutes with three or more error lines in a namespace.
-	type key struct {
-		cluster, ns string
-		minute      time.Time
-	}
-	counts := map[key]int{}
-	for _, r := range ws.AllLogs() {
-		if r.Level != "error" || r.TS.IsZero() || (cluster != "" && r.Cluster != cluster) {
-			continue
-		}
-		counts[key{r.Cluster, r.Namespace, r.TS.Truncate(time.Minute)}]++
-	}
-	for k, n := range counts {
-		if n < 3 {
-			continue
-		}
-		out = append(out, TimelineItem{Time: k.minute, From: k.minute, To: k.minute.Add(time.Minute), Cluster: k.cluster, Kind: "error-spike", Severity: "warning",
-			Title: fmt.Sprintf("%d error log lines in %s", n, k.ns), LogQuery: fmt.Sprintf("level:error ns:%s", k.ns)})
+	for _, e := range ws.ErrorMinutes(cluster, 3) {
+		out = append(out, TimelineItem{Time: e.Minute, From: e.Minute, To: e.Minute.Add(time.Minute), Cluster: e.Cluster, Kind: "error-spike", Severity: "warning",
+			Title: fmt.Sprintf("%d error log lines in %s", e.Count, e.Namespace), LogQuery: fmt.Sprintf("level:error ns:%s", e.Namespace)})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Time.Before(out[j].Time) })
 	return out

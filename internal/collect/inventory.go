@@ -102,6 +102,7 @@ func InventoryMarkdown() string {
 		w("- `%s`: %s\n", r.Name, r.Description)
 	}
 	w("- your own patterns from `--redact-extra` (one Go regular expression per line)\n\n")
+	w("JSON held inside a string, such as the `kubectl.kubernetes.io/last-applied-configuration` annotation or a JSON file in a ConfigMap, is parsed and redacted with the same rules, so an environment variable or key inside an embedded manifest is caught too.\n\n")
 	w("`redaction-report.json` in the bundle records how many replacements were made in each file, never the values. Review it with `flightbay inspect BUNDLE --redactions` before sending.\n\n")
 
 	w("## In every bundle\n\n")

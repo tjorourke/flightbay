@@ -2,7 +2,6 @@ package store
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 	"time"
 
@@ -162,18 +161,5 @@ func TestSubscribersNotified(t *testing.T) {
 	case <-ch:
 	case <-time.After(time.Second):
 		t.Fatal("no notification")
-	}
-}
-
-func TestLogMemoryBudget(t *testing.T) {
-	ws := New()
-	ws.SetMaxLogLines(3)
-	ws.AddLogLines("c", "ns", "p", "app", "current", []string{"2026-09-27T10:00:00Z a", "2026-09-27T10:00:01Z b", "2026-09-27T10:00:02Z c", "2026-09-27T10:00:03Z d", "2026-09-27T10:00:04Z e"}, "x")
-	res, err := ws.SearchLogs(LogFilter{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Total != 3 || ws.State().LogsSkipped != 2 || !strings.Contains(res.Message, "not indexed") {
-		t.Fatalf("budget: total=%d skipped=%d msg=%q", res.Total, ws.State().LogsSkipped, res.Message)
 	}
 }
