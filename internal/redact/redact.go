@@ -211,6 +211,17 @@ func (r *Redactor) walk(loc, key string, v any) any {
 		}
 		return out
 	case string:
+		// A string that is itself JSON (last-applied-configuration, JSON in a
+		// ConfigMap value, an embedded manifest) is redacted structurally, so
+		// env name/value pairs and sensitive keys inside it are caught too.
+		if ts := strings.TrimSpace(t); len(ts) > 1 && (ts[0] == '{' || ts[0] == '[') {
+			var inner any
+			if json.Unmarshal([]byte(ts), &inner) == nil {
+				if b, err := json.Marshal(r.walk(loc, key, inner)); err == nil {
+					return string(b)
+				}
+			}
+		}
 		return r.String(loc, t)
 	default:
 		return v

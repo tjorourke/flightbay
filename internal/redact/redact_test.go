@@ -241,3 +241,23 @@ func TestHelmSummaryOnlyWhenRequested(t *testing.T) {
 		t.Fatal("helm decoded without being requested")
 	}
 }
+
+func TestSecretsInsideEmbeddedJSONAreRedacted(t *testing.T) {
+	r, _ := New(nil)
+	const canary = "EMBEDDED-CANARY-77"
+	manifest := `{"apiVersion":"apps/v1","kind":"Deployment","spec":{"template":{"spec":{"containers":[{"name":"app","env":[{"name":"DB_PASSWORD","value":"` + canary + `"}]}]}}}}`
+	obj := map[string]any{"metadata": map[string]any{"name": "checkout", "annotations": map[string]any{LastApplied: manifest}},
+		"data": map[string]any{"settings.json": `{"db":{"user":"app","password":"` + canary + `"}}`, "plain": "not json {"}}
+	out := r.Object("x", obj)
+	b, _ := json.Marshal(out)
+	if strings.Contains(string(b), canary) {
+		t.Fatalf("secret inside embedded JSON survived: %s", b)
+	}
+	ann := out["metadata"].(map[string]any)["annotations"].(map[string]any)[LastApplied].(string)
+	if !strings.Contains(ann, `"DB_PASSWORD"`) || !strings.Contains(ann, `"kind":"Deployment"`) {
+		t.Fatalf("embedded manifest mangled: %s", ann)
+	}
+	if out["data"].(map[string]any)["plain"] != "not json {" {
+		t.Fatal("non-JSON string changed")
+	}
+}
