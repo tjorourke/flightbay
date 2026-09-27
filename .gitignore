@@ -4,3 +4,4 @@ dist/
 *.tar.zst.age
 .DS_Store
 .gstack/
+!examples/*.tar.zst
