@@ -103,7 +103,7 @@ function renderImportStatus() {
   }
   el.innerHTML = html;
   $('#load-deferred')?.addEventListener('click', async () => {
-    const r = await fetch('/api/load', {method: 'POST', credentials: 'same-origin'});
+    const r = await fetch('api/load', {method: 'POST', credentials: 'same-origin'});
     toast(r.ok ? 'Loading deferred categories from the bundle' : 'Could not load deferred data');
   });
 }
@@ -124,7 +124,7 @@ function onState(st) {
 }
 
 async function loadWorkspace() {
-  const w = await api('/api/workspace');
+  const w = await api('api/workspace');
   S.ws = w;
   $('#bundle-case').textContent = w.case ? `Case ${w.case}` : 'Snapshot';
   $('#bundle-sub').textContent = `${(w.contexts || []).length} cluster(s) · ${fmtDateTime(w.snapshot)}`;
@@ -150,7 +150,7 @@ function findingRow(f) {
 }
 
 async function overview() {
-  const w = S.ws = await api('/api/workspace');
+  const w = S.ws = await api('api/workspace');
   const clusters = (w.clusters || []).filter(c => !S.cluster || c.name === S.cluster);
   const tot = k => clusters.reduce((a, c) => a + (c[k] || 0), 0);
   const pol = w.policy || {};
@@ -194,14 +194,14 @@ function wireFindings() {
 
 // ---------- resources ----------
 async function resources() {
-  const types = await api('/api/resources', {cluster: S.cluster});
+  const types = await api('api/resources', {cluster: S.cluster});
   if (!types.length) return head('Resources', 'Captured objects') + `<div class="panel empty"><strong>No resource types yet</strong>${S.state?.phase === 'loading' ? 'The bundle is still loading; types appear as their first chunk arrives.' : 'This bundle holds no objects for the selected cluster.'}</div>`;
   if (S.res.resource === null || !types.find(t => t.resource === S.res.resource && t.group === S.res.group)) {
     const def = types.find(t => t.resource === 'pods' && t.group === '') || types[0];
     S.res.resource = def.resource; S.res.group = def.group;
   }
   const cur = types.find(t => t.resource === S.res.resource && t.group === S.res.group);
-  const list = await api('/api/objects', {cluster: S.cluster, group: S.res.group, resource: S.res.resource, namespace: S.res.ns, q: S.res.q});
+  const list = await api('api/objects', {cluster: S.cluster, group: S.res.group, resource: S.res.resource, namespace: S.res.ns, q: S.res.q});
   if (!S.res.ns && !S.res.q) S.res.nsOptions = [...new Set(list.rows.map(r => r.namespace).filter(Boolean))].sort();
   const multi = !S.cluster;
   const stateNote = cur.state === 'complete' ? '' : `<div class="notice ${cur.state === 'failed' ? 'bad' : 'info'}" style="margin-bottom:12px">${stateBadge(cur.state)} <span>${esc({
@@ -234,7 +234,7 @@ after.resources = () => {
 // ---------- object drawer ----------
 async function openObject(ref, tab = 'summary') {
   S.drawerOpen = true;
-  const d = await api('/api/object', ref).catch(e => ({error: e.message}));
+  const d = await api('api/object', ref).catch(e => ({error: e.message}));
   if (d.error) { toast(d.error); S.drawerOpen = false; return; }
   const o = d.object;
   const isPod = o.kind === 'Pod';
@@ -283,7 +283,7 @@ function logParams(extra = {}) {
 async function logs() {
   const L = S.logs;
   let res;
-  try { res = await api('/api/logs/search', logParams()); } catch (e) { res = {error: e.message, records: [], facets: {}, histogram: [], total: 0}; }
+  try { res = await api('api/logs/search', logParams()); } catch (e) { res = {error: e.message, records: [], facets: {}, histogram: [], total: 0}; }
   L.result = res; L.total = res.total; L.rev = res.revision;
   const facet = (key, field, label) => {
     const vals = Object.entries(res.facets?.[key] || {}).sort((a, b) => b[1] - a[1]).slice(0, 12);
@@ -338,7 +338,7 @@ async function checkNewLines() {
   const L = S.logs;
   if (L.follow) { render(); return; }
   try {
-    const r = await api('/api/logs/search', logParams({limit: 1}));
+    const r = await api('api/logs/search', logParams({limit: 1}));
     const extra = r.total - L.total;
     const el = $('#new-lines'); if (!el) return;
     el.innerHTML = extra > 0 ? `<div class="new-lines"><span>${num(extra)} new matching line${extra === 1 ? '' : 's'} loaded since this search</span><button id="show-new">Show</button></div>` : '';
@@ -349,7 +349,7 @@ async function checkNewLines() {
 async function expandLog(id) { S.logs.expanded = S.logs.expanded === id ? null : id; await render(); }
 
 async function showLogDetail(id) {
-  const ctx = await api('/api/logs/context', {id, n: 3});
+  const ctx = await api('api/logs/context', {id, n: 3});
   const el = $('#log-detail'); if (!el) return;
   const r = ctx.find(x => x.id === id) || ctx[0]; if (!r) return;
   const pivots = Object.entries(r.fields || {}).filter(([k]) => /trace|request|connection|span|correlation/i.test(k));
@@ -364,7 +364,7 @@ async function showLogDetail(id) {
 
 // ---------- timeline ----------
 async function timeline() {
-  const items = await api('/api/timeline', {cluster: S.cluster});
+  const items = await api('api/timeline', {cluster: S.cluster});
   return head('Timeline', 'Events, container exits, rollouts and error spikes on one UTC time axis.') + (items.length ? `<section class="panel">${items.map((i, n) => `
     <div class="timeline-item"><time>${fmtDateTime(i.time).slice(0, 16)}:${new Date(i.time).toISOString().slice(17, 19)}</time><span class="node ${esc(i.severity)}"></span>
     <div><h3>${esc(i.title)}</h3><p>${esc(i.detail || '')}</p><div class="row" style="margin-top:4px"><span class="tag">${esc(i.cluster)}</span><small>${esc(i.kind)}</small></div></div>
@@ -372,14 +372,14 @@ async function timeline() {
     `<div class="panel empty"><strong>Nothing on the timeline yet</strong>${S.state?.phase === 'loading' ? 'Events and logs are still loading.' : 'No events, exits or rollouts were captured.'}</div>`);
 }
 after.timeline = async () => {
-  const items = await api('/api/timeline', {cluster: S.cluster});
+  const items = await api('api/timeline', {cluster: S.cluster});
   document.querySelectorAll('[data-tobj]').forEach(b => b.onclick = () => openObject(items[+b.dataset.tobj].object));
   document.querySelectorAll('[data-tlog]').forEach(b => b.onclick = () => { const i = items[+b.dataset.tlog]; openLogs({q: i.logQuery, from: i.from && !i.from.startsWith('0001') ? i.from : '', to: i.to && !i.to.startsWith('0001') ? i.to : ''}); });
 };
 
 // ---------- findings ----------
 async function findings() {
-  const all = await api('/api/findings', {cluster: S.cluster});
+  const all = await api('api/findings', {cluster: S.cluster});
   const fs = all.filter(f => !S.findingSev || f.severity === S.findingSev);
   const prov = all.some(f => f.provisional);
   return head('Findings', 'Signals to investigate, each linked to its evidence. They are not a root-cause verdict.', `<select id="sev"><option value="">All severities</option>${['critical', 'warning', 'info'].map(s => `<option ${S.findingSev === s ? 'selected' : ''}>${s}</option>`).join('')}</select>`) +
@@ -438,11 +438,11 @@ function baselineSection(b) {
 
 async function compare() {
   const c = S.compare;
-  const base = await api('/api/baseline').catch(() => ({available: false}));
+  const base = await api('api/baseline').catch(() => ({available: false}));
   S.baseReport = base;
   const picker = `<div class="toolbar"><input id="cmp-q" placeholder="Find an object to compare, e.g. checkout-route" aria-label="Find object"><div id="cmp-results" class="search-results" style="width:100%"></div></div>`;
   if (!c) return head('Compare', base.available ? 'Changes since an earlier bundle, and the same object across clusters.' : 'The same object across the clusters in this bundle. Open with --baseline to compare against an earlier bundle.') + baselineSection(base) + picker;
-  const d = await api('/api/diff', c);
+  const d = await api('api/diff', c);
   const found = d.clusters.filter(x => x.found);
   const [L, R] = [found[0], found[1]];
   let body;
@@ -464,7 +464,7 @@ after.compare = () => {
   const q = $('#cmp-q'); if (!q) return;
   q.focus(); let t;
   q.oninput = () => { clearTimeout(t); t = setTimeout(async () => {
-    const hits = await api('/api/search', {q: q.value});
+    const hits = await api('api/search', {q: q.value});
     $('#cmp-results').innerHTML = hits.map((h, i) => `<button data-hit="${i}"><span class="badge">${esc(h.kind)}</span>${esc(h.namespace ? h.namespace + '/' : '')}${esc(h.name)}<small>${esc(h.cluster)}</small></button>`).join('');
     document.querySelectorAll('[data-hit]').forEach(b => b.onclick = () => { const h = hits[+b.dataset.hit]; S.compare = {group: h.group, resource: h.resource, namespace: h.namespace, name: h.name, kind: h.kind}; render(); });
   }, 200); };
@@ -490,7 +490,7 @@ function pxTable(t, q) {
 }
 
 async function proxies() {
-  const d = await api('/api/proxies', {cluster: S.cluster});
+  const d = await api('api/proxies', {cluster: S.cluster});
   S.px = S.px || {sel: '', tab: 'summary', file: '', q: ''};
   const comps = d.components;
   if (!comps.length) {
@@ -508,7 +508,7 @@ async function proxies() {
   let body = '';
   const tabs = ['summary', 'files'];
   if (S.px.tab === 'summary') {
-    const p = await api('/api/proxy', {cluster: cur.cluster, kind: cur.kind, namespace: cur.namespace, pod: cur.pod}).catch(e => ({error: e.message}));
+    const p = await api('api/proxy', {cluster: cur.cluster, kind: cur.kind, namespace: cur.namespace, pod: cur.pod}).catch(e => ({error: e.message}));
     if (p.error) body = `<div class="notice ${cur.files.length ? 'bad' : 'info'}">${cur.files.length ? esc(p.error) : 'Nothing was captured for this pod. See the Files tab for the reason.'}</div>`;
     else {
       const sm = p.summary; const q = S.px.q.toLowerCase();
@@ -524,7 +524,7 @@ async function proxies() {
     let viewer = '';
     if (sel) {
       S.px.file = sel.name;
-      const r = await fetch('/api/proxy/file?' + new URLSearchParams({cluster: cur.cluster, kind: cur.kind, namespace: cur.namespace, pod: cur.pod, file: sel.name}), {credentials: 'same-origin'});
+      const r = await fetch('api/proxy/file?' + new URLSearchParams({cluster: cur.cluster, kind: cur.kind, namespace: cur.namespace, pod: cur.pod, file: sel.name}), {credentials: 'same-origin'});
       let text = await r.text();
       if (sel.name.endsWith('.json')) { try { text = JSON.stringify(JSON.parse(text), null, 2); } catch (_) { /* shown as captured */ } }
       const q = S.px.q.toLowerCase();
@@ -556,7 +556,7 @@ after.proxies = () => {
 
 // ---------- coverage ----------
 async function coverage() {
-  const c = await api('/api/coverage');
+  const c = await api('api/coverage');
   const st = c.state;
   const rep = c.redaction || {};
   const locs = Object.entries(rep.locations || {}).sort();
@@ -605,7 +605,7 @@ function openSearch() {
   const input = $('#gs');
   input.oninput = () => { clearTimeout(t); t = setTimeout(async () => {
     const q = input.value.toLowerCase();
-    hits = views.filter(v => q && v.includes(q)).map(v => ({view: v})).concat(q ? await api('/api/search', {q}) : []); sel = 0; draw();
+    hits = views.filter(v => q && v.includes(q)).map(v => ({view: v})).concat(q ? await api('api/search', {q}) : []); sel = 0; draw();
   }, 150); };
   input.onkeydown = e => {
     if (e.key === 'ArrowDown') { sel = Math.min(sel + 1, hits.length - 1); draw(); e.preventDefault(); }
@@ -628,7 +628,8 @@ function ensureTerminal() {
   term.open($('#term-body'));
   const t = {term, fit, ws: null, queue: []};
   const connect = () => {
-    const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/api/terminal');
+    const u = new URL('api/terminal', location.href); u.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'; u.hash = '';
+    const ws = new WebSocket(u.href);
     ws.binaryType = 'arraybuffer';
     ws.onopen = () => { t.ws = ws; fitTerm(); t.queue.splice(0).forEach(m => ws.send(m)); };
     ws.onmessage = e => term.write(typeof e.data === 'string' ? e.data : new Uint8Array(e.data));
@@ -673,7 +674,7 @@ function boot() {
   addEventListener('hashchange', () => { parseHash(); closeDrawer(); render(); });
   parseHash();
   loadWorkspace().then(render).catch(e => { $('#main').innerHTML = `<div class="notice bad">${esc(e.message)}</div>`; });
-  const es = new EventSource('/api/state/stream');
+  const es = new EventSource('api/state/stream');
   es.addEventListener('state', e => onState(JSON.parse(e.data)));
 }
 boot();

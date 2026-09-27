@@ -38,7 +38,7 @@ var version = "0.1.0-dev"
 
 func main() {
 	root := &cobra.Command{Use: "flightbay", Short: "Flightbay by Solo: collect an offline, redacted snapshot of Kubernetes clusters", SilenceUsage: true}
-	root.AddCommand(collectCmd(), inspectCmd(), extractCmd(), rbacCmd(), &cobra.Command{
+	root.AddCommand(collectCmd(), inspectCmd(), extractCmd(), rbacCmd(), uploadCmd(), &cobra.Command{
 		Use: "version", Short: "Print the version", Run: func(*cobra.Command, []string) { fmt.Println("flightbay", version) },
 	})
 	if err := root.Execute(); err != nil {

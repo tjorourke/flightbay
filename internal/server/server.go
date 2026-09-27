@@ -11,6 +11,7 @@ import (
 	"github.com/tjorourke/flightbay/internal/mcp"
 	"io/fs"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sort"
@@ -213,9 +214,20 @@ func (s *Server) Handler() http.Handler {
 	// MCP for agents that connect over HTTP (kagent RemoteMCPServer, hosted
 	// desks). Same token as the API; tools call back into this server.
 	api("/mcp", func(w http.ResponseWriter, r *http.Request) {
-		(&mcp.Server{BaseURL: s.BaseURL, Token: s.Token, Version: "desk"}).HandleHTTP(w, r)
+		m := &mcp.Server{BaseURL: "http://workspace", Token: s.Token, Version: "desk", HTTP: &http.Client{Transport: inProcess{mux}}}
+		m.HandleHTTP(w, r)
 	})
 	return securityHeaders(mux)
+}
+
+// inProcess serves requests with a handler directly, so MCP tools read the
+// workspace without a network hop (and work behind a hosted path prefix).
+type inProcess struct{ h http.Handler }
+
+func (t inProcess) RoundTrip(r *http.Request) (*http.Response, error) {
+	rec := httptest.NewRecorder()
+	t.h.ServeHTTP(rec, r)
+	return rec.Result(), nil
 }
 
 func securityHeaders(h http.Handler) http.Handler {

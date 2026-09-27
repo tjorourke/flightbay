@@ -18,6 +18,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -28,6 +29,7 @@ import (
 	"github.com/tjorourke/flightbay/internal/apiserver"
 	"github.com/tjorourke/flightbay/internal/cli"
 	"github.com/tjorourke/flightbay/internal/diff"
+	"github.com/tjorourke/flightbay/internal/hosted"
 	"github.com/tjorourke/flightbay/internal/importer"
 	"github.com/tjorourke/flightbay/internal/mcp"
 	"github.com/tjorourke/flightbay/internal/server"
@@ -38,7 +40,7 @@ var version = "0.1.0-dev"
 
 func main() {
 	root := &cobra.Command{Use: "flightbay-desk", Short: "Flightbay by Solo: investigate a snapshot bundle offline", SilenceUsage: true}
-	root.AddCommand(openCmd(), shellCmd(), queryCmd(), findingsCmd(), proxyConfigCmd(), diffCmd(), mcpCmd(), keygenCmd(), &cobra.Command{
+	root.AddCommand(openCmd(), shellCmd(), queryCmd(), findingsCmd(), proxyConfigCmd(), diffCmd(), mcpCmd(), serveCmd(), keygenCmd(), &cobra.Command{
 		Use: "version", Short: "Print the version", Run: func(*cobra.Command, []string) { fmt.Println("flightbay-desk", version) },
 	})
 	if err := root.Execute(); err != nil {
@@ -97,9 +99,12 @@ func parseSize(s string) (int64, error) {
 	}
 	mult := int64(1)
 	u := strings.ToUpper(strings.TrimSpace(s))
-	for suf, m := range map[string]int64{"KIB": 1 << 10, "MIB": 1 << 20, "GIB": 1 << 30, "KB": 1000, "MB": 1000 * 1000, "K": 1 << 10, "M": 1 << 20} {
-		if strings.HasSuffix(u, suf) {
-			mult, u = m, strings.TrimSuffix(u, suf)
+	for _, sm := range []struct {
+		suf string
+		m   int64
+	}{{"GIB", 1 << 30}, {"MIB", 1 << 20}, {"KIB", 1 << 10}, {"GB", 1e9}, {"MB", 1e6}, {"KB", 1000}, {"G", 1 << 30}, {"M", 1 << 20}, {"K", 1 << 10}} {
+		if strings.HasSuffix(u, sm.suf) {
+			mult, u = sm.m, strings.TrimSuffix(u, sm.suf)
 			break
 		}
 	}
@@ -458,6 +463,93 @@ agent you connect is configured to use one.`,
 			return s.Serve(cmd.InOrStdin(), cmd.OutOrStdout())
 		},
 	}
+}
+
+func serveCmd() *cobra.Command {
+	var cfg hosted.Config
+	var listen, retention, maxBundle string
+	var identities []string
+	c := &cobra.Command{
+		Use:   "serve",
+		Short: "Run the hosted desk: many bundles, per-case access, uploads that open while they arrive",
+		Long: `Runs flightbay-desk as a shared service behind an SSO proxy (oauth2-proxy, Solo SSO).
+The proxy authenticates engineers and passes their identity in --user-header and
+--groups-header. This server trusts those headers, so it must only be reachable
+through the proxy (bind to the pod network and restrict it with a NetworkPolicy).
+
+Members of --support-group can open every case. --acl grants named users or groups
+specific cases. There is no terminal in hosted mode.`,
+		Example: `  flightbay-desk serve --listen :8080 --data-dir /data \
+    --user-header X-Forwarded-Email --groups-header X-Forwarded-Groups \
+    --support-group solo-support --retention 30d -i /secrets/support.key`,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var err error
+			if cfg.Identities, err = cli.LoadIdentities(identities); err != nil {
+				return err
+			}
+			if retention != "" {
+				d, err := parseDays(retention)
+				if err != nil {
+					return err
+				}
+				cfg.Retention = d
+			}
+			if cfg.MaxBundle, err = parseSize(maxBundle); err != nil {
+				return err
+			}
+			h, err := hosted.New(cfg)
+			if err != nil {
+				return err
+			}
+			defer h.Close()
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			go func() {
+				t := time.NewTicker(5 * time.Minute)
+				defer t.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-t.C:
+						h.Sweep()
+					}
+				}
+			}()
+			h.Sweep()
+			hs := &http.Server{Addr: listen, Handler: h.Handler(), ReadHeaderTimeout: 15 * time.Second}
+			go func() { <-ctx.Done(); _ = hs.Close() }()
+			fmt.Fprintf(cmd.ErrOrStderr(), "Flightbay hosted desk on %s (data %s). Identity from %s.\n", listen, cfg.DataDir, cfg.UserHeader)
+			if err := hs.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				return err
+			}
+			return nil
+		},
+	}
+	f := c.Flags()
+	f.StringVar(&listen, "listen", ":8080", "address to listen on (reachable only through the SSO proxy)")
+	f.StringVar(&cfg.DataDir, "data-dir", "/data", "bundles, metadata and the audit log")
+	f.StringVar(&cfg.UserHeader, "user-header", "", "header carrying the authenticated user, set by the SSO proxy")
+	f.StringVar(&cfg.GroupsHeader, "groups-header", "", "header carrying the user's groups (comma separated)")
+	f.StringSliceVar(&cfg.SupportGroups, "support-group", nil, "groups that can open every case")
+	f.StringVar(&cfg.ACLFile, "acl", "", "YAML granting cases to users or groups")
+	f.StringVar(&retention, "retention", "", "delete bundles this long after upload, e.g. 30d")
+	f.StringSliceVarP(&identities, "identity", "i", nil, "age identity for encrypted bundles")
+	f.IntVar(&cfg.MaxLogLines, "max-log-lines", 20_000_000, "log lines to hold in memory per workspace")
+	f.StringVar(&maxBundle, "max-bundle", "10GiB", "largest accepted upload")
+	f.StringVar(&cfg.Region, "region", "", "data residency label shown to users, e.g. eu-west-1")
+	return c
+}
+
+func parseDays(s string) (time.Duration, error) {
+	if strings.HasSuffix(s, "d") {
+		n, err := strconv.Atoi(strings.TrimSuffix(s, "d"))
+		if err != nil {
+			return 0, fmt.Errorf("bad duration %q", s)
+		}
+		return time.Duration(n) * 24 * time.Hour, nil
+	}
+	return time.ParseDuration(s)
 }
 
 func keygenCmd() *cobra.Command {
