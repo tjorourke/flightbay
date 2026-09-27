@@ -109,6 +109,22 @@ type Workspace struct {
 	subID      int
 	chunks     map[string]bool
 	crds       map[string]map[string]map[string]any // cluster -> crd name -> slim CRD
+	diags      map[string]*Diagnostic               // cluster/kind/ns/pod -> captured diagnostics
+	soloSum    map[string]json.RawMessage           // cluster -> solo/summary.json
+}
+
+// Diagnostic is one Solo component's captured admin output.
+type Diagnostic struct {
+	Cluster   string            `json:"cluster"`
+	Kind      string            `json:"kind"` // proxies or control-plane
+	Namespace string            `json:"namespace"`
+	Pod       string            `json:"pod"`
+	Component string            `json:"component"`
+	Container string            `json:"container"`
+	Image     string            `json:"image"`
+	Version   string            `json:"version"`
+	Node      string            `json:"node"`
+	Files     map[string][]byte `json:"-"`
 }
 
 // New returns an empty workspace.
@@ -116,7 +132,7 @@ func New() *Workspace {
 	return &Workspace{objects: map[string]*Object{}, byType: map[typeKey][]*Object{}, resources: map[string]map[string]bundle.APIResource{},
 		versions: map[string]json.RawMessage{}, coverage: map[string]bundle.Coverage{}, streamRecs: map[string][]*logs.Record{},
 		subs: map[int]chan struct{}{}, state: ImportState{Phase: PhaseWaiting}, chunks: map[string]bool{},
-		crds: map[string]map[string]map[string]any{}}
+		crds: map[string]map[string]map[string]any{}, diags: map[string]*Diagnostic{}, soloSum: map[string]json.RawMessage{}}
 }
 
 // commit must be called with the write lock held.
@@ -243,6 +259,74 @@ func (w *Workspace) registerLocked(cluster string, r bundle.APIResource) {
 		}
 	}
 	w.resources[cluster][key] = r
+}
+
+func diagKey(cluster, kind, ns, pod string) string {
+	return cluster + "/" + kind + "/" + ns + "/" + pod
+}
+
+// AddDiagnostic records a diagnostic file (or meta.json) for a component pod.
+func (w *Workspace) AddDiagnostic(cluster, kind, ns, pod, file string, data []byte) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	k := diagKey(cluster, kind, ns, pod)
+	d := w.diags[k]
+	if d == nil {
+		d = &Diagnostic{Cluster: cluster, Kind: kind, Namespace: ns, Pod: pod, Files: map[string][]byte{}}
+		w.diags[k] = d
+	}
+	if file == "meta.json" {
+		var meta struct{ Component, Container, Image, Version, Node string }
+		if json.Unmarshal(data, &meta) == nil {
+			d.Component, d.Container, d.Image, d.Version, d.Node = meta.Component, meta.Container, meta.Image, meta.Version, meta.Node
+		}
+	} else {
+		d.Files[file] = data
+	}
+	w.commit()
+}
+
+// Diagnostics lists captured components, optionally for one cluster.
+func (w *Workspace) Diagnostics(cluster string) []Diagnostic {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	var out []Diagnostic
+	for _, d := range w.diags {
+		if cluster == "" || d.Cluster == cluster {
+			out = append(out, *d)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		return a.Cluster+a.Component+a.Namespace+a.Pod < b.Cluster+b.Component+b.Namespace+b.Pod
+	})
+	return out
+}
+
+// Diagnostic returns one component pod's capture, or nil.
+func (w *Workspace) Diagnostic(cluster, kind, ns, pod string) *Diagnostic {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	if d := w.diags[diagKey(cluster, kind, ns, pod)]; d != nil {
+		c := *d
+		return &c
+	}
+	return nil
+}
+
+// SetSoloSummary records solo/summary.json for a cluster.
+func (w *Workspace) SetSoloSummary(cluster string, raw json.RawMessage) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.soloSum[cluster] = raw
+	w.commit()
+}
+
+// SoloSummary returns solo/summary.json for a cluster.
+func (w *Workspace) SoloSummary(cluster string) json.RawMessage {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.soloSum[cluster]
 }
 
 // AddCRD records a collected CustomResourceDefinition (schema stripped).

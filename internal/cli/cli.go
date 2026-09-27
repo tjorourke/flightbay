@@ -483,3 +483,169 @@ func Findings(w io.Writer, base, token string) error {
 	}
 	return nil
 }
+
+// ProxyConfigOptions select what fbpc prints.
+type ProxyConfigOptions struct {
+	Cluster, Namespace, Pod string
+	File                    string // print this captured file raw
+	Section                 string // only tables whose title contains this
+}
+
+type pxComponent struct {
+	Cluster   string `json:"cluster"`
+	Kind      string `json:"kind"`
+	Namespace string `json:"namespace"`
+	Pod       string `json:"pod"`
+	Component string `json:"component"`
+	Version   string `json:"version"`
+	Files     []struct {
+		Name   string `json:"name"`
+		Bytes  int    `json:"bytes"`
+		State  string `json:"state"`
+		Reason string `json:"reason"`
+	} `json:"files"`
+}
+
+// ProxyConfig prints a captured component's summary or one of its files
+// (the fbpc helper). With no pod it lists what was captured.
+func ProxyConfig(w io.Writer, base, token string, o ProxyConfigOptions) error {
+	var list struct {
+		Components []pxComponent `json:"components"`
+		Selected   bool          `json:"selected"`
+	}
+	if err := deskGet(base, token, "/api/proxies", url.Values{"cluster": {o.Cluster}}, &list); err != nil {
+		return err
+	}
+	if o.Pod == "" {
+		if len(list.Components) == 0 {
+			if !list.Selected {
+				fmt.Fprintln(w, "Proxy dumps were not selected by the customer for this bundle (flightbay collect --solo-diagnostics).")
+			} else {
+				fmt.Fprintln(w, "No Solo components were captured in the selected namespaces.")
+			}
+			return nil
+		}
+		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(tw, "CLUSTER\tCOMPONENT\tNAMESPACE\tPOD\tVERSION\tFILES")
+		for _, c := range list.Components {
+			ok := 0
+			for _, f := range c.Files {
+				if f.Bytes > 0 {
+					ok++
+				}
+			}
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d/%d\n", c.Cluster, c.Component, c.Namespace, c.Pod, c.Version, ok, len(c.Files))
+		}
+		return tw.Flush()
+	}
+	var match []pxComponent
+	for _, c := range list.Components {
+		if (c.Pod == o.Pod || strings.HasPrefix(c.Pod, o.Pod)) && (o.Namespace == "" || c.Namespace == o.Namespace) {
+			match = append(match, c)
+		}
+	}
+	switch {
+	case len(match) == 0:
+		return fmt.Errorf("no captured diagnostics for pod %q; run fbpc with no arguments to list them", o.Pod)
+	case len(match) > 1:
+		var names []string
+		for _, c := range match {
+			names = append(names, c.Cluster+" "+c.Namespace+"/"+c.Pod)
+		}
+		return fmt.Errorf("%q matches several pods, narrow with -n or --cluster: %s", o.Pod, strings.Join(names, ", "))
+	}
+	c := match[0]
+	q := url.Values{"cluster": {c.Cluster}, "kind": {c.Kind}, "namespace": {c.Namespace}, "pod": {c.Pod}}
+	if o.File != "" {
+		q.Set("file", o.File)
+		req, _ := http.NewRequest("GET", strings.TrimRight(base, "/")+"/api/proxy/file?"+q.Encode(), nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != 200 {
+			return fmt.Errorf("%s was not captured for %s (see fbpc %s for the files and reasons)", o.File, c.Pod, c.Pod)
+		}
+		_, err = io.Copy(w, resp.Body)
+		return err
+	}
+	var p struct {
+		Summary struct {
+			Counts map[string]int `json:"counts"`
+			Notes  []string       `json:"notes"`
+			Certs  []struct {
+				Identity  string    `json:"identity"`
+				Root      bool      `json:"root"`
+				NotAfter  time.Time `json:"notAfter"`
+				HoursLeft float64   `json:"hoursLeft"`
+			} `json:"certs"`
+			Tables []struct {
+				Title   string     `json:"title"`
+				Columns []string   `json:"columns"`
+				Rows    [][]string `json:"rows"`
+			} `json:"tables"`
+		} `json:"summary"`
+	}
+	if err := deskGet(base, token, "/api/proxy", q, &p); err != nil {
+		return err
+	}
+	fmt.Fprintf(w, "%s %s/%s (%s %s) on %s@snapshot\n", c.Component, c.Namespace, c.Pod, c.Component, c.Version, c.Cluster)
+	keys := make([]string, 0, len(p.Summary.Counts))
+	for k := range p.Summary.Counts {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var counts []string
+	for _, k := range keys {
+		counts = append(counts, fmt.Sprintf("%s=%d", k, p.Summary.Counts[k]))
+	}
+	if len(counts) > 0 {
+		fmt.Fprintln(w, strings.Join(counts, "  "))
+	}
+	for _, n := range p.Summary.Notes {
+		fmt.Fprintln(w, "note:", n)
+	}
+	sec := strings.ToLower(o.Section)
+	for _, t := range p.Summary.Tables {
+		if sec != "" && !strings.Contains(strings.ToLower(t.Title), sec) {
+			continue
+		}
+		fmt.Fprintf(w, "\n== %s (%d)\n", t.Title, len(t.Rows))
+		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(tw, strings.ToUpper(strings.Join(t.Columns, "\t")))
+		for _, r := range t.Rows {
+			for i := range r {
+				if len(r[i]) > 90 {
+					r[i] = r[i][:90] + "…"
+				}
+			}
+			fmt.Fprintln(tw, strings.Join(r, "\t"))
+		}
+		_ = tw.Flush()
+	}
+	if len(p.Summary.Certs) > 0 && (sec == "" || strings.Contains("certificates", sec)) {
+		fmt.Fprintf(w, "\n== Certificates (%d)\n", len(p.Summary.Certs))
+		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(tw, "IDENTITY\tTYPE\tEXPIRES\tHOURS LEFT")
+		for _, ct := range p.Summary.Certs {
+			typ := "workload"
+			if ct.Root {
+				typ = "root"
+			}
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%.1f\n", ct.Identity, typ, ct.NotAfter.Format(time.RFC3339), ct.HoursLeft)
+		}
+		_ = tw.Flush()
+	}
+	fmt.Fprintln(w, "\nFiles:")
+	for _, f := range c.Files {
+		st := f.State
+		if f.Reason != "" {
+			st += ": " + f.Reason
+		}
+		fmt.Fprintf(w, "  %-18s %8d bytes  %s\n", f.Name, f.Bytes, st)
+	}
+	fmt.Fprintf(w, "Raw file: fbpc %s --file config_dump.json | jq\n", c.Pod)
+	return nil
+}

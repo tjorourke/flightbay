@@ -203,6 +203,9 @@ func (s *Server) Handler() http.Handler {
 	api("/api/coverage", s.coverage)
 	api("/api/terminal", s.terminal)
 	api("/api/load", s.load)
+	api("/api/proxies", s.proxies)
+	api("/api/proxy", s.proxy)
+	api("/api/proxy/file", s.proxyFile)
 	return securityHeaders(mux)
 }
 

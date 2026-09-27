@@ -438,10 +438,87 @@ after.compare = () => {
 };
 
 // ---------- proxies ----------
-async function proxies() {
-  return head('Proxy configs', 'Envoy, ztunnel and agentgateway config dumps.') + `<div class="panel empty"><strong>Proxy config dumps are not collected by this build</strong>
-    Collection of config_dump, clusters, listeners and certificates through port-forward is planned (Phase 4). Proxy logs and the Gateway API and policy objects are available in Resources and the log explorer.</div>`;
+const compLabel = {ztunnel: 'ztunnel', envoy: 'Envoy', agentgateway: 'agentgateway', istiod: 'istiod', controller: 'Controller'};
+const pxKey = c => [c.cluster, c.kind, c.namespace, c.pod].join('/');
+
+function certCell(c) {
+  const cls = c.hoursLeft <= 0 ? 'red' : (c.root && c.daysLeft < 30) ? 'amber' : '';
+  const left = c.hoursLeft <= 0 ? 'expired' : c.daysLeft >= 2 ? `${c.daysLeft} days` : `${c.hoursLeft} h`;
+  return `<span class="${cls}">${esc(left)}</span>`;
 }
+
+function pxTable(t, q) {
+  const rows = q ? t.rows.filter(r => r.join(' ').toLowerCase().includes(q)) : t.rows;
+  return `<section class="panel mt"><div class="panel-head"><h2>${esc(t.title)}</h2><span class="badge">${rows.length}${rows.length !== t.rows.length ? ' of ' + t.rows.length : ''}</span></div>
+    <div class="table-scroll" style="max-height:48vh">${rows.length ? `<table><thead><tr>${t.columns.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>
+    ${rows.slice(0, 500).map(r => `<tr>${r.map((c, i) => `<td class="${i === 0 ? 'mono' : ''}" style="white-space:normal;max-width:520px">${/^STALE/.test(c) ? `<span class="red">${esc(c)}</span>` : esc(c)}</td>`).join('')}</tr>`).join('')}</tbody></table>` : '<div class="empty">Nothing captured here' + (q ? ' matches the filter' : '') + '.</div>'}</div>
+    ${rows.length > 500 ? `<div class="table-foot"><span>Showing 500 of ${rows.length}; narrow with the filter</span></div>` : ''}</section>`;
+}
+
+async function proxies() {
+  const d = await api('/api/proxies', {cluster: S.cluster});
+  S.px = S.px || {sel: '', tab: 'summary', file: '', q: ''};
+  const comps = d.components;
+  if (!comps.length) {
+    return head('Proxies', 'Envoy, ztunnel and agentgateway config dumps, istiod debug output and metrics.') + `<div class="panel empty"><strong>${d.selected ? 'No Solo components captured' : 'Proxy dumps, control-plane debug and metrics were not selected'}</strong>${
+      d.loading ? 'Diagnostics are written last in a bundle, so they may still be arriving.' : d.selected ? 'The selected namespaces held no ztunnel, Envoy, agentgateway, istiod or controller pods.' : 'The customer did not allow port-forward diagnostics for this bundle (flightbay collect --solo-diagnostics). Their absence says nothing about the proxies.'}</div>`;
+  }
+  if (!comps.find(c => pxKey(c) === S.px.sel)) { S.px.sel = pxKey(comps[0]); S.px.file = ''; }
+  const cur = comps.find(c => pxKey(c) === S.px.sel);
+  const groups = {};
+  comps.forEach(c => (groups[c.component || 'unknown'] ||= []).push(c));
+  const nav = Object.entries(groups).map(([g, cs]) => `<h3 style="margin:10px 8px 4px;font-size:11px" class="muted">${esc(compLabel[g] || g)}</h3>` + cs.map(c => {
+    const bad = c.files.some(f => f.state !== 'complete');
+    return `<button class="${pxKey(c) === S.px.sel ? 'active' : ''}" data-px="${attr(pxKey(c))}" title="${esc(c.namespace)}/${esc(c.pod)}"><span style="overflow:hidden;text-overflow:ellipsis">${esc(c.pod)}</span><span>${c.expired ? '<small class="red">expired</small>' : c.expiring ? '<small class="amber">cert</small>' : ''} <span class="st state-${bad ? 'truncated' : 'complete'}">●</span></span></button>`;
+  }).join('')).join('');
+  let body = '';
+  const tabs = ['summary', 'files'];
+  if (S.px.tab === 'summary') {
+    const p = await api('/api/proxy', {cluster: cur.cluster, kind: cur.kind, namespace: cur.namespace, pod: cur.pod}).catch(e => ({error: e.message}));
+    if (p.error) body = `<div class="notice ${cur.files.length ? 'bad' : 'info'}">${cur.files.length ? esc(p.error) : 'Nothing was captured for this pod. See the Files tab for the reason.'}</div>`;
+    else {
+      const sm = p.summary; const q = S.px.q.toLowerCase();
+      body = `<div class="stats">${Object.entries(sm.counts || {}).map(([k, v]) => `<div class="stat"><div class="eyebrow">${esc(k)}</div><div class="value ${k === 'stale' && v ? 'red' : ''}">${num(v)}</div></div>`).join('')}</div>
+        ${(sm.notes || []).map(n => `<div class="notice info mt">${esc(n)}</div>`).join('')}
+        ${sm.certs?.length ? `<section class="panel mt"><div class="panel-head"><h2>Certificates</h2><small>Measured at snapshot time · workload certificates are short-lived by design</small></div><div class="table-scroll" style="max-height:34vh"><table><thead><tr><th>Identity</th><th>Type</th><th>State</th><th>Expires</th><th>Left</th></tr></thead><tbody>
+          ${sm.certs.map(c => `<tr><td class="mono">${esc(c.identity)}</td><td>${c.root ? 'root' : 'workload'}</td><td>${esc(c.state || '')}</td><td>${fmtDateTime(c.notAfter)}</td><td>${certCell(c)}</td></tr>`).join('')}</tbody></table></div></section>` : ''}
+        ${(sm.tables || []).map(t => pxTable(t, q)).join('')}`;
+    }
+  } else {
+    const files = cur.files;
+    const sel = files.find(f => f.name === S.px.file && f.bytes) || files.find(f => f.bytes);
+    let viewer = '';
+    if (sel) {
+      S.px.file = sel.name;
+      const r = await fetch('/api/proxy/file?' + new URLSearchParams({cluster: cur.cluster, kind: cur.kind, namespace: cur.namespace, pod: cur.pod, file: sel.name}), {credentials: 'same-origin'});
+      let text = await r.text();
+      if (sel.name.endsWith('.json')) { try { text = JSON.stringify(JSON.parse(text), null, 2); } catch (_) { /* shown as captured */ } }
+      const q = S.px.q.toLowerCase();
+      const lines = text.split('\n');
+      const shown = q ? lines.filter(l => l.toLowerCase().includes(q)) : lines;
+      viewer = `<section class="panel mt"><div class="panel-head"><h2 class="mono">${esc(sel.name)}</h2><small>${bytes(sel.bytes)} · ${q ? `${num(shown.length)} of ${num(lines.length)} lines match` : num(lines.length) + ' lines'} · redacted and namespace-filtered at collection</small></div>
+        <pre class="code" style="max-height:60vh;overflow:auto;margin:0">${esc(shown.slice(0, 20000).join('\n'))}${shown.length > 20000 ? '\n… narrow with the filter to see more' : ''}</pre></section>`;
+    }
+    body = `<section class="panel"><div class="table-scroll"><table><thead><tr><th>File</th><th>Size</th><th>State</th><th>Notes</th></tr></thead><tbody>
+      ${files.map(f => `<tr ${f.bytes ? `data-pxfile="${esc(f.name)}" style="cursor:pointer"` : ''} class="${f.name === S.px.file ? 'sel' : ''}"><td class="mono ${f.bytes ? 'blue' : 'muted'}">${esc(f.name)}</td><td>${f.bytes ? bytes(f.bytes) : '—'}</td><td>${stateBadge(f.state, f.reason)}</td><td class="muted" style="white-space:normal">${esc(f.reason || '')}</td></tr>`).join('')}
+      </tbody></table></div></section>${viewer}`;
+  }
+  const sums = Object.entries(d.summaries || {});
+  return head('Proxies', 'Envoy, ztunnel and agentgateway config dumps, istiod debug output and metrics, as captured.', `<button id="px-term">&gt;_ fbpc ${esc(cur.pod)}</button>`) +
+    (sums.length ? `<div class="row wrap" style="margin-bottom:10px">${sums.flatMap(([cl, raw]) => (raw.components || []).map(c => `<span class="tag" title="${esc(c.image)}">${esc(cl)} · ${esc(compLabel[c.component] || c.component)} ${esc(c.version || '')} ×${c.pods.length}</span>`)).join(' ')}</div>` : '') + `
+  <div class="resource-layout"><nav class="types" aria-label="Components">${nav}</nav>
+  <div><div class="toolbar"><div class="row wrap"><span class="badge">${esc(compLabel[cur.component] || cur.component)}</span><span class="tag">${esc(cur.cluster)}</span><span class="mono">${esc(cur.namespace)}/${esc(cur.pod)}</span><small class="muted" title="${esc(cur.image)}">${esc(cur.version || '')}${cur.node ? ' · ' + esc(cur.node) : ''}</small></div></div>
+    <div class="toolbar"><div class="tabs" style="border:0;margin:0">${tabs.map(t => `<button class="${t === S.px.tab ? 'active' : ''}" data-pxtab="${t}">${t === 'summary' ? 'Summary' : 'Files'}</button>`).join('')}</div>
+    <input id="px-q" placeholder="Filter rows or lines" value="${esc(S.px.q)}" aria-label="Filter"></div>
+    ${body}</div></div>`;
+}
+after.proxies = () => {
+  document.querySelectorAll('[data-px]').forEach(b => b.onclick = () => { S.px.sel = JSON.parse(b.dataset.px); S.px.file = ''; render(); });
+  document.querySelectorAll('[data-pxtab]').forEach(b => b.onclick = () => { S.px.tab = b.dataset.pxtab; render(); });
+  document.querySelectorAll('[data-pxfile]').forEach(tr => tr.onclick = () => { S.px.file = tr.dataset.pxfile; render(); });
+  let t; const qi = $('#px-q'); if (qi) qi.oninput = e => { clearTimeout(t); t = setTimeout(() => { S.px.q = e.target.value; render().then(() => { const i = $('#px-q'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }); }, 250); };
+  const pt = $('#px-term'); if (pt) pt.onclick = () => { const [cl, , ns, pod] = S.px.sel.split('/'); termRun(`fbpc --cluster ${cl} -n ${ns} ${pod}`); };
+};
 
 // ---------- coverage ----------
 async function coverage() {
@@ -450,7 +527,7 @@ async function coverage() {
   const rep = c.redaction || {};
   const locs = Object.entries(rep.locations || {}).sort();
   const cov = c.coverage.filter(x => !S.cluster || x.cluster === S.cluster);
-  const target = x => x.type === 'logs' ? `logs ${x.namespace}/${x.pod}/${x.container} (${x.stream})` : x.type === 'events' ? 'events' : (x.group ? `${x.resource}.${x.group}` : x.resource);
+  const target = x => x.type === 'logs' ? `logs ${x.namespace}/${x.pod}/${x.container} (${x.stream})` : x.type === 'events' ? 'events' : x.type === 'diagnostic' ? `${x.container} ${x.namespace}/${x.pod} ${x.resource}` : (x.group ? `${x.resource}.${x.group}` : x.resource);
   return head('Coverage', 'What the customer allowed, what was collected, and what the importer verified.') + `
   <div class="grid2"><div>
     <section class="panel"><div class="panel-head"><h2>Collections</h2><small>${cov.length} records · ${cov.filter(x => x.state !== 'complete').length} not complete</small></div>
@@ -483,7 +560,7 @@ function closeModal() { $('#modal-root').innerHTML = ''; }
 
 function openSearch() {
   modal('Jump to an object or view', `<input id="gs" style="width:100%" placeholder="Pods, routes, services…" autocomplete="off"><div id="gs-res" class="search-results"></div>`);
-  const views = ['overview', 'resources', 'logs', 'timeline', 'findings', 'compare', 'coverage'];
+  const views = ['overview', 'resources', 'logs', 'timeline', 'findings', 'compare', 'proxies', 'coverage'];
   let hits = [], sel = 0;
   const draw = () => {
     $('#gs-res').innerHTML = hits.map((h, i) => `<button class="${i === sel ? 'sel' : ''}" data-i="${i}">${h.view ? `<span class="green">↗</span> ${esc(h.view)}<small>view</small>` : `<span class="badge">${esc(h.kind)}</span>${esc(h.namespace ? h.namespace + '/' : '')}${esc(h.name)}<small>${esc(h.cluster)}</small>`}</button>`).join('');

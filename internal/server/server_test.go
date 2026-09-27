@@ -415,3 +415,49 @@ func TestLoadDeferred(t *testing.T) {
 		t.Fatal("GET should not trigger a load")
 	}
 }
+
+func TestProxiesAPI(t *testing.T) {
+	s, srv := newServer(t, false)
+	ws := s.WS
+	ws.AddDiagnostic("mesh1", "proxies", "istio-system", "ztunnel-a", "meta.json", []byte(`{"component":"ztunnel","container":"istio-proxy","image":"x/ztunnel:1.30.4","version":"1.30.4","node":"w1"}`))
+	ws.AddDiagnostic("mesh1", "proxies", "istio-system", "ztunnel-a", "config_dump.json", []byte(`{"workloads":[{"name":"checkout","namespace":"payments"}],"services":[],"certificates":[{"identity":"spiffe://c/ns/payments/sa/x","certChain":[{"expirationTime":"2026-09-26T00:00:00Z"}]}]}`))
+	ws.SetCoverage(bundle.Coverage{ID: "mesh1.proxies.istio-system.ztunnel-a.config_dump", Cluster: "mesh1", Type: bundle.CoverageDiagnostic, Namespace: "istio-system", Pod: "ztunnel-a", Container: "ztunnel", Resource: "config_dump.json", State: bundle.StateComplete, Reason: "3 entries naming namespaces outside the selection removed"})
+	// A component whose port-forward failed has coverage but no files.
+	ws.SetCoverage(bundle.Coverage{ID: "mesh1.control-plane.istio-system.istiod-a.syncz", Cluster: "mesh1", Type: bundle.CoverageDiagnostic, Namespace: "istio-system", Pod: "istiod-a", Container: "istiod", Resource: "syncz.json", State: bundle.StateFailed, Reason: "port-forward failed: connection refused"})
+
+	var list struct {
+		Components []diagRow `json:"components"`
+	}
+	if code := get(t, srv, "/api/proxies", &list); code != 200 || len(list.Components) != 2 {
+		t.Fatalf("list %d %+v", code, list)
+	}
+	var zt, id diagRow
+	for _, c := range list.Components {
+		if c.Pod == "ztunnel-a" {
+			zt = c
+		} else {
+			id = c
+		}
+	}
+	if zt.Component != "ztunnel" || zt.Counts["workloads"] != 1 || zt.Expired != 1 || zt.Files[0].Reason == "" {
+		t.Fatalf("ztunnel row %+v", zt)
+	}
+	if id.Component != "istiod" || id.Kind != "control-plane" || len(id.Files) != 1 || id.Files[0].State != bundle.StateFailed {
+		t.Fatalf("failed istiod must still be listed with its reason: %+v", id)
+	}
+	var detail struct {
+		Summary struct {
+			Tables []struct{ Title string } `json:"tables"`
+		} `json:"summary"`
+	}
+	if code := get(t, srv, "/api/proxy?cluster=mesh1&kind=proxies&namespace=istio-system&pod=ztunnel-a", &detail); code != 200 || len(detail.Summary.Tables) == 0 {
+		t.Fatalf("detail %d %+v", code, detail)
+	}
+	var raw map[string]any
+	if code := get(t, srv, "/api/proxy/file?cluster=mesh1&kind=proxies&namespace=istio-system&pod=ztunnel-a&file=config_dump.json", &raw); code != 200 || raw["workloads"] == nil {
+		t.Fatalf("file %d %v", code, raw)
+	}
+	if code := get(t, srv, "/api/proxy/file?cluster=mesh1&kind=proxies&namespace=istio-system&pod=ztunnel-a&file=../../etc/passwd", &raw); code != 404 {
+		t.Fatalf("unknown file should 404, got %d", code)
+	}
+}

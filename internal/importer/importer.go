@@ -23,7 +23,7 @@ type Options struct {
 	Reader   bundle.ReaderOptions
 	Source   string
 	Throttle int64 // bytes per second; 0 = unlimited (used to rehearse slow uploads)
-	// Skip defers categories ("objects", "logs", "events"): their members are
+	// Skip defers categories ("objects", "logs", "events", "diagnostics"): their members are
 	// still verified but not loaded. A later Run without Skip loads them.
 	Skip map[string]bool
 }
@@ -36,6 +36,8 @@ func category(kind string) string {
 		return "logs"
 	case bundle.PathEvents:
 		return "events"
+	case bundle.PathSolo:
+		return "diagnostics"
 	}
 	return ""
 }
@@ -149,7 +151,7 @@ func Run(ctx context.Context, src io.Reader, ws *store.Workspace, o Options) err
 	ws.SetState(func(s *store.ImportState) {
 		s.Phase, s.Verified, s.Finished, s.BytesReceived = store.PhaseComplete, true, time.Now().UTC(), cr.n.Load()
 		s.Deferred = nil
-		for _, c := range []string{"objects", "logs", "events"} {
+		for _, c := range []string{"objects", "logs", "events", "diagnostics"} {
 			if deferred[c] {
 				s.Deferred = append(s.Deferred, c)
 			}
@@ -231,6 +233,14 @@ func apply(ws *store.Workspace, m *bundle.Member, r *bundle.Reader) error {
 		ws.AddCollectionLog(lines)
 	case bundle.PathRedaction:
 		ws.SetRedaction(json.RawMessage(m.Data))
+	case bundle.PathSolo:
+		if info.Sub == "" {
+			if info.File == "summary.json" {
+				ws.SetSoloSummary(info.Cluster, json.RawMessage(m.Data))
+			}
+			return nil
+		}
+		ws.AddDiagnostic(info.Cluster, info.Sub, info.Namespace, info.Pod, info.File, m.Data)
 	}
 	return nil
 }

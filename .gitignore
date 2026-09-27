@@ -3,3 +3,4 @@ dist/
 *.tar.zst
 *.tar.zst.age
 .DS_Store
+.gstack/

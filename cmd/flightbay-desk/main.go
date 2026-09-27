@@ -221,9 +221,15 @@ func openCmd() *cobra.Command {
 			info := deskInfo{URL: base, Token: srv.Token, Kubeconfig: srv.KubeconfigPath(), WorkDir: workdir, Bundle: path, PID: os.Getpid()}
 			b, _ := json.MarshalIndent(info, "", "  ")
 			_ = os.WriteFile(filepath.Join(workdir, "desk.json"), b, 0o600)
-			_ = os.WriteFile(filepath.Join(home(), "current.json"), b, 0o600)
+			// Helpers (fbq, fbpc, flightbay-desk shell) find the workspace through this.
+			if err := os.MkdirAll(home(), 0o700); err == nil {
+				err = os.WriteFile(filepath.Join(home(), "current.json"), b, 0o600)
+			}
+			if err != nil {
+				fmt.Fprintf(errOut, "warning: could not record the open workspace for helpers: %v\n", err)
+			}
 			url := base + "/?token=" + srv.Token
-			fmt.Fprintf(errOut, "\nFlightbay desk is ready while the bundle loads.\n  UI:          %s\n  kubectl:     export KUBECONFIG=%s   (snapshot API on %s)\n  Shell:       flightbay-desk shell   (kubectl, k9s, stern, fbq, fbfind)\n  Press Ctrl+C to close the workspace.\n\n", url, srv.KubeconfigPath(), srv.KubeURL)
+			fmt.Fprintf(errOut, "\nFlightbay desk is ready while the bundle loads.\n  UI:          %s\n  kubectl:     export KUBECONFIG=%s   (snapshot API on %s)\n  Shell:       flightbay-desk shell   (kubectl, k9s, stern, fbq, fbfind, fbpc)\n  Press Ctrl+C to close the workspace.\n\n", url, srv.KubeconfigPath(), srv.KubeURL)
 			if !noBrowser {
 				openBrowser(url)
 			}
@@ -251,7 +257,7 @@ func openCmd() *cobra.Command {
 	}
 	c.Flags().StringVar(&listen, "listen", "127.0.0.1:8484", "loopback address for the UI and API")
 	c.Flags().StringSliceVarP(&identities, "identity", "i", nil, "age identity file for encrypted bundles")
-	c.Flags().StringSliceVar(&deferCats, "defer", nil, "categories to load later from the UI: objects, logs, events")
+	c.Flags().StringSliceVar(&deferCats, "defer", nil, "categories to load later from the UI: objects, logs, events, diagnostics")
 	c.Flags().StringVar(&throttle, "throttle", "", "limit import speed, e.g. 512KiB (rehearse slow uploads)")
 	c.Flags().StringVar(&workdir, "workdir", "", "workspace directory (default ~/.flightbay/workspaces/ws-*)")
 	c.Flags().BoolVar(&noBrowser, "no-browser", false, "do not open a browser")
@@ -279,7 +285,7 @@ func deskEnv() (string, string, error) {
 
 func shellCmd() *cobra.Command {
 	return &cobra.Command{
-		Use: "shell", Short: "Start a shell wired to the open workspace (kubectl, k9s, stern, fbq, fbfind)",
+		Use: "shell", Short: "Start a shell wired to the open workspace (kubectl, k9s, stern, fbq, fbfind, fbpc)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			d, err := currentDesk()
 			if err != nil {
@@ -330,12 +336,29 @@ func findingsCmd() *cobra.Command {
 }
 
 func proxyConfigCmd() *cobra.Command {
-	return &cobra.Command{
-		Use: "proxy-config [POD]", Short: "Show a captured proxy config dump (the fbpc helper)",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return errors.New("proxy config dumps are not collected by this build of flightbay (planned for Phase 4)")
+	var o cli.ProxyConfigOptions
+	c := &cobra.Command{
+		Use: "proxy-config [POD]", Short: "Show a captured proxy or control-plane dump (the fbpc helper)", Args: cobra.MaximumNArgs(1),
+		Example: `  fbpc                                  # list captured components
+  fbpc ztunnel-5b4bw                    # workloads, services, policies, certificates
+  fbpc ai-gateway --section routes      # one table
+  fbpc istiod --file syncz.json | jq    # a raw captured file`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			u, t, err := deskEnv()
+			if err != nil {
+				return err
+			}
+			if len(args) == 1 {
+				o.Pod = args[0]
+			}
+			return cli.ProxyConfig(cmd.OutOrStdout(), u, t, o)
 		},
 	}
+	c.Flags().StringVar(&o.Cluster, "cluster", "", "cluster name in the bundle")
+	c.Flags().StringVarP(&o.Namespace, "namespace", "n", "", "namespace of the pod")
+	c.Flags().StringVar(&o.File, "file", "", "print one captured file as captured, e.g. config_dump.json")
+	c.Flags().StringVar(&o.Section, "section", "", "only tables whose title contains this, e.g. routes")
+	return c
 }
 
 func keygenCmd() *cobra.Command {
