@@ -23,7 +23,7 @@ func ws(t *testing.T, id string, namespaces []string, image string, services []s
 	b, _ := json.Marshal(p)
 	w.SetHeader(&bundle.Header{BundleID: id, Contexts: []string{"mesh1"}, Policy: b, CaptureStart: time.Now()})
 	w.AddObjects("mesh1", deploy, []map[string]any{{"kind": "Deployment", "metadata": map[string]any{"name": "checkout", "namespace": "payments", "resourceVersion": rv, "uid": "u" + rv},
-		"spec": map[string]any{"template": map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"name": "app", "image": image}}}}},
+		"spec":   map[string]any{"template": map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"name": "app", "image": image}}}}},
 		"status": map[string]any{"conditions": []any{map[string]any{"type": "Available", "status": "True", "lastTransitionTime": rv}}}}}, "d")
 	var objs []map[string]any
 	for _, s := range services {
