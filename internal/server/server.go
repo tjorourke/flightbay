@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/tjorourke/flightbay/internal/diff"
+	"github.com/tjorourke/flightbay/internal/mcp"
 	"io/fs"
 	"net/http"
 	"os"
@@ -209,6 +210,11 @@ func (s *Server) Handler() http.Handler {
 	api("/api/proxy", s.proxy)
 	api("/api/proxy/file", s.proxyFile)
 	api("/api/baseline", s.baselineDiff)
+	// MCP for agents that connect over HTTP (kagent RemoteMCPServer, hosted
+	// desks). Same token as the API; tools call back into this server.
+	api("/mcp", func(w http.ResponseWriter, r *http.Request) {
+		(&mcp.Server{BaseURL: s.BaseURL, Token: s.Token, Version: "desk"}).HandleHTTP(w, r)
+	})
 	return securityHeaders(mux)
 }
 

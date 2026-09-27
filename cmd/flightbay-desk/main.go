@@ -29,6 +29,7 @@ import (
 	"github.com/tjorourke/flightbay/internal/cli"
 	"github.com/tjorourke/flightbay/internal/diff"
 	"github.com/tjorourke/flightbay/internal/importer"
+	"github.com/tjorourke/flightbay/internal/mcp"
 	"github.com/tjorourke/flightbay/internal/server"
 	"github.com/tjorourke/flightbay/internal/store"
 )
@@ -37,7 +38,7 @@ var version = "0.1.0-dev"
 
 func main() {
 	root := &cobra.Command{Use: "flightbay-desk", Short: "Flightbay by Solo: investigate a snapshot bundle offline", SilenceUsage: true}
-	root.AddCommand(openCmd(), shellCmd(), queryCmd(), findingsCmd(), proxyConfigCmd(), diffCmd(), keygenCmd(), &cobra.Command{
+	root.AddCommand(openCmd(), shellCmd(), queryCmd(), findingsCmd(), proxyConfigCmd(), diffCmd(), mcpCmd(), keygenCmd(), &cobra.Command{
 		Use: "version", Short: "Print the version", Run: func(*cobra.Command, []string) { fmt.Println("flightbay-desk", version) },
 	})
 	if err := root.Execute(); err != nil {
@@ -434,6 +435,29 @@ func diffCmd() *cobra.Command {
 	c.Flags().BoolVar(&jsonOut, "json", false, "print the report as JSON")
 	c.Flags().BoolVar(&showYAML, "yaml", false, "include the before and after YAML of changed objects")
 	return c
+}
+
+func mcpCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "mcp",
+		Short: "Serve the open workspace to AI agents over MCP (stdio), read-only",
+		Long: `Serves the open workspace as a Model Context Protocol server on stdin/stdout.
+Tools: workspace_summary, list_findings, search_logs, log_context, list_resource_types,
+list_objects, get_object, proxy_config, compare_baseline. Prompt: triage.
+
+The server only talks to the local desk. Snapshot data reaches a model only if the
+agent you connect is configured to use one.`,
+		Example: `  claude mcp add flightbay -- flightbay-desk mcp
+  opencode: "mcp": {"flightbay": {"type": "local", "command": ["flightbay-desk", "mcp"]}}`,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			u, t, err := deskEnv()
+			if err != nil {
+				return err
+			}
+			s := &mcp.Server{BaseURL: u, Token: t, Version: version}
+			return s.Serve(cmd.InOrStdin(), cmd.OutOrStdout())
+		},
+	}
 }
 
 func keygenCmd() *cobra.Command {
