@@ -7,6 +7,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"github.com/tjorourke/flightbay/internal/diff"
 	"io/fs"
 	"net/http"
 	"os"
@@ -48,6 +49,7 @@ type Server struct {
 	api  http.Handler
 	term *termSession
 	mu   sync.Mutex
+	base baselineState
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -206,6 +208,7 @@ func (s *Server) Handler() http.Handler {
 	api("/api/proxies", s.proxies)
 	api("/api/proxy", s.proxy)
 	api("/api/proxy/file", s.proxyFile)
+	api("/api/baseline", s.baselineDiff)
 	return securityHeaders(mux)
 }
 
@@ -507,30 +510,7 @@ func (s *Server) diff(w http.ResponseWriter, r *http.Request) {
 			out = append(out, side{Cluster: c})
 			continue
 		}
-		clean := map[string]any{}
-		for k, v := range o.Obj {
-			clean[k] = v
-		}
-		if md, ok := o.Obj["metadata"].(map[string]any); ok {
-			m2 := map[string]any{}
-			for k, v := range md {
-				switch k {
-				case "uid", "resourceVersion", "creationTimestamp", "generation", "managedFields", "selfLink":
-					continue
-				}
-				m2[k] = v
-			}
-			if ann, ok := m2["annotations"].(map[string]any); ok {
-				a2 := map[string]any{}
-				for k, v := range ann {
-					if !strings.HasPrefix(k, "kubectl.kubernetes.io/last-applied") && !strings.HasPrefix(k, "deployment.kubernetes.io/revision") {
-						a2[k] = v
-					}
-				}
-				m2["annotations"] = a2
-			}
-			clean["metadata"] = m2
-		}
+		clean := diff.Clean(o.Obj)
 		y, _ := yaml.Marshal(clean)
 		out = append(out, side{Cluster: c, Found: true, YAML: string(y)})
 	}

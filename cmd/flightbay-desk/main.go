@@ -27,6 +27,7 @@ import (
 
 	"github.com/tjorourke/flightbay/internal/apiserver"
 	"github.com/tjorourke/flightbay/internal/cli"
+	"github.com/tjorourke/flightbay/internal/diff"
 	"github.com/tjorourke/flightbay/internal/importer"
 	"github.com/tjorourke/flightbay/internal/server"
 	"github.com/tjorourke/flightbay/internal/store"
@@ -36,7 +37,7 @@ var version = "0.1.0-dev"
 
 func main() {
 	root := &cobra.Command{Use: "flightbay-desk", Short: "Flightbay by Solo: investigate a snapshot bundle offline", SilenceUsage: true}
-	root.AddCommand(openCmd(), shellCmd(), queryCmd(), findingsCmd(), proxyConfigCmd(), keygenCmd(), &cobra.Command{
+	root.AddCommand(openCmd(), shellCmd(), queryCmd(), findingsCmd(), proxyConfigCmd(), diffCmd(), keygenCmd(), &cobra.Command{
 		Use: "version", Short: "Print the version", Run: func(*cobra.Command, []string) { fmt.Println("flightbay-desk", version) },
 	})
 	if err := root.Execute(); err != nil {
@@ -109,7 +110,7 @@ func parseSize(s string) (int64, error) {
 }
 
 func openCmd() *cobra.Command {
-	var listen, workdir, throttle, shell string
+	var listen, workdir, throttle, shell, baseline string
 	var identities, deferCats []string
 	var noBrowser, noTerminal bool
 	c := &cobra.Command{
@@ -198,6 +199,20 @@ func openCmd() *cobra.Command {
 					return importer.Run(context.Background(), f, ws, o)
 				}
 			}
+			if baseline != "" {
+				go func() {
+					bws, err := loadBundle(ctx, baseline, ids)
+					if bws == nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "Baseline not loaded: %v\n", err)
+						return
+					}
+					if err != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "Baseline loaded with problems: %v\n", err)
+					}
+					srv.SetBaseline(bws, baseline)
+					fmt.Fprintf(cmd.ErrOrStderr(), "Baseline %s loaded for comparison.\n", baseline)
+				}()
+			}
 			defer srv.Close()
 			hs := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 			go func() { _ = hs.Serve(ln) }()
@@ -263,6 +278,7 @@ func openCmd() *cobra.Command {
 	c.Flags().BoolVar(&noBrowser, "no-browser", false, "do not open a browser")
 	c.Flags().BoolVar(&noTerminal, "no-terminal", false, "disable the in-browser terminal")
 	c.Flags().StringVar(&shell, "shell", "", "shell for the terminal (default /bin/bash)")
+	c.Flags().StringVar(&baseline, "baseline", "", "an earlier bundle from the same customer to compare against (Compare view)")
 	return c
 }
 
@@ -358,6 +374,62 @@ func proxyConfigCmd() *cobra.Command {
 	c.Flags().StringVarP(&o.Namespace, "namespace", "n", "", "namespace of the pod")
 	c.Flags().StringVar(&o.File, "file", "", "print one captured file as captured, e.g. config_dump.json")
 	c.Flags().StringVar(&o.Section, "section", "", "only tables whose title contains this, e.g. routes")
+	return c
+}
+
+// loadBundle imports a whole bundle into a fresh workspace and verifies it.
+func loadBundle(ctx context.Context, path string, ids []age.Identity) (*store.Workspace, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	ws := store.New()
+	o := importer.Options{Source: path}
+	o.Reader.Identities = ids
+	if err := importer.Run(ctx, f, ws, o); err != nil {
+		return ws, fmt.Errorf("%s: %w (compared as an unverified, possibly partial capture)", path, err)
+	}
+	return ws, nil
+}
+
+func diffCmd() *cobra.Command {
+	var identities []string
+	var jsonOut, showYAML bool
+	c := &cobra.Command{
+		Use:   "diff BEFORE AFTER",
+		Short: "Compare two bundles from the same customer: objects, image versions and findings",
+		Example: `  flightbay-desk diff flightbay-01234567-20260920T0900Z.tar.zst flightbay-01234567-20260927T1012Z.tar.zst
+  flightbay-desk diff before.tar.zst after.tar.zst --yaml    # include changed objects
+  flightbay-desk open after.tar.zst --baseline before.tar.zst  # the same in the UI`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ids, err := cli.LoadIdentities(identities)
+			if err != nil {
+				return err
+			}
+			before, err1 := loadBundle(cmd.Context(), args[0], ids)
+			after, err2 := loadBundle(cmd.Context(), args[1], ids)
+			for _, e := range []error{err1, err2} {
+				if e != nil {
+					if before == nil || after == nil {
+						return e
+					}
+					fmt.Fprintln(cmd.ErrOrStderr(), "warning:", e)
+				}
+			}
+			r := diff.Compare(before, after)
+			if jsonOut {
+				_, err = cmd.OutOrStdout().Write(append(r.JSON(), '\n'))
+				return err
+			}
+			fmt.Fprint(cmd.OutOrStdout(), r.Text(showYAML))
+			return nil
+		},
+	}
+	c.Flags().StringSliceVarP(&identities, "identity", "i", nil, "age identity file for encrypted bundles")
+	c.Flags().BoolVar(&jsonOut, "json", false, "print the report as JSON")
+	c.Flags().BoolVar(&showYAML, "yaml", false, "include the before and after YAML of changed objects")
 	return c
 }
 

@@ -408,10 +408,40 @@ function lineDiff(a, b) {
   return {a: A, b: B};
 }
 
+function baselineSection(b) {
+  if (!b?.available) return '';
+  const r = b.report, sm = r.summary || {};
+  const sel = S.baseSel;
+  const ch = (r.changes || []).filter(x => !S.baseKind || x.kind === S.baseKind);
+  const kinds = [...new Set((r.changes || []).map(x => x.kind))].sort();
+  let detail = '';
+  if (sel != null && ch[sel]) {
+    const x = ch[sel];
+    if (x.change === 'changed') {
+      const df = lineDiff((x.before || '').split('\n'), (x.after || '').split('\n'));
+      detail = `<div class="diff-grid mt"><div class="diff-col"><div class="panel-head"><h2>Before</h2></div><div class="diff-code">${df.a.map(l => `<span class="${l.c || ''}">${esc(l.t) || ' '}</span>`).join('')}</div></div>
+        <div class="diff-col"><div class="panel-head"><h2>After</h2></div><div class="diff-code">${df.b.map(l => `<span class="${l.c || ''}">${esc(l.t) || ' '}</span>`).join('')}</div></div></div>`;
+    } else detail = `<pre class="code mt">${esc(x.after || x.before)}</pre>`;
+  }
+  return `<section class="panel" style="margin-bottom:16px"><div class="panel-head"><h2>Against the earlier bundle</h2><small class="mono">${esc(r.before.case || r.before.bundleId)} ${fmtDateTime(r.before.captured)} → ${esc(r.after.case || r.after.bundleId)} ${fmtDateTime(r.after.captured)}</small></div><div class="panel-body">
+    <div class="row wrap"><span class="badge green">${sm.added || 0} added</span><span class="badge red">${sm.removed || 0} removed</span><span class="badge amber">${sm.changed || 0} changed</span><span class="badge">${sm.versions || 0} image changes</span><span class="badge red">${sm.newFindings || 0} new findings</span><span class="badge green">${sm.resolvedFindings || 0} resolved</span>${b.loading ? '<span class="badge blue">still loading</span>' : ''}</div>
+    ${(r.versions || []).length ? `<h3 class="mt">Image changes</h3><div class="table-scroll"><table><tbody>${r.versions.map(v => `<tr><td><span class="tag">${esc(v.cluster)}</span></td><td class="mono">${esc(v.namespace)}/${esc(v.workload)} ${esc(v.container)}</td><td class="muted">${esc(v.before)}</td><td>→</td><td class="amber">${esc(v.after)}</td></tr>`).join('')}</tbody></table></div>` : ''}
+    ${(r.newFindings || []).length ? `<h3 class="mt">New since the earlier bundle</h3>${r.newFindings.map(findingRow).join('')}` : ''}
+    ${(r.resolvedFindings || []).length ? `<h3 class="mt">No longer present</h3>${r.resolvedFindings.map(f => `<div class="finding-row"><span class="sev info">✓</span><div><strong>${esc(f.title)}</strong><p>${esc(f.cluster)} · ${esc(f.rule)}</p></div></div>`).join('')}` : ''}
+    ${(r.changes || []).length ? `<h3 class="mt">Objects</h3><div class="toolbar"><select id="base-kind"><option value="">All kinds</option>${kinds.map(k => `<option ${S.baseKind === k ? 'selected' : ''}>${esc(k)}</option>`).join('')}</select></div>
+      <div class="table-scroll" style="max-height:40vh"><table><thead><tr><th>Change</th><th>Cluster</th><th>Kind</th><th>Object</th><th>Fields</th></tr></thead><tbody>
+      ${ch.map((x, i) => `<tr data-base="${i}" style="cursor:pointer" class="${i === sel ? 'sel' : ''}"><td class="${x.change === 'added' ? 'green' : x.change === 'removed' ? 'red' : 'amber'}">${esc(x.change)}</td><td><span class="tag">${esc(x.cluster)}</span></td><td>${esc(x.kind)}</td><td class="mono">${esc(x.namespace ? x.namespace + '/' : '')}${esc(x.name)}</td><td class="muted" style="white-space:normal">${esc((x.fields || []).join(', '))}</td></tr>`).join('')}
+      </tbody></table></div>${detail}` : '<p class="muted mt">No object changes between the two captures.</p>'}
+    ${(r.notComparable || []).length ? `<div class="notice info mt"><div><strong>Not comparable</strong>: one bundle did not capture these completely, so their absence proves nothing.<br><small>${r.notComparable.slice(0, 12).map(esc).join('<br>')}${r.notComparable.length > 12 ? '<br>…' : ''}</small></div></div>` : ''}
+  </div></section>`;
+}
+
 async function compare() {
   const c = S.compare;
+  const base = await api('/api/baseline').catch(() => ({available: false}));
+  S.baseReport = base;
   const picker = `<div class="toolbar"><input id="cmp-q" placeholder="Find an object to compare, e.g. checkout-route" aria-label="Find object"><div id="cmp-results" class="search-results" style="width:100%"></div></div>`;
-  if (!c) return head('Compare', 'The same object across the clusters in this bundle.') + picker;
+  if (!c) return head('Compare', base.available ? 'Changes since an earlier bundle, and the same object across clusters.' : 'The same object across the clusters in this bundle. Open with --baseline to compare against an earlier bundle.') + baselineSection(base) + picker;
   const d = await api('/api/diff', c);
   const found = d.clusters.filter(x => x.found);
   const [L, R] = [found[0], found[1]];
@@ -427,6 +457,9 @@ async function compare() {
   return head('Compare', `${esc(c.kind || c.resource)} ${esc(c.namespace)}/${esc(c.name)} across clusters`, '<button id="cmp-clear">Pick another object</button>') + body;
 }
 after.compare = () => {
+  document.querySelectorAll('[data-base]').forEach(tr => tr.onclick = () => { S.baseSel = S.baseSel === +tr.dataset.base ? null : +tr.dataset.base; render(); });
+  const bk = $('#base-kind'); if (bk) bk.onchange = e => { S.baseKind = e.target.value; S.baseSel = null; render(); };
+  wireFindings();
   const clr = $('#cmp-clear'); if (clr) clr.onclick = () => { S.compare = null; render(); };
   const q = $('#cmp-q'); if (!q) return;
   q.focus(); let t;
