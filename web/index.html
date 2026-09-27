@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Flightbay · Snapshot workspace</title>
+<link rel="stylesheet" href="/static/app.css">
+<link rel="stylesheet" href="/static/vendor/xterm.css">
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <a href="#overview" class="brand" aria-label="Flightbay overview"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span class="brand-text">flightbay<span class="green">.</span></span></a>
+    <div class="bundle"><div class="row between"><span class="eyebrow">Workspace</span><span id="phase-dot" class="dot"></span></div><strong id="bundle-case">Loading…</strong><small id="bundle-sub"></small></div>
+    <div class="eyebrow nav-label">Investigate</div>
+    <nav class="nav" aria-label="Main navigation">
+      <a data-view="overview" href="#overview"><span class="nav-icon">◫</span><span class="nav-text">Overview</span></a>
+      <a data-view="resources" href="#resources"><span class="nav-icon">▤</span><span class="nav-text">Resources</span></a>
+      <a data-view="logs" href="#logs"><span class="nav-icon">≡</span><span class="nav-text">Log explorer</span></a>
+      <a data-view="timeline" href="#timeline"><span class="nav-icon">↕</span><span class="nav-text">Timeline</span></a>
+      <a data-view="findings" href="#findings"><span class="nav-icon">⊙</span><span class="nav-text">Findings</span><span class="count hidden" id="nav-findings"></span></a>
+      <a data-view="compare" href="#compare"><span class="nav-icon">±</span><span class="nav-text">Compare</span></a>
+      <a data-view="proxies" href="#proxies"><span class="nav-icon">⌘</span><span class="nav-text">Proxy configs</span></a>
+      <a data-view="coverage" href="#coverage"><span class="nav-icon">✓</span><span class="nav-text">Coverage</span></a>
+    </nav>
+    <div class="side-bottom"><small class="muted">Flightbay by Solo</small><small class="muted" id="collector"></small></div>
+  </aside>
+  <div class="shell">
+    <header class="topbar">
+      <span class="crumb" id="crumb">Workspace</span>
+      <button class="global-search" id="open-search" aria-label="Search objects"><span>Search objects…</span><kbd>⌘ K</kbd></button>
+      <select id="cluster" aria-label="Cluster"><option value="">All clusters</option></select>
+    </header>
+    <div class="snapshot" id="snapshot-bar">
+      <span class="badge green"><span class="dot"></span> Offline snapshot</span>
+      <span id="snapshot-time"></span>
+      <span class="spacer"></span>
+      <span id="import-status" class="import-status"></span>
+    </div>
+    <main class="content" id="main" tabindex="-1"></main>
+    <section class="terminal-dock collapsed hidden" id="terminal" aria-label="Snapshot terminal">
+      <div class="terminal-head">
+        <button class="ghost green" id="term-toggle">&gt;_ Terminal <kbd>⌃ `</kbd></button>
+        <span class="muted terminal-meta">bash · KUBECONFIG points at this snapshot · kubectl, k9s, stern, fbq, fbfind</span>
+        <span class="spacer"></span>
+        <button class="ghost" id="term-expand" aria-label="Expand terminal">↕</button>
+      </div>
+      <div class="terminal-body" id="term-body"></div>
+    </section>
+  </div>
+</div>
+<div id="overlay"></div>
+<div id="modal-root"></div>
+<div id="toast" class="toast hidden" role="status"></div>
+<script src="/static/vendor/xterm.js"></script>
+<script src="/static/vendor/addon-fit.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

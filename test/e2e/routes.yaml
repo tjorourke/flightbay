@@ -1,0 +1,14 @@
+# Applied after the Gateway API CRDs. The route references a Service that does
+# not exist, which the analyzers should flag once Service coverage is complete.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: checkout-route
+  namespace: payments
+spec:
+  parentRefs:
+  - name: payments-gateway
+  rules:
+  - backendRefs:
+    - name: checkout-v2
+      port: 8080
