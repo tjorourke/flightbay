@@ -447,6 +447,14 @@ func (w *Workspace) SearchLogs(f LogFilter) (*LogResult, error) {
 	w.mu.RLock()
 	lo, hi := w.logStart, w.logEnd
 	w.mu.RUnlock()
+	// Zoomed in: the histogram's axis is the selected range, so each drag
+	// re-buckets into finer bars.
+	if !f.From.IsZero() {
+		lo = f.From
+	}
+	if !f.To.IsZero() {
+		hi = f.To
+	}
 	const nb = 48
 	span := hi.Sub(lo)
 	if span < time.Minute {
@@ -484,8 +492,9 @@ func (w *Workspace) SearchLogs(f LogFilter) (*LogResult, error) {
 		}
 		res.Total += inr
 		if b >= 0 && int(b) < len(res.Histogram) {
-			res.Histogram[b].Count = all
+			res.Histogram[b].Count += inr // only lines inside the range being shown
 		}
+		_ = all
 	}
 	hrows.Close()
 	// 3. The page, newest first.
@@ -506,6 +515,60 @@ func (w *Workspace) SearchLogs(f LogFilter) (*LogResult, error) {
 		res.Message = "No matches in the captured logs."
 	}
 	return res, nil
+}
+
+// FieldValues is one parsed field with its most common values.
+type FieldValues struct {
+	Field  string         `json:"field"`
+	Count  int            `json:"count"`
+	Values []FieldCounter `json:"values"`
+}
+
+// FieldCounter is one value and how many matching lines carry it.
+type FieldCounter struct {
+	Value string `json:"value"`
+	Count int    `json:"count"`
+}
+
+// LogFields lists the parsed fields present in lines matching the query,
+// most common first, each with its top values.
+func (w *Workspace) LogFields(query, cluster string, maxFields, maxValues int) ([]FieldValues, error) {
+	q, err := logs.ParseQuery(query)
+	if err != nil {
+		return nil, err
+	}
+	w.mu.RLock()
+	ref := w.logEnd
+	w.mu.RUnlock()
+	where, args := q.SQL(ref)
+	if cluster != "" {
+		where += " AND cluster = ?"
+		args = append(args, cluster)
+	}
+	rows, err := w.ldb.db.Query(`WITH kv AS (SELECT unnest(map_keys(fields)) AS k, unnest(map_values(fields)) AS v FROM log_lines WHERE fields IS NOT NULL AND `+where+`),
+	  keys AS (SELECT k, count(*) AS n FROM kv GROUP BY k ORDER BY n DESC LIMIT ?),
+	  vals AS (SELECT k, v, count(*) AS n, row_number() OVER (PARTITION BY k ORDER BY count(*) DESC, v) AS r FROM kv WHERE k IN (SELECT k FROM keys) GROUP BY k, v)
+	  SELECT keys.k, keys.n, vals.v, vals.n FROM keys JOIN vals USING (k) WHERE vals.r <= ? ORDER BY keys.n DESC, keys.k, vals.n DESC`, append(args, maxFields, maxValues)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []FieldValues{}
+	for rows.Next() {
+		var k, v string
+		var kn, vn int
+		if err := rows.Scan(&k, &kn, &v, &vn); err != nil {
+			return nil, err
+		}
+		if len(out) == 0 || out[len(out)-1].Field != k {
+			out = append(out, FieldValues{Field: k, Count: kn})
+		}
+		if len(v) > 120 {
+			v = v[:120]
+		}
+		out[len(out)-1].Values = append(out[len(out)-1].Values, FieldCounter{Value: v, Count: vn})
+	}
+	return out, rows.Err()
 }
 
 // LogContext returns up to n lines either side of a line in its stream.

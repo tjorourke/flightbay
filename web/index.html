@@ -18,7 +18,6 @@
       <a data-view="overview" href="#overview"><span class="nav-icon">◫</span><span class="nav-text">Overview</span></a>
       <a data-view="resources" href="#resources"><span class="nav-icon">▤</span><span class="nav-text">Resources</span></a>
       <a data-view="logs" href="#logs"><span class="nav-icon">≡</span><span class="nav-text">Log explorer</span></a>
-      <a data-view="sql" href="#sql"><span class="nav-icon">⌗</span><span class="nav-text">SQL</span></a>
       <a data-view="timeline" href="#timeline"><span class="nav-icon">↕</span><span class="nav-text">Timeline</span></a>
       <a data-view="findings" href="#findings"><span class="nav-icon">⊙</span><span class="nav-text">Findings</span><span class="count hidden" id="nav-findings"></span></a>
       <a data-view="compare" href="#compare"><span class="nav-icon">±</span><span class="nav-text">Compare</span></a>
@@ -43,8 +42,9 @@
     <section class="terminal-dock collapsed hidden" id="terminal" aria-label="Snapshot terminal">
       <div class="terminal-head">
         <button class="ghost green" id="term-toggle">&gt;_ Terminal <kbd>⌃ `</kbd></button>
-        <span class="muted terminal-meta">bash · KUBECONFIG points at this snapshot · kubectl, k9s, fbsearch, fbq, fbsql, fbpc</span>
+        <span class="muted terminal-meta">bash · KUBECONFIG points at this snapshot · kubectl, k9s, fbsearch, fbq, fbpc</span>
         <span class="spacer"></span>
+        <button class="ghost" id="term-k9s" title="Open k9s on the snapshot, full height">k9s</button>
         <button class="ghost" id="term-expand" aria-label="Expand terminal">↕</button>
       </div>
       <div class="terminal-body" id="term-body"></div>

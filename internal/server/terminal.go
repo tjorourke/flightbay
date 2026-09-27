@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 
 	"github.com/coder/websocket"
@@ -42,7 +43,11 @@ func (s *Server) session() (*termSession, error) {
 	if shell == "" {
 		shell = "/bin/bash"
 	}
-	cmd := exec.Command(shell, "--noprofile", "--norc", "-i")
+	args := []string{"--noprofile", "--norc", "-i"}
+	if _, err := os.Stat(s.RCFile()); err == nil && strings.HasSuffix(shell, "bash") {
+		args = []string{"--noprofile", "--rcfile", s.RCFile(), "-i"}
+	}
+	cmd := exec.Command(shell, args...)
 	cmd.Env = s.ShellEnv()
 	cmd.Dir = s.WorkDir
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 30, Cols: 120})
@@ -51,7 +56,7 @@ func (s *Server) session() (*termSession, error) {
 	}
 	t := &termSession{ptmx: ptmx, cmd: cmd, clients: map[*websocket.Conn]context.Context{}, done: make(chan struct{})}
 	intro := "\x1b[36mFlightbay snapshot shell.\x1b[0m kubectl, k9s and stern read the snapshot through KUBECONFIG.\r\n" +
-		"Helpers: fbsearch '<objects>', fbq '<logs>', fbsql, fbfind, fbpc [pod]. Contexts: kubectl config get-contexts. Writes are rejected: this is a read-only snapshot.\r\n"
+		"Try: k get pods -A, k9s, fbsearch '<objects>', fbq '<logs>', fbfind, fbpc [pod]. Contexts: kubectl config get-contexts. Writes are rejected: this is a read-only snapshot.\r\n"
 	t.buf = append(t.buf, intro...)
 	go t.pump()
 	s.term = t

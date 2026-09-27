@@ -143,3 +143,27 @@ func TestSQLIsReadOnlyAndSandboxed(t *testing.T) {
 		t.Fatalf("limit: %+v", r)
 	}
 }
+
+func TestLogFieldsAndZoomedHistogram(t *testing.T) {
+	ws, all := loaded(t)
+	fs, err := ws.LogFields("", "", 10, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]int{}
+	for _, f := range fs {
+		got[f.Field] = f.Count
+	}
+	if got["trace_id"] != 2 || len(fs[0].Values) == 0 {
+		t.Fatalf("fields %+v", fs)
+	}
+	from, to := all[1].TS, all[3].TS
+	res, _ := ws.SearchLogs(LogFilter{From: from, To: to})
+	n := 0
+	for _, b := range res.Histogram {
+		n += b.Count
+	}
+	if !res.From.Equal(from) || !res.To.Equal(to) || n != 3 || res.Total != 3 {
+		t.Fatalf("zoomed histogram from=%v to=%v bars=%d total=%d", res.From, res.To, n, res.Total)
+	}
+}

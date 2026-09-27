@@ -86,6 +86,21 @@ func Summarise(component string, files map[string][]byte, ref time.Time) Summary
 		sum.Notes = append(sum.Notes, "No files captured for this component.")
 	}
 	sort.Slice(sum.Certs, func(i, j int) bool { return sum.Certs[i].NotAfter.Before(sum.Certs[j].NotAfter) })
+	// Always lists, never null: the UI iterates these.
+	if sum.Certs == nil {
+		sum.Certs = []Cert{}
+	}
+	if sum.Tables == nil {
+		sum.Tables = []Table{}
+	}
+	if sum.Notes == nil {
+		sum.Notes = []string{}
+	}
+	for i := range sum.Tables {
+		if sum.Tables[i].Rows == nil {
+			sum.Tables[i].Rows = [][]string{}
+		}
+	}
 	return sum
 }
 

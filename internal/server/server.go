@@ -105,6 +105,9 @@ func (s *Server) Prepare() error {
 	if err := os.WriteFile(s.KubeconfigPath(), kc, 0o600); err != nil {
 		return err
 	}
+	if err := os.WriteFile(s.RCFile(), []byte(shellRC), 0o600); err != nil {
+		return err
+	}
 	helpers := map[string]string{"fbq": "query", "fbfind": "findings", "fbpc": "proxy-config", "fbsearch": "search", "fbsql": "sql"}
 	for name, sub := range helpers {
 		script := fmt.Sprintf("#!/bin/sh\n# Flightbay helper: runs `flightbay-desk %s` against this workspace.\nexec %q %s \"$@\"\n", sub, s.DeskBinary, sub)
@@ -115,6 +118,20 @@ func (s *Server) Prepare() error {
 	return nil
 }
 
+// shellRC is the rc file for workspace shells: no hooks from the user's own
+// shell, kubectl completion, and k as an alias for kubectl.
+const shellRC = `unset PROMPT_COMMAND
+alias k=kubectl
+if command -v kubectl >/dev/null 2>&1; then
+  source <(kubectl completion bash 2>/dev/null) 2>/dev/null
+  complete -o default -F __start_kubectl k 2>/dev/null
+fi
+alias kgp='kubectl get pods'
+`
+
+// RCFile is the rc file Prepare writes for workspace shells.
+func (s *Server) RCFile() string { return filepath.Join(s.WorkDir, "bashrc") }
+
 // ShellEnv is the environment for shells that talk to this workspace.
 func (s *Server) ShellEnv() []string {
 	snap := apiserver.SnapshotTime(s.WS).Format("2006-01-02T15:04Z")
@@ -124,7 +141,11 @@ func (s *Server) ShellEnv() []string {
 	}
 	env := []string{}
 	for _, kv := range os.Environ() {
-		if strings.HasPrefix(kv, "KUBECONFIG=") || strings.HasPrefix(kv, "PS1=") || strings.HasPrefix(kv, "PATH=") {
+		// Drop the caller's prompt hooks (bash-preexec, cmux, starship...) and
+		// exported functions: they belong to another shell and error here.
+		switch k, _, _ := strings.Cut(kv, "="); {
+		case k == "KUBECONFIG", k == "PS1", k == "PATH", k == "PROMPT_COMMAND", k == "BASH_ENV", k == "ENV",
+			strings.HasPrefix(k, "BASH_FUNC_"), strings.HasPrefix(k, "__bp_"), strings.HasPrefix(k, "STARSHIP"):
 			continue
 		}
 		env = append(env, kv)
@@ -135,6 +156,7 @@ func (s *Server) ShellEnv() []string {
 		"FLIGHTBAY_URL="+strings.TrimRight(s.BaseURL, "/"),
 		"FLIGHTBAY_TOKEN="+s.Token,
 		"TERM=xterm-256color",
+		"BASH_SILENCE_DEPRECATION_WARNING=1",
 		fmt.Sprintf(`PS1=\[\e[36m\]flightbay\[\e[0m\] %s \[\e[33m\]@%s\[\e[0m\] \W $ `, label, snap),
 	)
 }
@@ -206,6 +228,7 @@ func (s *Server) Handler() http.Handler {
 	api("/api/diff", s.diff)
 	api("/api/search", s.search)
 	api("/api/objects/search", s.objectSearch)
+	api("/api/logs/fields", s.logFields)
 	api("/api/sql", s.sqlQuery)
 	api("/api/coverage", s.coverage)
 	api("/api/terminal", s.terminal)
@@ -554,6 +577,17 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, h := range res.Results {
 		out = append(out, map[string]string{"cluster": h.Cluster, "group": h.Group, "resource": h.Resource, "kind": h.Kind, "namespace": h.Namespace, "name": h.Name, "match": h.Match, "snippet": h.Snippet})
+	}
+	writeJSON(w, 200, out)
+}
+
+// logFields lists parsed log fields and their top values for the explorer.
+func (s *Server) logFields(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	out, err := s.WS.LogFields(q.Get("q"), q.Get("cluster"), 14, 8)
+	if err != nil {
+		jerr(w, 400, err.Error())
+		return
 	}
 	writeJSON(w, 200, out)
 }

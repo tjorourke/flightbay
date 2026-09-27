@@ -373,21 +373,29 @@ func deskEnv() (string, string, error) {
 
 func shellCmd() *cobra.Command {
 	return &cobra.Command{
-		Use: "shell", Short: "Start a shell wired to the open workspace (kubectl, k9s, stern, fbq, fbsearch, fbsql, fbfind, fbpc)",
+		Use: "shell", Short: "Start a shell wired to the open workspace (kubectl or k, k9s, stern, fbsearch, fbq, fbfind, fbpc)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			d, err := currentDesk()
 			if err != nil {
 				return err
 			}
-			sh := os.Getenv("SHELL")
-			if sh == "" {
-				sh = "/bin/bash"
+			// Same environment as the UI's terminal: bash with its own rc file,
+			// so hooks from the user's zsh or bash setup don't leak in.
+			env := []string{}
+			for _, kv := range os.Environ() {
+				switch k, _, _ := strings.Cut(kv, "="); {
+				case k == "PROMPT_COMMAND", k == "BASH_ENV", k == "ENV", k == "KUBECONFIG", k == "PS1", strings.HasPrefix(k, "BASH_FUNC_"):
+					continue
+				}
+				env = append(env, kv)
 			}
-			c := exec.Command(sh)
-			c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
-			c.Env = append(os.Environ(), "KUBECONFIG="+d.Kubeconfig, "FLIGHTBAY_URL="+d.URL, "FLIGHTBAY_TOKEN="+d.Token,
-				"PATH="+filepath.Join(d.WorkDir, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
-			fmt.Fprintf(cmd.ErrOrStderr(), "Flightbay snapshot shell for %s. kubectl and k9s read the snapshot. Type exit to leave.\n", d.Bundle)
+			env = append(env, "KUBECONFIG="+d.Kubeconfig, "FLIGHTBAY_URL="+d.URL, "FLIGHTBAY_TOKEN="+d.Token, "BASH_SILENCE_DEPRECATION_WARNING=1",
+				"PATH="+filepath.Join(d.WorkDir, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"),
+				`PS1=\[\e[36m\]flightbay\[\e[0m\] snapshot \W $ `)
+			args := []string{"--noprofile", "--rcfile", filepath.Join(d.WorkDir, "bashrc"), "-i"}
+			c := exec.Command("bash", args...)
+			c.Stdin, c.Stdout, c.Stderr, c.Env = os.Stdin, os.Stdout, os.Stderr, env
+			fmt.Fprintf(cmd.ErrOrStderr(), "Flightbay snapshot shell for %s. kubectl (or k) and k9s read the snapshot. Type exit to leave.\n", d.Bundle)
 			return c.Run()
 		},
 	}

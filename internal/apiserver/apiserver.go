@@ -644,6 +644,14 @@ func withRV(it item) map[string]any {
 func (s *Server) logs(w http.ResponseWriter, r *http.Request, cluster, ns, pod string) {
 	o := s.WS.Get(cluster, "", "pods", ns, pod)
 	q := r.URL.Query()
+	// Subscribe before reading, so a chunk committed between the first read
+	// and the subscription still wakes a follower.
+	var updates <-chan struct{}
+	if q.Get("follow") == "true" {
+		ch, cancel := s.WS.Subscribe()
+		defer cancel()
+		updates = ch
+	}
 	container := q.Get("container")
 	if container == "" {
 		if o == nil {
@@ -725,14 +733,15 @@ func (s *Server) logs(w http.ResponseWriter, r *http.Request, cluster, ns, pod s
 	if fl != nil {
 		fl.Flush()
 	}
-	ch, cancel := s.WS.Subscribe()
-	defer cancel()
 	sent := len(recs)
+	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
 	for {
 		select {
 		case <-r.Context().Done():
 			return
-		case <-ch:
+		case <-updates:
+		case <-tick.C:
 		}
 		now := s.WS.LogStreamFrom(cluster, ns, pod, container, stream, sent)
 		for _, rec := range now {

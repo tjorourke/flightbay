@@ -70,6 +70,9 @@ func (s *Server) diagRow(d store.Diagnostic, cov []bundle.Coverage, withCounts b
 		}
 	}
 	sort.Slice(row.Files, func(i, j int) bool { return row.Files[i].Name < row.Files[j].Name })
+	if row.Files == nil {
+		row.Files = []diagFile{}
+	}
 	if withCounts && len(d.Files) > 0 {
 		sum := solo.Summarise(row.Component, d.Files, s.snapshot())
 		row.Counts = sum.Counts

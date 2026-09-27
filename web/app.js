@@ -15,7 +15,6 @@ const S = {
   logs: {q: '', namespace: '', pod: '', container: '', level: '', stream: '', from: '', to: '', limit: 200, expanded: null, follow: false, total: 0, rev: 0, result: null},
   compare: null, findingSev: '', term: null,
   search: {q: '', limit: 200},
-  sql: {q: "SELECT kind, count(*) AS objects FROM objects GROUP BY kind ORDER BY objects DESC", result: null, error: ''},
 };
 
 async function api(path, params) {
@@ -69,7 +68,7 @@ function openLogs(filters) {
 async function render() {
   const seq = ++S.renderSeq;
   document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('active', a.dataset.view === S.view));
-  const views = {search, sql, overview, resources, logs, timeline, findings, compare, proxies, coverage};
+  const views = {search, overview, resources, logs, timeline, findings, compare, proxies, coverage};
   const fn = views[S.view] || overview;
   $('#crumb').textContent = S.ws ? `Workspace / ${S.ws.case ? 'Case ' + S.ws.case : 'Snapshot'} / ${S.view}` : 'Workspace';
   try {
@@ -195,6 +194,32 @@ function wireFindings() {
   document.querySelectorAll('[data-finding]').forEach(b => b.onclick = () => openFinding(JSON.parse(b.dataset.finding)));
 }
 
+// ---------- kinds, grouped by area ----------
+const areaOrder = ['Workloads', 'Networking', 'Gateway API', 'Istio', 'agentgateway and kgateway', 'kagent', 'Solo', 'Config, access and storage', 'Other'];
+function kindArea(t) {
+  const g = t.group || '', k = t.kind || t.resource;
+  if ((g === '' && ['Pod', 'ReplicationController', 'PodTemplate'].includes(k)) || ['apps', 'batch', 'autoscaling', 'policy'].includes(g)) return 'Workloads';
+  if ((g === '' && ['Service', 'Endpoints'].includes(k)) || g === 'discovery.k8s.io' || g === 'networking.k8s.io') return 'Networking';
+  if (g.startsWith('gateway.networking')) return 'Gateway API';
+  if (g.endsWith('istio.io')) return 'Istio';
+  if (/agentgateway|kgateway|gateway\.solo\.io/.test(g)) return 'agentgateway and kgateway';
+  if (g.includes('kagent')) return 'kagent';
+  if (g.endsWith('solo.io')) return 'Solo';
+  if (g === '' || ['rbac.authorization.k8s.io', 'coordination.k8s.io', 'storage.k8s.io', 'apiextensions.k8s.io', 'admissionregistration.k8s.io'].includes(g)) return 'Config, access and storage';
+  return 'Other';
+}
+// groupKinds keeps types with captured objects, grouped by area and sorted by count.
+function groupKinds(types) {
+  const withObjects = types.filter(t => t.count > 0);
+  const seen = {};
+  withObjects.forEach(t => { const k = t.kind || t.resource; seen[k] = (seen[k] || 0) + 1; });
+  const groups = {};
+  withObjects.forEach(t => (groups[kindArea(t)] ||= []).push({...t, dup: seen[t.kind || t.resource] > 1}));
+  Object.values(groups).forEach(g => g.sort((a, b) => b.count - a.count || (a.kind || '').localeCompare(b.kind || '')));
+  return {groups: areaOrder.filter(a => groups[a]).map(a => [a, groups[a]]), hidden: types.length - withObjects.length};
+}
+const kindLabel = t => `${esc(t.kind || t.resource)}${t.dup ? `<span class="grp">${esc(t.group || 'core')}</span>` : ''}`;
+
 // ---------- search ----------
 function hl(text, q) {
   // Quoted phrases highlight as a whole; key:value filters and -exclusions do not.
@@ -222,8 +247,10 @@ async function search() {
   const header = head('Search', 'Every captured object of every kind: names, namespaces, labels, and anything in spec and status (images, hostnames, status reasons).');
   if (!Q.q.trim()) {
     const types = await api('api/resources', {cluster: S.cluster});
-    return header + bar + `<section class="panel mt"><div class="panel-head"><h2>Captured kinds</h2><small>Click a kind to list it</small></div><div class="panel-body row wrap">
-      ${types.map(t => `<button class="chip" data-okind="${esc(t.kind || t.resource)}">${esc(t.kind || t.resource)} <small>${t.count}</small></button>`).join('') || '<span class="muted">No objects loaded yet.</span>'}</div></section>
+    const {groups, hidden} = groupKinds(types);
+    return header + bar + `<section class="panel mt"><div class="panel-head"><h2>What was captured</h2><small>${groups.reduce((n, [, g]) => n + g.length, 0)} kinds with objects · click one to list it</small></div><div class="panel-body">
+      ${groups.length ? `<div class="kind-groups">${groups.map(([area, ts]) => `<div class="kind-group"><h3>${esc(area)}</h3>${ts.map(t => `<button class="kind-row" data-okind="${esc(t.name)}"><span>${kindLabel(t)}</span><small>${num(t.count)}</small></button>`).join('')}</div>`).join('')}</div>` : '<span class="muted">No objects loaded yet.</span>'}
+      ${hidden ? `<p class="muted mt" style="font-size:12px">${hidden} other resource types have no captured objects and are not shown. <button class="link" id="go-cov">See coverage</button> for types that were excluded or failed.</p>` : ''}</div></section>
       <div class="notice info mt"><div><strong>Syntax</strong>: <code>kind:pod</code> (or po, deploy, svc, httproute) · <code>ns:payments</code> · <code>name:checkout*</code> · <code>label:app=checkout</code> · <code>"free text"</code> in names, labels, spec and status · <code>-</code> to exclude, e.g. <code>-kind:event</code>. Space means AND.</div></div>`;
   }
   const r = await api('api/objects/search', {q: Q.q, cluster: S.cluster, limit: Q.limit}).catch(e => ({error: e.message, results: [], byKind: {}, total: 0}));
@@ -245,6 +272,7 @@ after.search = () => {
   $('#obj-form').onsubmit = e => { e.preventDefault(); go($('#obj-q').value.trim()); };
   document.querySelectorAll('[data-otry]').forEach(b => b.onclick = () => go(b.dataset.otry));
   document.querySelectorAll('[data-okind]').forEach(b => b.onclick = () => go(`kind:${b.dataset.okind.toLowerCase()} ${Q.q.replace(/-?kind:\S+/g, '')}`.trim()));
+  const gc = $('#go-cov'); if (gc) gc.onclick = () => nav('coverage');
   const more = $('#obj-more'); if (more) more.onclick = () => { Q.limit += 500; render(); };
   const lg = $('#obj-logs'); if (lg) lg.onclick = () => openLogs({q: Q.q.split(/\s+/).filter(w => !/^-?(kind|label|name|ns|namespace|cluster):/.test(w)).join(' ')});
   document.querySelectorAll('[data-ohit]').forEach(tr => tr.onclick = () => {
@@ -254,53 +282,14 @@ after.search = () => {
   const i = $('#obj-q'); if (i && !Q.q) i.focus();
 };
 
-// ---------- sql ----------
-const sqlExamples = [
-  ['Objects per kind', "SELECT kind, count(*) AS objects FROM objects GROUP BY kind ORDER BY objects DESC"],
-  ['Pods and their phase', "SELECT namespace, name, object->>'$.status.phase' AS phase, object->>'$.spec.nodeName' AS node FROM objects WHERE kind = 'Pod' ORDER BY namespace, name"],
-  ['Noisiest error pods', "SELECT namespace, pod, count(*) AS errors FROM logs WHERE level = 'error' GROUP BY ALL ORDER BY errors DESC LIMIT 20"],
-  ['Warning events', "SELECT namespace, reason, object_kind, object_name, message FROM events WHERE type = 'Warning' ORDER BY namespace"],
-  ['Log lines per minute', "SELECT date_trunc('minute', time) AS minute, count(*) AS lines, count(*) FILTER (WHERE level = 'error') AS errors FROM logs GROUP BY ALL ORDER BY minute"],
-  ['Images in use', "SELECT DISTINCT namespace, c->>'$.image' AS image FROM objects, unnest(CAST(object->'$.spec.containers' AS JSON[])) AS t(c) WHERE kind = 'Pod' ORDER BY image"],
-];
-
-async function sql() {
-  const Q = S.sql;
-  const r = Q.result;
-  return head('SQL', 'Read-only DuckDB SQL over every log line, object and event in the snapshot. Nothing you run can change the workspace or touch local files.') + `
-  <div class="grid2" style="grid-template-columns:minmax(0,3fr) minmax(260px,1fr)"><div>
-    <textarea id="sql-q" spellcheck="false" style="width:100%;min-height:140px;font:12px/1.5 ui-monospace,Menlo,monospace;padding:12px;background:#0d1215;color:#dde7ee;border:1px solid #2c3a43;border-radius:8px">${esc(Q.q)}</textarea>
-    <div class="row between mt"><small class="muted">⌘/Ctrl + Enter to run</small><button class="primary" id="sql-run">Run ↵</button></div>
-    ${Q.error ? `<div class="notice bad mt">${esc(Q.error)}</div>` : ''}
-    ${r ? `<section class="panel mt"><div class="panel-head"><span><strong>${num(r.rows.length)}</strong> <span class="muted">rows${r.truncated ? ' (truncated)' : ''} · ${r.ms} ms</span></span></div>
-      <div class="table-scroll" style="max-height:60vh"><table><thead><tr>${r.columns.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>
-      ${r.rows.map(row => `<tr>${row.map(v => `<td class="mono" style="white-space:normal;max-width:520px;font-size:11px">${v === null ? '<span class="muted">NULL</span>' : esc(typeof v === 'object' ? JSON.stringify(v) : v)}</td>`).join('')}</tr>`).join('')}
-      </tbody></table></div></section>` : ''}
-  </div><div>
-    <section class="panel"><div class="panel-head"><h2>Examples</h2></div><div class="panel-body">${sqlExamples.map(([t], i) => `<button class="link" data-sqlex="${i}" style="display:block;margin-bottom:8px;text-align:left">${esc(t)}</button>`).join('')}</div></section>
-    <section class="panel mt"><div class="panel-head"><h2>Tables</h2></div><div class="panel-body mono" style="font-size:11px;line-height:1.7">
-      <strong>logs</strong> id, time, cluster, namespace, pod, container, stream, node, level, scope, msg, fields (map), raw<br><br>
-      <strong>objects</strong> cluster, api_group, version, resource, kind, namespace, name, labels (map), object (JSON: <code>object-&gt;&gt;'$.status.phase'</code>)<br><br>
-      <strong>events</strong> cluster, namespace, type, reason, object_kind, object_name, message, count, last_seen, event<br><br>
-      <strong>log_lines</strong> logs with ts in Unix ns, seq, chunk</div></section>
-  </div></div>`;
-}
-after.sql = () => {
-  const Q = S.sql;
-  const run = async (text) => {
-    Q.q = typeof text === 'string' ? text : $('#sql-q').value;
-    try { Q.result = await fetch('api/sql', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({query: Q.q})}).then(async r => { const b = await r.json(); if (!r.ok) throw new Error(b.error); return b; }); Q.error = ''; }
-    catch (e) { Q.error = e.message; Q.result = null; }
-    render();
-  };
-  $('#sql-run').onclick = () => run();
-  $('#sql-q').onkeydown = e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); run(); } };
-  document.querySelectorAll('[data-sqlex]').forEach(b => b.onclick = () => run(sqlExamples[+b.dataset.sqlex][1]));
-};
-
 // ---------- resources ----------
 async function resources() {
-  const types = await api('api/resources', {cluster: S.cluster});
+  const allTypes = await api('api/resources', {cluster: S.cluster});
+  const {groups, hidden} = groupKinds(allTypes);
+  // Only types with captured objects, unless one was opened explicitly (e.g. from a finding).
+  const types = groups.flatMap(([, g]) => g);
+  const explicit = allTypes.find(t => t.resource === S.res.resource && t.group === S.res.group && t.count === 0);
+  if (explicit) types.push(explicit);
   if (!types.length) return head('Resources', 'Captured objects') + `<div class="panel empty"><strong>No resource types yet</strong>${S.state?.phase === 'loading' ? 'The bundle is still loading; types appear as their first chunk arrives.' : 'This bundle holds no objects for the selected cluster.'}</div>`;
   if (S.res.resource === null || !types.find(t => t.resource === S.res.resource && t.group === S.res.group)) {
     const def = types.find(t => t.resource === 'pods' && t.group === '') || types[0];
@@ -317,8 +306,9 @@ async function resources() {
     truncated: 'This list was truncated: ' + (cur.reason || ''),
     'not-collected': 'No collection record for this type in the bundle.',
   }[cur.state] || '')}</span></div>`;
-  return head('Resources', 'Browse captured objects. Click a row for YAML, relationships, events and logs.', `<button id="res-term">&gt;_ kubectl get ${esc(cur.resource)}</button>`) + `
-  <div class="resource-layout"><nav class="types" aria-label="Resource types">${types.map(t => `<button class="${t === cur ? 'active' : ''}" data-type="${attr({g: t.group, r: t.resource})}" title="${esc(t.name)} · ${esc(t.state)}"><span>${esc(t.kind || t.resource)}</span><span><small>${t.count}</small> <span class="st state-${esc(t.state)}">●</span></span></button>`).join('')}</nav>
+  return head('Resources', 'Browse captured objects. Click a row for YAML, relationships, events and logs.', `<button id="res-k9s" title="k9s on this type and namespace, in the terminal">Open in k9s</button><button id="res-term">&gt;_ kubectl get ${esc(cur.resource)}</button>`) + `
+  <div class="resource-layout"><nav class="types" aria-label="Resource types">${groups.map(([area, ts]) => `<h3 style="margin:12px 8px 4px;font-size:10px;letter-spacing:.08em;text-transform:uppercase" class="muted">${esc(area)}</h3>` + ts.map(t => `<button class="${t.resource === cur.resource && t.group === cur.group ? 'active' : ''}" data-type="${attr({g: t.group, r: t.resource})}" title="${esc(t.name)} · ${esc(t.state)}"><span>${kindLabel(t)}</span><span><small>${t.count}</small> <span class="st state-${esc(t.state)}">●</span></span></button>`).join('')).join('')}
+    ${hidden ? `<p class="muted" style="font-size:11px;margin:12px 8px">${hidden} types with no captured objects are hidden. <button class="link" id="res-cov">Coverage</button> shows which were excluded or failed.</p>` : ''}</nav>
   <div><div class="toolbar"><select id="res-ns" aria-label="Namespace"><option value="">All namespaces</option>${S.res.nsOptions.map(n => `<option ${n === S.res.ns ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
     <input id="res-q" placeholder="Filter by name, status or label (press /)" value="${esc(S.res.q)}" aria-label="Filter"><button id="res-reset">Reset</button></div>
     ${stateNote}
@@ -334,6 +324,8 @@ after.resources = () => {
   $('#res-ns').onchange = e => { S.res.ns = e.target.value; render(); };
   let t; $('#res-q').oninput = e => { clearTimeout(t); t = setTimeout(() => { S.res.q = e.target.value; render().then(() => { const i = $('#res-q'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }); }, 250); };
   $('#res-reset').onclick = () => { S.res.ns = ''; S.res.q = ''; render(); };
+  const rc = $('#res-cov'); if (rc) rc.onclick = () => nav('coverage');
+  $('#res-k9s').onclick = () => openK9s(S.res.resource + (S.res.group ? '.' + S.res.group : ''), S.res.ns);
   $('#res-term').onclick = () => termRun(`kubectl get ${S.res.resource}${S.res.group ? '.' + S.res.group : ''} ${S.res.ns ? '-n ' + S.res.ns : '-A'}`);
 };
 
@@ -386,57 +378,144 @@ function logParams(extra = {}) {
   return Object.assign({q: L.q, cluster: S.cluster, namespace: L.namespace, pod: L.pod, container: L.container, level: L.level, stream: L.stream, from: L.from, to: L.to, limit: L.limit}, extra);
 }
 
+const logExamples = [
+  ['Errors', 'level:error'],
+  ['Warnings and errors', 'level:warn OR level:error'],
+  ['Crashed containers', 'stream:previous'],
+  ['HTTP 5xx', 'status:5*'],
+  ['Connection problems', '"connection refused" OR "connection reset" OR "timed out"'],
+  ['Certificates', 'certificate OR cert'],
+  ['istiod pushes', 'pod:istiod* push'],
+  ['Denied / forbidden', 'denied OR forbidden OR 403'],
+];
+const quickRanges = [['All', 0], ['Last 5 min', 5], ['Last 15 min', 15], ['Last hour', 60], ['Last 6 hours', 360], ['Last 24 hours', 1440]];
+const toLocalInput = iso => iso ? new Date(iso).toISOString().slice(0, 19) : '';
+const fromLocalInput = v => v ? new Date(v + 'Z').toISOString() : '';
+const fmtAxis = (t, span) => { const d = new Date(t).toISOString(); return span > 864e5 ? d.slice(5, 16).replace('T', ' ') : span > 6e4 ? d.slice(11, 19) : d.slice(11, 23); };
+
+function addTerm(term) {
+  const L = S.logs;
+  const q = (L.q || '').trim();
+  if ((' ' + q + ' ').includes(' ' + term + ' ')) return;
+  L.q = (q ? q + ' ' : '') + term; L.expanded = null; render();
+}
+function fieldTerm(k, v) { return /[\s"]/.test(v) ? `${k}:"${v.replace(/"/g, '')}"` : `${k}:${v}`; }
+
 async function logs() {
   const L = S.logs;
   let res;
   try { res = await api('api/logs/search', logParams()); } catch (e) { res = {error: e.message, records: [], facets: {}, histogram: [], total: 0}; }
+  const fields = await api('api/logs/fields', {q: L.q, cluster: S.cluster}).catch(() => []);
   L.result = res; L.total = res.total; L.rev = res.revision;
-  const facet = (key, field, label) => {
-    const vals = Object.entries(res.facets?.[key] || {}).sort((a, b) => b[1] - a[1]).slice(0, 12);
-    if (!vals.length) return '';
-    return `<h3>${label}</h3>` + vals.map(([v, n]) => `<button class="facet ${L[field] === v ? 'active' : ''}" data-facet="${attr({field, v})}"><span></span><span>${esc(v || '—')}</span><small>${num(n)}</small></button>`).join('');
+  if (!L.from && !L.to && res.from && !res.from.startsWith('0001')) L.bounds = {from: res.from, to: res.to};
+  const facet = (key, field, label, extra = '') => {
+    let vals = Object.entries(res.facets?.[key] || {}).sort((a, b) => b[1] - a[1]);
+    if (key === 'pod' && L.podFilter) vals = vals.filter(([v]) => v.toLowerCase().includes(L.podFilter.toLowerCase()));
+    vals = vals.slice(0, key === 'pod' ? 40 : 12);
+    if (!vals.length && !extra) return '';
+    return `<h3>${label}</h3>${extra}` + vals.map(([v, n]) => `<button class="facet ${L[field] === v ? 'active' : ''}" data-facet="${attr({field, v})}"><span></span><span>${esc(v || '—')}</span><small>${num(n)}</small></button>`).join('');
   };
-  const chips = ['namespace', 'pod', 'container', 'level', 'stream'].filter(k => L[k]).map(k => `<button class="chip" data-clear="${k}">${k}: ${esc(L[k])} ×</button>`).join('') +
-    (L.from ? `<button class="chip" data-clear="time">${fmtTime(L.from)}–${fmtTime(L.to)} ×</button>` : '');
-  const max = Math.max(1, ...(res.histogram || []).map(b => b.count));
-  const hist = (res.histogram || []).map((b, i) => { const sel = L.from && b.start >= L.from && b.start < L.to; return `<div data-bucket="${i}" class="${sel ? 'sel' : ''}" style="height:${Math.max(3, b.count / max * 76)}px" title="${fmtTime(b.start)} · ${b.count} lines"></div>`; }).join('');
+  const podPicker = Object.keys(res.facets?.pod || {}).length > 8 ? `<input id="pod-filter" placeholder="Find a pod…" value="${esc(L.podFilter || '')}" style="width:100%;margin:0 0 6px;font-size:12px">` : '';
+  const fieldList = fields.length ? `<h3>Fields <small class="muted" style="text-transform:none;letter-spacing:0">click a value to filter</small></h3>` + fields.map(f => `<details class="field" ${L.openField === f.field ? 'open' : ''} data-fieldname="${esc(f.field)}"><summary><span class="mono">${esc(f.field)}</span><small>${num(f.count)}</small></summary>
+      ${f.values.map(v => `<button class="facet" data-addterm="${attr(fieldTerm(f.field, v.value))}" title="${esc(f.field)}:${esc(v.value)}"><span></span><span class="mono" style="font-size:11px">${esc(v.value || '""')}</span><small>${num(v.count)}</small></button>`).join('')}</details>`).join('') : '';
+  const chips = ['namespace', 'pod', 'container', 'level', 'stream'].filter(k => L[k]).map(k => `<button class="chip" data-clear="${k}">${k}: ${esc(L[k])} ×</button>`).join('');
+  const hist = res.histogram || [];
+  const max = Math.max(1, ...hist.map(b => b.count));
+  const span = res.to && res.from ? new Date(res.to) - new Date(res.from) : 0;
+  const bars = hist.map((b, i) => `<div data-bucket="${i}" style="height:${b.count ? Math.max(3, b.count / max * 96) : 0}px" title="${fmtDateTime(b.start)} · ${num(b.count)} lines"></div>`).join('');
+  const axis = hist.length ? `<div class="hist-axis"><span>${fmtAxis(res.from, span)}</span><span>${fmtAxis(new Date((new Date(res.from).getTime() + new Date(res.to).getTime()) / 2).toISOString(), span)}</span><span>${fmtAxis(res.to, span)}</span></div>` : '';
+  const zoomed = !!(L.from || L.to);
   const rows = res.records.map(r => `<div class="log-row ${r.level === 'error' ? 'error' : r.level === 'warn' ? 'warn' : ''}" data-log="${r.id}" tabindex="0">
       <span class="muted">${fmtTime(r.ts)}</span><span class="${r.level === 'error' ? 'red' : r.level === 'warn' ? 'amber' : 'green'}">${esc(r.level.toUpperCase())}</span>
       <span class="pod" title="${esc(r.cluster)} ${esc(r.namespace)}/${esc(r.pod)}">${esc(r.pod)}<br><span class="muted">${esc(r.container)}${r.stream === 'previous' ? ' · previous' : ''}</span></span>
       <span class="msg">${esc(r.msg)}${Object.entries(r.fields || {}).filter(([k]) => /trace|request_id|connection/.test(k)).map(([k, v]) => ` <span class="blue">${esc(k)}=${esc(v)}</span>`).join('')}</span></div>${L.expanded === r.id ? '<div id="log-detail"></div>' : ''}`).join('');
-  return head('Log explorer', 'Search every captured log line, then follow the evidence across pods.', `<label class="row"><input type="checkbox" id="follow" ${L.follow ? 'checked' : ''}> Follow incoming data</label><button id="log-term">&gt;_ fbq in terminal</button>`) + `
-  <div class="log-layout"><aside class="facets" aria-label="Facets">${facet('level', 'level', 'Level')}${facet('namespace', 'namespace', 'Namespace')}${facet('pod', 'pod', 'Pod')}${facet('container', 'container', 'Container')}${facet('stream', 'stream', 'Stream')}${!S.cluster ? facet('cluster', 'cluster_', 'Cluster') : ''}
-    <h3>Syntax</h3><div class="muted mono" style="font-size:10px;line-height:1.8">level:error<br>ns:payments pod:checkout*<br>trace_id:a4e98f02<br>"connection reset"<br>-healthz · a OR b<br>since:15m</div></aside>
-  <section><form class="query" id="log-form"><span class="green">⌕</span><input id="log-q" value="${esc(L.q)}" placeholder='Search, or try level:error ns:payments "timed out"' autocomplete="off" spellcheck="false" aria-label="Log query"><button class="primary">Search ↵</button></form>
-    <div class="help-row"><span>Try</span>${['level:error', 'level:warn OR level:error', '"connection"', 'stream:previous'].map(x => `<button data-try="${esc(x)}">${esc(x)}</button>`).join('')}</div>
+  return head('Log explorer', 'Search every captured log line. Drag across the chart to zoom into a time range; pinch or scroll over it to zoom around the cursor.', `<label class="row"><input type="checkbox" id="follow" ${L.follow ? 'checked' : ''}> Follow incoming data</label><button id="log-term">&gt;_ fbq in terminal</button>`) + `
+  <div class="log-layout"><aside class="facets" aria-label="Filters">${facet('level', 'level', 'Level')}${facet('namespace', 'namespace', 'Namespace')}${facet('pod', 'pod', 'Pod', podPicker)}${facet('container', 'container', 'Container')}${facet('stream', 'stream', 'Stream')}${!S.cluster ? facet('cluster', 'cluster_', 'Cluster') : ''}
+    ${fieldList}
+    <h3>Syntax</h3><div class="muted mono" style="font-size:10px;line-height:1.8">level:error<br>ns:payments pod:checkout*<br>trace_id:a4e98f02<br>"connection reset"<br>-healthz · a OR b<br>status:5* · since:15m</div></aside>
+  <section><form class="query" id="log-form"><span class="green">⌕</span><input id="log-q" value="${esc(L.q)}" placeholder='Search, e.g. level:error ns:payments "timed out"' autocomplete="off" spellcheck="false" aria-label="Log query"><button class="primary">Search ↵</button></form>
+    <div class="help-row"><span>Examples</span>${logExamples.map(([t, q]) => `<button data-try="${esc(q)}" title="${esc(q)}">${esc(t)}</button>`).join('')}</div>
     ${res.error ? `<div class="notice bad">${esc(res.error)}</div>` : ''}
+    <div class="time-bar"><select id="quick-range" aria-label="Quick range">${quickRanges.map(([t, m]) => `<option value="${m}">${t}${m ? ' of the capture' : ' of the capture'}</option>`).join('')}<option value="custom" ${zoomed ? 'selected' : ''}>Custom range</option></select>
+      <input type="datetime-local" step="1" id="t-from" value="${toLocalInput(L.from || res.from)}" aria-label="From (UTC)"><span class="muted">→</span><input type="datetime-local" step="1" id="t-to" value="${toLocalInput(L.to || res.to)}" aria-label="To (UTC)"><small class="muted">UTC</small>
+      <button id="t-apply">Apply</button>${zoomed ? '<button id="t-out">Zoom out</button><button id="t-reset">Whole capture</button>' : ''}</div>
     <div class="chips">${chips}</div>
     <div id="new-lines"></div>
-    <div class="histogram"><div class="row between"><small>Log volume${res.from && !res.from.startsWith('0001') ? ` · ${fmtDateTime(res.from)} – ${fmtTime(res.to)}` : ''}</small><small>Drag across bars to pick a time range</small></div><div class="bars" id="bars">${hist}</div></div>
+    <div class="histogram"><div class="row between"><small>${num(res.total)} lines${zoomed ? ' in the selected range' : ''}</small><small class="muted">Drag to zoom · pinch or scroll to zoom · double-click to zoom out</small></div>
+      <div class="bars-wrap" id="bars-wrap"><div class="bars" id="bars">${bars}</div><div class="brush hidden" id="brush"></div></div>${axis}</div>
     <div class="panel"><div class="panel-head"><span><strong>${num(res.total)}</strong> <span class="muted">matching lines · ${num(res.scanned)} searched${res.loading ? ' · <span class="blue">bundle still loading</span>' : ''}</span></span><small>Newest first · click a line for context</small></div>
     <div class="table-scroll" style="max-height:60vh"><div class="log-table"><div class="log-row log-head"><span>TIME (UTC)</span><span>LEVEL</span><span>POD / CONTAINER</span><span>MESSAGE</span></div>
-    ${rows || `<div class="empty"><strong>${esc(res.message || 'No matches')}</strong>${res.loading ? 'Log batches are still arriving; results update as they load.' : 'Remove a filter or broaden the search.'}</div>`}</div></div>
+    ${rows || `<div class="empty"><strong>${esc(res.message || 'No matches')}</strong>${res.loading ? 'Log batches are still arriving; results update as they load.' : zoomed ? 'Nothing in this time range. Zoom out or pick another range.' : 'Remove a filter or broaden the search.'}</div>`}</div></div>
     ${res.total > res.records.length ? `<div class="table-foot"><span>Showing ${res.records.length} of ${num(res.total)}</span><button id="more">Show more</button></div>` : ''}</div>
   </section></div>`;
 }
+
+function setRange(from, to) {
+  const L = S.logs;
+  const b = L.bounds;
+  if (b && from && to && new Date(from) <= new Date(b.from) && new Date(to) >= new Date(b.to)) { L.from = L.to = ''; }
+  else { L.from = from; L.to = to; }
+  L.expanded = null; L.limit = 200; render();
+}
+
 after.logs = () => {
   const L = S.logs;
   $('#log-form').onsubmit = e => { e.preventDefault(); L.q = $('#log-q').value; L.expanded = null; L.limit = 200; render(); };
-  document.querySelectorAll('[data-try]').forEach(b => b.onclick = () => { L.q = b.dataset.try; render(); });
+  document.querySelectorAll('[data-try]').forEach(b => b.onclick = () => { L.q = b.dataset.try; L.expanded = null; render(); });
   document.querySelectorAll('[data-facet]').forEach(b => b.onclick = () => { const f = JSON.parse(b.dataset.facet); if (f.field === 'cluster_') { setCluster(f.v); return; } L[f.field] = L[f.field] === f.v ? '' : f.v; render(); });
-  document.querySelectorAll('[data-clear]').forEach(b => b.onclick = () => { const k = b.dataset.clear; if (k === 'time') { L.from = L.to = ''; } else L[k] = ''; render(); });
+  document.querySelectorAll('[data-addterm]').forEach(b => b.onclick = () => addTerm(JSON.parse(b.dataset.addterm)));
+  document.querySelectorAll('details.field').forEach(d => d.ontoggle = () => { if (d.open) L.openField = d.dataset.fieldname; });
+  document.querySelectorAll('[data-clear]').forEach(b => b.onclick = () => { L[b.dataset.clear] = ''; render(); });
   document.querySelectorAll('[data-log]').forEach(el => { const go = () => expandLog(Number(el.dataset.log)); el.onclick = go; el.onkeydown = e => { if (e.key === 'Enter') go(); }; });
+  const pf = $('#pod-filter'); if (pf) { let t; pf.oninput = e => { clearTimeout(t); t = setTimeout(() => { L.podFilter = e.target.value; render().then(() => { const i = $('#pod-filter'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }); }, 200); }; }
   $('#follow').onchange = e => { L.follow = e.target.checked; if (L.follow) render(); };
   $('#log-term').onclick = () => termRun(`fbq '${(L.q || 'level:error').replace(/'/g, '')}'`);
   const more = $('#more'); if (more) more.onclick = () => { L.limit += 500; render(); };
-  const bars = $('#bars'); let start = null;
-  const hist = L.result.histogram || [];
-  bars.onmousedown = e => { const b = e.target.dataset.bucket; if (b !== undefined) { start = +b; e.preventDefault(); } };
-  bars.onmouseup = e => {
-    const b = e.target.dataset.bucket; if (start === null || b === undefined) return;
-    const lo = Math.min(start, +b), hi = Math.max(start, +b); start = null;
-    L.from = hist[lo].start; L.to = hi + 1 < hist.length ? hist[hi + 1].start : L.result.to; render();
+  // Time controls.
+  const res = L.result, b = L.bounds || {from: res.from, to: res.to};
+  $('#quick-range').onchange = e => {
+    const m = e.target.value; if (m === 'custom') return;
+    if (+m === 0) { setRange('', ''); return; }
+    const end = new Date(b.to); setRange(new Date(end - m * 6e4).toISOString(), end.toISOString());
   };
+  $('#t-apply').onclick = () => setRange(fromLocalInput($('#t-from').value), fromLocalInput($('#t-to').value));
+  const out = $('#t-out'); if (out) out.onclick = () => zoomBy(2, 0.5);
+  const rs = $('#t-reset'); if (rs) rs.onclick = () => setRange('', '');
+  // Histogram: drag to select, pinch/scroll to zoom around the cursor, double-click to zoom out.
+  const wrap = $('#bars-wrap'), brush = $('#brush');
+  if (!wrap || !res.from || res.from.startsWith('0001')) return;
+  const t0 = new Date(res.from).getTime(), t1 = new Date(res.to).getTime();
+  const posToTime = x => { const r = wrap.getBoundingClientRect(); return t0 + Math.min(1, Math.max(0, (x - r.left) / r.width)) * (t1 - t0); };
+  let startX = null;
+  wrap.onpointerdown = e => { startX = e.clientX; wrap.setPointerCapture(e.pointerId); brush.classList.remove('hidden'); brush.style.left = (e.clientX - wrap.getBoundingClientRect().left) + 'px'; brush.style.width = '0px'; e.preventDefault(); };
+  wrap.onpointermove = e => {
+    if (startX === null) return;
+    const r = wrap.getBoundingClientRect(), a = Math.min(startX, e.clientX) - r.left, z = Math.max(startX, e.clientX) - r.left;
+    brush.style.left = Math.max(0, a) + 'px'; brush.style.width = Math.min(r.width, z) - Math.max(0, a) + 'px';
+    brush.title = `${fmtDateTime(new Date(posToTime(Math.min(startX, e.clientX))).toISOString())} → ${fmtTime(new Date(posToTime(Math.max(startX, e.clientX))).toISOString())}`;
+  };
+  wrap.onpointerup = e => {
+    if (startX === null) return;
+    const a = Math.min(startX, e.clientX), z = Math.max(startX, e.clientX); startX = null;
+    if (z - a < 4) { brush.classList.add('hidden'); return; } // a click, not a drag
+    setRange(new Date(posToTime(a)).toISOString(), new Date(posToTime(z)).toISOString());
+  };
+  wrap.ondblclick = () => zoomBy(2, 0.5);
+  let wheelT, pending = null;
+  wrap.onwheel = e => {
+    e.preventDefault();
+    const r = wrap.getBoundingClientRect(), frac = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+    const factor = Math.exp(e.deltaY * (e.ctrlKey ? 0.01 : 0.002)); // ctrlKey = trackpad pinch
+    pending = (pending || 1) * factor;
+    clearTimeout(wheelT); wheelT = setTimeout(() => { const f = pending; pending = null; zoomBy(f, frac); }, 180);
+  };
+  function zoomBy(factor, frac) {
+    const width = (t1 - t0) * factor, centre = t0 + frac * (t1 - t0);
+    let from = centre - frac * width, to = from + width;
+    if (b.from) { from = Math.max(from, new Date(b.from).getTime()); to = Math.min(to, new Date(b.to).getTime()); }
+    if (to - from < 1000) to = from + 1000;
+    setRange(new Date(from).toISOString(), new Date(to).toISOString());
+  }
   if (L.expanded) showLogDetail(L.expanded);
 };
 
@@ -700,7 +779,7 @@ function closeModal() { $('#modal-root').innerHTML = ''; }
 
 function openSearch() {
   modal('Jump to an object or view', `<input id="gs" style="width:100%" placeholder="Any object: name, label, image, hostname, kind:pod…" autocomplete="off"><div id="gs-res" class="search-results"></div>`);
-  const views = ['search', 'sql', 'overview', 'resources', 'logs', 'timeline', 'findings', 'compare', 'proxies', 'coverage'];
+  const views = ['search', 'overview', 'resources', 'logs', 'timeline', 'findings', 'compare', 'proxies', 'coverage'];
   let hits = [], sel = 0;
   const draw = () => {
     $('#gs-res').innerHTML = hits.map((h, i) => `<button class="${i === sel ? 'sel' : ''}" data-i="${i}">${h.all ? `<span class="green">⌕</span> Search everything for “${esc(h.all)}”<small>Search page</small>` : h.view ? `<span class="green">↗</span> ${esc(h.view)}<small>view</small>` : `<span class="badge">${esc(h.kind)}</span>${esc(h.namespace ? h.namespace + '/' : '')}${esc(h.name)}${h.snippet ? ` <span class="muted mono" style="font-size:10px">…${esc(h.snippet.slice(0, 70))}…</span>` : ''}<small>${esc(h.cluster)}</small>`}</button>`).join('');
@@ -758,6 +837,12 @@ function toggleTerminal(open) {
   dock.classList.toggle('collapsed', !willOpen);
   if (willOpen) { const t = ensureTerminal(); if (t) setTimeout(() => { t.fitTerm(); t.term.focus(); }, 30); }
 }
+// openK9s runs real k9s against the snapshot in the terminal, full height.
+function openK9s(resource, ns) {
+  $('#terminal').classList.add('expanded');
+  termRun(`k9s --readonly ${resource ? '-c ' + resource : ''} ${ns ? '-n ' + ns : '-A'}`.replace(/\s+/g, ' ').trim());
+}
+
 function termRun(cmd) {
   if (!S.ws?.terminal) { navigator.clipboard?.writeText(cmd); toast('Terminal disabled; command copied: ' + cmd); return; }
   toggleTerminal(true);
@@ -769,6 +854,7 @@ function boot() {
   $('#open-search').onclick = openSearch;
   $('#cluster').onchange = e => setCluster(e.target.value);
   $('#term-toggle').onclick = () => toggleTerminal();
+  $('#term-k9s').onclick = () => openK9s('pods', '');
   $('#term-expand').onclick = () => { $('#terminal').classList.toggle('expanded'); toggleTerminal(true); };
   document.addEventListener('keydown', e => {
     const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName) || document.activeElement?.closest?.('.xterm');

@@ -36,10 +36,10 @@ Things to try:
 
 - **Findings.** The five planted faults, each with its evidence and a next step.
 - **Search.** `checkout`, `kind:pod CrashLoopBackOff`, `label:app=checkout`, `"registry.invalid"`.
-- **Log explorer.** `level:error`, then click a line and follow its `trace_id` across pods.
+- **Log explorer.** Click the **Errors** example, drag across the chart to zoom into a spike, then click a line and follow its `trace_id` across pods.
 - **Proxy configs.** The waypoint's listeners, clusters, routes and certificates, istiod's view of which proxies are in sync, and ztunnel's workloads.
-- **SQL.** Pick an example, or write your own.
-- **Terminal.** Open it at the bottom (Ctrl+\`) and run `kubectl get pods -n payments`, `kubectl logs`, `k9s`, `fbsearch`, `fbq` or `fbsql`.
+- **k9s.** Press **Open in k9s** on Resources, or **k9s** in the terminal bar.
+- **Terminal.** Open it at the bottom (Ctrl+\`) and run `k get pods -n payments`, `k logs`, `k9s`, `fbsearch` or `fbq`.
 
 ## Capture a cluster
 
@@ -88,23 +88,18 @@ label:app=checkout   name:ist*    labels and name prefixes
 "CrashLoopBackOff"   -kind:event  phrases, and - to exclude
 ```
 
-**Log explorer** searches every log line, with facets, a timeline, context around each line and one-click pivots on trace, request and connection IDs. Results arrive while a large bundle is still loading.
+**Log explorer** searches every log line, like Kibana or OpenSearch Dashboards:
+
+- **Time.** Drag across the chart with your trackpad or mouse to zoom into a range, and keep dragging to drill down. Pinch or scroll over the chart to zoom around the cursor, and double-click to zoom out. There are quick ranges ("last 15 minutes of the capture"), exact from/to times, and **Whole capture** to reset.
+- **Fields.** The left panel lists level, namespace, pod (with a search box), container and stream, and then the fields parsed from the logs, such as `trace_id`, `status`, `method`, `path`, `src.workload` and `dst.addr`, each with its most common values. Click a value to filter on it.
+- **Examples** above the search box: errors, crashed containers, HTTP 5xx, connection problems, certificates, istiod pushes, and denied requests.
+- **Context.** Click a line to see the lines around it in the same container, and follow its trace, request or connection ID across pods.
 
 ```text
-level:error ns:payments "timed out"    pod:checkout*    trace_id:a4e98f02    stream:previous    since:15m    -healthz    a OR b
+level:error ns:payments "timed out"    pod:checkout*    trace_id:a4e98f02    status:5*    stream:previous    since:15m    -healthz    a OR b
 ```
 
 ![Log explorer](docs/images/logs.png)
-
-**SQL** runs DuckDB SQL over the logs, objects and events tables, read-only. Nothing you run can change the workspace or read local files.
-
-```sql
-SELECT namespace, pod, count(*) AS errors FROM logs WHERE level = 'error' GROUP BY ALL ORDER BY errors DESC;
-SELECT namespace, name, object->>'$.status.phase' AS phase FROM objects WHERE kind = 'Pod';
-SELECT reason, object_name, message FROM events WHERE type = 'Warning';
-```
-
-![SQL](docs/images/sql.png)
 
 **Proxy configs** shows what each Envoy, ztunnel and agentgateway had loaded when the snapshot was taken: listeners, routes, clusters, endpoints, workloads, policies and certificates. For istiod it shows which proxies are in sync.
 
@@ -116,17 +111,17 @@ SELECT reason, object_name, message FROM events WHERE type = 'Warning';
 
 ### From the terminal
 
-`kubectl`, `k9s` and `stern` work against the snapshot. Each cluster appears as `<context>@snapshot`, and changes are refused.
+`kubectl` (or `k`), `k9s` and `stern` work against the snapshot. Each cluster appears as `<context>@snapshot`, and changes are refused.
 
 ```bash
 flightbay-desk shell                          # a shell wired to the open workspace (or use the UI's terminal)
-kubectl get pods -A
-kubectl describe pod -n payments checkout-85b9d479d6-cgf5q
-kubectl logs -n payments deploy/checkout --previous
+k get pods -A                                 # k is kubectl, with tab completion
+k describe pod -n payments checkout-85b9d479d6-cgf5q
+k logs -n payments deploy/checkout --previous
 k9s
 fbsearch 'kind:pod CrashLoopBackOff'          # object search
 fbq 'level:error ns:payments'                 # log search
-fbsql "SELECT kind, count(*) FROM objects GROUP BY ALL"    # or just fbsql for a prompt
+fbsql "SELECT namespace, pod, count(*) FROM logs WHERE level = 'error' GROUP BY ALL"   # read-only DuckDB SQL; fbsql alone for a prompt
 fbpc                                          # captured proxies; fbpc <pod> for one, --file config_dump.json for raw
 fbfind                                        # findings
 ```
@@ -142,7 +137,7 @@ An object only counts as removed if both captures covered its type and namespace
 
 ### AI agents
 
-`flightbay-desk mcp` makes the open workspace available to AI agents over MCP. The tools are read-only: search objects and logs, SQL, findings, objects and proxy configs, plus a `triage` prompt for a guided investigation.
+`flightbay-desk mcp` makes the open workspace available to AI agents over MCP. The tools are read-only: search objects and logs, read-only SQL, findings, objects and proxy configs, plus a `triage` prompt for a guided investigation.
 
 ```bash
 claude mcp add flightbay -- flightbay-desk mcp
@@ -161,7 +156,7 @@ The MCP server only talks to your local workspace. Snapshot data reaches a model
 | `flightbay rbac` | Least-privilege RBAC for your options |
 | `flightbay docs collects` | What is and isn't collected |
 | `flightbay-desk open` | What `flightbay ui` runs; `--keep` keeps the workspace, `-i key` opens encrypted bundles |
-| `flightbay-desk search / query / sql / findings / proxy-config` | The terminal helpers, usable anywhere a workspace is open |
+| `flightbay-desk search / query / findings / proxy-config / sql` | The terminal helpers (`fbsearch`, `fbq`, `fbfind`, `fbpc`, `fbsql`), usable anywhere a workspace is open |
 | `flightbay-desk diff A B` | Compare two captures |
 | `flightbay-desk mcp` | MCP server for agents |
 | `flightbay-desk keygen` | Create a key pair for `--encrypt-to` |
