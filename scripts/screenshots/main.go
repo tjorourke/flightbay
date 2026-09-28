@@ -46,6 +46,7 @@ type shot struct {
 }
 
 var shots = []shot{
+	{name: "start", desk: "start", hash: "", theme: "dark", setup: `document.querySelector('[data-card=file]').click()`},
 	{name: "overview", desk: "sample", hash: "overview", theme: "dark"},
 	{name: "search", desk: "sample", hash: "search", theme: "dark"},
 	{name: "logs", desk: "sample", hash: "logs", theme: "dark"},
@@ -177,6 +178,28 @@ func run(deskBin, chromeBin, sample, mesh, out, only string) error {
 			return err
 		}
 	}
+	if needed["start"] {
+		// The start page lists bundles in its directory and ~/Downloads; give
+		// it a home of its own so only these two appear.
+		home := filepath.Join(tmp, "start-home")
+		dl := filepath.Join(home, "Downloads")
+		if err := os.MkdirAll(dl, 0o755); err != nil {
+			return err
+		}
+		if err := copyFile(sample, filepath.Join(dl, "flightbay-DEMO-0001-20260928T0036Z.tar.zst")); err != nil {
+			return err
+		}
+		if mesh != "" {
+			if err := copyFile(mesh, filepath.Join(dl, filepath.Base(mesh))); err != nil {
+				return err
+			}
+		}
+		d, err := startDesk(deskBin, filepath.Join(tmp, "start"), "", []string{"HOME=" + home})
+		if err != nil {
+			return fmt.Errorf("start page: %w", err)
+		}
+		desks["start"] = d
+	}
 	if needed["mesh"] {
 		if err := start("mesh", mesh, []string{"FLIGHTBAY_ENTERPRISE=1"}); err != nil {
 			return err
@@ -234,10 +257,19 @@ func startDesk(bin, home, bundle string, env []string, args ...string) (*deskPro
 	if err != nil {
 		return nil, err
 	}
-	// Run from the bundle's directory so the UI shows file names, not local paths.
+	// Run from the bundle's directory so the UI shows file names, not local
+	// paths. No bundle means the start page, which is ready once it listens.
 	argv := append([]string{"open", filepath.Base(bundle), "--listen", fmt.Sprintf("127.0.0.1:%d", port), "--no-browser"}, args...)
+	dir := filepath.Dir(bundle)
+	if bundle == "" {
+		argv = append([]string{"start", "--listen", fmt.Sprintf("127.0.0.1:%d", port), "--no-browser"}, args...)
+		dir = home
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return nil, err
+		}
+	}
 	cmd := exec.Command(bin, argv...)
-	cmd.Dir = filepath.Dir(bundle)
+	cmd.Dir = dir
 	cmd.Env = append(append(os.Environ(), "FLIGHTBAY_HOME="+home), env...)
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
@@ -255,6 +287,10 @@ func startDesk(bin, home, bundle string, env []string, args ...string) (*deskPro
 			line := sc.Text()
 			if m := uiLine.FindStringSubmatch(line); m != nil {
 				d.base, d.token = m[1], m[2]
+				if bundle == "" && !sent {
+					ready <- nil
+					sent = true
+				}
 			}
 			if !sent && strings.HasPrefix(line, "Import complete") {
 				ready <- nil
@@ -474,7 +510,7 @@ func (b *browser) capture(d *deskProc, s shot) ([]byte, error) {
 	if err := b.call(ss, "Page.navigate", map[string]any{"url": d.base + "/#" + s.hash}, nil); err != nil {
 		return nil, err
 	}
-	if err := b.waitFor(ss, `document.readyState === 'complete' && !!document.querySelector('#main .page-head, #main .nv-frame, #main .nv')`); err != nil {
+	if err := b.waitFor(ss, `document.readyState === 'complete' && !!document.querySelector('#main .page-head, #main .nv-frame, #main .nv, #cards')`); err != nil {
 		return nil, err
 	}
 	time.Sleep(1500 * time.Millisecond)
