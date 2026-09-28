@@ -109,7 +109,7 @@ level:error ns:payments "timed out"    pod:checkout*    trace_id:a4e98f02    sta
 
 ![Findings](docs/images/findings.png)
 
-**Best practices** scans the snapshot against 130 checks drawn from the Solo field guides, the agentgateway, kagent, Istio and kgateway source, and Kubernetes hardening guidance, in four areas:
+**Scorecard** scores the snapshot against Solo's best practices: 131 checks drawn from the Solo field guides, the agentgateway, kagent, Istio and kgateway source, and Kubernetes hardening guidance, in four areas:
 
 - **Agentic**: MCP and A2A endpoints without authentication, optional API-key modes, client tokens passed through to MCP servers, missing tool allowlists, code mode without limits, guardrails that fail open, LLM spend without a budget, credentials held inline or pointing at Secrets that don't exist, policies that weren't accepted, and agents that bypass the gateway.
 - **Istio**: namespace enrolment, pods ztunnel isn't capturing, STRICT mTLS, default-deny, principals in the wrong trust domain, L7 policy that nothing enforces, ingress that skips the waypoint, istiod HA, plugged-in CA, multicluster peering and remote secrets, and exposed control-plane ports.
@@ -118,9 +118,9 @@ level:error ns:payments "timed out"    pod:checkout*    trace_id:a4e98f02    sta
 
 **Flightbay Enterprise** adds a priority view: severity tags coloured by weight, a **Fix these first** list ranked by severity and how much of each check fails, and the area score each fix gives back ("+7"). `fbscore --top 10` prints the same ranking, and the MCP `best_practices` tool returns it as `priorities`. Turn it on for the desk with `FLIGHTBAY_ENTERPRISE=1 flightbay ui` (or `FLIGHTBAY_FEATURES=priorities`); `flightbay-desk features` lists what is on.
 
-Only problems are listed by default, with a line saying how many checks ran. Each check lists the objects it looked at, says why it matters and gives the YAML to fix it, with a link to the matching guide on mastertheagent.com or masterthemesh.com. Checks are weighted by severity. A check whose data wasn't collected, or that has nothing to apply to, is marked not applicable and doesn't count against the score.
+The page opens on the score per area, then tabs: Summary (the most serious problems), one tab per area, and All checks. Only problems are listed by default, with a line saying how many checks ran. Each check lists the objects it looked at, says why it matters and gives the YAML to fix it, with a link to the matching guide on mastertheagent.com or masterthemesh.com. Checks are weighted by severity. A check whose data wasn't collected, or that has nothing to apply to, is marked not applicable and doesn't count against the score.
 
-![Best practices](docs/images/posture.png)
+![Scorecard](docs/images/posture.png)
 
 **Timeline** puts Kubernetes events, container exits, rollouts and bursts of error logs on one UTC axis, so you can see what changed just before things broke. Filter by kind, severity and namespace, drag across the density strip to zoom into a window, and jump from any entry to the object or to the logs around that moment. A steady run of errors shows as one entry covering its time range, and a minute well above that run's usual rate is called out on its own.
 

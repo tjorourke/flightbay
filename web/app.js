@@ -15,7 +15,7 @@ const S = {
   logs: {q: '', namespace: '', workload: '', pod: '', container: '', level: '', stream: '', from: '', to: '', limit: 200, expanded: null, follow: false, total: 0, rev: 0, result: null},
   compare: null, findingSev: '', term: null,
   search: {q: '', limit: 200},
-  pst: {area: '', status: 'attention', q: '', open: null},
+  pst: {tab: 'summary', area: '', status: 'attention', q: '', open: null},
   nv: {resource: 'pods', group: '', ns: '', q: '', sel: 0, cmd: false},
 };
 
@@ -53,8 +53,10 @@ function parseHash() {
     for (const k of ['q', 'namespace', 'workload', 'pod', 'container', 'level', 'stream', 'from', 'to']) if (p.has(k)) S.logs[k] = p.get(k);
   }
   if (view === 'search' && p.has('q')) S.search.q = p.get('q');
+  if (view === 'posture' || view === 'bestpractices') { location.replace('#scorecard' + (query ? '?' + query : '')); }
+  if ((view === 'scorecard' || view === 'posture') && p.has('tab')) S.pst.tab = p.get('tab');
   if (view === 'resources' && p.has('resource')) { S.res.resource = p.get('resource'); S.res.group = p.get('group') || ''; }
-  S.view = view;
+  S.view = view === 'posture' || view === 'bestpractices' ? 'scorecard' : view;
 }
 
 function nav(view) {
@@ -70,7 +72,7 @@ function openLogs(filters) {
 async function render() {
   const seq = ++S.renderSeq;
   document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('active', a.dataset.view === S.view));
-  const views = {navigator, search, overview, posture, resources, logs, timeline, findings, compare, proxies, coverage};
+  const views = {navigator, search, overview, scorecard: posture, resources, logs, timeline, findings, compare, proxies, coverage};
   const fn = views[S.view] || overview;
   $('#crumb').textContent = S.ws ? `Workspace / ${S.ws.case ? 'Case ' + S.ws.case : 'Snapshot'} / ${S.view}` : 'Workspace';
   try {
@@ -566,8 +568,15 @@ async function posture() {
   const tot = {fail: 0, warn: 0, pass: 0, na: 0};
   r.checks.forEach(c => tot[c.status]++);
   const objs = r.checks.reduce((n, c) => n + c.total, 0);
-  const coverage = `<div class="notice info pst-coverage"><div><strong>Scanned ${r.checks.length} best practices</strong> across ${present.length} area${present.length === 1 ? '' : 's'}, evaluating ${objs} object${objs === 1 ? '' : 's'}: <span class="red">${tot.fail} failing</span>, <span class="amber">${tot.warn} with warnings</span>, ${tot.pass} passing, ${tot.na} not applicable to this capture.
-    ${absent.length ? `<br><small class="muted">Not scored: ${absent.map(a => `${esc(a.title)} (${esc(a.reason)})`).join('; ')}.</small>` : ''}</div></div>`;
+  const coverage = `<p class="muted pst-coverage-line">Scanned <strong>${r.checks.length}</strong> checks across ${present.length} area${present.length === 1 ? '' : 's'} and ${objs} object${objs === 1 ? '' : 's'}: <span class="red">${tot.fail} failing</span>, <span class="amber">${tot.warn} warnings</span>, ${tot.pass} passing, ${tot.na} not applicable.${absent.length ? ` Not scored: ${absent.map(a => `${esc(shortName[a.area] || a.title)} (${esc(a.reason)})`).join('; ')}.` : ''}</p>`;
+  // Tabs: Summary, one per scored area, All checks.
+  const areaIds = present.map(a => a.area);
+  if (P.tab !== 'summary' && P.tab !== 'all' && !areaIds.includes(P.tab)) P.tab = 'summary';
+  P.area = areaIds.includes(P.tab) ? P.tab : '';
+  const attention = id => r.checks.filter(c => (!id || c.area === id) && (c.status === 'fail' || c.status === 'warn'));
+  const failing = id => r.checks.filter(c => (!id || c.area === id) && c.status === 'fail').length;
+  const tab = (id, label, n, red) => `<button class="pst-tab ${P.tab === id ? 'on' : ''}" data-psttab="${esc(id)}">${esc(label)}${n ? `<span class="pst-tab-n ${red === undefined ? '' : red ? 'red' : 'amber'}">${n}</span>` : ''}</button>`;
+  const tabs = `<nav class="pst-tabs" role="tablist">${tab('summary', 'Summary')}${present.map(a => tab(a.area, shortName[a.area] || a.title, attention(a.area).length, failing(a.area) > 0)).join('')}${tab('all', 'All checks', r.checks.length)}</nav>`;
   const terms = qTerms(P.q);
   const typedStatus = terms.some(t => t.key === 'status'); // a status: term overrides the status chips
   const checks = r.checks.filter(c => (!P.area || c.area === P.area) &&
@@ -583,39 +592,59 @@ async function posture() {
         ${c.status === 'fail' || c.status === 'warn' || c.status === 'na' ? `<div class="row between mt"><h3>How to fix</h3><div class="row"><button data-pstcopy="${esc(c.id)}">Copy YAML</button><a href="${esc(c.source)}" target="_blank" rel="noopener">Read the guide ↗</a></div></div><pre class="code mt">${esc(c.fix)}</pre>` : `<p class="mt"><a href="${esc(c.source)}" target="_blank" rel="noopener">Read the guide ↗</a></p>`}
       </div>` : ''}</div>`;
   };
-  const pri = (r.priorities || []).filter(p => !P.area || p.area === P.area);
-  const fixFirst = !feature('priorities') || !pri.length ? '' : `<section class="panel pst-first"><div class="panel-head"><h2>Fix these first</h2><small class="muted">Ranked by severity and how much of it fails. +N is the area score it gives back <span class="ent-pill">Enterprise</span></small></div>
-    <div class="pst-first-list">${pri.map(p => `<button class="pst-first-row" data-pstgo="${esc(p.id)}"><span class="pst-rank">${p.rank}</span><span class="pst-pts big">${pstPts(p.points)}</span>${pstBadge(p.status)}${pstSev(p.severity)}
-      <span class="pst-first-main"><strong>${esc(p.title)}</strong><small class="muted">${esc(shortName[p.area] || p.area)} · ${p.failing ? p.failing + ' failing' : ''}${p.failing && p.warning ? ', ' : ''}${p.warning ? p.warning + ' warning' : ''} of ${p.total}: <span class="mono">${esc(p.objects.join(', '))}</span></small></span><span class="muted">▸</span></button>`).join('')}</div></section>`;
+  const objList = its => its.filter(i => i.status === 'fail' || i.status === 'warn').slice(0, 4).map(i => (i.kind + ' ' + (i.namespace ? i.namespace + '/' : '') + i.name).trim());
+  const firstRow = (p, rank) => `<button class="pst-first-row" data-pstgo="${esc(p.id)}"><span class="pst-rank">${rank}</span>${p.points !== undefined ? `<span class="pst-pts big">${pstPts(p.points)}</span>` : ''}${pstBadge(p.status)}${pstSev(p.severity)}
+      <span class="pst-first-main"><strong>${esc(p.title)}</strong><small class="muted">${esc(shortName[p.area] || p.area)} · ${p.failing ? p.failing + ' failing' : ''}${p.failing && p.warning ? ', ' : ''}${p.warning ? p.warning + ' warning' : ''} of ${p.total}: <span class="mono">${esc(p.objects.join(', '))}</span></small></span><span class="muted">▸</span></button>`;
+  let summary = '';
+  if (P.tab === 'summary') {
+    if (feature('priorities') && (r.priorities || []).length) {
+      summary = `<section class="panel"><div class="panel-head"><h2>Fix these first</h2><small class="muted">Ranked by severity and how much of it fails. +N is the area score it gives back <span class="ent-pill">Enterprise</span></small></div>
+        <div>${r.priorities.map(p => firstRow(p, p.rank)).join('')}</div></section>`;
+    } else {
+      const sevRank = {critical: 0, high: 1, medium: 2, low: 3};
+      const worst = attention('').filter(c => c.severity === 'critical' || c.severity === 'high')
+        .sort((a, b) => (a.status === b.status ? 0 : a.status === 'fail' ? -1 : 1) || sevRank[a.severity] - sevRank[b.severity]).slice(0, 10)
+        .map(c => ({id: c.id, area: c.area, title: c.title, status: c.status, severity: c.severity, total: c.total,
+          failing: c.items.filter(i => i.status === 'fail').length, warning: c.items.filter(i => i.status === 'warn').length, objects: objList(c.items)}));
+      summary = `<section class="panel"><div class="panel-head"><h2>Most serious problems</h2><small class="muted">Critical and high severity checks that fail or warn</small></div>
+        <div>${worst.map((p, i) => firstRow(p, i + 1)).join('') || '<div class="empty"><strong>No critical or high problems</strong>Open an area tab to see the rest.</div>'}</div></section>`;
+    }
+  }
   let lastArea = '';
   const rows = checks.map(c => { const h = !P.area && c.area !== lastArea ? `<div class="tl-day">${esc((r.areas.find(a => a.area === c.area) || {}).title || c.area)}</div>` : ''; lastArea = c.area; return h + row(c); }).join('');
-  return head('Best practices', "Solo's guidance for agentic workloads, Istio, ingress and Kubernetes, checked against this snapshot. Problems first, each with its evidence and fix.", '<button id="pst-term">&gt;_ fbscore in terminal</button>') + `
-    ${coverage}
-    ${fixFirst}
+  const list = P.tab === 'summary' ? '' : `
+    <div class="toolbar"><div class="row wrap">${chip('status', 'attention', 'Needs attention')}${chip('status', 'fail', 'Failing')}${chip('status', 'warn', 'Warnings')}${chip('status', 'pass', 'Passing')}${chip('status', 'na', 'Not applicable')}${chip('status', 'all', 'All')}</div>
+      <input id="pst-q" placeholder="Filter. Try status: severity: category: kind: ns: or text" value="${esc(P.q)}" style="min-width:340px" autocomplete="off" spellcheck="false"></div>
+    <section class="panel">${rows || (P.status === 'attention' && !P.q ? '<div class="empty"><strong>Nothing needs attention</strong>Every applicable check passes. Choose Passing or All to see them.</div>' : '<div class="empty"><strong>No checks match</strong>Change the filters above.</div>')}</section>`;
+  return head('Scorecard', "Solo's best practices for agentic workloads, Istio, ingress and Kubernetes, scored against this snapshot. Every problem comes with its evidence and the fix.", '<button id="pst-term">&gt;_ fbscore in terminal</button>') + `
     <div class="pst-cards">${present.map(card).join('')}</div>
-    <div class="toolbar mt"><div class="row wrap">${chip('area', '', 'All areas')}${present.map(a => chip('area', a.area, shortName[a.area] || a.title)).join('')}<span class="muted">·</span>${chip('status', 'attention', 'Needs attention')}${chip('status', 'fail', 'Failing')}${chip('status', 'pass', 'Passing')}${chip('status', 'na', 'Not applicable')}${chip('status', 'all', 'All')}</div>
-      <input id="pst-q" placeholder="Filter. Try status: severity: area: category: kind: ns: or text" value="${esc(P.q)}" style="min-width:340px" autocomplete="off" spellcheck="false"></div>
-    <section class="panel">${rows || (P.status === 'attention' && !P.q ? '<div class="empty"><strong>Nothing needs attention</strong>Every applicable check passes. Choose Passing or All to see them.</div>' : '<div class="empty"><strong>No checks match</strong>Change the filters above.</div>')}</section>
+    ${coverage}
+    ${tabs}
+    <div class="pst-tabbody">${summary}${list}</div>
     <p class="muted mt" style="font-size:12px">Scores weight checks by severity (critical 10, high 6, medium 3, low 1) and give partial credit per object. Checks whose data was not captured, or that have nothing to apply to, are not applicable and do not lower the score.</p>`;
 }
-after.posture = () => {
+after.scorecard = () => {
   const P = S.pst;
   document.querySelectorAll('[data-pst]').forEach(b => b.onclick = () => { const f = JSON.parse(b.dataset.pst); P[f.field] = f.v; render(); });
+  document.querySelectorAll('[data-psttab]').forEach(b => b.onclick = () => { P.tab = b.dataset.psttab; P.open = null; render(); });
   document.querySelectorAll('[data-pstgo]').forEach(b => b.onclick = () => {
-    const id = b.dataset.pstgo; P.open = id; P.status = 'attention'; P.q = '';
+    const id = b.dataset.pstgo, c = S.pstData.checks.find(x => x.id === id); P.tab = c ? c.area : 'all'; P.open = id; P.status = 'attention'; P.q = '';
     render().then(() => { const el = document.querySelector(`[data-pstopen="${CSS.escape(id)}"]`); if (el) el.scrollIntoView({block: 'start', behavior: 'smooth'}); });
   });
-  document.querySelectorAll('[data-pstarea]').forEach(b => b.onclick = () => { P.area = P.area === b.dataset.pstarea ? '' : b.dataset.pstarea; render(); });
+  document.querySelectorAll('[data-pstarea]').forEach(b => b.onclick = () => { P.tab = P.tab === b.dataset.pstarea ? 'summary' : b.dataset.pstarea; P.open = null; render(); });
   document.querySelectorAll('[data-pstopen]').forEach(b => b.onclick = () => { P.open = P.open === b.dataset.pstopen ? null : b.dataset.pstopen; render(); });
   document.querySelectorAll('[data-pstobj]').forEach(b => b.onclick = () => { const x = JSON.parse(b.dataset.pstobj); const it = S.pstData.checks.find(c => c.id === x.c).items.filter(i => i.status !== 'na')[x.n]; openObject({cluster: it.cluster, group: it.group, resource: it.resource, namespace: it.namespace, name: it.name}); });
   document.querySelectorAll('[data-pstcopy]').forEach(b => b.onclick = () => { const c = S.pstData.checks.find(x => x.id === b.dataset.pstcopy); navigator.clipboard.writeText(c.fix).then(() => toast('Fix copied'), () => toast('Clipboard unavailable')); });
-  let t; $('#pst-q').oninput = e => { clearTimeout(t); t = setTimeout(() => { const c = e.target.selectionStart, v = e.target.value; P.q = v; render().then(() => refocus('#pst-q', c, v)); }, 250); };
+  const q = $('#pst-q');
+  if (q) {
+  let t; q.oninput = e => { clearTimeout(t); t = setTimeout(() => { const c = e.target.selectionStart, v = e.target.value; P.q = v; render().then(() => refocus('#pst-q', c, v)); }, 250); };
   typeahead($('#pst-q'), {keys: pstKeys, alias: {sev: 'severity', namespace: 'ns'}, values: (f, p, rest) => {
     const terms = qTerms(rest), checks = (S.pstData?.checks || []).filter(c => pstMatch(c, terms)), get = pstFields[f];
     if (!get) return [];
     const hints = {fail: 'failing', warn: 'warning', pass: 'passing', na: 'not applicable'};
     return countValues(checks.flatMap(get), p, f === 'status' ? v => hints[v] : null);
   }});
+  }
   $('#pst-term').onclick = () => termRun('fbscore');
 };
 
@@ -1350,7 +1379,7 @@ function closeModal() { $('#modal-root').innerHTML = ''; }
 
 function openSearch() {
   modal('Jump to an object or view', `<input id="gs" style="width:100%" placeholder="Any object: name, label, image, hostname. Try kind: ns: label:" autocomplete="off"><div id="gs-res" class="search-results"></div>`);
-  const views = ['navigator', 'search', 'overview', 'posture', 'resources', 'logs', 'timeline', 'findings', 'compare', 'proxies', 'coverage'];
+  const views = ['navigator', 'search', 'overview', 'scorecard', 'resources', 'logs', 'timeline', 'findings', 'compare', 'proxies', 'coverage'];
   let hits = [], sel = 0;
   const draw = () => {
     $('#gs-res').innerHTML = hits.map((h, i) => `<button class="${i === sel ? 'sel' : ''}" data-i="${i}">${h.all ? `<span class="green">⌕</span> Search everything for “${esc(h.all)}”<small>Search page</small>` : h.view ? `<span class="green">↗</span> ${esc(h.view)}<small>view</small>` : `<span class="badge">${esc(h.kind)}</span>${esc(h.namespace ? h.namespace + '/' : '')}${esc(h.name)}${h.snippet ? ` <span class="muted mono" style="font-size:10px">…${esc(h.snippet.slice(0, 70))}…</span>` : ''}<small>${esc(h.cluster)}</small>`}</button>`).join('');

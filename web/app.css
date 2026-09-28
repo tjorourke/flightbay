@@ -235,3 +235,12 @@ details.cmp-other>summary h2::before{content:'▸ ';color:var(--muted)}details.c
 .pst-first-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
 .pst-first-main small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ent-pill{font:600 9px var(--mono);letter-spacing:.06em;text-transform:uppercase;padding:2px 6px;border-radius:9px;border:1px solid var(--teal);color:var(--teal);margin-left:6px}
+/* ---------- scorecard tabs ---------- */
+.pst-coverage-line{font-size:12px;margin:10px 2px 0}
+.pst-tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin:18px 0 14px;overflow-x:auto}
+.pst-tab{background:none;border:0;border-bottom:2px solid transparent;border-radius:0;padding:10px 16px;color:var(--muted);font-weight:600;display:flex;align-items:center;gap:8px;white-space:nowrap}
+.pst-tab:hover{color:var(--text)}
+.pst-tab.on{color:var(--text);border-bottom-color:var(--teal)}
+.pst-tab-n{font:600 10px var(--mono);padding:1px 6px;border-radius:9px;background:var(--raised)}
+.pst-tab-n.red{background:#3b292b;color:var(--red)}.pst-tab-n.amber{background:#3a3223;color:var(--amber)}
+[data-theme=light] .pst-tab-n.red{background:#fbe3e4}[data-theme=light] .pst-tab-n.amber{background:#f8ecd3}
