@@ -230,7 +230,7 @@ func agenticChecks(e env) []Check {
 			st, detail := Fail, "no rate limit applies ("+policyNames(md.applicable(b))+")"
 			for _, p := range md.applicable(b) {
 				t := m(p.spec["traffic"])
-				if t["entRateLimit"] != nil || t["rateLimit"] != nil || t["localRateLimit"] != nil {
+				if t["entRateLimit"] != nil || len(l(path(t, "rateLimit", "local"))) > 0 || path(t, "rateLimit", "global") != nil || len(l(path(t, "rateLimit", "conditional"))) > 0 {
 					st, detail = Pass, "rate limited by "+p.o.Name
 				}
 			}
@@ -420,12 +420,20 @@ func agenticChecks(e env) []Check {
 		use := map[string][]string{}
 		sa := map[*store.Object]string{}
 		for _, a := range agents {
-			d := agentDeploy(a)
-			if d == nil {
-				c.Items = append(c.Items, e.item(a, NA, "agent deployment not captured"))
-				continue
+			// The Agent's own serviceAccountName wins; otherwise read the
+			// generated Deployment.
+			n := s(path(a.Obj, "spec", "declarative", "deployment", "serviceAccountName"))
+			if n == "" {
+				n = s(path(a.Obj, "spec", "byo", "deployment", "serviceAccountName"))
 			}
-			n := s(path(d.Obj, "spec", "template", "spec", "serviceAccountName"))
+			if n == "" {
+				d := agentDeploy(a)
+				if d == nil {
+					c.Items = append(c.Items, e.item(a, NA, "agent deployment not captured"))
+					continue
+				}
+				n = s(path(d.Obj, "spec", "template", "spec", "serviceAccountName"))
+			}
 			sa[a] = n
 			use[a.Namespace+"/"+n] = append(use[a.Namespace+"/"+n], a.Name)
 		}

@@ -229,19 +229,31 @@ func openCmd() *cobra.Command {
 					return importer.Run(context.Background(), f, ws, o)
 				}
 			}
-			if baseline != "" {
+			if path != "-" {
+				srv.BundlePath = path
+			}
+			srv.Identities = ids
+			// Loads an earlier bundle for the Compare view, from --baseline or
+			// picked in the UI.
+			srv.LoadBaseline = func(p string) error {
+				srv.BaselineLoading(p)
 				go func() {
-					bws, err := loadBundle(ctx, baseline, ids)
+					bws, err := loadBundle(ctx, p, ids)
 					if bws == nil {
+						srv.BaselineFailed(p, err)
 						fmt.Fprintf(cmd.ErrOrStderr(), "Baseline not loaded: %v\n", err)
 						return
 					}
 					if err != nil {
 						fmt.Fprintf(cmd.ErrOrStderr(), "Baseline loaded with problems: %v\n", err)
 					}
-					srv.SetBaseline(bws, baseline)
-					fmt.Fprintf(cmd.ErrOrStderr(), "Baseline %s loaded for comparison.\n", baseline)
+					srv.SetBaseline(bws, p)
+					fmt.Fprintf(cmd.ErrOrStderr(), "Baseline %s loaded for comparison.\n", p)
 				}()
+				return nil
+			}
+			if baseline != "" {
+				_ = srv.LoadBaseline(baseline)
 			}
 			defer srv.Close()
 			hs := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
@@ -609,7 +621,7 @@ func postureCmd() *cobra.Command {
 	var all bool
 	c := &cobra.Command{
 		Use: "posture", Aliases: []string{"best-practices", "score"},
-		Short:   "Best-practice scores for the agentic stack and Istio ambient, with fixes (the fbscore helper)",
+		Short:   "Best-practice scores (agentic, Istio, ingress, Kubernetes) with fixes (the fbscore helper)",
 		Example: "  fbscore                 # failing and warning checks, with the YAML to fix them\n  fbscore --area agentic\n  fbscore --all           # every check, including passing and not applicable",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			u, t, err := deskEnv()
@@ -619,7 +631,7 @@ func postureCmd() *cobra.Command {
 			return cli.Posture(cmd.OutOrStdout(), u, t, area, all)
 		},
 	}
-	c.Flags().StringVar(&area, "area", "", "agentic or ambient")
+	c.Flags().StringVar(&area, "area", "", "agentic, ambient, gateway or kubernetes")
 	c.Flags().BoolVar(&all, "all", false, "show passing and not applicable checks too")
 	return c
 }

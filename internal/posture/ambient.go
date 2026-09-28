@@ -174,7 +174,13 @@ func ambientChecks(e env) []Check {
 				md, src = meshMode, meshSrc
 			}
 			for _, pa := range e.ws.List(e.cluster, "security.istio.io", "peerauthentications", ns, nil) {
-				if strings.Contains(fmt.Sprint(path(pa.Obj, "spec", "portLevelMtls")), "PERMISSIVE") || strings.Contains(fmt.Sprint(path(pa.Obj, "spec", "portLevelMtls")), "DISABLE") {
+				plm := fmt.Sprint(path(pa.Obj, "spec", "portLevelMtls"))
+				switch {
+				case path(pa.Obj, "spec", "selector") != nil && s(path(pa.Obj, "spec", "mtls", "mode")) == "DISABLE":
+					c.Items = append(c.Items, e.item(pa, Fail, "workload-scoped PeerAuthentication disables mTLS"))
+				case strings.Contains(plm, "DISABLE"):
+					c.Items = append(c.Items, e.item(pa, Fail, "port-level mTLS DISABLE"))
+				case strings.Contains(plm, "PERMISSIVE"):
 					c.Items = append(c.Items, e.item(pa, Fail, "port-level mTLS is not STRICT"))
 				}
 			}
@@ -417,8 +423,8 @@ func ambientChecks(e env) []Check {
 		}
 	})
 
-	add(spec{"ambient.no-tls-disable", "Encryption", "medium", "No DestinationRule disables TLS",
-		"tls.mode DISABLE on an in-mesh host removes encryption; external hosts need SIMPLE or MUTUAL origination.",
+	add(spec{"ambient.no-tls-disable", "Encryption", "medium", "No DestinationRule disables TLS or its verification",
+		"tls.mode DISABLE on an in-mesh host removes encryption; external hosts need SIMPLE or MUTUAL origination, and insecureSkipVerify accepts any certificate.",
 		"trafficPolicy:\n  tls: {mode: SIMPLE, sni: api.external.example.com}", meshBase + "istio-ambient-crds/"}, func(c *Check) {
 		drs := e.list("networking.istio.io", "destinationrules")
 		if len(drs) == 0 {
@@ -426,8 +432,11 @@ func ambientChecks(e env) []Check {
 			return
 		}
 		for _, dr := range drs {
-			if strings.Contains(fmt.Sprint(path(dr.Obj, "spec", "trafficPolicy")), "mode:DISABLE") {
+			tp := fmt.Sprint(path(dr.Obj, "spec", "trafficPolicy")) + fmt.Sprint(path(dr.Obj, "spec", "subsets"))
+			if strings.Contains(tp, "mode:DISABLE") {
 				c.Items = append(c.Items, e.item(dr, Fail, "tls mode DISABLE"))
+			} else if strings.Contains(tp, "insecureSkipVerify:true") {
+				c.Items = append(c.Items, e.item(dr, Fail, "tls insecureSkipVerify: the server certificate is not checked"))
 			} else {
 				c.Items = append(c.Items, e.item(dr, Pass, "TLS not disabled"))
 			}

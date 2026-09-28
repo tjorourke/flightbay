@@ -226,10 +226,12 @@ pass "resource search (CLI, API), read-only SQL over logs and objects, DuckDB wo
 
 step "Desk: best-practice scores"
 pst=$(api /api/posture)
-contains "$pst" 'Istio ambient' "posture reports the ambient area"
+contains "$pst" 'Istio (ambient and control plane)' "posture reports the Istio area"
 contains "$pst" '"checks"' "posture returns its checks"
 score=$(env FLIGHTBAY_URL=$URL FLIGHTBAY_TOKEN=$TOKEN "$WORK/ws/bin/fbscore" --all)
-contains "$score" "Istio ambient: " "fbscore prints the ambient area (scored, or why not)"
+contains "$score" "Istio (ambient and control plane): " "fbscore prints the Istio area (scored, or why not)"
+contains "$score" "Kubernetes (workload and platform hygiene): " "fbscore scores Kubernetes hygiene"
+contains "$score" "k8s.probes" "the planted checkout pod without probes is reported"
 contains "$score" "Agentic (agentgateway, kagent, MCP): " "fbscore prints the agentic area (scored, or why not)"
 absent "$pst" "$CANARY" "no canary in posture output"
 pass "posture API and fbscore score the snapshot and give fixes"

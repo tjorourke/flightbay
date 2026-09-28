@@ -260,6 +260,9 @@ func (md *model) applicable(b *backend) []policy {
 		}
 	}
 	for _, p := range md.policies {
+		if !policyActive(p) {
+			continue // not accepted or not attached: enforces nothing
+		}
 		if md.targets(p, b.o.Group, b.o.Kind, b.o.Namespace, b.o.Name) {
 			add(p)
 		}
@@ -421,7 +424,7 @@ func (md *model) agentgatewayGateways() []*store.Object {
 func (md *model) gatewayPolicies(gw *store.Object) []policy {
 	var out []policy
 	for _, p := range md.policies {
-		if md.targets(p, "gateway.networking.k8s.io", "Gateway", gw.Namespace, gw.Name) {
+		if policyActive(p) && md.targets(p, "gateway.networking.k8s.io", "Gateway", gw.Namespace, gw.Name) {
 			out = append(out, p)
 		}
 	}

@@ -76,6 +76,7 @@ async function render() {
   try {
     const html = await fn(seq);
     if (seq !== S.renderSeq || html === undefined) return;
+    taClose(true);
     $('#main').innerHTML = html;
     after[S.view]?.();
   } catch (e) {
@@ -86,6 +87,186 @@ const after = {};
 
 function head(title, sub, actions = '') {
   return `<div class="page-head"><div><h1>${esc(title)}</h1><p>${sub}</p></div><div class="row wrap">${actions}</div></div>`;
+}
+
+// refocus puts the caret back in a query input after a re-render replaced it.
+function refocus(sel, caret, value) {
+  const i = typeof sel === 'string' ? $(sel) : sel; if (!i) return;
+  if (value !== undefined) i.value = value;
+  i.focus();
+  const c = caret == null ? i.value.length : Math.min(caret, i.value.length);
+  i.setSelectionRange(c, c);
+}
+
+// ---------- typeahead ----------
+// One suggestion dropdown for every query input. It reads the key:value term
+// under the caret, suggests keys while there is no colon, then values from
+// the capture (the server for objects and logs, data already in the page for
+// the timeline, best practices and navigator).
+const TA = {cache: new Map(), keys: new Map(), menu: null, active: null, reopen: null};
+
+// qTerms splits a query into terms, keeping quoted phrases and -negation.
+function qTerms(q) {
+  return ((q || '').match(/-?(?:[A-Za-z_][\w.\-]*:)?"[^"]*"?|\S+/g) || []).map(t => {
+    const neg = t.startsWith('-') && t.length > 1, body = neg ? t.slice(1) : t;
+    const m = body.match(/^([A-Za-z_][\w.\-]*):(.*)$/);
+    return m && !body.startsWith('"') ? {neg, key: m[1].toLowerCase(), val: m[2].replace(/^"|"$/g, '')} : {neg, text: body.replace(/"/g, '')};
+  }).filter(t => t.text !== '' && t.val !== '');
+}
+
+function taToken(value, caret) {
+  let start = 0, inQ = false;
+  for (let i = 0; i < caret; i++) { const c = value[i]; if (c === '"') inQ = !inQ; else if (!inQ && /\s/.test(c)) start = i + 1; }
+  let end = caret;
+  while (end < value.length && (inQ || !/\s/.test(value[end]))) { if (value[end] === '"') inQ = !inQ; end++; }
+  const upto = value.slice(start, caret);
+  const neg = upto.startsWith('-') ? '-' : '', body = upto.slice(neg.length);
+  const m = body.match(/^([A-Za-z_][\w.\-]*):(.*)$/s);
+  return m ? {start, end, neg, key: m[1], partial: m[2].replace(/^"/, '').replace(/"$/, '')} : {start, end, neg, key: null, partial: body.replace(/^"/, ''), quoted: body.startsWith('"')};
+}
+const taQuote = v => /[\s"]/.test(v) ? `"${v.replace(/"/g, '')}"` : v;
+
+function taFetch(scope, field, prefix, q) {
+  const key = [scope, field, prefix, q, S.cluster].join('\u0000');
+  if (!TA.cache.has(key)) {
+    if (TA.cache.size > 500) TA.cache.clear();
+    TA.cache.set(key, api('api/suggest', {scope, field, prefix, q, cluster: S.cluster}).then(r => r.values || []).catch(() => { TA.cache.delete(key); return []; }));
+  }
+  return TA.cache.get(key);
+}
+function taKeys(o) {
+  if (o.keys) return Promise.resolve(typeof o.keys === 'function' ? o.keys() : o.keys);
+  const k = TA.keys.get(o.scope);
+  if (k && Date.now() - k.t < 60000) return k.p;
+  const p = api('api/suggest', {scope: o.scope, field: ''}).then(r => r.values || []).catch(() => []);
+  TA.keys.set(o.scope, {t: Date.now(), p});
+  return p;
+}
+// countValues turns a list of strings into sorted suggestions for client-side scopes.
+function countValues(list, prefix, hint) {
+  const m = new Map(), p = (prefix || '').toLowerCase();
+  for (const v of list) if (v && String(v).toLowerCase().startsWith(p)) m.set(v, (m.get(v) || 0) + 1);
+  return [...m].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0]))).slice(0, 50).map(([value, count]) => ({value, count, hint: hint?.(value) || ''}));
+}
+
+function taClose(keep) {
+  const a = TA.active;
+  if (keep && a && document.activeElement === a.input && TA.menu?.isConnected) TA.reopen = a.input.id;
+  TA.menu?.remove(); TA.active = null;
+}
+addEventListener('resize', () => TA.active?.place());
+document.addEventListener('scroll', () => TA.active?.place(), true);
+
+// typeahead(input, {scope, keys, values, bareValues, bareField, alias, extraQ, onAccept, bare})
+//   scope      objects | logs: values come from /api/suggest
+//   keys       [{value, hint, example}] or a function; default: the server's keys for scope
+//   values     (field, partial, rest) => [{value, count, hint}] for client-side scopes; rest is the query without this term
+//   bareValues partial => suggestions for a term with no colon (navigator types)
+//   bareField  server field to suggest for bare text, e.g. name
+//   extraQ     () => extra query terms that narrow suggestions
+//   onAccept   (input) => run the view's search after a value is chosen
+function typeahead(input, o) {
+  if (!input || input._ta) return input?._ta;
+  const st = {items: [], sel: -1, tok: null, seq: 0, timer: null};
+  const self = {input, place, close: () => taClose()};
+  input._ta = self;
+  const rest = () => {
+    const v = input.value, t = st.tok;
+    return [(t ? v.slice(0, t.start) + v.slice(t.end) : v).trim(), o.extraQ?.() || ''].filter(Boolean).join(' ');
+  };
+  const field = k => { const l = k.toLowerCase(); return (o.alias || {})[l] || l; };
+  async function refresh(force) {
+    const tok = st.tok = taToken(input.value, input.selectionStart ?? input.value.length);
+    const my = ++st.seq;
+    let items = [];
+    if (!tok.key) {
+      if (tok.quoted || (!tok.partial && !force)) { st.items = []; draw(); return; }
+      const p = tok.partial.toLowerCase();
+      const keys = await taKeys(o);
+      items = keys.filter(k => k.value.toLowerCase().startsWith(p)).map(k => ({type: 'key', value: k.value + ':', hint: k.hint, example: k.example, count: k.count}));
+      if (o.bareValues) items = items.concat(o.bareValues(tok.partial).map(x => ({...x, type: 'text'})));
+      else if (o.bareField && tok.partial.length >= 3) {
+        if (!TA.cache.has([o.scope, o.bareField, tok.partial, rest(), S.cluster].join('\u0000'))) { clearTimeout(st.timer); await new Promise(r => { st.timer = setTimeout(r, 120); }); if (my !== st.seq) return; }
+        items = items.concat((await taFetch(o.scope, o.bareField, tok.partial, rest())).slice(0, 12).map(x => ({...x, type: 'text'})));
+      }
+    } else {
+      const f = field(tok.key);
+      if (o.values) items = await o.values(f, tok.partial, rest());
+      else {
+        const q = rest();
+        if (!TA.cache.has([o.scope, f, tok.partial, q, S.cluster].join('\u0000'))) { clearTimeout(st.timer); await new Promise(r => { st.timer = setTimeout(r, 120); }); if (my !== st.seq) return; }
+        items = await taFetch(o.scope, f, tok.partial, q);
+      }
+      items = (items || []).filter(x => !(x.value === tok.partial && !x.more && !force)).map(x => ({...x, type: 'value'}));
+    }
+    if (my !== st.seq) return;
+    st.items = items.slice(0, 60); st.sel = -1; draw();
+  }
+  function place() {
+    const m = TA.menu; if (!m || TA.active !== self) return;
+    if (!input.isConnected) { taClose(); return; }
+    const r = (input.closest('.query') || input).getBoundingClientRect();
+    const w = Math.min(Math.max(Math.min(r.width, 640), 360), innerWidth - r.left - 12);
+    Object.assign(m.style, {left: r.left + 'px', top: r.bottom + 4 + 'px', width: w + 'px', maxHeight: Math.max(160, Math.min(360, innerHeight - r.bottom - 16)) + 'px'});
+  }
+  function draw() {
+    if (!st.items.length || document.activeElement !== input || !input.isConnected) { if (TA.active === self) taClose(); return; }
+    if (TA.active && TA.active !== self) taClose();
+    const m = TA.menu || (TA.menu = document.createElement('div'));
+    m.className = 'ta-menu'; m.setAttribute('role', 'listbox');
+    const tok = st.tok;
+    const head = tok.key ? `<div class="ta-head">${esc(field(tok.key))} <span>values in this capture</span></div>` : '';
+    m.innerHTML = head + st.items.map((it, i) => `<button type="button" tabindex="-1" role="option" class="ta-item ta-${it.type} ${i === st.sel ? 'sel' : ''}" data-tai="${i}">
+      <span class="ta-v">${esc(it.value)}${it.more ? '<b>=…</b>' : ''}</span><span class="ta-h">${esc(it.hint || '')}${it.example ? ` <code>${esc(it.example)}</code>` : ''}</span>${it.count ? `<span class="ta-c">${num(it.count)}</span>` : ''}</button>`).join('') +
+      '<div class="ta-foot">↑ ↓ choose · Enter or Tab insert · Esc close</div>';
+    if (!m.isConnected) document.body.appendChild(m);
+    TA.active = self;
+    m.onmousedown = e => e.preventDefault();
+    m.querySelectorAll('[data-tai]').forEach(b => { b.onclick = () => accept(+b.dataset.tai); });
+    place();
+  }
+  function highlight() {
+    TA.menu?.querySelectorAll('[data-tai]').forEach(b => b.classList.toggle('sel', +b.dataset.tai === st.sel));
+    TA.menu?.querySelector('.ta-item.sel')?.scrollIntoView({block: 'nearest'});
+  }
+  function accept(i) {
+    const it = st.items[i], t = st.tok; if (!it || !t) return;
+    const v = input.value;
+    let ins;
+    if (it.type === 'key') ins = t.neg + it.value;
+    else if (it.type === 'text') ins = t.neg + (o.bareValues ? it.value : taQuote(it.value) + ' ');
+    else ins = t.neg + t.key + ':' + (it.more ? it.value + '=' : taQuote(it.value) + ' ');
+    let after = v.slice(t.end);
+    if (ins.endsWith(' ') && after.startsWith(' ')) after = after.slice(1);
+    input.value = v.slice(0, t.start) + ins + after;
+    const c = t.start + ins.length;
+    input.setSelectionRange(c, c);
+    st.items = []; taClose();
+    if (it.type === 'key' || it.more) { refresh(true); return; }
+    if (o.onAccept) o.onAccept(input); else input.dispatchEvent(new Event('input', {bubbles: true}));
+  }
+  input.setAttribute('autocomplete', 'off');
+  input.addEventListener('keydown', e => {
+    const open = TA.active === self && st.items.length;
+    if (!open) {
+      if (e.key === 'ArrowDown' && (input.value.trim() === '' || e.altKey || e.ctrlKey)) { e.preventDefault(); e.stopImmediatePropagation(); refresh(true); }
+      else if (e.key === ' ' && e.ctrlKey) { e.preventDefault(); refresh(true); }
+      return;
+    }
+    const n = st.items.length;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { st.sel = e.key === 'ArrowDown' ? (st.sel + 1) % n : (st.sel <= 0 ? n - 1 : st.sel - 1); highlight(); }
+    else if ((e.key === 'Enter' && st.sel >= 0) || (e.key === 'Tab' && !e.shiftKey)) accept(Math.max(0, st.sel));
+    else if (e.key === 'Escape') { st.items = []; taClose(); }
+    else { if (e.key === 'Enter') { st.items = []; taClose(); } return; }
+    e.preventDefault(); e.stopImmediatePropagation(); e.stopPropagation();
+  }, true);
+  input.addEventListener('input', () => refresh());
+  input.addEventListener('click', () => { if (TA.active === self) refresh(); });
+  input.addEventListener('keyup', e => { if (TA.active === self && /^(ArrowLeft|ArrowRight|Home|End)$/.test(e.key)) refresh(); });
+  input.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== input && TA.active === self) taClose(); }, 120));
+  input.addEventListener('focus', () => { if (TA.reopen && TA.reopen === input.id) { TA.reopen = null; setTimeout(() => refresh(), 0); } });
+  if (TA.reopen && TA.reopen === input.id && document.activeElement === input) { TA.reopen = null; setTimeout(() => refresh(), 0); }
+  return self;
 }
 
 // ---------- import status ----------
@@ -118,6 +299,7 @@ function onState(st) {
   S.state = st;
   renderImportStatus();
   if (!prev) return;
+  if (st.revision !== prev.revision) { TA.cache.clear(); TA.keys.clear(); }
   const phaseChanged = prev.phase !== st.phase;
   if (S.view === 'logs' && !phaseChanged) { checkNewLines(); return; }
   if (S.drawerOpen || document.querySelector('.modal-backdrop')) return;
@@ -228,6 +410,7 @@ const nvQuick = [['pods', ''], ['deployments', 'apps'], ['services', ''], ['gate
 async function navigator() {
   const N = S.nv, w = S.ws || await api('api/workspace');
   const types = await api('api/resources', {cluster: S.cluster});
+  S.nvTypes = types;
   const have = types.filter(t => t.count > 0);
   let cur = types.find(t => t.resource === N.resource && t.group === N.group) || have.find(t => t.resource === 'pods') || have[0];
   if (!cur) return head('Navigator', 'Nothing captured yet.');
@@ -251,16 +434,28 @@ async function navigator() {
       <div class="nv-logo"> ┌─┐ ┌─┐ ┌─┐\n │ │ │ │ │ │  flightbay\n │ └─┘ │ │ │  snapshot\n └─────┘ └─┘  navigator</div>
     </div>
     <div class="nv-frame"><div class="nv-title">${esc(cur.kind || cur.resource)}(${esc(N.ns || 'all')}) [${list.rows.length}]</div>
-      ${N.cmd ? `<div class="nv-cmd"><span>:</span><input id="nv-cmdline" placeholder="pods, deploy, svc, httproute, gateway…  (Enter to switch, Esc to cancel)" autocomplete="off" list="nv-kinds"><datalist id="nv-kinds">${types.slice().sort((a, b) => b.count - a.count).map(t => `<option value="${esc(t.resource)}">${esc(t.kind)} · ${t.count}${t.group ? ' · ' + esc(t.group) : ''}</option>`).join('')}</datalist></div>` : ''}
+      ${N.cmd ? `<div class="nv-cmd"><span>:</span><input id="nv-cmdline" placeholder="pods, deploy, svc, httproute, gateway…  (Enter to switch, Esc to cancel)" autocomplete="off" spellcheck="false"></div>` : ''}
       <div class="nv-bar">${quick.map(([r, g]) => `<button class="nv-type ${r === N.resource && g === N.group ? 'on' : ''}" data-nvtype="${attr({r, g})}">:${r}</button>`).join('')}
         <span style="flex:1"></span><select id="nv-ns"><option value="">All namespaces</option>${nss.map(n => `<option ${n === N.ns ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
-        <input id="nv-q" placeholder="/ filter by name, status or label" value="${esc(N.q)}" style="width:280px"></div>
+        <input id="nv-q" placeholder="/ filter by name, status or label:" value="${esc(N.q)}" style="width:280px" autocomplete="off" spellcheck="false"></div>
       <div class="table-scroll" style="max-height:58vh"><table><thead><tr>${cur.namespaced ? '<th>Namespace</th>' : ''}${list.columns.map(c => `<th>${esc(c)}</th>`).join('')}<th></th></tr></thead><tbody>
         ${list.rows.map((r, i) => `<tr class="${i === N.sel ? 'sel' : ''}" data-nvrow="${i}">${cur.namespaced ? `<td>${esc(r.namespace)}</td>` : ''}${r.cells.map((c, j) => `<td>${j === 0 && i === N.sel ? '› ' : ''}${j === statusCol ? statusCell(c) : esc(c)}</td>`).join('')}
           <td style="text-align:right"><button class="ghost" data-nvyaml="${i}">YAML</button>${(N.resource === 'pods' && !N.group) || workloadKinds.includes(r.kind) ? `<button class="ghost" data-nvlogs="${i}">Logs</button>` : ''}</td></tr>`).join('') || `<tr><td colspan="9" class="muted">No ${esc(cur.kind || cur.resource)} objects${N.q ? ' match the filter' : ''}.</td></tr>`}
       </tbody></table></div>
       <div class="nv-status"><span>${sel ? `${esc(sel.name)}${sel.namespace ? ' · ' + esc(sel.namespace) : ''}${!S.cluster ? ' · ' + esc(sel.cluster) : ''}` : ''}</span><span><b>Enter</b> describe · <b>y</b> yaml · <b>l</b> logs · <b>:</b> type · <b>/</b> filter</span></div>
     </div></div>`;
+}
+
+const labelKey = [{value: 'label', hint: 'label key or key=value', example: 'label:app=checkout'}];
+// nvTypeSuggestions lists the captured types for the : command line, matching
+// the resource name, kind, singular name or a short name.
+function nvTypeSuggestions(p) {
+  const w = (p || '').toLowerCase().replace(/^:/, '');
+  const types = S.nvTypes || [];
+  const dup = {}; types.forEach(t => { dup[t.resource] = (dup[t.resource] || 0) + 1; });
+  return types.filter(t => !w || t.resource.startsWith(w) || (t.kind || '').toLowerCase().startsWith(w) || (t.singularName || '').startsWith(w) || (t.shortNames || []).some(s => s.startsWith(w)))
+    .sort((a, b) => (b.count > 0) - (a.count > 0) || b.count - a.count || a.resource.localeCompare(b.resource)).slice(0, 40)
+    .map(t => ({value: dup[t.resource] > 1 ? t.name : t.resource, count: t.count, hint: `${t.kind}${(t.shortNames || []).length ? ' · ' + t.shortNames.join(', ') : ''}${t.group ? ' · ' + t.group : ''}${t.count ? '' : ' · none captured'}`}));
 }
 
 function nvRef(r) { return {cluster: r.cluster, group: r.group, resource: r.resource, namespace: r.namespace, name: r.name}; }
@@ -274,15 +469,13 @@ after.navigator = () => {
   document.querySelectorAll('[data-nvlogs]').forEach(b => b.onclick = e => { e.stopPropagation(); const r = N.rows[+b.dataset.nvlogs]; openLogs(r.kind === 'Pod' ? {pod: r.name, namespace: r.namespace} : {workload: `${r.kind}/${r.name}`, namespace: r.namespace}); });
   $('#nv-ns').onchange = e => { N.ns = e.target.value; N.sel = 0; render(); };
   $('#nv-ctx').onchange = e => setCluster(e.target.value);
-  let t; $('#nv-q').oninput = e => { clearTimeout(t); t = setTimeout(() => { N.q = e.target.value; N.sel = 0; render().then(() => { const i = $('#nv-q'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }); }, 200); };
+  let t; $('#nv-q').oninput = e => { clearTimeout(t); t = setTimeout(() => { const c = e.target.selectionStart, v = e.target.value; N.q = v; N.sel = 0; render().then(() => refocus('#nv-q', c, v)); }, 200); };
+  typeahead($('#nv-q'), {scope: 'objects', keys: labelKey, alias: {l: 'label'}, extraQ: () => `kind:${N.resource}${N.group ? '.' + N.group : ''}${N.ns ? ' ns:' + N.ns : ''}`});
   $('#nv-q').onkeydown = e => { if (e.key === 'Escape' || e.key === 'Enter') { e.target.blur(); } };
   const cl = $('#nv-cmdline');
   if (cl) {
-    cl.focus();
-    cl.onkeydown = async e => {
-      if (e.key === 'Escape') { N.cmd = false; render(); return; }
-      if (e.key !== 'Enter') return;
-      const want = cl.value.trim().toLowerCase().replace(/^:/, '');
+    const go = async value => {
+      const want = value.trim().toLowerCase().replace(/^:/, '');
       const types = await api('api/resources', {cluster: S.cluster});
       const exact = x => x.resource === want || x.name === want || (x.kind || '').toLowerCase() === want || x.singularName === want || (x.shortNames || []).includes(want);
       let m = types.filter(exact);
@@ -290,6 +483,14 @@ after.navigator = () => {
       m.sort((a, b) => b.count - a.count || (a.group ? 1 : 0) - (b.group ? 1 : 0));
       if (m.length) setType(m[0].resource, m[0].group); else toast(`No type matches "${want}" in this bundle`);
     };
+    typeahead(cl, {keys: [], bareValues: nvTypeSuggestions, onAccept: i => go(i.value)});
+    cl.focus();
+    cl.onkeydown = e => {
+      if (e.key === 'Escape') { N.cmd = false; render(); return; }
+      if (e.key === 'Enter') go(cl.value);
+    };
+    // Show the captured types straight away, as k9s does.
+    setTimeout(() => cl.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowDown'})), 0);
   }
 };
 
@@ -322,52 +523,91 @@ document.addEventListener('keydown', e => {
 const pstColour = n => n >= 90 ? 'var(--teal)' : n >= 75 ? '#7fc97f' : n >= 60 ? 'var(--amber)' : 'var(--red)';
 const pstBadge = st => `<span class="pst-badge pst-${st}">${{fail: 'FAIL', warn: 'WARN', pass: 'PASS', na: 'N/A'}[st]}</span>`;
 
+// The filter box takes free text and key:value terms. Values match as a
+// case-insensitive prefix; kind: and ns: match any object a check looked at.
+const pstFields = {area: c => [c.area], status: c => [c.status], severity: c => [c.severity], sev: c => [c.severity], category: c => [c.category],
+  kind: c => c.items.map(i => i.kind), ns: c => c.items.map(i => i.namespace), namespace: c => c.items.map(i => i.namespace), id: c => [c.id]};
+const pstKeys = [
+  {value: 'status', hint: 'fail, warn, pass or na', example: 'status:fail'},
+  {value: 'severity', hint: 'critical, high, medium or low', example: 'severity:critical'},
+  {value: 'area', hint: 'which part of the stack', example: 'area:agentic'},
+  {value: 'category', hint: 'group of checks', example: 'category:identity'},
+  {value: 'kind', hint: 'kind of object checked', example: 'kind:AgentgatewayPolicy'},
+  {value: 'ns', hint: 'namespace of an object checked', example: 'ns:kagent'},
+  {value: 'id', hint: 'check identifier', example: 'id:ag-'},
+];
+function pstMatch(c, terms) {
+  return terms.every(t => {
+    let ok;
+    if (t.key && pstFields[t.key]) { const w = t.val.toLowerCase(); ok = pstFields[t.key](c).some(v => String(v || '').toLowerCase().startsWith(w)); }
+    else ok = (c.title + ' ' + c.id + ' ' + c.category + ' ' + c.items.map(i => i.name + ' ' + i.detail).join(' ')).toLowerCase().includes((t.text ?? `${t.key}:${t.val}`).toLowerCase());
+    return t.neg ? !ok : ok;
+  });
+}
+
 async function posture() {
   const P = S.pst;
   const r = await api('api/posture');
   S.pstData = r;
+  const shortName = {agentic: 'Agentic', ambient: 'Istio', gateway: 'Ingress', kubernetes: 'Kubernetes'};
+  const present = r.areas.filter(a => a.present && a.grade), absent = r.areas.filter(a => !a.present || !a.grade);
   const card = a => {
-    if (!a.present) return `<section class="panel pst-card"><div class="panel-body"><h2>${esc(a.title)}</h2><p class="muted mt">Not scored: ${esc(a.reason)}</p></div></section>`;
     const cats = Object.entries(a.categories || {}).sort((x, y) => x[1] - y[1]);
     const c = a.counts || {};
-    return `<section class="panel pst-card"><div class="panel-body"><div class="row" style="gap:22px;align-items:center">
-      <div class="pst-ring" style="--pct:${a.score};--col:${pstColour(a.score)}"><div><strong>${a.score}</strong><span>${esc(a.grade || '')}</span></div></div>
-      <div style="flex:1;min-width:0"><h2>${esc(a.title)}</h2>
-        <p class="muted" style="margin:4px 0 10px">${c.fail || 0} failing · ${c.warn || 0} warnings · ${c.pass || 0} passing · ${c.na || 0} not applicable</p>
-        ${cats.map(([k, v]) => `<div class="pst-cat"><span>${esc(k)}</span><div class="pst-bar"><i style="width:${v}%;background:${pstColour(v)}"></i></div><small>${v}</small></div>`).join('')}</div></div></div></section>`;
+    return `<section class="panel pst-card ${P.area === a.area ? 'on' : ''}" data-pstarea="${esc(a.area)}" title="Show only ${esc(a.title)}"><div class="panel-body">
+      <div class="row" style="gap:16px;align-items:center"><div class="pst-ring" style="--pct:${a.score};--col:${pstColour(a.score)}"><div><strong>${a.score}</strong><span>${esc(a.grade || '')}</span></div></div>
+      <div style="min-width:0"><h2 style="font-size:15px">${esc(a.title)}</h2><p class="muted" style="margin:4px 0 0;font-size:12px"><span class="red">${c.fail || 0} failing</span> · <span class="amber">${c.warn || 0} warnings</span> · ${c.pass || 0} passing · ${c.na || 0} n/a</p></div></div>
+      <div class="mt">${cats.map(([k, v]) => `<div class="pst-cat"><span>${esc(k)}</span><div class="pst-bar"><i style="width:${v}%;background:${pstColour(v)}"></i></div><small>${v}</small></div>`).join('')}</div></div></section>`;
   };
-  const q = P.q.toLowerCase();
+  const tot = {fail: 0, warn: 0, pass: 0, na: 0};
+  r.checks.forEach(c => tot[c.status]++);
+  const objs = r.checks.reduce((n, c) => n + c.total, 0);
+  const coverage = `<div class="notice info pst-coverage"><div><strong>Scanned ${r.checks.length} best practices</strong> across ${present.length} area${present.length === 1 ? '' : 's'}, evaluating ${objs} object${objs === 1 ? '' : 's'}: <span class="red">${tot.fail} failing</span>, <span class="amber">${tot.warn} with warnings</span>, ${tot.pass} passing, ${tot.na} not applicable to this capture.
+    ${absent.length ? `<br><small class="muted">Not scored: ${absent.map(a => `${esc(a.title)} (${esc(a.reason)})`).join('; ')}.</small>` : ''}</div></div>`;
+  const terms = qTerms(P.q);
+  const typedStatus = terms.some(t => t.key === 'status'); // a status: term overrides the status chips
   const checks = r.checks.filter(c => (!P.area || c.area === P.area) &&
-    (P.status === 'all' || (P.status === 'attention' ? (c.status === 'fail' || c.status === 'warn') : c.status === P.status)) &&
-    (!q || (c.title + ' ' + c.id + ' ' + c.category + ' ' + c.items.map(i => i.name + ' ' + i.detail).join(' ')).toLowerCase().includes(q)));
-  const chip = (field, v, label) => `<button class="chip ${P[field] === v ? 'on' : ''}" data-pst="${attr({field, v})}">${label}</button>`;
+    (typedStatus || P.status === 'all' || (P.status === 'attention' ? (c.status === 'fail' || c.status === 'warn') : c.status === P.status)) &&
+    pstMatch(c, terms));
+  const chip = (field, v, label) => `<button class="chip ${P[field] === v && !(field === 'status' && typedStatus) ? 'on' : ''}" data-pst="${attr({field, v})}">${label}</button>`;
   const row = c => {
     const open = P.open === c.id;
     const items = c.items.filter(i => i.status !== 'na');
-    return `<div class="pst-check ${open ? 'open' : ''}"><button class="pst-head" data-pstopen="${esc(c.id)}">${pstBadge(c.status)}<span class="tag">${esc(c.severity)}</span><strong>${esc(c.title)}</strong><span class="muted">${esc(c.area === 'agentic' ? 'Agentic' : 'Ambient')} · ${esc(c.category)}</span><span style="flex:1"></span>${c.status === 'na' ? `<small class="muted">${esc(c.reason)}</small>` : `<small>${c.passed}/${c.total} pass</small>`}<span class="muted">${open ? '▾' : '▸'}</span></button>
+    return `<div class="pst-check ${open ? 'open' : ''}"><button class="pst-head" data-pstopen="${esc(c.id)}">${pstBadge(c.status)}<span class="tag">${esc(c.severity)}</span><strong>${esc(c.title)}</strong><span class="muted">${esc(shortName[c.area] || c.area)} · ${esc(c.category)}</span><span style="flex:1"></span>${c.status === 'na' ? `<small class="muted">${esc(c.reason)}</small>` : `<small>${c.passed}/${c.total} pass</small>`}<span class="muted">${open ? '▾' : '▸'}</span></button>
       ${open ? `<div class="pst-body"><p>${esc(c.why)}</p>
         ${items.length ? `<div class="table-scroll mt" style="max-height:40vh"><table><thead><tr><th></th><th>Object</th><th>What we found</th></tr></thead><tbody>${items.map((i, n) => `<tr><td>${pstBadge(i.status)}</td><td class="mono">${i.name ? `<button class="link" data-pstobj="${attr({c: c.id, n})}">${esc(i.kind)} ${esc(i.namespace ? i.namespace + '/' : '')}${esc(i.name)}</button>` : '<span class="muted">cluster</span>'}</td><td style="white-space:normal">${esc(i.detail)}</td></tr>`).join('')}</tbody></table></div>` : ''}
         ${c.status === 'fail' || c.status === 'warn' || c.status === 'na' ? `<div class="row between mt"><h3>How to fix</h3><div class="row"><button data-pstcopy="${esc(c.id)}">Copy YAML</button><a href="${esc(c.source)}" target="_blank" rel="noopener">Read the guide ↗</a></div></div><pre class="code mt">${esc(c.fix)}</pre>` : `<p class="mt"><a href="${esc(c.source)}" target="_blank" rel="noopener">Read the guide ↗</a></p>`}
       </div>` : ''}</div>`;
   };
-  return head('Best practices', "How this snapshot scores against Solo's defence-in-depth guidance for agentic workloads and Istio ambient. Each check shows the evidence and the change to make.", '<button id="pst-term">&gt;_ fbscore in terminal</button>') + `
-    <div class="grid2">${r.areas.map(card).join('')}</div>
-    <div class="toolbar mt"><div class="row wrap">${chip('area', '', 'Both')}${chip('area', 'agentic', 'Agentic')}${chip('area', 'ambient', 'Ambient')}<span class="muted">·</span>${chip('status', 'attention', 'Needs attention')}${chip('status', 'fail', 'Failing')}${chip('status', 'pass', 'Passing')}${chip('status', 'na', 'Not applicable')}${chip('status', 'all', 'All')}</div>
-      <input id="pst-q" placeholder="Filter checks, objects or findings" value="${esc(P.q)}" style="min-width:260px"></div>
-    <section class="panel">${checks.map(row).join('') || '<div class="empty"><strong>No checks match</strong>Change the filters above.</div>'}</section>
+  let lastArea = '';
+  const rows = checks.map(c => { const h = !P.area && c.area !== lastArea ? `<div class="tl-day">${esc((r.areas.find(a => a.area === c.area) || {}).title || c.area)}</div>` : ''; lastArea = c.area; return h + row(c); }).join('');
+  return head('Best practices', "Solo's guidance for agentic workloads, Istio, ingress and Kubernetes, checked against this snapshot. Problems first, each with its evidence and fix.", '<button id="pst-term">&gt;_ fbscore in terminal</button>') + `
+    ${coverage}
+    <div class="pst-cards">${present.map(card).join('')}</div>
+    <div class="toolbar mt"><div class="row wrap">${chip('area', '', 'All areas')}${present.map(a => chip('area', a.area, shortName[a.area] || a.title)).join('')}<span class="muted">·</span>${chip('status', 'attention', 'Needs attention')}${chip('status', 'fail', 'Failing')}${chip('status', 'pass', 'Passing')}${chip('status', 'na', 'Not applicable')}${chip('status', 'all', 'All')}</div>
+      <input id="pst-q" placeholder="Filter. Try status: severity: area: category: kind: ns: or text" value="${esc(P.q)}" style="min-width:340px" autocomplete="off" spellcheck="false"></div>
+    <section class="panel">${rows || (P.status === 'attention' && !P.q ? '<div class="empty"><strong>Nothing needs attention</strong>Every applicable check passes. Choose Passing or All to see them.</div>' : '<div class="empty"><strong>No checks match</strong>Change the filters above.</div>')}</section>
     <p class="muted mt" style="font-size:12px">Scores weight checks by severity (critical 10, high 6, medium 3, low 1) and give partial credit per object. Checks whose data was not captured, or that have nothing to apply to, are not applicable and do not lower the score.</p>`;
 }
 after.posture = () => {
   const P = S.pst;
   document.querySelectorAll('[data-pst]').forEach(b => b.onclick = () => { const f = JSON.parse(b.dataset.pst); P[f.field] = f.v; render(); });
+  document.querySelectorAll('[data-pstarea]').forEach(b => b.onclick = () => { P.area = P.area === b.dataset.pstarea ? '' : b.dataset.pstarea; render(); });
   document.querySelectorAll('[data-pstopen]').forEach(b => b.onclick = () => { P.open = P.open === b.dataset.pstopen ? null : b.dataset.pstopen; render(); });
   document.querySelectorAll('[data-pstobj]').forEach(b => b.onclick = () => { const x = JSON.parse(b.dataset.pstobj); const it = S.pstData.checks.find(c => c.id === x.c).items.filter(i => i.status !== 'na')[x.n]; openObject({cluster: it.cluster, group: it.group, resource: it.resource, namespace: it.namespace, name: it.name}); });
   document.querySelectorAll('[data-pstcopy]').forEach(b => b.onclick = () => { const c = S.pstData.checks.find(x => x.id === b.dataset.pstcopy); navigator.clipboard.writeText(c.fix).then(() => toast('Fix copied'), () => toast('Clipboard unavailable')); });
-  let t; $('#pst-q').oninput = e => { clearTimeout(t); t = setTimeout(() => { P.q = e.target.value; render().then(() => { const i = $('#pst-q'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }); }, 250); };
+  let t; $('#pst-q').oninput = e => { clearTimeout(t); t = setTimeout(() => { const c = e.target.selectionStart, v = e.target.value; P.q = v; render().then(() => refocus('#pst-q', c, v)); }, 250); };
+  typeahead($('#pst-q'), {keys: pstKeys, alias: {sev: 'severity', namespace: 'ns'}, values: (f, p, rest) => {
+    const terms = qTerms(rest), checks = (S.pstData?.checks || []).filter(c => pstMatch(c, terms)), get = pstFields[f];
+    if (!get) return [];
+    const hints = {fail: 'failing', warn: 'warning', pass: 'passing', na: 'not applicable'};
+    return countValues(checks.flatMap(get), p, f === 'status' ? v => hints[v] : null);
+  }});
   $('#pst-term').onclick = () => termRun('fbscore');
 };
 
 // ---------- search ----------
+const objAlias = {type: 'kind', k: 'kind', namespace: 'ns', l: 'label'};
 function hl(text, q) {
   // Quoted phrases highlight as a whole; key:value filters and -exclusions do not.
   const words = ((q || '').match(/-?"[^"]+"|\S+/g) || []).filter(w => !w.startsWith('-') && (w.startsWith('"') || !/^\w+:/.test(w))).map(w => w.replace(/"/g, '')).filter(Boolean);
@@ -389,7 +629,7 @@ function whyMatched(h, q) {
 async function search() {
   const Q = S.search;
   const examples = ['kind:pod', 'CrashLoopBackOff', 'kind:httproute', 'label:app', 'kind:deployment ns:istio-system', '"image"'];
-  const bar = `<form class="query" id="obj-form"><span class="green">⌕</span><input id="obj-q" value="${esc(Q.q)}" placeholder='Search every object: checkout, kind:pod ns:payments, label:app=checkout, "CrashLoopBackOff"' autocomplete="off" spellcheck="false" aria-label="Object search"><button class="primary">Search ↵</button></form>
+  const bar = `<form class="query" id="obj-form"><span class="green">⌕</span><input id="obj-q" value="${esc(Q.q)}" placeholder='Search every object. Try kind: ns: label: name: or free text, e.g. kind:pod label:app=checkout' autocomplete="off" spellcheck="false" aria-label="Object search"><button class="primary">Search ↵</button></form>
     <div class="help-row"><span>Try</span>${examples.map(x => `<button data-otry="${esc(x)}">${esc(x)}</button>`).join('')}</div>`;
   const header = head('Search', 'Every captured object of every kind: names, namespaces, labels, and anything in spec and status (images, hostnames, status reasons).');
   if (!Q.q.trim()) {
@@ -415,7 +655,8 @@ async function search() {
 }
 after.search = () => {
   const Q = S.search;
-  const go = q => { Q.q = q; Q.limit = 200; history.replaceState(null, '', '#search' + (q ? '?q=' + encodeURIComponent(q) : '')); render(); };
+  const go = (q, keep) => { Q.q = q; Q.limit = 200; history.replaceState(null, '', '#search' + (q ? '?q=' + encodeURIComponent(q) : '')); render().then(() => { if (keep) refocus('#obj-q', keep.caret, keep.value); }); };
+  typeahead($('#obj-q'), {scope: 'objects', alias: objAlias, bareField: 'name', onAccept: i => go(i.value.trim(), {value: i.value, caret: i.selectionStart})});
   $('#obj-form').onsubmit = e => { e.preventDefault(); go($('#obj-q').value.trim()); };
   document.querySelectorAll('[data-otry]').forEach(b => b.onclick = () => go(b.dataset.otry));
   document.querySelectorAll('[data-okind]').forEach(b => b.onclick = () => go(`kind:${b.dataset.okind.toLowerCase()} ${Q.q.replace(/-?kind:\S+/g, '')}`.trim()));
@@ -457,7 +698,7 @@ async function resources() {
   <div class="resource-layout"><nav class="types" aria-label="Resource types">${groups.map(([area, ts]) => `<h3 style="margin:12px 8px 4px;font-size:10px;letter-spacing:.08em;text-transform:uppercase" class="muted">${esc(area)}</h3>` + ts.map(t => `<button class="${t.resource === cur.resource && t.group === cur.group ? 'active' : ''}" data-type="${attr({g: t.group, r: t.resource})}" title="${esc(t.name)} · ${esc(t.state)}"><span>${kindLabel(t)}</span><span><small>${t.count}</small> <span class="st state-${esc(t.state)}">●</span></span></button>`).join('')).join('')}
     ${hidden ? `<p class="muted" style="font-size:11px;margin:12px 8px">${hidden} types with no captured objects are hidden. <button class="link" id="res-cov">Coverage</button> shows which were excluded or failed.</p>` : ''}</nav>
   <div><div class="toolbar"><select id="res-ns" aria-label="Namespace"><option value="">All namespaces</option>${S.res.nsOptions.map(n => `<option ${n === S.res.ns ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
-    <input id="res-q" placeholder="Filter by name, status or label (press /)" value="${esc(S.res.q)}" aria-label="Filter"><button id="res-reset">Reset</button></div>
+    <input id="res-q" placeholder="Filter by name, status or label: (press /)" value="${esc(S.res.q)}" aria-label="Filter" autocomplete="off" spellcheck="false"><button id="res-reset">Reset</button></div>
     ${stateNote}
     <section class="panel"><div class="panel-head"><div class="row"><h2>${esc(cur.kind || cur.resource)}</h2><span class="badge">${list.rows.length}</span></div><span class="mono muted" style="font-size:10px">${esc(cur.group ? cur.group + '/' + cur.version : cur.version)} · ${esc(cur.name)}</span></div>
     <div class="table-scroll" style="max-height:62vh">${list.rows.length ? `<table><thead><tr>${multi ? '<th>Cluster</th>' : ''}${cur.namespaced ? '<th>Namespace</th>' : ''}${list.columns.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>
@@ -469,7 +710,8 @@ after.resources = () => {
   document.querySelectorAll('[data-type]').forEach(b => b.onclick = () => { const t = JSON.parse(b.dataset.type); S.res.group = t.g; S.res.resource = t.r; S.res.ns = ''; S.res.q = ''; render(); });
   document.querySelectorAll('[data-obj]').forEach(tr => tr.onclick = () => openObject(JSON.parse(tr.dataset.obj)));
   $('#res-ns').onchange = e => { S.res.ns = e.target.value; render(); };
-  let t; $('#res-q').oninput = e => { clearTimeout(t); t = setTimeout(() => { S.res.q = e.target.value; render().then(() => { const i = $('#res-q'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }); }, 250); };
+  let t; $('#res-q').oninput = e => { clearTimeout(t); t = setTimeout(() => { const c = e.target.selectionStart, v = e.target.value; S.res.q = v; render().then(() => refocus('#res-q', c, v)); }, 250); };
+  typeahead($('#res-q'), {scope: 'objects', keys: labelKey, alias: {l: 'label'}, extraQ: () => `kind:${S.res.resource}${S.res.group ? '.' + S.res.group : ''}${S.res.ns ? ' ns:' + S.res.ns : ''}`});
   $('#res-reset').onclick = () => { S.res.ns = ''; S.res.q = ''; render(); };
   const rc = $('#res-cov'); if (rc) rc.onclick = () => nav('coverage');
   $('#res-k9s').onclick = () => openK9s(S.res.resource + (S.res.group ? '.' + S.res.group : ''), S.res.ns);
@@ -494,7 +736,7 @@ async function openObject(ref, tab = 'summary') {
           ${o.object.spec?.nodeName ? `<dt>Node</dt><dd>${esc(o.object.spec.nodeName)}</dd>` : ''}${st.phase ? `<dt>Phase</dt><dd>${statusCell(st.phase)}</dd>` : ''}</dl>
           ${cs ? `<h3 class="mt">Containers</h3><div class="table-scroll"><table><thead><tr><th>Name</th><th>Ready</th><th>State</th><th>Restarts</th><th>Last termination</th></tr></thead><tbody>${cs}</tbody></table></div>` : ''}
           ${o.object['x-flightbay'] ? '<div class="notice info mt">Secret values were never collected. Only metadata' + (o.object['x-flightbay'].keys ? ', key names and byte lengths are' : ' is') + ' shown.</div>' : ''}
-          <div class="row wrap mt">${isPod ? `<button class="primary" id="d-logs">Open pod logs →</button>` : ''}${workloadKinds.includes(o.kind) ? `<button class="primary" id="d-wlogs">Open logs of all its pods →</button>` : ''}<button id="d-describe">&gt;_ kubectl describe</button><button id="d-compare">Compare across clusters</button></div>`;
+          <div class="row wrap mt">${isPod ? `<button class="primary" id="d-logs">Open pod logs →</button>` : ''}${workloadKinds.includes(o.kind) ? `<button class="primary" id="d-wlogs">Open logs of all its pods →</button>` : ''}<button id="d-describe">&gt;_ kubectl describe</button>${(S.ws?.clusters || []).length > 1 ? '<button id="d-compare">Compare across clusters</button>' : ''}</div>`;
       },
       yaml: () => `<div class="row between" style="margin-bottom:10px"><small>Captured object (redacted)</small><button id="d-copy">Copy YAML</button></div><pre class="code">${esc(d.yaml)}</pre>`,
       json: () => `<pre class="code">${esc(d.json)}</pre>`,
@@ -587,7 +829,7 @@ async function logs() {
   <div class="log-layout"><aside class="facets" aria-label="Filters">${facet('level', 'level', 'Level')}${facet('namespace', 'namespace', 'Namespace')}${workloadFacet}${facet('pod', 'pod', 'Pod', podPicker)}${facet('container', 'container', 'Container')}${facet('stream', 'stream', 'Stream')}${!S.cluster ? facet('cluster', 'cluster_', 'Cluster') : ''}
     ${fieldList}
     <h3>Syntax</h3><div class="muted mono" style="font-size:10px;line-height:1.8">level:error<br>ns:payments pod:checkout*<br>trace_id:a4e98f02<br>"connection reset"<br>-healthz · a OR b<br>status:5* · since:15m</div></aside>
-  <section><form class="query" id="log-form"><span class="green">⌕</span><input id="log-q" value="${esc(L.q)}" placeholder='Search, e.g. level:error ns:payments "timed out"' autocomplete="off" spellcheck="false" aria-label="Log query"><button class="primary">Search ↵</button></form>
+  <section><form class="query" id="log-form"><span class="green">⌕</span><input id="log-q" value="${esc(L.q)}" placeholder='Search logs. Try level: ns: pod: container: since: or "free text"' autocomplete="off" spellcheck="false" aria-label="Log query"><button class="primary">Search ↵</button></form>
     <div class="help-row"><span>Examples</span>${logExamples.map(([t, q]) => `<button data-try="${esc(q)}" title="${esc(q)}">${esc(t)}</button>`).join('')}</div>
     ${res.error ? `<div class="notice bad">${esc(res.error)}</div>` : ''}
     <div class="time-bar"><select id="quick-range" aria-label="Quick range">${quickRanges.map(([t, m]) => `<option value="${m}">${t}${m ? ' of the capture' : ' of the capture'}</option>`).join('')}<option value="custom" ${zoomed ? 'selected' : ''}>Custom range</option></select>
@@ -615,6 +857,10 @@ function setRange(from, to) {
 after.logs = () => {
   const L = S.logs;
   $('#log-form').onsubmit = e => { e.preventDefault(); L.q = $('#log-q').value; L.expanded = null; L.limit = 200; render(); };
+  typeahead($('#log-q'), {scope: 'logs', alias: {namespace: 'ns', deploy: 'workload', deployment: 'workload'}, onAccept: i => {
+    const keep = {value: i.value, caret: i.selectionStart};
+    L.q = i.value.trim(); L.expanded = null; L.limit = 200; render().then(() => refocus('#log-q', keep.caret, keep.value));
+  }});
   document.querySelectorAll('[data-try]').forEach(b => b.onclick = () => { L.q = b.dataset.try; L.expanded = null; render(); });
   document.querySelectorAll('[data-facet]').forEach(b => b.onclick = () => { const f = JSON.parse(b.dataset.facet); if (f.field === 'cluster_') { setCluster(f.v); return; } L[f.field] = L[f.field] === f.v ? '' : f.v; render(); });
   document.querySelectorAll('[data-addterm]').forEach(b => b.onclick = () => addTerm(JSON.parse(b.dataset.addterm)));
@@ -707,10 +953,32 @@ async function showLogDetail(id) {
 // the density strip shows where things cluster, and dragging on it zooms in.
 const tlKinds = [['event', 'Events'], ['termination', 'Container exits'], ['rollout', 'Rollouts'], ['error-spike', 'Error spikes']];
 const tlSevColour = {critical: 'var(--red)', warning: 'var(--amber)', info: 'var(--blue, #6aa0ff)'};
+// The filter box takes free text and key:value terms (ns:, kind:, severity:,
+// reason:, object:, cluster:). Values match as a case-insensitive prefix, and
+// a leading - excludes.
+const tlReason = i => i.kind === 'event' ? (i.title || '').split(':')[0] : i.kind === 'termination' ? (i.detail || '').split(',')[0] : '';
+const tlFields = {ns: i => i.namespace, namespace: i => i.namespace, kind: i => i.kind, type: i => i.kind, severity: i => i.severity, sev: i => i.severity,
+  reason: tlReason, object: i => i.object?.kind || (i.kind === 'event' ? ((i.title || '').split(': ')[1] || '').split('/')[0] : ''), cluster: i => i.cluster};
+const tlKeys = [
+  {value: 'ns', hint: 'namespace', example: 'ns:istio-system'},
+  {value: 'kind', hint: 'event, termination, rollout or error-spike', example: 'kind:termination'},
+  {value: 'severity', hint: 'critical, warning or info', example: 'severity:warning'},
+  {value: 'reason', hint: 'event or exit reason', example: 'reason:BackOff'},
+  {value: 'object', hint: 'kind of the object involved', example: 'object:Pod'},
+  {value: 'cluster', hint: 'cluster in the bundle', example: 'cluster:mesh1'},
+];
+function tlMatch(i, terms) {
+  return terms.every(t => {
+    let ok;
+    if (t.key && tlFields[t.key]) ok = String(tlFields[t.key](i) || '').toLowerCase().startsWith(t.val.toLowerCase());
+    else ok = (i.title + ' ' + (i.detail || '') + ' ' + (i.namespace || '')).toLowerCase().includes((t.text ?? `${t.key}:${t.val}`).toLowerCase());
+    return t.neg ? !ok : ok;
+  });
+}
 function tlFilter(items, T, withTime = true) {
-  const q = T.q.toLowerCase();
+  const terms = qTerms(T.q);
   return items.filter(i => !T.hideKinds.includes(i.kind) && (!T.sev || i.severity === T.sev) && (!T.ns || i.namespace === T.ns) &&
-    (!q || (i.title + ' ' + (i.detail || '') + ' ' + (i.namespace || '')).toLowerCase().includes(q)) &&
+    (!terms.length || tlMatch(i, terms)) &&
     (!withTime || ((!T.from || i.time >= T.from) && (!T.to || i.time <= T.to))));
 }
 async function timeline() {
@@ -745,7 +1013,7 @@ async function timeline() {
     <div class="toolbar"><div class="row wrap">${tlKinds.map(([k, t]) => `<button class="chip ${T.hideKinds.includes(k) ? '' : 'on'}" data-tkind="${k}">${t} <small>${count(k)}</small></button>`).join('')}</div>
       <div class="row"><select id="tl-sev"><option value="">All severities</option>${['critical', 'warning', 'info'].map(v => `<option ${T.sev === v ? 'selected' : ''}>${v}</option>`).join('')}</select>
       <select id="tl-ns"><option value="">All namespaces</option>${namespaces.map(v => `<option ${T.ns === v ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select>
-      <input id="tl-q" placeholder="Filter titles and messages" value="${esc(T.q)}" style="min-width:220px"></div></div>
+      <input id="tl-q" placeholder="Filter. Try ns: kind: severity: reason: or text" value="${esc(T.q)}" style="min-width:300px" autocomplete="off" spellcheck="false"></div></div>
     <section class="panel"><div class="panel-head"><h2>${shown.length} of ${items.length} entries</h2><div class="row"><small class="muted">${fmt(new Date(lo).toISOString())} → ${fmt(new Date(hi).toISOString())} UTC · drag to zoom</small><button id="tl-order">${T.newest ? 'Newest first' : 'Oldest first'} ⇅</button>${T.from || T.to ? '<button id="tl-reset">Reset zoom</button>' : ''}</div></div>
       <div class="panel-body"><div class="tl-strip" id="tl-strip" data-lo="${lo}" data-w="${w}">${buckets.map(bar).join('')}<div class="tl-sel" id="tl-sel"></div></div></div></section>
     <section class="panel mt">${rows || '<div class="empty"><strong>No entries match</strong>Change the filters or reset the zoom.</div>'}
@@ -768,7 +1036,13 @@ after.timeline = () => {
   const more = $('#tl-more'); if (more) more.onclick = () => { T.limit += 300; render(); };
   $('#tl-order').onclick = () => { T.newest = !T.newest; render(); };
   const reset = $('#tl-reset'); if (reset) reset.onclick = () => { T.from = T.to = ''; render(); };
-  let tm; $('#tl-q').oninput = e => { clearTimeout(tm); tm = setTimeout(() => { T.q = e.target.value; T.limit = 300; render().then(() => { const i = $('#tl-q'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }); }, 250); };
+  let tm; $('#tl-q').oninput = e => { clearTimeout(tm); tm = setTimeout(() => { const c = e.target.selectionStart, v = e.target.value; T.q = v; T.limit = 300; render().then(() => refocus('#tl-q', c, v)); }, 250); };
+  typeahead($('#tl-q'), {keys: tlKeys, alias: {namespace: 'ns', type: 'kind', sev: 'severity'}, values: (f, p, rest) => {
+    const terms = qTerms(rest), all = (S.tlItems || []).filter(i => tlMatch(i, terms)), get = tlFields[f];
+    if (!get) return [];
+    const label = {event: 'Kubernetes events', termination: 'container exits', rollout: 'ReplicaSet created', 'error-spike': 'error-log runs'};
+    return countValues(all.map(get), p, f === 'kind' ? v => label[v] : null);
+  }});
   // Drag (or click a column) on the strip to zoom into that window.
   const strip = $('#tl-strip'), sel = $('#tl-sel'), lo = +strip.dataset.lo, w = +strip.dataset.w;
   const frac = e => { const r = strip.getBoundingClientRect(); return Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)); };
@@ -829,7 +1103,7 @@ function baselineSection(b) {
     } else detail = `<pre class="code mt">${esc(x.after || x.before)}</pre>`;
   }
   return `<section class="panel" style="margin-bottom:16px"><div class="panel-head"><h2>Against the earlier bundle</h2><small class="mono">${esc(r.before.case || r.before.bundleId)} ${fmtDateTime(r.before.captured)} → ${esc(r.after.case || r.after.bundleId)} ${fmtDateTime(r.after.captured)}</small></div><div class="panel-body">
-    <div class="row wrap"><span class="badge green">${sm.added || 0} added</span><span class="badge red">${sm.removed || 0} removed</span><span class="badge amber">${sm.changed || 0} changed</span><span class="badge">${sm.versions || 0} image changes</span><span class="badge red">${sm.newFindings || 0} new findings</span><span class="badge green">${sm.resolvedFindings || 0} resolved</span>${b.loading ? '<span class="badge blue">still loading</span>' : ''}</div>
+    <div class="row wrap"><span class="badge green">${sm.added || 0} added</span><span class="badge red">${sm.removed || 0} removed</span><span class="badge amber">${sm.changed || 0} changed</span><span class="badge">${sm.versions || 0} image changes</span><span class="badge red">${sm.newFindings || 0} new findings</span><span class="badge green">${sm.resolvedFindings || 0} resolved</span>${b.workspaceLoading ? '<span class="badge blue">this bundle is still loading</span>' : ''}</div>
     ${(r.versions || []).length ? `<h3 class="mt">Image changes</h3><div class="table-scroll"><table><tbody>${r.versions.map(v => `<tr><td><span class="tag">${esc(v.cluster)}</span></td><td class="mono">${esc(v.namespace)}/${esc(v.workload)} ${esc(v.container)}</td><td class="muted">${esc(v.before)}</td><td>→</td><td class="amber">${esc(v.after)}</td></tr>`).join('')}</tbody></table></div>` : ''}
     ${(r.newFindings || []).length ? `<h3 class="mt">New since the earlier bundle</h3>${r.newFindings.map(findingRow).join('')}` : ''}
     ${(r.resolvedFindings || []).length ? `<h3 class="mt">No longer present</h3>${r.resolvedFindings.map(f => `<div class="finding-row"><span class="sev info">✓</span><div><strong>${esc(f.title)}</strong><p>${esc(f.cluster)} · ${esc(f.rule)}</p></div></div>`).join('')}` : ''}
@@ -841,13 +1115,38 @@ function baselineSection(b) {
   </div></section>`;
 }
 
-async function compare() {
-  const c = S.compare;
-  const base = await api('api/baseline').catch(() => ({available: false}));
-  S.baseReport = base;
-  const picker = `<div class="toolbar"><input id="cmp-q" placeholder="Find an object to compare, e.g. checkout-route" aria-label="Find object"><div id="cmp-results" class="search-results" style="width:100%"></div></div>`;
-  if (!c) return head('Compare', base.available ? 'Changes since an earlier bundle, and the same object across clusters.' : 'The same object across the clusters in this bundle. Open with --baseline to compare against an earlier bundle.') + baselineSection(base) + picker;
-  const d = await api('api/diff', c);
+const cmpIntro = "See what changed between two captures of the same cluster: objects added, removed or changed, image upgrades, and findings that appeared or went away. It is the quickest way to answer \"what changed since it last worked?\"";
+
+function candidateRows(cands, cur) {
+  return cands.map((c, i) => `<tr class="${c.current ? 'sel' : ''}"><td class="mono" style="white-space:normal;word-break:break-all" title="${esc(c.path)}">${esc(c.name)}${c.encrypted && c.unreadable ? ' <span class="badge amber">encrypted</span>' : ''}</td>
+    <td>${esc(c.case || '—')}</td>
+    <td>${(c.clusters || []).map(x => `<span class="tag">${esc(x)}</span>`).join(' ') || '<span class="muted">unknown</span>'}${c.sameCluster ? ' <span class="badge green">same cluster</span>' : ''}</td>
+    <td>${c.captured && !c.captured.startsWith('0001') ? fmtDateTime(c.captured) : `<span class="muted" title="file modified">${fmtDateTime(c.modified)}</span>`}</td>
+    <td class="muted">${bytes(c.size)}</td>
+    <td style="text-align:right">${c.current ? '<span class="badge">loaded</span>' : `<button class="${i === 0 && !cur ? 'primary' : ''}" data-cand="${esc(c.path)}" ${c.unreadable ? `title="${esc(c.unreadable)}"` : ''}>Compare</button>`}</td></tr>`).join('');
+}
+
+function baselinePicker(base, cands, collapsed) {
+  const list = cands?.candidates || [];
+  const dirs = (cands?.dirs || []).filter((d, i, a) => a.indexOf(d) === i);
+  const same = list.filter(c => c.sameCluster).length;
+  if (base.canLoad === false) return `<div class="notice info"><div><strong>Loading an earlier capture is not available here.</strong> Start the desk with <code>flightbay-desk open after.tar.zst --baseline before.tar.zst</code>, or compare on the command line with <code>flightbay-desk diff before.tar.zst after.tar.zst</code>.</div></div>`;
+  const body = `<p class="muted" style="margin:0 0 12px">Pick an earlier bundle from the same cluster. Flightbay loads it next to this one on your machine and lists the differences. Nothing leaves this computer.</p>
+    ${base.error ? `<div class="notice bad" style="margin-bottom:12px">The last load failed: ${esc(base.error)}</div>` : ''}
+    ${list.length ? `<div class="table-scroll" style="max-height:44vh"><table><thead><tr><th>Bundle</th><th>Case</th><th>Cluster</th><th>Captured</th><th>Size</th><th></th></tr></thead><tbody>${candidateRows(list, base.available)}</tbody></table></div>
+      ${!same && S.ws?.clusters?.length ? `<p class="muted mt" style="font-size:12px">None of these were captured from ${esc((S.ws.clusters || []).map(c => c.name).join(', '))}. You can still compare them, but most objects will show as added or removed.</p>` : ''}`
+      : `<div class="empty" style="padding:18px"><strong>No other bundles found</strong>Looked in ${dirs.map(d => `<code>${esc(d)}</code>`).join(', ') || 'the bundle directory, the working directory and ~/Downloads'}. Paste the path of an earlier capture below.</div>`}
+    <form class="query mt" id="cmp-path-form"><span class="muted">⤓</span><input id="cmp-path" placeholder="Or paste a path, e.g. ~/Downloads/flightbay-MESH1-20260920T0900Z.tar.zst" autocomplete="off" spellcheck="false" aria-label="Bundle path"><button class="primary">Compare ↵</button></form>`;
+  if (collapsed) return `<details class="panel mt cmp-other"><summary class="panel-head"><h2>Compare with a different capture</h2><small>${list.length} bundle${list.length === 1 ? '' : 's'} found</small></summary><div class="panel-body">${body}</div></details>`;
+  return `<section class="panel"><div class="panel-head"><h2>Compare with an earlier capture</h2><small>${list.length ? `${list.length} bundle${list.length === 1 ? '' : 's'} found${same ? `, ${same} from this cluster` : ''}` : ''}</small></div><div class="panel-body">${body}</div></section>`;
+}
+
+function crossClusterSection(c, d) {
+  const clusters = S.ws?.clusters || [];
+  if (clusters.length < 2) return `<p class="muted mt" style="font-size:12px">Comparing one object across clusters applies to captures that include two or more clusters. This bundle has ${clusters.length ? 'one, ' + esc(clusters[0].name) : 'no clusters loaded yet'}.</p>`;
+  const intro = `<p class="muted" style="margin:0 0 12px">This bundle holds ${clusters.length} clusters. Pick an object to see how its captured YAML differs between them, for example a route or a policy that should be identical everywhere.</p>`;
+  if (!c) return `<section class="panel mt"><div class="panel-head"><h2>The same object across clusters</h2><small>${clusters.map(x => esc(x.name)).join(' · ')}</small></div><div class="panel-body">${intro}
+    <div class="toolbar" style="margin:0"><input id="cmp-q" placeholder="Find an object to compare, e.g. checkout-route or kind:httproute" aria-label="Find object" autocomplete="off" spellcheck="false"><div id="cmp-results" class="search-results" style="width:100%"></div></div></div></section>`;
   const found = d.clusters.filter(x => x.found);
   const [L, R] = [found[0], found[1]];
   let body;
@@ -856,20 +1155,59 @@ async function compare() {
     const df = lineDiff(L.yaml.split('\n'), R.yaml.split('\n'));
     const changes = df.a.filter(x => x.c).length + df.b.filter(x => x.c).length;
     body = `<div class="row" style="margin-bottom:10px"><span class="badge ${changes ? 'amber' : 'green'}">${changes ? changes + ' changed lines' : 'identical'}</span><small>metadata noise (uid, resourceVersion, timestamps) removed</small></div>
-      <section class="panel"><div class="diff-grid"><div class="diff-col"><div class="panel-head"><h2>${esc(L.cluster)}</h2></div><div class="diff-code">${df.a.map(x => `<span class="${x.c || ''}">${esc(x.t) || ' '}</span>`).join('')}</div></div>
-      <div class="diff-col"><div class="panel-head"><h2>${esc(R.cluster)}</h2></div><div class="diff-code">${df.b.map(x => `<span class="${x.c || ''}">${esc(x.t) || ' '}</span>`).join('')}</div></div></div></section>`;
+      <div class="diff-grid"><div class="diff-col"><div class="panel-head"><h2>${esc(L.cluster)}</h2></div><div class="diff-code">${df.a.map(x => `<span class="${x.c || ''}">${esc(x.t) || ' '}</span>`).join('')}</div></div>
+      <div class="diff-col"><div class="panel-head"><h2>${esc(R.cluster)}</h2></div><div class="diff-code">${df.b.map(x => `<span class="${x.c || ''}">${esc(x.t) || ' '}</span>`).join('')}</div></div></div>`;
   }
-  return head('Compare', `${esc(c.kind || c.resource)} ${esc(c.namespace)}/${esc(c.name)} across clusters`, '<button id="cmp-clear">Pick another object</button>') + body;
+  return `<section class="panel mt"><div class="panel-head"><h2>${esc(c.kind || c.resource)} ${esc(c.namespace ? c.namespace + '/' : '')}${esc(c.name)} across clusters</h2><button id="cmp-clear">Pick another object</button></div><div class="panel-body">${body}</div></section>`;
 }
+
+async function compare() {
+  const c = S.compare;
+  const [base, cands, d] = await Promise.all([
+    api('api/baseline').catch(() => ({available: false})),
+    api('api/baseline/candidates').catch(() => ({candidates: []})),
+    c && (S.ws?.clusters || []).length > 1 ? api('api/diff', c) : null,
+  ]);
+  S.baseReport = base;
+  let top;
+  if (base.loading) {
+    const name = (base.loadingPath || '').split('/').pop();
+    top = `<section class="panel"><div class="panel-head"><h2>Loading the earlier capture</h2><small>${base.loadingSince ? 'started ' + fmtTime(base.loadingSince) + ' UTC' : ''}</small></div><div class="panel-body">
+      <div class="row"><span class="progress"><i></i></span><span class="mono">${esc(name)}</span></div>
+      <p class="muted mt" style="font-size:12px">The whole bundle is read and verified before the comparison appears. Large captures take a minute or two; this page refreshes by itself.</p></div></section>`;
+    if (base.available) top += baselineSection(base);
+  } else if (base.available) {
+    top = baselineSection(base) + baselinePicker(base, cands, true);
+  } else {
+    top = baselinePicker(base, cands, false);
+  }
+  return head('Compare', esc(cmpIntro)) + top + crossClusterSection(c, d);
+}
+
+async function loadBaseline(path) {
+  const r = await fetch('api/baseline/load', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json', Accept: 'application/json'}, body: JSON.stringify({path})});
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) { toast(body.error || 'Could not load that bundle'); return; }
+  S.baseSel = null; S.baseKind = '';
+  toast('Loading ' + (body.path || path).split('/').pop() + ' as the baseline');
+  render();
+}
+
+let cmpPoll = null;
 after.compare = () => {
   document.querySelectorAll('[data-base]').forEach(tr => tr.onclick = () => { S.baseSel = S.baseSel === +tr.dataset.base ? null : +tr.dataset.base; render(); });
   const bk = $('#base-kind'); if (bk) bk.onchange = e => { S.baseKind = e.target.value; S.baseSel = null; render(); };
   wireFindings();
+  document.querySelectorAll('[data-cand]').forEach(b => b.onclick = () => { b.disabled = true; loadBaseline(b.dataset.cand); });
+  const pf = $('#cmp-path-form'); if (pf) pf.onsubmit = e => { e.preventDefault(); const v = $('#cmp-path').value.trim(); if (v) loadBaseline(v); else toast('Paste the path of a .tar.zst bundle'); };
+  clearTimeout(cmpPoll);
+  if (S.baseReport?.loading) cmpPoll = setTimeout(() => { if (S.view === 'compare' && !S.drawerOpen) render(); }, 1500);
   const clr = $('#cmp-clear'); if (clr) clr.onclick = () => { S.compare = null; render(); };
   const q = $('#cmp-q'); if (!q) return;
-  q.focus(); let t;
+  typeahead(q, {scope: 'objects', alias: objAlias});
+  let t;
   q.oninput = () => { clearTimeout(t); t = setTimeout(async () => {
-    const hits = await api('api/search', {q: q.value});
+    const hits = q.value.trim() ? await api('api/search', {q: q.value}).catch(() => []) : [];
     $('#cmp-results').innerHTML = hits.map((h, i) => `<button data-hit="${i}"><span class="badge">${esc(h.kind)}</span>${esc(h.namespace ? h.namespace + '/' : '')}${esc(h.name)}<small>${esc(h.cluster)}</small></button>`).join('');
     document.querySelectorAll('[data-hit]').forEach(b => b.onclick = () => { const h = hits[+b.dataset.hit]; S.compare = {group: h.group, resource: h.resource, namespace: h.namespace, name: h.name, kind: h.kind}; render(); });
   }, 200); };
@@ -998,7 +1336,7 @@ function modal(title, body) {
 function closeModal() { $('#modal-root').innerHTML = ''; }
 
 function openSearch() {
-  modal('Jump to an object or view', `<input id="gs" style="width:100%" placeholder="Any object: name, label, image, hostname, kind:pod…" autocomplete="off"><div id="gs-res" class="search-results"></div>`);
+  modal('Jump to an object or view', `<input id="gs" style="width:100%" placeholder="Any object: name, label, image, hostname. Try kind: ns: label:" autocomplete="off"><div id="gs-res" class="search-results"></div>`);
   const views = ['navigator', 'search', 'overview', 'posture', 'resources', 'logs', 'timeline', 'findings', 'compare', 'proxies', 'coverage'];
   let hits = [], sel = 0;
   const draw = () => {
@@ -1008,6 +1346,7 @@ function openSearch() {
   const pick = h => { closeModal(); if (h.all) { S.search.q = h.all; nav('search'); } else if (h.view) nav(h.view); else openObject(h); };
   let t;
   const input = $('#gs');
+  typeahead(input, {scope: 'objects', alias: objAlias});
   input.oninput = () => { clearTimeout(t); t = setTimeout(async () => {
     const q = input.value.toLowerCase();
     hits = views.filter(v => q && v.includes(q)).map(v => ({view: v})).concat(q ? (await api('api/search', {q: input.value})).slice(0, 12) : []).concat(q ? [{all: input.value}] : []); sel = 0; draw();

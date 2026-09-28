@@ -109,13 +109,24 @@ level:error ns:payments "timed out"    pod:checkout*    trace_id:a4e98f02    sta
 
 ![Findings](docs/images/findings.png)
 
-**Best practices** scores the snapshot against Solo's defence-in-depth guidance, in two areas. Agentic covers agentgateway, kagent and MCP: MCP endpoints with no JWT or external auth, tool allowlists, rate limits on LLM routes, prompt guards, credentials held literally in env or routes, agent identity and audit logging. Istio ambient covers namespace enrolment, workloads that opt out, STRICT mTLS, default-deny, ALLOW policies that admit anything, L7 policy without a waypoint, missing waypoints, egress and telemetry. Each check lists the objects it looked at, says why it matters and gives the YAML to fix it, with a link to the matching guide on mastertheagent.com. Checks are weighted by severity. A check whose data wasn't collected, or that has nothing to apply to, is marked not applicable and doesn't count against the score.
+**Best practices** scans the snapshot against 130 checks drawn from the Solo field guides, the agentgateway, kagent, Istio and kgateway source, and Kubernetes hardening guidance, in four areas:
+
+- **Agentic**: MCP and A2A endpoints without authentication, optional API-key modes, client tokens passed through to MCP servers, missing tool allowlists, code mode without limits, guardrails that fail open, LLM spend without a budget, credentials held inline or pointing at Secrets that don't exist, policies that weren't accepted, and agents that bypass the gateway.
+- **Istio**: namespace enrolment, pods ztunnel isn't capturing, STRICT mTLS, default-deny, principals in the wrong trust domain, L7 policy that nothing enforces, ingress that skips the waypoint, istiod HA, plugged-in CA, multicluster peering and remote secrets, and exposed control-plane ports.
+- **Ingress**: listeners without TLS, certificate Secrets that are missing or not granted, cross-namespace references without a ReferenceGrant, shared gateways open to every namespace, client IP policy that sees the wrong address, and kgateway auth that fails open.
+- **Kubernetes**: privileged pods and host access, capabilities (knowing what ztunnel and istio-cni legitimately need), RBAC wildcards and cluster-admin bindings, Pod Security Admission, NetworkPolicy, exposed Services, requests, probes, replicas and PDBs, unpinned images, supported versions, failed Helm releases and expiring certificates.
+
+Only problems are listed by default, with a line saying how many checks ran. Each check lists the objects it looked at, says why it matters and gives the YAML to fix it, with a link to the matching guide on mastertheagent.com or masterthemesh.com. Checks are weighted by severity. A check whose data wasn't collected, or that has nothing to apply to, is marked not applicable and doesn't count against the score.
 
 ![Best practices](docs/images/posture.png)
 
 **Timeline** puts Kubernetes events, container exits, rollouts and bursts of error logs on one UTC axis, so you can see what changed just before things broke. Filter by kind, severity and namespace, drag across the density strip to zoom into a window, and jump from any entry to the object or to the logs around that moment. A steady run of errors shows as one entry covering its time range, and a minute well above that run's usual rate is called out on its own.
 
 ![Timeline](docs/images/timeline.png)
+
+**Compare** shows what changed between two captures of the same cluster: objects added, removed or changed, image upgrades, and findings that appeared or went away. Pick an earlier bundle from the list (Flightbay looks next to the open bundle, in the current directory and in `~/Downloads`) or paste a path. For a capture of several clusters it also compares one object across them.
+
+Search boxes complete as you type from what is in the capture: `kind:` lists the kinds that have objects, `label:` lists label keys and then their values, `ns:` in the log explorer lists namespaces with lines matching the rest of the query. The timeline, best practices, navigator and resources filters do the same.
 
 ### From the terminal
 

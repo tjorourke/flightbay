@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"filippo.io/age"
 	"sigs.k8s.io/yaml"
 
 	"github.com/tjorourke/flightbay/internal/analyze"
@@ -48,12 +49,25 @@ type Server struct {
 	// snapshot API. kubectl only sends kubeconfig tokens over TLS.
 	KubeURL string
 	KubeCA  []byte
+	// LoadBaseline starts loading an earlier bundle for the Compare view in
+	// the background and calls SetBaseline (or BaselineFailed) when done. It
+	// returns an error only if loading cannot start. nil disables loading
+	// baselines from the UI.
+	LoadBaseline func(path string) error
+	// BundlePath is the bundle file the workspace was opened from ("" for a
+	// stream). Its directory is searched for baseline candidates.
+	BundlePath string
+	// BaselineDirs are extra directories to search for baseline candidates.
+	BaselineDirs []string
+	// Identities decrypt bundle headers when listing baseline candidates.
+	Identities []age.Identity
 
 	once sync.Once
 	api  http.Handler
 	term *termSession
 	mu   sync.Mutex
 	base baselineState
+	sugg suggestCache
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -239,6 +253,9 @@ func (s *Server) Handler() http.Handler {
 	api("/api/proxy", s.proxy)
 	api("/api/proxy/file", s.proxyFile)
 	api("/api/baseline", s.baselineDiff)
+	api("/api/baseline/candidates", s.baselineCandidates)
+	api("/api/baseline/load", s.baselineLoad)
+	api("/api/suggest", s.suggest)
 	// MCP for agents that connect over HTTP (kagent RemoteMCPServer, hosted
 	// desks). Same token as the API; tools call back into this server.
 	api("/mcp", func(w http.ResponseWriter, r *http.Request) {

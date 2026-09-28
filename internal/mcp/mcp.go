@@ -153,8 +153,8 @@ func tools() []tool {
 				return s.get("/api/sql", url.Values{"q": {arg(a, "query")}, "limit": {limit}})
 			}},
 		{Name: "best_practices", Title: "Best-practice scores",
-			Description: "Scores the snapshot against Solo's defence-in-depth best practices for the agentic stack (MCP and LLM authentication, tool allowlists, rate limits, prompt guards, credentials, agent identity, audit) and for Istio ambient (enrolment, STRICT mTLS, default-deny, allow-all policies, waypoints, egress, telemetry). Returns a score and grade per area, and every check with its status, affected objects, why it matters and the fix YAML.",
-			InputSchema: obj(map[string]any{"area": str("agentic or ambient; omit for both"), "status": str("fail, warn, pass or na; omit for all")}),
+			Description: "Scores the snapshot against Solo's best practices in four areas: agentic (agentgateway, kagent, MCP, A2A and agentregistry: authentication, tool allowlists, passthrough tokens, guardrails, budgets, credentials, policy status), Istio (ambient enrolment, STRICT mTLS, default-deny, waypoint wiring, trust domain, control-plane HA, CA and multicluster peering), ingress (Gateway API and kgateway: TLS, certificates, ReferenceGrants, HA, auth) and Kubernetes (privileged pods, capabilities, RBAC, Pod Security Admission, NetworkPolicy, exposure, requests, replicas, pinned images, versions, Helm). Returns a score and grade per area, and every check with its status, affected objects, why it matters and the fix YAML.",
+			InputSchema: obj(map[string]any{"area": str("agentic, ambient, gateway or kubernetes; omit for all"), "status": str("fail, warn, pass or na; omit for all")}),
 			call: func(s *Server, a map[string]any) (string, error) {
 				body, err := s.get("/api/posture", nil)
 				if err != nil || (arg(a, "area") == "" && arg(a, "status") == "") {

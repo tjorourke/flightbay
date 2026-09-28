@@ -7,6 +7,10 @@ import (
 	"github.com/tjorourke/flightbay/internal/logs"
 )
 
+// objectsLatest is the objects table with one row per object. A reload of
+// deferred objects can append a second copy: keep the newest.
+const objectsLatest = `(SELECT * FROM objects QUALIFY row_number() OVER (PARTITION BY cluster, api_group, resource, namespace, name ORDER BY rowid DESC) = 1)`
+
 // ObjectHit is one object found by SearchObjects.
 type ObjectHit struct {
 	Cluster   string            `json:"cluster"`
@@ -36,68 +40,12 @@ type ObjectResult struct {
 //	name:checkout*   label:app=checkout   label:app   "free text" (name, labels, spec, status...)
 //	-term negates. Space is AND.
 func (w *Workspace) SearchObjects(query, cluster string, limit int) (*ObjectResult, error) {
-	toks, err := logs.Tokenize(query)
-	if err != nil {
-		return nil, err
-	}
 	if limit <= 0 {
 		limit = 200
 	}
-	var where []string
-	var args []any
-	var texts []string
-	for _, t := range toks {
-		neg := strings.HasPrefix(t, "-") && len(t) > 1
-		if neg {
-			t = t[1:]
-		}
-		key, val, isField := strings.Cut(t, ":")
-		if !isField || strings.HasPrefix(t, `"`) || strings.Contains(key, " ") {
-			key, val = "", t
-		}
-		val = strings.Trim(val, `"`)
-		lv := strings.ToLower(val)
-		var clause string
-		var cargs []any
-		switch strings.ToLower(key) {
-		case "kind", "type", "k":
-			var alts []string
-			for _, c := range w.Clusters() {
-				if r, ok := w.FindResource(c, lv); ok {
-					alts = append(alts, "(resource = ? AND api_group = ?)")
-					cargs = append(cargs, r.Resource, r.Group)
-				}
-			}
-			alts = append(alts, "lower(kind) = ?", "resource = ?")
-			cargs = append(cargs, lv, lv)
-			clause = "(" + strings.Join(alts, " OR ") + ")"
-		case "ns", "namespace":
-			clause, cargs = likeOrEq("namespace", lv)
-		case "cluster":
-			clause, cargs = likeOrEq("cluster", lv)
-		case "name":
-			clause, cargs = likeOrEq("name", lv)
-		case "label", "l":
-			k, v, hasV := strings.Cut(val, "=")
-			if hasV {
-				clause, cargs = "coalesce(labels[?] = ?, false)", []any{k, v}
-			} else {
-				clause, cargs = "labels[?] IS NOT NULL", []any{k}
-			}
-		default:
-			if key != "" {
-				lv = strings.ToLower(t) // e.g. "image:nginx" searched as text
-			}
-			clause, cargs = "contains(lower(object), ?)", []any{lv}
-			if !neg {
-				texts = append(texts, lv)
-			}
-		}
-		if neg {
-			clause = "NOT coalesce(" + clause + ", false)"
-		}
-		where = append(where, clause)
-		args = append(args, cargs...)
+	where, args, texts, err := w.objectConds(query, nil)
+	if err != nil {
+		return nil, err
 	}
 	if cluster != "" {
 		where = append(where, "cluster = ?")
@@ -106,8 +54,7 @@ func (w *Workspace) SearchObjects(query, cluster string, limit int) (*ObjectResu
 	if len(where) == 0 {
 		where = []string{"TRUE"}
 	}
-	// A reload of deferred objects can append a second copy: keep the newest.
-	base := `(SELECT * FROM objects QUALIFY row_number() OVER (PARTITION BY cluster, api_group, resource, namespace, name ORDER BY rowid DESC) = 1)`
+	base := objectsLatest
 	cond := strings.Join(where, " AND ")
 	w.mu.RLock()
 	loading := w.state.Phase == PhaseLoading || w.state.Phase == PhaseWaiting
@@ -178,6 +125,72 @@ func (w *Workspace) SearchObjects(query, cluster string, limit int) (*ObjectResu
 		}
 	}
 	return res, rows.Err()
+}
+
+// objectConds turns an object query into SQL conditions over the objects
+// table. keep, when set, drops terms whose key it rejects ("" is free text).
+func (w *Workspace) objectConds(query string, keep func(key string) bool) (where []string, args []any, texts []string, err error) {
+	toks, err := logs.Tokenize(query)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	for _, t := range toks {
+		neg := strings.HasPrefix(t, "-") && len(t) > 1
+		if neg {
+			t = t[1:]
+		}
+		key, val, isField := strings.Cut(t, ":")
+		if !isField || strings.HasPrefix(t, `"`) || strings.Contains(key, " ") {
+			key, val = "", t
+		}
+		if keep != nil && !keep(strings.ToLower(key)) {
+			continue
+		}
+		val = strings.Trim(val, `"`)
+		lv := strings.ToLower(val)
+		var clause string
+		var cargs []any
+		switch strings.ToLower(key) {
+		case "kind", "type", "k":
+			var alts []string
+			for _, c := range w.Clusters() {
+				if r, ok := w.FindResource(c, lv); ok {
+					alts = append(alts, "(resource = ? AND api_group = ?)")
+					cargs = append(cargs, r.Resource, r.Group)
+				}
+			}
+			alts = append(alts, "lower(kind) = ?", "resource = ?")
+			cargs = append(cargs, lv, lv)
+			clause = "(" + strings.Join(alts, " OR ") + ")"
+		case "ns", "namespace":
+			clause, cargs = likeOrEq("namespace", lv)
+		case "cluster":
+			clause, cargs = likeOrEq("cluster", lv)
+		case "name":
+			clause, cargs = likeOrEq("name", lv)
+		case "label", "l":
+			k, v, hasV := strings.Cut(val, "=")
+			if hasV {
+				clause, cargs = "coalesce(labels[?] = ?, false)", []any{k, v}
+			} else {
+				clause, cargs = "labels[?] IS NOT NULL", []any{k}
+			}
+		default:
+			if key != "" {
+				lv = strings.ToLower(t) // e.g. "image:nginx" searched as text
+			}
+			clause, cargs = "contains(lower(object), ?)", []any{lv}
+			if !neg {
+				texts = append(texts, lv)
+			}
+		}
+		if neg {
+			clause = "NOT coalesce(" + clause + ", false)"
+		}
+		where = append(where, clause)
+		args = append(args, cargs...)
+	}
+	return where, args, texts, nil
 }
 
 func likeOrEq(col, v string) (string, []any) {
