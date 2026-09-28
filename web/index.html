@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Flightbay · Snapshot workspace</title>
+<script>(function(){var t=localStorage.getItem('flightbay-theme')||(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');document.documentElement.dataset.theme=t;})();</script>
 <link rel="stylesheet" href="static/app.css">
 <link rel="stylesheet" href="static/vendor/xterm.css">
 </head>
@@ -15,6 +16,7 @@
     <div class="eyebrow nav-label">Investigate</div>
     <nav class="nav" aria-label="Main navigation">
       <a data-view="search" href="#search"><span class="nav-icon">⌕</span><span class="nav-text">Search</span></a>
+      <a data-view="navigator" href="#navigator"><span class="nav-icon">⌨</span><span class="nav-text">Navigator</span></a>
       <a data-view="overview" href="#overview"><span class="nav-icon">◫</span><span class="nav-text">Overview</span></a>
       <a data-view="resources" href="#resources"><span class="nav-icon">▤</span><span class="nav-text">Resources</span></a>
       <a data-view="logs" href="#logs"><span class="nav-icon">≡</span><span class="nav-text">Log explorer</span></a>
@@ -31,6 +33,7 @@
       <span class="crumb" id="crumb">Workspace</span>
       <button class="global-search" id="open-search" aria-label="Search objects"><span>Search objects…</span><kbd>⌘ K</kbd></button>
       <select id="cluster" aria-label="Cluster"><option value="">All clusters</option></select>
+      <button class="ghost" id="theme-toggle" title="Light or dark" aria-label="Switch between light and dark">◐</button>
     </header>
     <div class="snapshot" id="snapshot-bar">
       <span class="badge green"><span class="dot"></span> Offline snapshot</span>

@@ -111,3 +111,68 @@ details.field .facet{padding-left:18px}
 .kind-row:hover{background:#1a2328}
 .kind-row small{color:#7c8c97;font-family:ui-monospace,Menlo,monospace}
 .kind-row .grp{color:#5f7079;font-size:10px;margin-left:6px}
+
+/* ---------- light theme ---------- */
+:root[data-theme=light]{color-scheme:light;--bg:#f5f6f7;--panel:#ffffff;--raised:#f0f2f4;--line:#dde2e6;--text:#1b2328;--muted:#5d6a74;--teal:#0d8a72;--blue:#2361b3;--amber:#9a6200;--red:#bf3a40}
+[data-theme=light] button:hover{border-color:#aab4bc;background:#e7ebee}
+[data-theme=light] button.active,[data-theme=light] .types button.active,[data-theme=light] .nav a.active{background:#dff3ee;color:#0b6f5c;border-color:#a9dccf}
+[data-theme=light] button.primary{color:#fff}
+[data-theme=light] input,[data-theme=light] select,[data-theme=light] textarea{background:#fff}
+[data-theme=light] .tag{background:#eceff2;color:#34434e}
+[data-theme=light] kbd{border-color:#c9d0d6}
+[data-theme=light] .sidebar{background:#eef1f3}
+[data-theme=light] .bundle{background:#fff}
+[data-theme=light] .nav a{color:#46535d}
+[data-theme=light] .nav a:hover{background:#e3e8eb}
+[data-theme=light] .nav .count{background:#f7e7c6}
+[data-theme=light] .snapshot{background:#e8f3f0;border-bottom-color:#cfe3dc;color:#34504a}
+[data-theme=light] .progress{background:#d8dee2}
+[data-theme=light] .sev.critical{background:#fbe3e4}
+[data-theme=light] .sev.warning{background:#f8ecd3}
+[data-theme=light] .sev.info{background:#e1ecf7}
+[data-theme=light] .notice{background:#fbf5e6;border-color:#ecd9a8;color:#5c4a1c}
+[data-theme=light] .notice.info{background:#eaf2f9;border-color:#c3d7ea;color:#24445f}
+[data-theme=light] .notice.bad{background:#fbeaea;border-color:#efc3c5;color:#6d2226}
+[data-theme=light] th,[data-theme=light] .log-head{background:#f2f4f6}
+[data-theme=light] td,[data-theme=light] .log-row{border-bottom-color:#e6eaed}
+[data-theme=light] tbody tr:hover,[data-theme=light] .log-row:hover,[data-theme=light] details.field summary:hover,[data-theme=light] .kind-row:hover{background:#eef2f4}
+[data-theme=light] .facet span:first-child{border-color:#aab4bc}
+[data-theme=light] .query{background:#fff;border-color:#a9cfc4}
+[data-theme=light] .chip{background:#e2f3ee;border-color:#b3dccf;color:#0b6f5c}
+[data-theme=light] .bars div{background:#7fb8a9}
+[data-theme=light] .new-lines{background:#e2f3ee;border-color:#a9dccf;color:#0b6f5c}
+[data-theme=light] .log-row.error{background:#fdf0f0}
+[data-theme=light] .log-row.warn{background:#fdf7ea}
+[data-theme=light] .log-row .pod{color:#3d5566}
+[data-theme=light] .line-detail{background:#f0f8f5}
+[data-theme=light] .line-detail pre,[data-theme=light] .code{color:#27404f}
+[data-theme=light] .code{background:#f7f9fa}
+[data-theme=light] .diff-code .del{background:#fbe3e4}
+[data-theme=light] .diff-code .add{background:#e0f3ec}
+[data-theme=light] .drawer{background:#fff;border-left-color:#d3dadf;box-shadow:-20px 0 70px #0002}
+[data-theme=light] .drawer-backdrop{background:#0003}
+[data-theme=light] .modal{border-color:#d3dadf}
+[data-theme=light] .modal-backdrop{background:#0004}
+[data-theme=light] .search-results button:hover,[data-theme=light] .search-results button.sel{background:#e2f3ee}
+[data-theme=light] .toast{background:#e2f3ee;border-color:#8fcbb8}
+[data-theme=light] mark{background:#fdeca8;color:#4a3a00}
+[data-theme=light] .hist-axis,[data-theme=light] details.field summary::before,[data-theme=light] .kind-group h3,[data-theme=light] .kind-row small{color:#6b7882}
+[data-theme=light] .terminal-head{background:#e8ecef}
+/* The terminal stays dark in both themes: k9s and shell colours assume it. */
+
+/* ---------- navigator (k9s-style, keyboard first) ---------- */
+.nv{font:12px/1.55 var(--mono)}
+.nv-head{display:grid;grid-template-columns:minmax(260px,1.2fr) 1fr 1fr auto;gap:10px 28px;padding:14px 18px;border:1px solid var(--line);border-radius:6px;background:var(--panel);margin-bottom:14px}
+.nv-head dl{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:0}.nv-head dt{color:var(--muted)}.nv-head dd{margin:0;color:var(--blue)}
+.nv-keys{display:grid;grid-template-columns:auto 1fr;gap:3px 10px;color:var(--muted)}.nv-keys b{color:var(--amber);font-weight:500}
+.nv-logo{color:var(--teal);white-space:pre;font-size:11px;line-height:1.25;align-self:center}
+.nv-frame{border:1px solid var(--teal);border-radius:4px;position:relative;padding-top:6px}
+.nv-title{position:absolute;top:-10px;left:50%;transform:translateX(-50%);background:var(--bg);padding:0 8px;color:var(--teal);font-weight:600}
+.nv-bar{display:flex;gap:8px;align-items:center;padding:10px 14px;flex-wrap:wrap}
+.nv-bar .nv-type{font:12px var(--mono);padding:4px 9px}
+.nv-bar .nv-type.on{background:var(--teal);color:var(--bg);border-color:var(--teal)}
+.nv table{font:12px var(--mono)}.nv th{color:var(--blue);background:transparent;letter-spacing:0;text-transform:uppercase;font-size:11px}
+.nv tr.sel td{background:rgba(114,214,190,.16);color:var(--text)}.nv tr.sel td:first-child{box-shadow:inset 3px 0 var(--teal)}
+.nv td{padding:7px 14px}.nv tbody tr{cursor:pointer}
+.nv-status{display:flex;justify-content:space-between;padding:8px 14px;border-top:1px solid var(--line);color:var(--muted);font-size:11px}.nv-status b{color:var(--amber);font-weight:500}
+.nv-cmd{display:flex;align-items:center;gap:8px;padding:8px 14px;border-bottom:1px solid var(--line)}.nv-cmd span{color:var(--amber)}.nv-cmd input{flex:1;font:12px var(--mono)}

@@ -30,7 +30,7 @@ Make sure `$(go env GOPATH)/bin` is on your `PATH`. Release builds (Homebrew, `k
 flightbay ui examples/sample-bundle.tar.zst
 ```
 
-Your browser opens on the workspace. If it doesn't, open the `UI:` address it prints, token included. Press Ctrl+C in the terminal to close it; the workspace is deleted when you do.
+Your browser opens on the workspace. If it doesn't, open the `UI:` address it prints, token included. The button at the top right switches between light and dark. Press Ctrl+C in the terminal to close it; the workspace is deleted when you do.
 
 Things to try:
 
