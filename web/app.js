@@ -2063,7 +2063,7 @@ async function proxies() {
   const comps = d.components;
   if (!comps.length) {
     return head('Proxy configs', 'Envoy, ztunnel and agentgateway config dumps, istiod debug output and metrics.') + `<div class="panel empty"><strong>${d.selected ? 'No Solo components captured' : 'Proxy dumps, control-plane debug and metrics were not selected'}</strong>${
-      d.loading ? 'Diagnostics are written last in a bundle, so they may still be arriving.' : d.selected ? 'The selected namespaces held no ztunnel, Envoy, agentgateway, istiod or controller pods.' : 'The customer did not allow port-forward diagnostics for this bundle (flightbay collect --solo-diagnostics). Their absence says nothing about the proxies.'}</div>`;
+      S.ws?.live ? (S.ws.canRefreshDiagnostics ? 'Live mode reads diagnostics once when the mirror is ready; they may still be arriving. Solo component pods appear here as soon as they are read.' : 'Live mode reads proxy dumps only with flightbay-desk live --solo-diagnostics.') : d.loading ? 'Diagnostics are written last in a bundle, so they may still be arriving.' : d.selected ? 'The selected namespaces held no ztunnel, Envoy, agentgateway, istiod or controller pods.' : 'The customer did not allow port-forward diagnostics for this bundle (flightbay collect --solo-diagnostics). Their absence says nothing about the proxies.'}</div>`;
   }
   if (!comps.find(c => pxKey(c) === S.px.sel)) { S.px.sel = pxKey(comps[0]); S.px.file = ''; }
   const cur = comps.find(c => pxKey(c) === S.px.sel);
@@ -2113,7 +2113,7 @@ async function proxies() {
       </tbody></table></div></section>${viewer}`;
   }
   const meta = [['Node', cur.node], ['Pod', `${cur.namespace}/${cur.pod}`], ['Version', cur.version], ['Cluster', multi ? cur.cluster : ''], ['Image', cur.image]].filter(([, v]) => v);
-  return head('Proxy configs', 'Envoy, ztunnel and agentgateway config dumps, istiod debug output and metrics, as captured.', `<button id="px-term">&gt;_ fbpc ${esc(cur.pod)}</button>`) + `
+  return head('Proxy configs', 'Envoy, ztunnel and agentgateway config dumps, istiod debug output and metrics, as captured.', `${S.ws?.canRefreshDiagnostics ? '<button id="px-refresh" title="Read this pod\'s admin endpoints again now, over port-forward">Refresh diagnostics</button>' : ''}<button id="px-term">&gt;_ fbpc ${esc(cur.pod)}</button>`) + `
   <div class="resource-layout px-layout"><nav class="types px-nav" aria-label="Components">${nav}</nav>
   <div><div class="px-head"><div class="row"><span class="badge">${esc(compLabel[cur.component] || cur.component)}</span><h2 class="mono">${esc(pxTitle(cur))}</h2></div>
     <dl class="px-meta">${meta.map(([k, v]) => `<div><dt>${k}</dt><dd class="mono">${esc(v)}</dd></div>`).join('')}</dl></div>
@@ -2127,6 +2127,7 @@ after.proxies = () => {
   document.querySelectorAll('[data-pxfile]').forEach(tr => tr.onclick = () => { S.px.file = tr.dataset.pxfile; render(); });
   let t; const qi = $('#px-q'); if (qi) qi.oninput = e => { clearTimeout(t); t = setTimeout(() => { S.px.q = e.target.value; render().then(() => { const i = $('#px-q'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }); }, 250); };
   const pt = $('#px-term'); if (pt) pt.onclick = () => { const [cl, , ns, pod] = S.px.sel.split('/'); termRun(`fbpc --cluster ${cl} -n ${ns} ${pod}`); };
+  const pr = $('#px-refresh'); if (pr) pr.onclick = () => liveRefreshDiagnostics(S.px.sel, pr);
 };
 
 // ---------- coverage ----------
@@ -2271,3 +2272,151 @@ function boot() {
   es.addEventListener('state', e => onState(JSON.parse(e.data)));
 }
 boot();
+
+// ---------- live mode ----------
+// flightbay-desk live mirrors a running cluster. The server says so in
+// /api/workspace (source "live", S.ws.live) and in every state event
+// (state.live). This block swaps the offline banner for a live one, adds Save
+// as bundle, and refreshes views as the mirror changes. It wraps the shared
+// functions rather than editing them, so bundle workspaces behave as before.
+const LIVE = {lastRender: 0, pending: false, timer: null, tick: null, saving: false};
+const isLive = () => !!(S.ws?.live?.live || S.state?.live?.live);
+
+function liveAgo(t) {
+  if (!t || String(t).startsWith('0001')) return 'none yet';
+  const s = Math.max(0, Math.round((Date.now() - new Date(t).getTime()) / 1000));
+  return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.floor(s / 60)}m ago` : `${Math.floor(s / 3600)}h ago`;
+}
+
+function renderLiveBanner() {
+  const lv = S.state?.live || S.ws?.live; if (!lv) return;
+  const badge = document.querySelector('#snapshot-bar .badge');
+  if (badge) {
+    const up = lv.connected !== false;
+    badge.className = `badge ${up ? 'green' : 'amber'}`;
+    badge.title = up ? `Connected to ${lv.server || lv.context}. Read-only: get, list, watch and pods/log only.` : `Reconnecting to ${lv.server || lv.context} (${lv.reconnects} reconnects so far). The mirror shows the last state received.`;
+    badge.innerHTML = `<span class="dot"></span> Live · ${esc(lv.context)} · ${num(lv.objectsWatched)} objects · ${num(lv.logStreams)}${lv.logStreamsTotal > lv.logStreams ? ' of ' + num(lv.logStreamsTotal) : ''} log streams · last change ${esc(liveAgo(lv.lastEvent))}${up ? '' : ' · reconnecting'}`;
+  }
+  const t = $('#snapshot-time');
+  if (t) t.innerHTML = `<span class="muted">Read-only mirror${lv.logLinesDropped ? ` · ${num(lv.logLinesDropped)} old log lines dropped` : ''}</span> <button id="live-save" class="ghost" title="Write the mirror as it is now to a normal, verified bundle">${LIVE.saving ? 'Saving…' : 'Save as bundle'}</button>`;
+  const b = $('#live-save'); if (b) b.onclick = liveSave;
+}
+
+async function liveSave() {
+  if (LIVE.saving) return;
+  LIVE.saving = true; renderLiveBanner();
+  try {
+    const r = await fetch('api/live/save', {method: 'POST', credentials: 'same-origin'});
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.error || r.statusText);
+    modal('Saved as bundle', `<p>The mirror as it was a moment ago is now a normal, verified bundle:</p><pre class="code">${esc(body.path)}</pre>
+      <p class="muted">Check it with <code>flightbay inspect ${esc(body.path)}</code>, open it later with <code>flightbay-desk open ${esc(body.path)}</code>, or send it like any capture.</p>`);
+  } catch (e) { toast('Save failed: ' + e.message); }
+  LIVE.saving = false; renderLiveBanner();
+}
+
+// Throttled refresh: at most once every 3 s, and never while the user types
+// or has a drawer or modal open. A blocked refresh waits for its moment.
+function liveBusy() {
+  const a = document.activeElement;
+  return S.drawerOpen || !!document.querySelector('.modal-backdrop') || !!TA.active ||
+    (a && (/INPUT|TEXTAREA|SELECT/.test(a.tagName) || a.isContentEditable || a.closest?.('.xterm')));
+}
+function liveSchedule() {
+  LIVE.pending = true;
+  if (LIVE.timer) return;
+  const wait = Math.max(0, 3000 - (Date.now() - LIVE.lastRender));
+  LIVE.timer = setTimeout(liveRefresh, wait);
+}
+async function liveRefresh() {
+  LIVE.timer = null;
+  if (!LIVE.pending) return;
+  if (liveBusy() || document.hidden) { LIVE.timer = setTimeout(liveRefresh, 1000); return; }
+  LIVE.pending = false; LIVE.lastRender = Date.now();
+  if (S.view === 'logs') { checkNewLines(); return; } // the log explorer has Follow incoming data
+  if (S.view === 'compare') return;
+  const main = $('#main'), top = main?.scrollTop || 0;
+  const scrolls = [...document.querySelectorAll('#main .table-scroll')].map(e => e.scrollTop);
+  try { await loadWorkspace(); await render(); } catch (_) { /* the next change retries */ }
+  if (main) main.scrollTop = top;
+  document.querySelectorAll('#main .table-scroll').forEach((e, i) => { if (scrolls[i]) e.scrollTop = scrolls[i]; });
+}
+
+{
+  const baseImportStatus = renderImportStatus;
+  renderImportStatus = function () {
+    if (!isLive()) return baseImportStatus();
+    const st = S.state || S.ws?.state || {};
+    const el = $('#import-status');
+    const loading = st.phase === 'loading' || st.phase === 'waiting';
+    if (el) el.innerHTML = loading ? `<span class="progress"><i></i></span><span class="blue">Listing the cluster</span><span>${num(st.objects)} objects so far</span>`
+      : `<span>${num(st.objects)} objects · ${num(st.logLines)} log lines · ${num(st.events)} events</span>`;
+    const dot = $('#phase-dot'); if (dot) dot.className = `dot ${loading ? 'blue' : st.live?.connected === false ? 'amber' : 'green'}`;
+    renderLiveBanner();
+  };
+
+  const baseOnState = onState;
+  onState = function (st) {
+    const prev = S.state;
+    if (!st.live) return baseOnState(st);
+    if (S.ws) S.ws.live = st.live;
+    if (!prev || prev.phase !== st.phase || st.phase !== 'live') return baseOnState(st);
+    S.state = st;
+    renderImportStatus();
+    if (st.revision !== prev.revision) { TA.cache.clear(); TA.keys.clear(); liveSchedule(); }
+  };
+
+  const baseLoadWorkspace = loadWorkspace;
+  loadWorkspace = async function () {
+    await baseLoadWorkspace();
+    if (!isLive()) return;
+    const w = S.ws;
+    $('#bundle-case').textContent = 'Live';
+    $('#bundle-sub').textContent = `${w.live.context} · read-only`;
+    $('#collector').textContent = w.collector || '';
+    document.querySelectorAll('#cluster option').forEach(o => { if (o.value) o.textContent = o.value + '@live'; });
+    document.title = `Flightbay · Live · ${w.live.context}`;
+    const meta = document.querySelector('.terminal-meta');
+    if (meta) meta.textContent = 'bash · KUBECONFIG points at the read-only live mirror · kubectl, k9s (watches update), fbsearch, fbq, fbpc, fbscore';
+    renderImportStatus();
+  };
+
+  // Views written for bundles say "snapshot", "captured" and "verified". In
+  // live mode relabel the few that would mislead; the views are unchanged.
+  const baseRender = render;
+  render = async function () {
+    await baseRender();
+    if (!isLive()) return;
+    const c = $('#crumb'); if (c) c.textContent = c.textContent.replace('/ Snapshot /', `/ Live ${S.ws.live.context} /`);
+  };
+  const baseOverview = overview;
+  overview = async function (seq) {
+    const html = await baseOverview(seq);
+    if (!isLive() || typeof html !== 'string') return html;
+    return html.replace('<h1>Snapshot</h1>', '<h1>Live</h1>')
+      .replace(/ · captured [^<]*/, ' · live, read-only')
+      .replace('still loading', 'following live')
+      .replace('Provisional until the import is verified', 'Recomputed as the cluster changes')
+      .replace('Rules run against the captured snapshot', 'Rules run against the live mirror')
+      .replace('<span class="badge">snapshot contexts</span>', '<span class="badge green">live</span>')
+      .replace('<h2>Bundle provenance</h2><span class="badge amber">not yet verified</span>', '<h2>Live mirror</h2><span class="badge green">read-only</span>');
+  };
+
+  // "last change 4s ago" keeps counting between events.
+  LIVE.tick = setInterval(() => { if (isLive()) renderLiveBanner(); }, 1000);
+  // boot() ran before this block; if the workspace is already loaded, redo the header.
+  if (S.ws) loadWorkspace().catch(() => {});
+}
+
+// Proxy configs: Refresh diagnostics for the selected pod (live with --solo-diagnostics).
+async function liveRefreshDiagnostics(podKey, btn) {
+  const [, , ns, pod] = podKey.split('/');
+  if (btn) { btn.disabled = true; btn.textContent = 'Refreshing…'; }
+  try {
+    const r = await fetch('api/live/refresh-diagnostics?' + new URLSearchParams({pod: `${ns}/${pod}`}), {method: 'POST', credentials: 'same-origin'});
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.error || r.statusText);
+    toast(`Refreshed ${ns}/${pod}: ${body.files} files`);
+    await render();
+  } catch (e) { toast('Refresh failed: ' + e.message); if (btn) { btn.disabled = false; btn.textContent = 'Refresh diagnostics'; } }
+}

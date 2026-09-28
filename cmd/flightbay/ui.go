@@ -16,11 +16,12 @@ import (
 // PATH and hands over.
 func uiCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "ui [BUNDLE | DIR]",
-		Short: "Open the UI on a bundle (default: the newest flightbay-*.tar.zst in this directory)",
+		Use:   "ui [BUNDLE | DIR] | ui --live [--context CTX] [scope flags]",
+		Short: "Open the UI on a bundle (default: the newest flightbay-*.tar.zst in this directory), or on a live cluster with --live",
 		Example: `  flightbay ui                                   # newest bundle here
   flightbay ui flightbay-DEMO-20260927T1842Z.tar.zst
-  flightbay ui ~/Downloads                         # newest bundle in a folder`,
+  flightbay ui ~/Downloads                         # newest bundle in a folder
+  flightbay ui --live --context kind-mesh1 --namespaces kagent   # mirror a cluster live, read-only`,
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true, // flags go to flightbay-desk open
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -33,7 +34,16 @@ func uiCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			argv := append([]string{desk, "open"}, args...)
+			sub := "open"
+			var rest []string
+			for _, a := range args {
+				if a == "--live" || a == "--live=true" {
+					sub = "live" // flags after it go to flightbay-desk live
+					continue
+				}
+				rest = append(rest, a)
+			}
+			argv := append([]string{desk, sub}, rest...)
 			if err := syscall.Exec(desk, argv, os.Environ()); err != nil {
 				c := exec.Command(desk, argv[1:]...) // platforms without exec
 				c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr

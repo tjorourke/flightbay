@@ -222,7 +222,7 @@ func (w *Workspace) SuggestLogs(field, prefix, query, cluster string, limit int)
 		return nil, err
 	}
 	w.mu.RLock()
-	ref := w.logEnd
+	ref := w.logNowLocked()
 	w.mu.RUnlock()
 	where, args := q.SQL(ref)
 	if cluster != "" {

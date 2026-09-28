@@ -296,6 +296,58 @@ func TestWatchDeliversImportedObjects(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("imported object not delivered to watch")
 	}
+	// A live workspace replaces and removes objects: the watch reports both.
+	updated := podObj("payments", "late-1", "late", "app")
+	updated["status"].(map[string]any)["phase"] = "Failed"
+	ws.UpsertObject("mesh1", podsRes, updated)
+	ws.DeleteObject("mesh1", "", "pods", "payments", "checkout-1")
+	want := []struct{ typ, name, phase string }{{"MODIFIED", "late-1", "Failed"}, {"DELETED", "checkout-1", ""}}
+	var lastRV string
+	for _, wnt := range want {
+		select {
+		case ev := <-w.ResultChan():
+			p := ev.Object.(*corev1.Pod)
+			if string(ev.Type) != wnt.typ || p.Name != wnt.name || (wnt.phase != "" && string(p.Status.Phase) != wnt.phase) {
+				t.Fatalf("want %s %s, got %s %s (%s)", wnt.typ, wnt.name, ev.Type, p.Name, p.Status.Phase)
+			}
+			if p.ResourceVersion == "" || p.ResourceVersion == lastRV {
+				t.Fatalf("%s without a new resourceVersion: %q", ev.Type, p.ResourceVersion)
+			}
+			lastRV = p.ResourceVersion
+		case <-ctx.Done():
+			t.Fatalf("%s not delivered to watch", wnt.typ)
+		}
+	}
+}
+
+// A watch resumed from a list's resourceVersion (kubectl get -w, reflectors)
+// must not replay the list, but must report later changes to listed objects.
+func TestWatchFromListVersionReportsChanges(t *testing.T) {
+	ws, srv := setup(t, true)
+	cs := kubernetes.NewForConfigOrDie(cfg(srv))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	l, err := cs.CoreV1().Pods("payments").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := cs.CoreV1().Pods("payments").Watch(ctx, metav1.ListOptions{ResourceVersion: l.ResourceVersion})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Stop()
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		ws.DeleteObject("mesh1", "", "pods", "payments", "sidecar-1")
+	}()
+	select {
+	case ev := <-w.ResultChan():
+		if ev.Type != "DELETED" || ev.Object.(*corev1.Pod).Name != "sidecar-1" {
+			t.Fatalf("expected DELETED sidecar-1 first (no replay of the list), got %s %s", ev.Type, ev.Object.(*corev1.Pod).Name)
+		}
+	case <-ctx.Done():
+		t.Fatal("delete not delivered")
+	}
 }
 
 func TestFollowLogsDeliversNewLines(t *testing.T) {
@@ -317,6 +369,32 @@ func TestFollowLogsDeliversNewLines(t *testing.T) {
 	n, _ = io.ReadAtLeast(stream, buf, len("Later\n"))
 	if string(buf[:n]) != "Later\n" {
 		t.Fatalf("followed line %q", buf[:n])
+	}
+}
+
+// A live workspace trims its oldest lines, so a stream's line count and its
+// sequence numbers drift apart. A follower started after a trim must resume
+// from the newest sequence number, not replay lines it already sent.
+func TestFollowLogsAfterTrim(t *testing.T) {
+	ws, srv := setup(t, false)
+	ws.TrimLogs(3) // drops "Starting": current keeps "Ready" (seq 1), previous keeps both lines
+	cs := kubernetes.NewForConfigOrDie(cfg(srv))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	stream, err := cs.CoreV1().Pods("payments").GetLogs("checkout-1", &corev1.PodLogOptions{Follow: true}).Stream(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	buf := make([]byte, 64)
+	n, _ := io.ReadAtLeast(stream, buf, len("Ready\n"))
+	if string(buf[:n]) != "Ready\n" {
+		t.Fatalf("initial lines %q", buf[:n])
+	}
+	ws.AddLogLines("mesh1", "payments", "checkout-1", "app", "current", []string{"2026-09-27T10:11:10Z Newest"}, "l4")
+	n, _ = io.ReadAtLeast(stream, buf, len("Newest\n"))
+	if string(buf[:n]) != "Newest\n" {
+		t.Fatalf("after a trim the follower sent %q", buf[:n])
 	}
 }
 

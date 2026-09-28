@@ -45,7 +45,7 @@ var version = "0.1.0-dev"
 // newRoot builds the command tree (also used to generate the CLI reference).
 func newRoot() *cobra.Command {
 	root := &cobra.Command{Use: "flightbay-desk", Short: "Flightbay by Solo: investigate a snapshot bundle offline", SilenceUsage: true}
-	root.AddCommand(openCmd(), shellCmd(), queryCmd(), findingsCmd(), proxyConfigCmd(), searchCmd(), sqlCmd(), flowsCmd(), postureCmd(), reachCmd(), featuresCmd(), diffCmd(), driftCmd(), mcpCmd(), keygenCmd(), &cobra.Command{
+	root.AddCommand(openCmd(), liveCmd(), shellCmd(), queryCmd(), findingsCmd(), proxyConfigCmd(), searchCmd(), sqlCmd(), flowsCmd(), postureCmd(), reachCmd(), featuresCmd(), diffCmd(), driftCmd(), mcpCmd(), keygenCmd(), &cobra.Command{
 		Use: "version", Short: "Print the version", Run: func(*cobra.Command, []string) { fmt.Println("flightbay-desk", version) },
 	})
 	return root
@@ -475,7 +475,12 @@ func shellCmd() *cobra.Command {
 			args := []string{"--noprofile", "--rcfile", filepath.Join(d.WorkDir, "bashrc"), "-i"}
 			c := exec.Command("bash", args...)
 			c.Stdin, c.Stdout, c.Stderr, c.Env = os.Stdin, os.Stdout, os.Stderr, env
-			fmt.Fprintf(cmd.ErrOrStderr(), "Flightbay snapshot shell for %s. kubectl (or k) and k9s read the snapshot. Type exit to leave.\n", d.Bundle)
+			if strings.HasPrefix(d.Bundle, "live:") {
+				env = append(env, `PS1=\[\e[32m\]flightbay\[\e[0m\] live \W $ `)
+				fmt.Fprintf(cmd.ErrOrStderr(), "Flightbay live shell for %s. kubectl (or k) and k9s read the read-only live mirror. Type exit to leave.\n", strings.TrimPrefix(d.Bundle, "live:"))
+			} else {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Flightbay snapshot shell for %s. kubectl (or k) and k9s read the snapshot. Type exit to leave.\n", d.Bundle)
+			}
 			return c.Run()
 		},
 	}

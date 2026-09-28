@@ -32,8 +32,12 @@ type Server struct {
 	Token string
 }
 
-// SnapshotTime is the moment the capture describes.
+// SnapshotTime is the moment the capture describes. A live workspace
+// describes the cluster as it is now.
 func SnapshotTime(ws *store.Workspace) time.Time {
+	if ws.IsLive() {
+		return time.Now().UTC()
+	}
 	if m := ws.Manifest(); m != nil && !m.CaptureEnd.IsZero() {
 		return m.CaptureEnd
 	}
@@ -46,10 +50,16 @@ func SnapshotTime(ws *store.Workspace) time.Time {
 // Kubeconfig returns a kubeconfig with one "<cluster>@snapshot" context per
 // cluster. caPEM is the session CA for an https baseURL.
 func Kubeconfig(baseURL, token string, clusters []string, caPEM []byte) ([]byte, error) {
+	return KubeconfigFor(baseURL, token, clusters, caPEM, "snapshot")
+}
+
+// KubeconfigFor is Kubeconfig with the context suffix chosen: "snapshot" for
+// a bundle, "live" for a workspace mirroring a running cluster.
+func KubeconfigFor(baseURL, token string, clusters []string, caPEM []byte, suffix string) ([]byte, error) {
 	c := clientcmdapi.NewConfig()
 	c.AuthInfos["flightbay"] = &clientcmdapi.AuthInfo{Token: token}
 	for i, cl := range clusters {
-		name := cl + "@snapshot"
+		name := cl + "@" + suffix
 		c.Clusters[name] = &clientcmdapi.Cluster{Server: strings.TrimRight(baseURL, "/") + "/clusters/" + cl, CertificateAuthorityData: caPEM}
 		c.Contexts[name] = &clientcmdapi.Context{Cluster: name, AuthInfo: "flightbay"}
 		if i == 0 {
@@ -123,6 +133,11 @@ func (s *Server) handler() http.Handler {
 }
 
 func (s *Server) readOnly(w http.ResponseWriter) {
+	if s.WS.IsLive() {
+		status(w, http.StatusMethodNotAllowed, metav1.StatusReasonMethodNotAllowed,
+			"flightbay: this is a read-only mirror of a live cluster; changes are refused here and never sent to the cluster")
+		return
+	}
 	status(w, http.StatusMethodNotAllowed, metav1.StatusReasonMethodNotAllowed,
 		fmt.Sprintf("flightbay: this is a read-only snapshot taken %s", SnapshotTime(s.WS).Format(time.RFC3339)))
 }
@@ -343,7 +358,11 @@ func (s *Server) items(cluster string, r served, ns string) []item {
 			if e.Obj["apiVersion"] == nil {
 				e.Obj["apiVersion"], e.Obj["kind"] = "v1", "Event"
 			}
-			out = append(out, item{rv: int64(i + 1), ns: n, obj: e.Obj})
+			rv := e.RV
+			if rv == 0 {
+				rv = int64(i + 1)
+			}
+			out = append(out, item{rv: rv, ns: n, obj: e.Obj})
 		}
 	case virtualNamespaces:
 		seen := map[string]bool{}
@@ -588,22 +607,53 @@ func (s *Server) watch(w http.ResponseWriter, r *http.Request, cluster string, r
 	w.WriteHeader(200)
 	fl.Flush()
 	enc := json.NewEncoder(w)
-	sent := map[string]bool{}
+	// sent holds what the client knows, by namespace/name. Objects it
+	// already has from the list it resumed from count as known, so a later
+	// change is MODIFIED and a removal DELETED. Live workspaces change
+	// objects in place (upserts and deletes), so a watch must report both.
+	sent := map[string]item{}
+	key := func(it item) string { return it.ns + "/" + lookup(it.obj, "metadata.name") }
+	emit := func(typ string, it item) bool {
+		var obj any = withRV(it)
+		if wantsTable(r) {
+			obj = s.table(cluster, res, []item{it}, q.Get("includeObject"))
+		}
+		return enc.Encode(map[string]any{"type": typ, "object": obj}) == nil
+	}
 	first := true
 	for {
 		rev := s.WS.Revision()
 		items, _ := filter(r, s.items(cluster, res, ns))
+		seen := make(map[string]bool, len(items))
 		for _, it := range items {
-			key := it.ns + "/" + lookup(it.obj, "metadata.name")
-			if sent[key] || (res.virtual == real && it.rv <= since) {
+			k := key(it)
+			seen[k] = true
+			prev, known := sent[k]
+			switch {
+			case !known && first && res.virtual == real && it.rv <= since:
+				sent[k] = it // in the list the client resumed from
+			case !known:
+				sent[k] = it
+				if !emit("ADDED", it) {
+					return
+				}
+			case it.rv > prev.rv:
+				sent[k] = it
+				if !emit("MODIFIED", it) {
+					return
+				}
+			}
+		}
+		for k, prev := range sent {
+			if seen[k] {
 				continue
 			}
-			sent[key] = true
-			var obj any = withRV(it)
-			if wantsTable(r) {
-				obj = s.table(cluster, res, []item{it}, q.Get("includeObject"))
+			delete(sent, k)
+			gone := prev
+			if gone.rv < rev {
+				gone.rv = rev
 			}
-			if err := enc.Encode(map[string]any{"type": "ADDED", "object": obj}); err != nil {
+			if !emit("DELETED", gone) {
 				return
 			}
 		}
@@ -738,7 +788,12 @@ func (s *Server) logs(w http.ResponseWriter, r *http.Request, cluster, ns, pod s
 	if fl != nil {
 		fl.Flush()
 	}
-	sent := len(recs)
+	// Resume by sequence number, not by count: a live workspace trims its
+	// oldest lines, so counts and sequence numbers drift apart.
+	next := 0
+	if len(recs) > 0 {
+		next = recs[len(recs)-1].Seq + 1
+	}
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
 	for {
@@ -748,7 +803,7 @@ func (s *Server) logs(w http.ResponseWriter, r *http.Request, cluster, ns, pod s
 		case <-updates:
 		case <-tick.C:
 		}
-		now := s.WS.LogStreamFrom(cluster, ns, pod, container, stream, sent)
+		now := s.WS.LogStreamFrom(cluster, ns, pod, container, stream, next)
 		for _, rec := range now {
 			out := rec.Raw + "\n"
 			if timestamps {
@@ -758,7 +813,9 @@ func (s *Server) logs(w http.ResponseWriter, r *http.Request, cluster, ns, pod s
 				return
 			}
 		}
-		sent += len(now)
+		if len(now) > 0 {
+			next = now[len(now)-1].Seq + 1
+		}
 		if fl != nil {
 			fl.Flush()
 		}

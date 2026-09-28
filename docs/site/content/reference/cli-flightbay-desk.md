@@ -107,6 +107,84 @@ flightbay-desk keygen [flags]
 |---|---|
 | `-o, --output string` | identity file to write (default "flightbay-identity.txt") |
 
+## flightbay-desk live
+
+Live mode connects to a cluster with your kubeconfig and keeps a workspace in step with it:
+an initial list of every selected resource type, then watches; events as they happen; and
+container logs followed as kubectl logs -f would. Everything in the desk works on it: the UI,
+search, SQL, the Scorecard, agent reach and findings, and kubectl and k9s in the terminal,
+whose watches update as the cluster changes.
+
+It only reads. The requests it makes are get, list, watch and pods/log (plus port-forward to
+Solo components when --solo-diagnostics is given and you ask for a refresh). A guard in the
+client refuses anything else before it leaves the process. Scope and redaction are the ones
+flightbay collect uses, with the same flags. Save as bundle writes the mirror as a normal,
+verified bundle at any moment.
+
+```text
+flightbay-desk live [flags]
+```
+
+Examples:
+
+```bash
+  flightbay-desk live --context kind-mesh1 --namespaces kagent,istio-system
+  flightbay-desk live --context prod --namespaces payments --exclude-resources configmaps,secrets
+  flightbay-desk live --context mesh1 --solo-diagnostics --max-log-streams 50
+  flightbay-desk live --context mesh1 --namespaces payments --dry-run      # the plan and the RBAC it needs
+  flightbay rbac --live --namespaces payments                               # the same RBAC, without a cluster
+```
+
+| Flag | Description |
+|---|---|
+| `--allow-remote` | allow a non-loopback --listen (for containers); the token is still required |
+| `--burst int` | API server request burst |
+| `--case string` | support case number, recorded in the bundle |
+| `--cluster-scoped` | also collect cluster-scoped objects (nodes, namespaces, CRDs, ClusterRoles) |
+| `--collect strings` | categories: objects,logs,events,nodes,helm,proxies,control-plane,metrics |
+| `--compression string` | best, better, default or fastest |
+| `--config string` | collection config file (YAML); flags refine it, exclusions always win. A CONFIG.sig next to it is checked |
+| `--configmaps string` | omit, metadata or scrubbed |
+| `--context string` | kubeconfig context to mirror (default: current context) |
+| `--drop-field stringArray` | remove this path from every object before writing, e.g. 'metadata.annotations["corp.example/*"]' (repeatable) |
+| `--dry-run` | print what would be watched and the RBAC it needs; reads discovery only |
+| `--exclude-namespaces strings` | namespaces to exclude (globs allowed) |
+| `--exclude-resources strings` | resources never to read, e.g. configmaps,secrets |
+| `--hubble-flows int[=20000]` | read the last N flows from Cilium hubble-relay (kube-system) through port-forward and the local hubble CLI; --hubble-flows alone means 20000 |
+| `--include-resources strings` | allowlist: read only these resource types (same as --resources); --exclude-resources still wins |
+| `--json` | print the dry-run plan as JSON |
+| `--keep` | keep the workspace directory (DuckDB file, kubeconfig) after stopping |
+| `--kubeconfig string` | kubeconfig file (default: $KUBECONFIG or ~/.kube/config) |
+| `--label-selector string` | only collect namespaced objects matching this label selector |
+| `--listen string` | loopback address for the UI and API (default "127.0.0.1:8484") |
+| `--log-containers strings` | only collect logs from containers matching these globs |
+| `--log-pods strings` | only collect logs from pods matching these globs |
+| `--log-streams strings` | log streams: current,previous,init,ephemeral |
+| `--log-tail int` | lines of history per stream when following starts (within --since) (default 500) |
+| `--max-bundle-bytes int` | stop collecting once the compressed bundle reaches this size |
+| `--max-log-bytes int` | per-stream log limit in bytes (keeps the newest lines) |
+| `--max-log-lines int` | log lines kept in the workspace; the oldest are dropped first (default 1000000) |
+| `--max-log-streams int` | container log streams followed at once; beyond it unhealthy pods come first and the rest take turns (default 100) |
+| `--namespaces strings` | namespaces to include (globs allowed); default all |
+| `--no-browser` | do not open a browser |
+| `--no-logs` | do not collect container logs |
+| `--no-portforward` | never use port-forward |
+| `--no-proxy-dumps` | do not collect proxy config dumps |
+| `--no-terminal` | disable the in-browser terminal |
+| `--object-detail string` | metadata or full |
+| `--policy-key strings` | public keys of whoever approves collection policies; --config must then be signed by one of them and flags may only narrow it |
+| `--portforward` | allow port-forward based diagnostics |
+| `--profile string` | starting profile: minimal, standard or custom (default "standard") |
+| `--qps float32` | API server requests per second |
+| `--redact-extra string` | file of extra redaction patterns (one Go regular expression per line) |
+| `--resources strings` | resource allowlist, e.g. pods,deployments.apps,httproutes.gateway.networking.k8s.io |
+| `--save-dir string` | directory Save as bundle writes to (default ".") |
+| `--secrets string` | omit, metadata or keys (values are never collected) |
+| `--shell string` | shell for the terminal (default /bin/bash) |
+| `--since string` | log window, e.g. 2h |
+| `--solo-diagnostics` | add proxy dumps, control-plane debug and metrics, and allow the port-forward they need |
+| `--workdir string` | workspace directory (default ~/.flightbay/workspaces/ws-*) |
+
 ## flightbay-desk mcp
 
 Serves the open workspace as a Model Context Protocol server on stdin/stdout.

@@ -4,6 +4,7 @@
 package server
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
@@ -77,6 +78,13 @@ type Server struct {
 	Identities []age.Identity
 	// Review is set in review mode (flightbay review).
 	Review *ReviewSession
+	// RefreshDiagnostics re-runs the Solo diagnostics for one pod of a live
+	// workspace and returns how many files were captured; nil when the
+	// workspace is not live or diagnostics were not allowed.
+	RefreshDiagnostics func(ctx context.Context, namespace, pod string) (int, error)
+	// SaveBundle writes the live mirror as a bundle and returns its path;
+	// nil when the workspace is not live.
+	SaveBundle func() (string, error)
 
 	once   sync.Once
 	api    http.Handler
@@ -132,7 +140,11 @@ func (s *Server) Prepare() error {
 	if kubeURL == "" {
 		kubeURL = strings.TrimRight(s.BaseURL, "/") + "/k8s"
 	}
-	kc, err := apiserver.Kubeconfig(kubeURL, s.Token, s.WS.Clusters(), s.KubeCA)
+	suffix := "snapshot"
+	if s.WS.IsLive() {
+		suffix = "live"
+	}
+	kc, err := apiserver.KubeconfigFor(kubeURL, s.Token, s.WS.Clusters(), s.KubeCA, suffix)
 	if err != nil {
 		return err
 	}
@@ -172,6 +184,12 @@ func (s *Server) ShellEnv() []string {
 	label := "snapshot"
 	if h := s.WS.Header(); h != nil && h.Case != "" {
 		label = "case " + h.Case
+	}
+	if s.WS.IsLive() {
+		label, snap = "live", "live"
+		if h := s.WS.Header(); h != nil && len(h.Contexts) > 0 {
+			snap = h.Contexts[0]
+		}
 	}
 	env := []string{}
 	for _, kv := range os.Environ() {
@@ -286,6 +304,8 @@ func (s *Server) Handler() http.Handler {
 	api("/api/review/preview", s.reviewPreview)
 	api("/api/review/export", s.reviewExport)
 	api("/api/review/lines", s.reviewLines)
+	api("/api/live/save", s.liveSave)
+	api("/api/live/refresh-diagnostics", s.liveRefreshDiagnostics)
 	// MCP for agents that connect over HTTP (kagent RemoteMCPServer, hosted
 	// desks). Same token as the API; tools call back into this server.
 	api("/mcp", func(w http.ResponseWriter, r *http.Request) {
@@ -327,6 +347,11 @@ func (s *Server) workspace(w http.ResponseWriter, r *http.Request) {
 			out["source"], out["repo"] = h.Source, h.Repo // a repo scan: declared state
 		}
 		out["collectorSha256"], out["policySource"], out["review"] = h.CollectorSHA256, h.PolicySource, h.Review
+		if s.WS.IsLive() {
+			// The Navigator and the banner read S.ws.live.
+			out["source"], out["live"] = h.Source, s.WS.State().Live
+			out["canSave"], out["canRefreshDiagnostics"] = s.SaveBundle != nil, s.RefreshDiagnostics != nil
+		}
 	}
 	out["trust"] = s.WS.Trust()
 	out["reviewMode"] = s.Review != nil

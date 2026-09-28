@@ -72,6 +72,7 @@ type Collector struct {
 	MaxDiagBytes  int64         // largest single diagnostic response kept
 	Progress      func(string)
 	Hubble        HubbleRunner // runs the hubble CLI; nil = exec hubble from PATH
+	Live          bool         // dry runs print the RBAC for flightbay-desk live (adds watch)
 
 	// Recorded in bundle.json: the approved policy file used, and the
 	// collector binary's own hash.
@@ -303,8 +304,35 @@ func (c *Collector) DryRun(_ context.Context, cluster string, cl Clients) (*DryR
 		out.LogStreams, out.LogSince, out.LogMaxBytes = c.Policy.Logs.Streams, c.Policy.Logs.Since, c.Policy.Logs.MaxBytes
 	}
 	out.Flows = c.flowPlan()
-	out.RBAC = c.Policy.RBAC(disc)
+	out.RBAC = c.Policy.RBACFor(disc, c.Live)
 	return out, nil
+}
+
+// Print writes the plan as flightbay collect --dry-run shows it.
+func (pl *DryRunPlan) Print(w io.Writer, showRBAC bool) {
+	fmt.Fprintf(w, "Cluster %s\n  Categories: %s\n  Namespaces: %s\n", pl.Cluster, strings.Join(pl.Categories, ", "), strings.Join(pl.Namespaces, ", "))
+	for _, u := range pl.Unavailable {
+		fmt.Fprintf(w, "  Not collected: %s\n", u)
+	}
+	if len(pl.LogStreams) > 0 {
+		fmt.Fprintf(w, "  Logs: streams %s, since %s, up to %d bytes per stream (newest kept)\n", strings.Join(pl.LogStreams, ","), pl.LogSince, pl.LogMaxBytes)
+	}
+	fmt.Fprintf(w, "  Resource types (%d): %s\n", len(pl.Resources), strings.Join(pl.Resources, ", "))
+	for _, c := range pl.Categories {
+		if c == "proxies" || c == "control-plane" || c == "metrics" {
+			fmt.Fprintln(w, "  Diagnostics: port-forward to Solo component pods in the selected namespaces (ztunnel, Envoy,\n"+
+				"    agentgateway, istiod, gateway controllers) to read their admin endpoints. Output naming other\n"+
+				"    namespaces is removed before writing; Envoy SDS secrets and controller krt snapshots are never kept.")
+			break
+		}
+	}
+	for _, f := range pl.Flows {
+		fmt.Fprintf(w, "  Flows: %s\n", f)
+	}
+	fmt.Fprintln(w, "  Secret values are never collected. A dry run reads discovery only, no objects or logs.")
+	if showRBAC {
+		fmt.Fprintf(w, "\nRequired RBAC:\n%s\n", pl.RBAC)
+	}
 }
 
 // podInfo is what log collection needs from a pod.

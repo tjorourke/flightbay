@@ -158,3 +158,14 @@ See [Scope](/collect/scope/) for the file format.
 ## Scan a repository instead
 
 If there is no cluster to hand, or you want to check changes before they are deployed, scan the manifests, Helm charts and Kustomize overlays in a repository. See [Scan examples](/scan/examples/).
+
+## Watch a cluster live instead
+
+If you have access to the cluster yourself and want to watch it change rather than capture it once, mirror it into the desk. It uses the same scope and redaction flags, only reads (`get`, `list`, `watch` and `pods/log`), and can save the mirror as a normal bundle at any moment.
+
+```bash
+flightbay rbac --live --namespaces payments          # the RBAC it needs: collect's, plus watch
+flightbay ui --live --context prod-eu --namespaces payments --exclude-resources configmaps
+```
+
+See [Live mode](/desk/live/).

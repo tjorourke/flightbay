@@ -5,7 +5,6 @@ package main
 
 import (
 	"bufio"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,11 +18,6 @@ import (
 
 	"filippo.io/age"
 	"github.com/spf13/cobra"
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/client-go/discovery"
-	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/metadata"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/yaml"
@@ -93,45 +87,10 @@ func (k *kubeFlags) resolve() (clientcmd.ClientConfig, []string, error) {
 }
 
 func restConfig(k *kubeFlags, ctx string, p *policy.Policy) (*rest.Config, error) {
-	rules := clientcmd.NewDefaultClientConfigLoadingRules()
-	if k.kubeconfig != "" {
-		rules.ExplicitPath = k.kubeconfig
-	}
-	cfg, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, &clientcmd.ConfigOverrides{CurrentContext: ctx}).ClientConfig()
-	if err != nil {
-		return nil, err
-	}
-	cfg.QPS, cfg.Burst = p.QPS, p.Burst
-	cfg.UserAgent = "flightbay/" + version
-	cfg.WarningHandler = rest.NoWarnings{}
-	return cfg, nil
+	return collect.RestConfig(k.kubeconfig, ctx, p, "flightbay/"+version)
 }
 
-type logSource struct{ cs kubernetes.Interface }
-
-func (l logSource) Stream(ctx context.Context, ns, pod string, o *corev1.PodLogOptions) (io.ReadCloser, error) {
-	return l.cs.CoreV1().Pods(ns).GetLogs(pod, o).Stream(ctx)
-}
-
-func clients(cfg *rest.Config) (collect.Clients, error) {
-	disc, err := discovery.NewDiscoveryClientForConfig(cfg)
-	if err != nil {
-		return collect.Clients{}, err
-	}
-	dyn, err := dynamic.NewForConfig(cfg)
-	if err != nil {
-		return collect.Clients{}, err
-	}
-	meta, err := metadata.NewForConfig(cfg)
-	if err != nil {
-		return collect.Clients{}, err
-	}
-	cs, err := kubernetes.NewForConfig(cfg)
-	if err != nil {
-		return collect.Clients{}, err
-	}
-	return collect.Clients{Discovery: disc, Dynamic: dyn, Metadata: meta, Logs: logSource{cs}, Forward: &forwarder{cfg: cfg, cs: cs}}, nil
-}
+func clients(cfg *rest.Config) (collect.Clients, error) { return collect.NewClients(cfg) }
 
 func recipients(specs []string) ([]age.Recipient, error) {
 	var out []age.Recipient
@@ -235,31 +194,7 @@ func splitList(s string) []string {
 	return out
 }
 
-func printPlan(w io.Writer, pl *collect.DryRunPlan, showRBAC bool) {
-	fmt.Fprintf(w, "Cluster %s\n  Categories: %s\n  Namespaces: %s\n", pl.Cluster, strings.Join(pl.Categories, ", "), strings.Join(pl.Namespaces, ", "))
-	for _, u := range pl.Unavailable {
-		fmt.Fprintf(w, "  Not collected: %s\n", u)
-	}
-	if len(pl.LogStreams) > 0 {
-		fmt.Fprintf(w, "  Logs: streams %s, since %s, up to %d bytes per stream (newest kept)\n", strings.Join(pl.LogStreams, ","), pl.LogSince, pl.LogMaxBytes)
-	}
-	fmt.Fprintf(w, "  Resource types (%d): %s\n", len(pl.Resources), strings.Join(pl.Resources, ", "))
-	for _, c := range pl.Categories {
-		if c == "proxies" || c == "control-plane" || c == "metrics" {
-			fmt.Fprintln(w, "  Diagnostics: port-forward to Solo component pods in the selected namespaces (ztunnel, Envoy,\n"+
-				"    agentgateway, istiod, gateway controllers) to read their admin endpoints. Output naming other\n"+
-				"    namespaces is removed before writing; Envoy SDS secrets and controller krt snapshots are never kept.")
-			break
-		}
-	}
-	for _, f := range pl.Flows {
-		fmt.Fprintf(w, "  Flows: %s\n", f)
-	}
-	fmt.Fprintln(w, "  Secret values are never collected. A dry run reads discovery only, no objects or logs.")
-	if showRBAC {
-		fmt.Fprintf(w, "\nRequired RBAC:\n%s\n", pl.RBAC)
-	}
-}
+func printPlan(w io.Writer, pl *collect.DryRunPlan, showRBAC bool) { pl.Print(w, showRBAC) }
 
 func collectCmd() *cobra.Command {
 	var pf cli.PolicyFlags
@@ -533,16 +468,19 @@ func extractCmd() *cobra.Command {
 func rbacCmd() *cobra.Command {
 	var pf cli.PolicyFlags
 	var kf kubeFlags
-	var discover bool
+	var discover, live bool
 	c := &cobra.Command{
 		Use: "rbac", Short: "Print least-privilege RBAC for the collection policy",
+		Example: `  flightbay rbac --namespaces payments
+  flightbay rbac --discover --context mesh1
+  flightbay rbac --live --namespaces kagent      # for flightbay-desk live: adds watch`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			p, err := pf.Resolve(cmd.Flags())
 			if err != nil {
 				return err
 			}
 			if !discover {
-				fmt.Fprint(cmd.OutOrStdout(), p.RBAC(nil))
+				fmt.Fprint(cmd.OutOrStdout(), p.RBACFor(nil, live))
 				return nil
 			}
 			_, ctxs, err := kf.resolve()
@@ -558,7 +496,7 @@ func rbacCmd() *cobra.Command {
 				return err
 			}
 			rd, _ := redact.New(nil)
-			pl, err := (&collect.Collector{Policy: p, Redactor: rd}).DryRun(cmd.Context(), ctxs[0], cl)
+			pl, err := (&collect.Collector{Policy: p, Redactor: rd, Live: live}).DryRun(cmd.Context(), ctxs[0], cl)
 			if err != nil {
 				return err
 			}
@@ -569,6 +507,7 @@ func rbacCmd() *cobra.Command {
 	pf.Register(c.Flags())
 	kf.register(c)
 	c.Flags().BoolVar(&discover, "discover", false, "use cluster discovery to list resources explicitly instead of a wildcard")
+	c.Flags().BoolVar(&live, "live", false, "RBAC for flightbay-desk live, which also needs watch")
 	return c
 }
 

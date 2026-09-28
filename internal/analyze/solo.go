@@ -13,6 +13,9 @@ import (
 // snapshotTime is when the capture describes; certificate lifetimes are
 // measured against it, not against the time the bundle is opened.
 func snapshotTime(ws *store.Workspace) time.Time {
+	if ws.IsLive() {
+		return time.Now().UTC()
+	}
 	if m := ws.Manifest(); m != nil && !m.CaptureEnd.IsZero() {
 		return m.CaptureEnd
 	}

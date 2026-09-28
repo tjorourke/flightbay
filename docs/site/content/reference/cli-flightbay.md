@@ -181,6 +181,14 @@ Print least-privilege RBAC for the collection policy
 flightbay rbac [flags]
 ```
 
+Examples:
+
+```bash
+  flightbay rbac --namespaces payments
+  flightbay rbac --discover --context mesh1
+  flightbay rbac --live --namespaces kagent      # for flightbay-desk live: adds watch
+```
+
 | Flag | Description |
 |---|---|
 | `--burst int` | API server request burst |
@@ -199,6 +207,7 @@ flightbay rbac [flags]
 | `--include-resources strings` | allowlist: read only these resource types (same as --resources); --exclude-resources still wins |
 | `--kubeconfig string` | kubeconfig file (default: $KUBECONFIG or ~/.kube/config) |
 | `--label-selector string` | only collect namespaced objects matching this label selector |
+| `--live` | RBAC for flightbay-desk live, which also needs watch |
 | `--log-containers strings` | only collect logs from containers matching these globs |
 | `--log-pods strings` | only collect logs from pods matching these globs |
 | `--log-streams strings` | log streams: current,previous,init,ephemeral |
@@ -304,10 +313,10 @@ Examples:
 
 ## flightbay ui
 
-Open the UI on a bundle (default: the newest flightbay-*.tar.zst in this directory)
+Open the UI on a bundle (default: the newest flightbay-*.tar.zst in this directory), or on a live cluster with --live
 
 ```text
-flightbay ui [BUNDLE | DIR]
+flightbay ui [BUNDLE | DIR] | ui --live [--context CTX] [scope flags]
 ```
 
 Examples:
@@ -316,6 +325,7 @@ Examples:
   flightbay ui                                   # newest bundle here
   flightbay ui flightbay-DEMO-20260927T1842Z.tar.zst
   flightbay ui ~/Downloads                         # newest bundle in a folder
+  flightbay ui --live --context kind-mesh1 --namespaces kagent   # mirror a cluster live, read-only
 ```
 
 ## flightbay version

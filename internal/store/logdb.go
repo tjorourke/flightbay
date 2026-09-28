@@ -399,7 +399,7 @@ func (w *Workspace) SearchLogs(f LogFilter) (*LogResult, error) {
 		return nil, err
 	}
 	w.mu.RLock()
-	ref, rev, scanned := w.logEnd, w.rev, w.state.LogLines
+	ref, rev, scanned := w.logNowLocked(), w.rev, w.state.LogLines
 	loading := w.state.Phase == PhaseLoading || w.state.Phase == PhaseWaiting
 	pol := w.policy
 	w.mu.RUnlock()
@@ -565,7 +565,7 @@ func (w *Workspace) LogFields(query, cluster string, maxFields, maxValues int) (
 		return nil, err
 	}
 	w.mu.RLock()
-	ref := w.logEnd
+	ref := w.logNowLocked()
 	w.mu.RUnlock()
 	where, args := q.SQL(ref)
 	if cluster != "" {
@@ -617,7 +617,7 @@ func (w *Workspace) FindLogs(query string, limit int) ([]*logs.Record, error) {
 		return nil, err
 	}
 	w.mu.RLock()
-	ref := w.logEnd
+	ref := w.logNowLocked()
 	w.mu.RUnlock()
 	where, args := q.SQL(ref)
 	rows, err := w.ldb.db.Query("SELECT "+lineCols+" FROM log_lines WHERE "+where+" ORDER BY id LIMIT ?", append(args, limit)...)

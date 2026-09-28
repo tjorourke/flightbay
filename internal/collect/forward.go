@@ -1,4 +1,4 @@
-package main
+package collect
 
 import (
 	"context"
@@ -12,8 +12,6 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/portforward"
 	"k8s.io/client-go/transport/spdy"
-
-	"github.com/tjorourke/flightbay/internal/collect"
 )
 
 // forwarder opens port-forwards the way kubectl does: WebSockets first,
@@ -31,7 +29,7 @@ type forwardSession struct {
 	client *http.Client
 }
 
-func (f *forwarder) Open(ctx context.Context, ns, pod string, ports []int) (collect.ForwardSession, error) {
+func (f *forwarder) Open(ctx context.Context, ns, pod string, ports []int) (ForwardSession, error) {
 	u := f.cs.CoreV1().RESTClient().Post().Resource("pods").Namespace(ns).Name(pod).SubResource("portforward").URL()
 	rt, upgrader, err := spdy.RoundTripperFor(f.cfg)
 	if err != nil {

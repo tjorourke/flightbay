@@ -41,21 +41,22 @@ const (
 
 // ImportState is the progress of the running import.
 type ImportState struct {
-	Phase         string    `json:"phase"`
-	Source        string    `json:"source"`
-	BytesReceived int64     `json:"bytesReceived"`
-	Members       int       `json:"members"`
-	Objects       int       `json:"objects"`
-	LogLines      int       `json:"logLines"`
-	LogsSkipped   int       `json:"logsSkipped,omitempty"` // lines not indexed because of the memory budget
-	Events        int       `json:"events"`
-	CoverageSeen  int       `json:"coverageSeen"`
-	Verified      bool      `json:"verified"`
-	Error         string    `json:"error,omitempty"`
-	Started       time.Time `json:"started"`
-	Finished      time.Time `json:"finished,omitempty"`
-	Revision      int64     `json:"revision"`
-	Deferred      []string  `json:"deferred,omitempty"`
+	Phase         string     `json:"phase"`
+	Source        string     `json:"source"`
+	BytesReceived int64      `json:"bytesReceived"`
+	Members       int        `json:"members"`
+	Objects       int        `json:"objects"`
+	LogLines      int        `json:"logLines"`
+	LogsSkipped   int        `json:"logsSkipped,omitempty"` // lines not indexed because of the memory budget
+	Events        int        `json:"events"`
+	CoverageSeen  int        `json:"coverageSeen"`
+	Verified      bool       `json:"verified"`
+	Error         string     `json:"error,omitempty"`
+	Started       time.Time  `json:"started"`
+	Finished      time.Time  `json:"finished,omitempty"`
+	Revision      int64      `json:"revision"`
+	Deferred      []string   `json:"deferred,omitempty"`
+	Live          *LiveState `json:"live,omitempty"` // set by flightbay-desk live
 }
 
 // Object is one captured Kubernetes object.
@@ -87,6 +88,7 @@ func (o *Object) Labels() map[string]string {
 type Event struct {
 	Cluster string         `json:"cluster"`
 	Obj     map[string]any `json:"object"`
+	RV      int64          `json:"-"` // revision the event was stored at; watches use it to spot updates
 }
 
 type typeKey struct{ cluster, group, resource string }
@@ -650,7 +652,7 @@ func (w *Workspace) AddEvents(cluster string, items []map[string]any) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	for _, it := range items {
-		w.events = append(w.events, Event{Cluster: cluster, Obj: it})
+		w.events = append(w.events, Event{Cluster: cluster, Obj: it, RV: w.rev + 1}) // the revision commit() moves to
 	}
 	w.state.Events += len(items)
 	w.commit()
