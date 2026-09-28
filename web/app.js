@@ -1029,7 +1029,12 @@ function rcGraph(a, G) {
     const D = G.direct || {n: into.length, counts: {}}, dc = D.counts;
     const beyond = nodes.filter(n => n.alsoDirect).length;
     const sy = Y(agent.id) + bh / 2;
-    frame = `<g class="rg-frame"><rect x="${fx}" y="${fy}" width="${fw}" height="${fh}" rx="10"/><text x="${fx + 14}" y="${fy + 18}" class="rg-fl">${D.n} Service${D.n === 1 ? '' : 's'}${['red', 'amber', 'green', 'grey'].filter(r => dc[r]).map(r => ` · ${dc[r]} ${r}`).join('')}${beyond ? ` · ${beyond} drawn to the right, behind a gateway` : ''}</text></g>
+    // The caption has to fit the frame, which is two boxes wide at the least:
+    // the longer wording goes first, then shorter ones.
+    const head = `${D.n} Service${D.n === 1 ? '' : 's'}${['red', 'amber', 'green', 'grey'].filter(r => dc[r]).map(r => ` · ${dc[r]} ${r}`).join('')}`;
+    const room = Math.floor((fw - 28) / 6.7);
+    const caption = [beyond ? `${head} · ${beyond} drawn to the right, behind a gateway` : head, `${head} · ${beyond} more to the right`, head, `${D.n} Services`].find(t => t.length <= room) || `${D.n} Services`;
+    frame = `<g class="rg-frame"><rect x="${fx}" y="${fy}" width="${fw}" height="${fh}" rx="10"/><text x="${fx + 14}" y="${fy + 18}" class="rg-fl">${esc(caption)}</text></g>
       <g class="rg-edge rg-${risk(worst)}" data-f="${esc(agent.id)}" data-t="rg-frame"><title>${esc(`${labelOf(agent.id)} reaches ${D.n} Services directly`)}</title><path class="rg-line rg-trunk" d="M${colX(0) + bw},${sy} H${fx - 3}" marker-end="url(#rga-${risk(worst)})"/></g>`;
   }
   const edgeSvg = ordered.map(e => {
