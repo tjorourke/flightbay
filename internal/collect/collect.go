@@ -11,7 +11,10 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -104,6 +107,24 @@ func (c *Collector) defaults() {
 	if c.LogRetryDelay == 0 {
 		c.LogRetryDelay = 1500 * time.Millisecond
 	}
+}
+
+// listWorkers is how many list and get requests run at once. Every request
+// still passes the client's QPS limiter; this bounds the heavy lists in
+// flight against the API server and etcd.
+func (c *Collector) listWorkers() int {
+	if c.Policy.Concurrency > 0 {
+		return c.Policy.Concurrency
+	}
+	return 4
+}
+
+// logWorkers is how many log streams are read at once.
+func (c *Collector) logWorkers() int {
+	if c.Policy.Logs.Concurrency > 0 {
+		return c.Policy.Logs.Concurrency
+	}
+	return 8
 }
 
 func (c *Collector) record(e LogEntry) {
@@ -383,17 +404,17 @@ func (c *Collector) CollectCluster(ctx context.Context, cluster string, cl Clien
 	wantPods := plan.Selected(policy.CatLogs) || c.diagSelected()
 	collectedPods := false
 	early, late := split(selected)
-	for _, r := range early {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
+	var podsMu sync.Mutex
+	if err := c.eachResource(ctx, early, func(r bundle.APIResource) error {
 		p, err := c.collectResource(ctx, cluster, cl, r, wantPods && r.Group == "" && r.Resource == "pods")
-		if err != nil {
-			return err
-		}
-		if r.Group == "" && r.Resource == "pods" && c.clientFor(r) == "dynamic" {
+		if err == nil && r.Group == "" && r.Resource == "pods" && c.clientFor(r) == "dynamic" {
+			podsMu.Lock()
 			pods, collectedPods = p, true
+			podsMu.Unlock()
 		}
+		return err
+	}); err != nil {
+		return err
 	}
 	if err := c.collectScopedNamespaces(ctx, cluster, cl, selected); err != nil {
 		return err
@@ -411,13 +432,11 @@ func (c *Collector) CollectCluster(ctx context.Context, cluster string, cl Clien
 			return err
 		}
 	}
-	for _, r := range late {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if _, err := c.collectResource(ctx, cluster, cl, r, false); err != nil {
-			return err
-		}
+	if err := c.eachResource(ctx, late, func(r bundle.APIResource) error {
+		_, err := c.collectResource(ctx, cluster, cl, r, false)
+		return err
+	}); err != nil {
+		return err
 	}
 	// Bulky diagnostics go last so objects and logs reach the desk first.
 	if c.diagSelected() {
@@ -437,6 +456,28 @@ func (c *Collector) CollectCluster(ctx context.Context, cluster string, cl Clien
 	return c.Writer.Flush()
 }
 
+// eachResource runs fn for each resource type, listWorkers at a time. Each
+// type's chunks and coverage record stay together; types may interleave.
+func (c *Collector) eachResource(ctx context.Context, rs []bundle.APIResource, fn func(bundle.APIResource) error) error {
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(c.listWorkers())
+	for _, r := range rs {
+		if gctx.Err() != nil {
+			break
+		}
+		g.Go(func() error {
+			if err := gctx.Err(); err != nil {
+				return err
+			}
+			return fn(r)
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return err
+	}
+	return ctx.Err()
+}
+
 var crdGVR = schema.GroupVersionResource{Group: "apiextensions.k8s.io", Version: "v1", Resource: "customresourcedefinitions"}
 
 // collectCRDs fetches the definition of each selected custom resource type, so
@@ -447,28 +488,31 @@ func (c *Collector) collectCRDs(ctx context.Context, cluster string, cl Clients,
 	if cl.Dynamic == nil {
 		return nil
 	}
-	denied := false
+	var denied atomic.Bool
+	var crds []bundle.APIResource
 	for _, r := range selected {
-		if !strings.Contains(r.Group, ".") || denied {
-			continue
+		if strings.Contains(r.Group, ".") {
+			crds = append(crds, r)
+		}
+	}
+	return c.eachResource(ctx, crds, func(r bundle.APIResource) error {
+		if denied.Load() {
+			return nil
 		}
 		name := r.Resource + "." + r.Group
 		u, err := cl.Dynamic.Resource(crdGVR).Get(ctx, name, metav1.GetOptions{})
 		if apierrors.IsNotFound(err) {
-			continue // a built-in or aggregated API, not a CRD
+			return nil // a built-in or aggregated API, not a CRD
 		}
 		if err != nil {
-			if apierrors.IsForbidden(err) {
-				denied = true // one entry, not one per type
+			if apierrors.IsForbidden(err) && denied.Swap(true) {
+				return nil // one entry, not one per type
 			}
 			c.record(LogEntry{Cluster: cluster, Operation: "crd", Target: name, Result: "failed", Error: err.Error()})
-			continue
+			return nil
 		}
-		if err := c.Writer.AddJSON(bundle.DiscoveryPath(cluster, "crds/"+bundle.SafeID(name)+".json"), SlimCRD(u.Object)); err != nil {
-			return err
-		}
-	}
-	return nil
+		return c.Writer.AddJSON(bundle.DiscoveryPath(cluster, "crds/"+bundle.SafeID(name)+".json"), SlimCRD(u.Object))
+	})
 }
 
 // SlimCRD keeps the parts of a CRD the desk uses: names, scope and the
@@ -562,14 +606,21 @@ func (c *Collector) keep(r bundle.APIResource, obj map[string]any) bool {
 }
 
 func (c *Collector) list(ctx context.Context, cl Clients, r bundle.APIResource, ns string, fn func(map[string]any)) error {
-	gvr := schema.GroupVersionResource{Group: r.Group, Version: r.Version, Resource: r.Resource}
-	opts := metav1.ListOptions{Limit: 500}
-	if r.Namespaced && c.Policy.LabelSelector != "" {
-		opts.LabelSelector = c.Policy.LabelSelector
+	selector := ""
+	if r.Namespaced {
+		selector = c.Policy.LabelSelector
 	}
+	return c.listWith(ctx, cl, r, ns, c.clientFor(r) == "metadata", selector, fn)
+}
+
+// listWith lists one type a page at a time (500 per request), so no request
+// asks the API server to build an unbounded response.
+func (c *Collector) listWith(ctx context.Context, cl Clients, r bundle.APIResource, ns string, meta bool, selector string, fn func(map[string]any)) error {
+	gvr := schema.GroupVersionResource{Group: r.Group, Version: r.Version, Resource: r.Resource}
+	opts := metav1.ListOptions{Limit: 500, LabelSelector: selector}
 	for {
 		var cont string
-		if c.clientFor(r) == "metadata" {
+		if meta {
 			if cl.Metadata == nil {
 				return fmt.Errorf("metadata client unavailable")
 			}
@@ -640,7 +691,7 @@ type chunker struct {
 	c       *Collector
 	path    func(int) string
 	list    map[string]any
-	items   []any
+	items   [][]byte // each object encoded once, as it arrives
 	size    int
 	part    int
 	chunks  []string
@@ -652,8 +703,11 @@ func (k *chunker) add(obj map[string]any) error {
 	if k.stopped {
 		return nil
 	}
-	b, _ := json.Marshal(obj)
-	k.items = append(k.items, obj)
+	b, err := json.Marshal(obj)
+	if err != nil {
+		return err
+	}
+	k.items = append(k.items, b)
 	k.size += len(b)
 	k.count++
 	if len(k.items) >= k.c.ChunkItems || k.size >= k.c.ChunkBytes {
@@ -674,11 +728,25 @@ func (k *chunker) flush() error {
 	}
 	k.part++
 	name := k.path(k.part)
-	l := map[string]any{"items": k.items}
-	for kk, v := range k.list {
-		l[kk] = v
+	// The list's own fields, then "items" spliced in from the encoded objects.
+	head, err := json.Marshal(k.list)
+	if err != nil {
+		return err
 	}
-	if err := k.c.Writer.AddJSON(name, l); err != nil {
+	buf := make([]byte, 0, k.size+len(head)+len(k.items)+16)
+	buf = append(buf, head[:len(head)-1]...)
+	if len(head) > 2 {
+		buf = append(buf, ',')
+	}
+	buf = append(buf, `"items":[`...)
+	for i, it := range k.items {
+		if i > 0 {
+			buf = append(buf, ',')
+		}
+		buf = append(buf, it...)
+	}
+	buf = append(buf, "]}"...)
+	if err := k.c.Writer.Add(name, buf); err != nil {
 		return err
 	}
 	k.chunks = append(k.chunks, name)
@@ -786,20 +854,13 @@ func (c *Collector) listPodsForLogs(ctx context.Context, cluster string, cl Clie
 	r := bundle.APIResource{Version: "v1", Resource: "pods", Kind: "Pod", Namespaced: true}
 	var pods []podInfo
 	for _, ns := range c.scopes(true) {
-		gvr := schema.GroupVersionResource{Version: "v1", Resource: "pods"}
-		var res dynamic.ResourceInterface = cl.Dynamic.Resource(gvr)
-		if ns != "" {
-			res = cl.Dynamic.Resource(gvr).Namespace(ns)
-		}
-		l, err := res.List(ctx, metav1.ListOptions{LabelSelector: c.Policy.LabelSelector})
+		err := c.listWith(ctx, cl, r, ns, false, c.Policy.LabelSelector, func(obj map[string]any) {
+			if c.keep(r, obj) {
+				pods = append(pods, parsePod(obj))
+			}
+		})
 		if err != nil {
 			c.record(LogEntry{Cluster: cluster, Operation: "list", Target: "pods (for logs)", Namespace: ns, Result: "failed", Error: err.Error()})
-			continue
-		}
-		for i := range l.Items {
-			if c.keep(r, l.Items[i].Object) {
-				pods = append(pods, parsePod(l.Items[i].Object))
-			}
 		}
 	}
 	return pods
@@ -892,24 +953,20 @@ func (c *Collector) collectEvents(ctx context.Context, cluster string, cl Client
 	k := &chunker{c: c, path: func(p int) string { return bundle.EventsPath(cluster, p) }, list: map[string]any{"apiVersion": "v1", "kind": "EventList"}}
 	var addErr error
 	for _, ns := range c.scopes(true) {
-		gvr := schema.GroupVersionResource{Version: "v1", Resource: "events"}
-		var res dynamic.ResourceInterface = cl.Dynamic.Resource(gvr)
-		if ns != "" {
-			res = cl.Dynamic.Resource(gvr).Namespace(ns)
+		// Events carry no labels worth selecting on, and their message is
+		// the point, so always the full object and never the label selector.
+		err := c.listWith(ctx, cl, r, ns, false, "", func(obj map[string]any) {
+			if addErr == nil && c.keep(r, obj) {
+				addErr = k.add(c.Redactor.Object(loc, obj))
+			}
+		})
+		if addErr != nil {
+			return addErr
 		}
-		l, err := res.List(ctx, metav1.ListOptions{})
 		if err != nil {
 			cov.State, cov.Reason = bundle.StateFailed, reason(err)
 			c.record(LogEntry{Cluster: cluster, Operation: "list", Target: "events", Namespace: ns, Result: "failed", Error: err.Error()})
 			break
-		}
-		for i := range l.Items {
-			if addErr == nil && c.keep(r, l.Items[i].Object) {
-				addErr = k.add(c.Redactor.Object(loc, l.Items[i].Object))
-			}
-		}
-		if addErr != nil {
-			return addErr
 		}
 	}
 	if err := k.flush(); err != nil {
@@ -932,6 +989,11 @@ func globAny(patterns []string, s string) bool {
 
 func (c *Collector) collectLogs(ctx context.Context, cluster string, cl Clients, pods []podInfo) error {
 	since := c.Policy.SinceDuration()
+	type job struct {
+		p               podInfo
+		container, name string
+	}
+	var jobs []job
 	for _, p := range pods {
 		if !globAny(c.Policy.Logs.Pods, p.name) {
 			continue
@@ -956,16 +1018,29 @@ func (c *Collector) collectLogs(ctx context.Context, cluster string, cl Clients,
 				streams = append(streams, "previous")
 			}
 			for _, s := range streams {
-				if err := ctx.Err(); err != nil {
-					return err
-				}
-				if err := c.collectStream(ctx, cluster, cl, p, name, s, since); err != nil {
-					return err
-				}
+				jobs = append(jobs, job{p, name, s})
 			}
 		}
 	}
-	return nil
+	// Streams are read logWorkers at a time. Each stream is read, redacted
+	// and written whole, so its chunks and coverage record stay together.
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(c.logWorkers())
+	for _, j := range jobs {
+		if gctx.Err() != nil {
+			break
+		}
+		g.Go(func() error {
+			if err := gctx.Err(); err != nil {
+				return err
+			}
+			return c.collectStream(gctx, cluster, cl, j.p, j.container, j.name, since)
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return err
+	}
+	return ctx.Err()
 }
 
 func (c *Collector) collectStream(ctx context.Context, cluster string, cl Clients, p podInfo, container, stream string, since time.Duration) error {

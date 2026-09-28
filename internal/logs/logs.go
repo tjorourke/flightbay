@@ -146,6 +146,9 @@ func NormalizeLevel(l string) string {
 }
 
 func kvFields(s string, into map[string]string) map[string]string {
+	if !strings.Contains(s, "=") {
+		return into // logfmtKV cannot match without an =
+	}
 	for _, m := range logfmtKV.FindAllStringSubmatch(s, -1) {
 		v := m[2]
 		if strings.HasPrefix(v, `"`) {
@@ -180,6 +183,30 @@ func str(v any) string {
 		b, _ := json.Marshal(t)
 		return string(b)
 	}
+}
+
+func isDigit(c byte) bool { return '0' <= c && c <= '9' }
+
+// maybeISOTime: istioRe starts with a date, 2026-09-27T...
+func maybeISOTime(s string) bool {
+	return len(s) > 10 && isDigit(s[0]) && s[4] == '-' && s[7] == '-' && s[10] == 'T'
+}
+
+func findIf(ok bool, re *regexp.Regexp, s string) []string {
+	if !ok {
+		return nil
+	}
+	return re.FindStringSubmatch(s)
+}
+
+// maybeErr holds for every line errWords can match.
+func maybeErr(s string) bool {
+	for _, w := range []string{"ERROR", "FATAL", "CRITICAL", "Exception", "Traceback"} {
+		if strings.Contains(s, w) {
+			return true
+		}
+	}
+	return strings.HasPrefix(s, "panic:") || strings.HasPrefix(s, "error:") || strings.HasPrefix(s, "fatal:")
 }
 
 // Parse sniffs the format: JSON, istio/ztunnel text, Envoy access log, klog, logfmt, then raw.
@@ -231,10 +258,14 @@ func Parse(line string) Parsed {
 			return p
 		}
 	}
-	if m := istioRe.FindStringSubmatch(s); m != nil {
-		return Parsed{Level: NormalizeLevel(m[1]), Scope: m[2], Msg: m[3], Fields: kvFields(m[3], nil)}
+	// Each expression below runs only when the line passes a cheap test it
+	// cannot match without, so most lines try one or two expressions.
+	if maybeISOTime(s) {
+		if m := istioRe.FindStringSubmatch(s); m != nil {
+			return Parsed{Level: NormalizeLevel(m[1]), Scope: m[2], Msg: m[3], Fields: kvFields(m[3], nil)}
+		}
 	}
-	if m := envoyRe.FindStringSubmatch(s); m != nil {
+	if m := findIf(s != "" && s[0] == '[', envoyRe, s); m != nil {
 		st, _ := strconv.Atoi(m[5])
 		lvl := "info"
 		if st >= 500 {
@@ -245,10 +276,10 @@ func Parse(line string) Parsed {
 		return Parsed{Level: lvl, Scope: "access", Msg: fmt.Sprintf("%s %s %s %s", m[2], m[3], m[4], m[5]),
 			Fields: map[string]string{"method": m[2], "path": m[3], "status": m[5], "response_flags": m[6]}}
 	}
-	if m := klogRe.FindStringSubmatch(s); m != nil {
+	if m := findIf(len(s) > 1 && strings.IndexByte("IWEF", s[0]) >= 0 && isDigit(s[1]), klogRe, s); m != nil {
 		return Parsed{Level: NormalizeLevel(m[1]), Scope: m[2], Msg: m[3], Fields: kvFields(m[3], nil)}
 	}
-	if logfmtRe.MatchString(s) && (strings.Contains(s, "level=") || strings.Contains(s, "msg=")) {
+	if (strings.Contains(s, "level=") || strings.Contains(s, "msg=")) && logfmtRe.MatchString(s) {
 		f := kvFields(s, nil)
 		p := Parsed{Level: NormalizeLevel(f["level"]), Msg: f["msg"], Scope: f["scope"], Fields: f}
 		delete(f, "level")
@@ -266,11 +297,11 @@ func Parse(line string) Parsed {
 	}
 	lvl := "info"
 	switch {
-	case errWords.MatchString(s):
+	case maybeErr(s) && errWords.MatchString(s):
 		lvl = "error"
-	case warnWords.MatchString(s):
+	case (strings.Contains(s, "WARN") || strings.HasPrefix(s, "warning:")) && warnWords.MatchString(s):
 		lvl = "warn"
-	case dbgWords.MatchString(s):
+	case (strings.Contains(s, "DEBUG") || strings.Contains(s, "TRACE")) && dbgWords.MatchString(s):
 		lvl = "debug"
 	}
 	return Parsed{Level: lvl, Msg: s, Fields: kvFields(s, nil)}

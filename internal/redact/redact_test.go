@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -308,5 +309,45 @@ func TestDropFields(t *testing.T) {
 		if _, err := ParseFieldRule(bad); err == nil {
 			t.Errorf("%q should be refused", bad)
 		}
+	}
+}
+
+// The literal prefilters must never change what is redacted: compare with
+// every rule's expression run on every string.
+func TestPrefilterMatchesFullScan(t *testing.T) {
+	corpus := []string{
+		"plain line with nothing in it",
+		"Authorization: Bearer abc.def.ghi", "authorization=basic dXNlcjpwYXNz", "AUTHORIZATION : Bearer zzz",
+		`{"Authorization":"Bearer abcdefgh"}`, "x-api-key=0123456789abcdef", "API_KEY: s3cr3tvalue", "apikey=abc",
+		"password=hunter2", "Passwd: hunter2", "PASSWORD=\"quoted value\"", "db_secret=abc; token=xyz", "my-credential:abc",
+		"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJl", "id AKIAABCDEFGHIJKLMNOP here", "ASIAABCDEFGHIJKLMNOP",
+		"sk-ant-abcdefghijklmnopqrstuv", "key sk-abcdefghijklmnopqrstuvwxyz", "postgres://user:pa55@db:5432/x", "https://a:b@host/",
+		"-----BEGIN RSA PRIVATE KEY-----MIIB-----END RSA PRIVATE KEY-----", "token_count=12", "secret=true", "apiVersion: v1",
+		"tokens=[REDACTED]", "Authorization: Bearer [REDACTED]", "mailto:someone@example.com", "http://example.com/@user",
+	}
+	fast, _ := New([]string{`corp-[0-9]{4}`})
+	slow, _ := New([]string{`corp-[0-9]{4}`})
+	for i := range slow.rules {
+		slow.rules[i].need = nil
+	}
+	for i := 0; i < 2000; i++ {
+		corpus = append(corpus, fmt.Sprintf("%d GET /v1/orders/%d status=200 duration_ms=%d user=u%d corp-%04d", i, i*7, i%900, i%13, i))
+	}
+	for _, s := range corpus {
+		if a, b := fast.String("x", s), slow.String("x", s); a != b {
+			t.Errorf("prefilter changed the result for %q: %q vs %q", s, a, b)
+		}
+	}
+	if a, b := fast.Report(), slow.Report(); a.Total != b.Total || fmt.Sprint(a.Locations) != fmt.Sprint(b.Locations) {
+		t.Errorf("counts differ: %+v vs %+v", a, b)
+	}
+}
+
+func BenchmarkLogLine(b *testing.B) {
+	r, _ := New(nil)
+	l := r.Lines("x")
+	line := `2026-09-27T00:00:01.000000000Z [00:00:01.000] "GET /api/v1/orders/42 HTTP/1.1" 200 - via_upstream - "-" 0 1043 12 11 "-" "curl/8.0" "a4e98f02-42" "checkout.payments.svc:8080"`
+	for i := 0; i < b.N; i++ {
+		l.Line(line)
 	}
 }

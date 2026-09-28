@@ -42,8 +42,8 @@ type PolicyFlags struct {
 	clusterScoped, portForward, noPortForward     bool
 	noLogs, noProxyDumps, soloDiagnostics         bool
 	maxLogBytes, maxBundleBytes                   int64
-	qps                                           float32
-	burst                                         int
+	qps, logQPS                                   float32
+	burst, concurrency, logConcurrency            int
 	redactExtra                                   string
 	hubbleFlows                                   int
 	includeResources, dropFields                  []string
@@ -54,7 +54,7 @@ type PolicyFlags struct {
 
 // narrowing flags only ever collect less, so they may refine an approved policy.
 var narrowing = map[string]bool{"case": true, "exclude-namespaces": true, "exclude-resources": true, "no-logs": true,
-	"no-proxy-dumps": true, "no-portforward": true, "drop-field": true, "redact-extra": true, "policy-key": true, "config": true}
+	"no-proxy-dumps": true, "no-portforward": true, "qps": true, "burst": true, "concurrency": true, "log-concurrency": true, "log-qps": true, "drop-field": true, "redact-extra": true, "policy-key": true, "config": true}
 
 // Register adds the flags to a flag set.
 func (f *PolicyFlags) Register(fs *pflag.FlagSet) {
@@ -98,6 +98,9 @@ func (f *PolicyFlags) Register(fs *pflag.FlagSet) {
 	fs.Int64Var(&f.maxBundleBytes, "max-bundle-bytes", 0, "stop collecting once the compressed bundle reaches this size")
 	fs.Float32Var(&f.qps, "qps", 0, "API server requests per second")
 	fs.IntVar(&f.burst, "burst", 0, "API server request burst")
+	fs.IntVar(&f.concurrency, "concurrency", 0, "list and get requests in flight at once (default 4); still bounded by --qps")
+	fs.IntVar(&f.logConcurrency, "log-concurrency", 0, "log streams read at once (default 8)")
+	fs.Float32Var(&f.logQPS, "log-qps", 0, "log requests per second (default 50); they are proxied to kubelets, so they are limited separately")
 	fs.StringVar(&f.redactExtra, "redact-extra", "", "file of extra redaction patterns (one Go regular expression per line)")
 	fs.IntVar(&f.hubbleFlows, "hubble-flows", 0, "read the last N flows from Cilium hubble-relay (kube-system) through port-forward and the local hubble CLI; --hubble-flows alone means 20000")
 	fs.Lookup("hubble-flows").NoOptDefVal = "20000"
@@ -231,6 +234,15 @@ func (f *PolicyFlags) Resolve(fs *pflag.FlagSet) (*policy.Policy, error) {
 	}
 	if ch("burst") {
 		p.Burst = f.burst
+	}
+	if ch("concurrency") {
+		p.Concurrency = f.concurrency
+	}
+	if ch("log-concurrency") {
+		p.Logs.Concurrency = f.logConcurrency
+	}
+	if ch("log-qps") {
+		p.Logs.QPS = f.logQPS
 	}
 	if f.redactExtra != "" {
 		b, err := os.ReadFile(f.redactExtra)

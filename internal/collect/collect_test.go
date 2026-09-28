@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -44,6 +45,7 @@ func (f *fakeDiscovery) ServerGroupsAndResources() ([]*metav1.APIGroup, []*metav
 }
 
 type fakeLogs struct {
+	mu      sync.Mutex // streams are read concurrently
 	streams map[string]string
 	queue   map[string][]string // responses returned in order before falling back to streams
 	calls   []string
@@ -51,6 +53,8 @@ type fakeLogs struct {
 
 func (f *fakeLogs) Stream(_ context.Context, ns, pod string, o *corev1.PodLogOptions) (io.ReadCloser, error) {
 	key := fmt.Sprintf("%s/%s/%s/%v", ns, pod, o.Container, o.Previous)
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.calls = append(f.calls, key)
 	if !o.Timestamps {
 		return nil, errors.New("timestamps must be requested")

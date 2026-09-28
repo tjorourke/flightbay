@@ -37,6 +37,7 @@ Examples:
 | `--cluster-scoped` | also collect cluster-scoped objects (nodes, namespaces, CRDs, ClusterRoles) |
 | `--collect strings` | categories: objects,logs,events,nodes,helm,proxies,control-plane,metrics |
 | `--compression string` | best, better, default or fastest |
+| `--concurrency int` | list and get requests in flight at once (default 4); still bounded by --qps |
 | `--config string` | collection config file (YAML); flags refine it, exclusions always win. A CONFIG.sig next to it is checked |
 | `--configmaps string` | omit, metadata or scrubbed |
 | `--context strings` | kubeconfig contexts to collect (default: current context) |
@@ -51,8 +52,10 @@ Examples:
 | `--json` | print the dry-run plan as JSON |
 | `--kubeconfig string` | kubeconfig file (default: $KUBECONFIG or ~/.kube/config) |
 | `--label-selector string` | only collect namespaced objects matching this label selector |
+| `--log-concurrency int` | log streams read at once (default 8) |
 | `--log-containers strings` | only collect logs from containers matching these globs |
 | `--log-pods strings` | only collect logs from pods matching these globs |
+| `--log-qps float32` | log requests per second (default 50); they are proxied to kubelets, so they are limited separately |
 | `--log-streams strings` | log streams: current,previous,init,ephemeral |
 | `--max-bundle-bytes int` | stop collecting once the compressed bundle reaches this size |
 | `--max-log-bytes int` | per-stream log limit in bytes (keeps the newest lines) |
@@ -196,6 +199,7 @@ Examples:
 | `--cluster-scoped` | also collect cluster-scoped objects (nodes, namespaces, CRDs, ClusterRoles) |
 | `--collect strings` | categories: objects,logs,events,nodes,helm,proxies,control-plane,metrics |
 | `--compression string` | best, better, default or fastest |
+| `--concurrency int` | list and get requests in flight at once (default 4); still bounded by --qps |
 | `--config string` | collection config file (YAML); flags refine it, exclusions always win. A CONFIG.sig next to it is checked |
 | `--configmaps string` | omit, metadata or scrubbed |
 | `--context strings` | kubeconfig contexts to collect (default: current context) |
@@ -208,8 +212,10 @@ Examples:
 | `--kubeconfig string` | kubeconfig file (default: $KUBECONFIG or ~/.kube/config) |
 | `--label-selector string` | only collect namespaced objects matching this label selector |
 | `--live` | RBAC for flightbay-desk live, which also needs watch |
+| `--log-concurrency int` | log streams read at once (default 8) |
 | `--log-containers strings` | only collect logs from containers matching these globs |
 | `--log-pods strings` | only collect logs from pods matching these globs |
+| `--log-qps float32` | log requests per second (default 50); they are proxied to kubelets, so they are limited separately |
 | `--log-streams strings` | log streams: current,previous,init,ephemeral |
 | `--max-bundle-bytes int` | stop collecting once the compressed bundle reaches this size |
 | `--max-log-bytes int` | per-stream log limit in bytes (keeps the newest lines) |

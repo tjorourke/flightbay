@@ -45,8 +45,59 @@ const lineCols = "id, seq, ts, cluster, namespace, pod, container, stream, node,
 type logDB struct {
 	db      *sql.DB
 	path    string
-	jobs    chan func()
+	jobs    chan func(*lineAcc)
 	pending sync.WaitGroup
+}
+
+// lineAcc collects one worker's parsed log rows across chunks and commits
+// them together. DuckDB commits appends one at a time, so a commit per 1 MiB
+// chunk cost more than parsing it; larger appends load about 1.6x faster.
+// Workers still parse and append in parallel, each on its own connection.
+// Parsed rows are large (their field maps most of all), so uncommitted rows
+// are bounded: at most logWorkers() x lineBatchRows.
+type lineAcc struct {
+	l      *logDB
+	rows   [][]driver.Value
+	afters []func(error) // run once the rows are committed (or failed)
+}
+
+const lineBatchRows = 25000
+
+func (a *lineAcc) add(rows [][]driver.Value, after func(error)) {
+	a.rows = append(a.rows, rows...)
+	a.afters = append(a.afters, after)
+	if len(a.rows) >= lineBatchRows {
+		a.flush()
+	}
+}
+
+func (a *lineAcc) flush() {
+	if len(a.afters) == 0 {
+		return
+	}
+	err := a.l.appendRows("log_lines", a.rows)
+	for _, f := range a.afters {
+		f(err)
+	}
+	clear(a.rows) // drop references so committed rows can be collected
+	clear(a.afters)
+	a.rows, a.afters = a.rows[:0], a.afters[:0]
+}
+
+// work runs queued chunks, committing whenever the queue runs dry, so lines
+// become searchable while a large bundle is still loading.
+func (l *logDB) work() {
+	acc := &lineAcc{l: l}
+	for {
+		var j func(*lineAcc)
+		select {
+		case j = <-l.jobs:
+		default:
+			acc.flush()
+			j = <-l.jobs
+		}
+		j(acc)
+	}
 }
 
 func openDB(path string) (*logDB, error) {
@@ -62,12 +113,8 @@ func openDB(path string) (*logDB, error) {
 		// No DuckDB linked (the collector, and flightbay scan): objects stay
 		// in memory and every SQL or log query returns an error instead of
 		// running. One worker drains queued log chunks, which fail at once.
-		l := &logDB{db: db, path: path, jobs: make(chan func(), 16)}
-		go func() {
-			for j := range l.jobs {
-				j()
-			}
-		}()
+		l := &logDB{db: db, path: path, jobs: make(chan func(*lineAcc), 16)}
+		go l.work()
 		return l, nil
 	}
 	if _, err := db.Exec(schema + flowsSchema); err != nil {
@@ -82,23 +129,29 @@ func openDB(path string) (*logDB, error) {
 			return nil, err
 		}
 	}
-	l := &logDB{db: db, path: path, jobs: make(chan func(), 16)}
+	l := &logDB{db: db, path: path, jobs: make(chan func(*lineAcc), 16)}
 	// Appending pays a cgo call per value, so chunks are parsed and appended
 	// by a few workers, each on its own connection. Chunks are independent:
 	// ids and sequence numbers are reserved in bundle order before queueing.
-	for i := 0; i < max(2, min(16, runtime.GOMAXPROCS(0))); i++ {
-		go func() {
-			for j := range l.jobs {
-				j()
-			}
-		}()
+	for i := 0; i < logWorkers(); i++ {
+		go l.work()
 	}
 	return l, nil
 }
 
+// logWorkers is how many workers parse and append log chunks.
+func logWorkers() int { return max(2, min(8, runtime.GOMAXPROCS(0))) }
+
 func (l *logDB) appendRows(table string, rows [][]driver.Value) error {
 	if len(rows) == 0 {
 		return nil
+	}
+	for _, r := range rows {
+		for i, v := range r {
+			if m, ok := v.(map[string]string); ok {
+				r[i] = duckMapOf(m)
+			}
+		}
 	}
 	conn, err := l.db.Conn(context.Background())
 	if err != nil {
@@ -178,22 +231,27 @@ func (w *Workspace) QueueLogLines(cluster, ns, pod, container, stream string, li
 	w.streamSeq[key] = seq + len(kept)
 	w.mu.Unlock()
 	w.ldb.pending.Add(1)
-	w.ldb.jobs <- func() {
-		defer w.ldb.pending.Done()
-		if done != nil {
-			defer done()
-		}
-		w.appendLines(firstID, seq, cluster, ns, pod, container, stream, node, chunk, wkind, wname, kept)
+	w.ldb.jobs <- func(acc *lineAcc) {
+		w.appendLines(acc, firstID, seq, cluster, ns, pod, container, stream, node, chunk, wkind, wname, kept, func() {
+			if done != nil {
+				done()
+			}
+			w.ldb.pending.Done()
+		})
 	}
 }
 
-func (w *Workspace) appendLines(firstID int64, seq int, cluster, ns, pod, container, stream, node, chunk, wkind, wname string, kept []string) {
+// lineInfo keeps what flow parsing needs from each parsed line.
+type lineInfo struct {
+	scope, rest string
+	fields      map[string]string
+}
+
+// appendLines parses a chunk (on a worker) and hands its rows to the batching
+// writer; finish runs once they are committed and counted.
+func (w *Workspace) appendLines(acc *lineAcc, firstID int64, seq int, cluster, ns, pod, container, stream, node, chunk, wkind, wname string, kept []string, finish func()) {
 	rows := make([][]driver.Value, 0, len(kept))
 	var start, end time.Time
-	type lineInfo struct {
-		scope, rest string
-		fields      map[string]string
-	}
 	info := make([]lineInfo, len(kept))
 	for i, l := range kept {
 		ts, rest := logs.SplitTimestamp(l)
@@ -210,13 +268,34 @@ func (w *Workspace) appendLines(firstID int64, seq int, cluster, ns, pod, contai
 			}
 		}
 		rows = append(rows, []driver.Value{firstID + int64(i), int32(seq + i), tsn, cluster, ns, pod, container, stream, node,
-			p.Level, p.Scope, p.Msg, toMap(p.Fields), rest, chunk, wname, wkind})
+			p.Level, p.Scope, p.Msg, rowFields(p.Fields), rest, chunk, wname, wkind})
 	}
-	if err := w.ldb.appendRows("log_lines", rows); err != nil {
-		w.SetState(func(s *ImportState) { s.Error = "log store: " + err.Error() })
-		return
+	// Flows first, while the parsed lines are at hand, so a batch waiting to
+	// be committed holds only its rows.
+	w.chunkFlows(cluster, ns, pod, container, wname, kept, info)
+	n := len(rows)
+	acc.add(rows, func(err error) {
+		defer finish()
+		if err != nil {
+			w.SetState(func(s *ImportState) { s.Error = "log store: " + err.Error() })
+			return
+		}
+		w.linesCommitted(n, start, end)
+	})
+}
+
+// rowFields is a row's fields column: the parsed map itself, converted to a
+// DuckDB MAP only as the row is appended (see appendRows), so a waiting
+// batch does not hold both.
+func rowFields(m map[string]string) any {
+	if len(m) == 0 {
+		return nil
 	}
-	// Envoy and CoreDNS flows are parsed once, here, while the line is at hand.
+	return m
+}
+
+// chunkFlows records flows from Envoy and CoreDNS lines, parsed once, here.
+func (w *Workspace) chunkFlows(cluster, ns, pod, container, wname string, kept []string, info []lineInfo) {
 	w.mu.RLock()
 	ep := w.envoyPodLocked(cluster, ns, pod, wname)
 	var nss []string
@@ -231,8 +310,12 @@ func (w *Workspace) appendLines(firstID int64, seq int, cluster, ns, pod, contai
 			w.SetState(func(s *ImportState) { s.Error = "log store: flows: " + err.Error() })
 		}
 	}
+}
+
+// linesCommitted counts a committed chunk and widens the log time range.
+func (w *Workspace) linesCommitted(n int, start, end time.Time) {
 	w.mu.Lock()
-	w.state.LogLines += len(rows)
+	w.state.LogLines += n
 	if end.After(w.logEnd) {
 		w.logEnd = end
 	}

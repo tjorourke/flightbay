@@ -34,7 +34,63 @@ type rule struct {
 	name    string
 	re      *regexp.Regexp
 	replace func(r *Redactor, loc string, m []string) (string, bool)
+	// need is a cheap test that every match of re passes (a literal the
+	// pattern cannot match without). Most text contains no credential, so
+	// this skips the regular expression for almost every log line. nil
+	// means always run the expression (customer patterns). lower is s in
+	// ASCII lower case, computed once per string.
+	need func(s, lower string) bool
 }
+
+// asciiLower lower-cases ASCII letters, returning s itself when it has none.
+func asciiLower(s string) string {
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; 'A' <= c && c <= 'Z' {
+			b := []byte(s)
+			for j := i; j < len(b); j++ {
+				if c := b[j]; 'A' <= c && c <= 'Z' {
+					b[j] = c + 'a' - 'A'
+				}
+			}
+			return string(b)
+		}
+	}
+	return s
+}
+
+func has(subs ...string) func(string, string) bool {
+	return func(s, _ string) bool {
+		for _, x := range subs {
+			if strings.Contains(s, x) {
+				return true
+			}
+		}
+		return false
+	}
+}
+
+// hasFold matches lower-case literals against the lower-cased string.
+func hasFold(subs ...string) func(string, string) bool {
+	return func(_, lower string) bool {
+		for _, x := range subs {
+			if strings.Contains(lower, x) {
+				return true
+			}
+		}
+		return false
+	}
+}
+
+// Literals the built-in patterns cannot match without.
+var (
+	needPEM       = has("PRIVATE KEY-----")
+	needAuth      = hasFold("authorization")
+	needJWT       = has("eyJ")
+	needAWS       = has("AKIA", "ASIA")
+	needAPIKey    = has("sk-")
+	needURLCred   = func(s, _ string) bool { return strings.Contains(s, "://") && strings.Contains(s, "@") }
+	needSensitive = hasFold("passw", "secret", "token", "apikey", "api_key", "api-key", "credential")
+)
 
 // Redactor applies the built-in scrubbers plus customer-supplied patterns.
 type Redactor struct {
@@ -88,31 +144,31 @@ func New(extra []string) (*Redactor, error) {
 		return func(*Redactor, string, []string) (string, bool) { return Placeholder, true }
 	}
 	r.rules = []rule{
-		{"private-key", pemRe, func(*Redactor, string, []string) (string, bool) { return "[REDACTED PRIVATE KEY]", true }},
+		{"private-key", pemRe, func(*Redactor, string, []string) (string, bool) { return "[REDACTED PRIVATE KEY]", true }, needPEM},
 		{"authorization", authRe, func(_ *Redactor, _ string, m []string) (string, bool) {
 			if m[2] == Placeholder || strings.HasPrefix(m[2], "[REDACTED") {
 				return m[0], false
 			}
 			return m[1] + Placeholder, true
-		}},
-		{"jwt", jwtRe, whole("jwt")},
-		{"aws-access-key", awsRe, whole("aws")},
-		{"api-key", apiKeyRe, whole("api")},
-		{"url-credentials", urlCredRe, func(_ *Redactor, _ string, m []string) (string, bool) { return m[1] + Placeholder + "@", true }},
+		}, needAuth},
+		{"jwt", jwtRe, whole("jwt"), needJWT},
+		{"aws-access-key", awsRe, whole("aws"), needAWS},
+		{"api-key", apiKeyRe, whole("api"), needAPIKey},
+		{"url-credentials", urlCredRe, func(_ *Redactor, _ string, m []string) (string, bool) { return m[1] + Placeholder + "@", true }, needURLCred},
 		{"sensitive-key", sensitiveKV, func(_ *Redactor, _ string, m []string) (string, bool) {
 			v := m[4]
 			if strings.HasPrefix(v, "[REDACTED") || digitsOnly.MatchString(v) || v == "true" || v == "false" || v == "null" {
 				return m[0], false
 			}
 			return m[1] + m[2] + m[3] + Placeholder, true
-		}},
+		}, needSensitive},
 	}
 	for i, p := range extra {
 		re, err := regexp.Compile(p)
 		if err != nil {
 			return nil, fmt.Errorf("redaction pattern %d %q: %w", i+1, p, err)
 		}
-		r.rules = append(r.rules, rule{fmt.Sprintf("extra-%d", i+1), re, whole("extra")})
+		r.rules = append(r.rules, rule{fmt.Sprintf("extra-%d", i+1), re, whole("extra"), nil})
 	}
 	return r, nil
 }
@@ -132,7 +188,11 @@ func (r *Redactor) String(loc, s string) string {
 	if s == "" {
 		return s
 	}
+	lower := asciiLower(s)
 	for _, ru := range r.rules {
+		if ru.need != nil && !ru.need(s, lower) {
+			continue
+		}
 		if !ru.re.MatchString(s) {
 			continue
 		}
@@ -162,12 +222,12 @@ func (r *Redactor) Lines(loc string) *LineRedactor { return &LineRedactor{r: r, 
 // Line scrubs one line.
 func (l *LineRedactor) Line(s string) string {
 	if l.inKey {
-		if pemEndRe.MatchString(s) {
+		if needPEM(s, s) && pemEndRe.MatchString(s) {
 			l.inKey = false
 		}
 		return "[REDACTED PRIVATE KEY]"
 	}
-	if pemBeginRe.MatchString(s) && !pemEndRe.MatchString(s) {
+	if needPEM(s, s) && pemBeginRe.MatchString(s) && !pemEndRe.MatchString(s) {
 		l.inKey = true
 		l.r.count(l.loc, "private-key")
 		idx := pemBeginRe.FindStringIndex(s)

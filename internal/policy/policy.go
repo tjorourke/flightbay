@@ -47,6 +47,11 @@ type LogPolicy struct {
 	MaxBytes   int64    `json:"maxBytes,omitempty"`   // per container stream, tail-biased
 	Pods       []string `json:"pods,omitempty"`       // pod name globs; empty = all
 	Containers []string `json:"containers,omitempty"` // container name globs; empty = all
+	// Concurrency is how many log streams are read at once (default 8), and
+	// QPS their request rate (default 50). A log request is proxied to a
+	// kubelet, so it is limited separately from list and get requests.
+	Concurrency int     `json:"concurrency,omitempty"`
+	QPS         float32 `json:"qps,omitempty"`
 }
 
 // FlowPolicy declares observed-traffic sources beyond the captured logs.
@@ -90,6 +95,7 @@ type Policy struct {
 	RedactExtra       []string   `json:"redactExtra,omitempty"`
 	DropFields        []string   `json:"dropFields,omitempty"` // object paths removed before writing (redact.FieldRule)
 	QPS               float32    `json:"qps,omitempty"`
+	Concurrency       int        `json:"concurrency,omitempty"` // list and get requests in flight at once (default 4)
 	Burst             int        `json:"burst,omitempty"`
 	Flows             FlowPolicy `json:"flows,omitempty"`
 }
@@ -97,7 +103,7 @@ type Policy struct {
 // Profile returns a named starting policy.
 func Profile(name string) (*Policy, error) {
 	base := Policy{Profile: name, ObjectDetail: DetailFull, ConfigMaps: "scrubbed", Secrets: "keys", Compression: "best",
-		Logs: LogPolicy{Streams: []string{"current", "previous"}, Since: "24h", MaxBytes: 20 << 20}, QPS: 20, Burst: 40}
+		Logs: LogPolicy{Streams: []string{"current", "previous"}, Since: "24h", MaxBytes: 20 << 20, Concurrency: 8, QPS: 50}, QPS: 50, Burst: 100, Concurrency: 4}
 	switch name {
 	case "minimal":
 		base.Categories = []Category{CatObjects, CatEvents}
@@ -181,6 +187,12 @@ func (p *Policy) Validate() error {
 		if _, err := time.ParseDuration(p.Logs.Since); err != nil {
 			return fmt.Errorf("logs.since: %w", err)
 		}
+	}
+	if p.Concurrency < 0 || p.Concurrency > 32 || p.Logs.Concurrency < 0 || p.Logs.Concurrency > 64 {
+		return fmt.Errorf("concurrency must be between 1 and 32 (lists) and 1 and 64 (log streams)")
+	}
+	if p.QPS < 0 || p.Logs.QPS < 0 {
+		return fmt.Errorf("qps must be positive")
 	}
 	if p.Flows.Hubble < 0 {
 		return fmt.Errorf("flows.hubble must be 0 (off) or a number of flows, got %d", p.Flows.Hubble)

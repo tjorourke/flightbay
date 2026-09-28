@@ -112,10 +112,15 @@ Use it with care. Objects without the label (a Service, a NetworkPolicy, an Auth
 
 | Flag | Default | Effect |
 |---|---|---|
-| `--qps` | 20 | API server requests per second |
-| `--burst` | 40 | API server request burst |
+| `--qps` | 50 | List and get requests per second (the same as kubectl) |
+| `--burst` | 100 | List and get request burst |
+| `--concurrency` | 4 | List and get requests in flight at once; each still passes `--qps` |
+| `--log-concurrency` | 8 | Log streams read at once |
+| `--log-qps` | 50 | Log requests per second, limited separately |
 | `--max-bundle-bytes` | none | Stop collecting once the compressed bundle reaches this size |
 | `--compression` | `best` | `best`, `better`, `default` or `fastest` |
+
+How these protect the API server, and what to change on a very large or busy cluster, is in [Large clusters](/collect/large-clusters/).
 
 ## Config files
 

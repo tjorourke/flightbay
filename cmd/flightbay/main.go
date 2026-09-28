@@ -341,7 +341,9 @@ func collectCmd() *cobra.Command {
 					cfg.WarningHandler = &collect.Warner{C: col, Cluster: bundle.SafeID(kctx)}
 					var cl collect.Clients
 					if cl, err = clients(cfg); err == nil {
-						err = col.CollectCluster(ctx, kctx, cl)
+						if cl.Logs, err = collect.NewLogSource(cfg, p.Logs.QPS, p.Logs.Concurrency); err == nil {
+							err = col.CollectCluster(ctx, kctx, cl)
+						}
 					}
 				}
 				if err != nil {

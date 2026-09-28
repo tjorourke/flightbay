@@ -143,6 +143,7 @@ Examples:
 | `--cluster-scoped` | also collect cluster-scoped objects (nodes, namespaces, CRDs, ClusterRoles) |
 | `--collect strings` | categories: objects,logs,events,nodes,helm,proxies,control-plane,metrics |
 | `--compression string` | best, better, default or fastest |
+| `--concurrency int` | list and get requests in flight at once (default 4); still bounded by --qps |
 | `--config string` | collection config file (YAML); flags refine it, exclusions always win. A CONFIG.sig next to it is checked |
 | `--configmaps string` | omit, metadata or scrubbed |
 | `--context string` | kubeconfig context to mirror (default: current context) |
@@ -157,8 +158,10 @@ Examples:
 | `--kubeconfig string` | kubeconfig file (default: $KUBECONFIG or ~/.kube/config) |
 | `--label-selector string` | only collect namespaced objects matching this label selector |
 | `--listen string` | loopback address for the UI and API (default "127.0.0.1:8484") |
+| `--log-concurrency int` | log streams read at once (default 8) |
 | `--log-containers strings` | only collect logs from containers matching these globs |
 | `--log-pods strings` | only collect logs from pods matching these globs |
+| `--log-qps float32` | log requests per second (default 50); they are proxied to kubelets, so they are limited separately |
 | `--log-streams strings` | log streams: current,previous,init,ephemeral |
 | `--log-tail int` | lines of history per stream when following starts (within --since) (default 500) |
 | `--max-bundle-bytes int` | stop collecting once the compressed bundle reaches this size |

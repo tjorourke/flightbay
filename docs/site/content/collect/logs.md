@@ -30,6 +30,8 @@ Logs are read through `pods/log` with `timestamps=true`, so every line carries t
 | `--log-pods 'checkout-*,istiod-*'` | `logs.pods` | all | Only pods whose name matches one of these globs. |
 | `--log-containers 'istio-proxy,app'` | `logs.containers` | all | Only containers whose name matches one of these globs. |
 | `--no-logs` | (drop `logs` from `categories`) | | No container logs at all. |
+| `--log-concurrency 8` | `logs.concurrency` | `8` | Log streams read at once. |
+| `--log-qps 50` | `logs.qps` | `50` | Log requests per second, limited separately from list requests. See [Large clusters](/collect/large-clusters/). |
 
 `--max-log-bytes` takes a plain number of bytes. `10MiB` is not accepted.
 

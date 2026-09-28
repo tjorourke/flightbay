@@ -68,6 +68,21 @@ func (l logSource) Stream(ctx context.Context, ns, pod string, o *corev1.PodLogO
 	return l.cs.CoreV1().Pods(ns).GetLogs(pod, o).Stream(ctx)
 }
 
+// NewLogSource is a log client with its own rate limit. A log request is
+// proxied by the API server to a kubelet rather than served from etcd or the
+// watch cache, so logs are limited separately from list and get requests.
+func NewLogSource(cfg *rest.Config, qps float32, burst int) (LogSource, error) {
+	c := rest.CopyConfig(cfg)
+	if qps > 0 {
+		c.QPS, c.Burst = qps, max(burst, int(qps))
+	}
+	cs, err := kubernetes.NewForConfig(c)
+	if err != nil {
+		return nil, err
+	}
+	return logSource{cs}, nil
+}
+
 // NewClients builds the discovery, dynamic, metadata, log and port-forward
 // clients for one cluster.
 func NewClients(cfg *rest.Config) (Clients, error) {

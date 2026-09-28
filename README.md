@@ -62,6 +62,7 @@ The default `standard` profile collects objects, events, the last 24 hours of lo
 | `--namespaces`, `--exclude-namespaces` | Limit the capture (globs work: `team-*`) |
 | `--since 2h`, `--max-log-bytes 10485760`, `--no-logs` | Control log volume |
 | `--exclude-resources configmaps,secrets` | Never read these types |
+| `--concurrency 4`, `--log-concurrency 8`, `--log-qps 50` | How much is read in parallel; lower them on a busy production cluster ([Large clusters](docs/site/content/collect/large-clusters.md)) |
 | `--include-resources pods,httproutes.gateway.networking.k8s.io` | Read only these types (exclusions still win) |
 | `--drop-field 'metadata.annotations["corp.example/*"]'` | Remove a field from every object before writing |
 | `--sign flightbay-signing.key` | Sign the bundle with your key (`flightbay keygen`) |
