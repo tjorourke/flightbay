@@ -30,6 +30,10 @@ type ReviewSession struct {
 	Options review.Options // identities, signer, recipients, trusted keys, tool
 	Plan    review.Plan    // starting plan (reviewer name)
 	Landing bool           // open the UI on the Review and send page (--review)
+	// SignerPath is the key file exports are signed with, when known.
+	SignerPath string
+	// Frozen is set for a live mirror: when it was frozen into Source.
+	Frozen time.Time
 
 	mu       sync.Mutex
 	exported []reviewExport
@@ -85,8 +89,8 @@ func (s *Server) readPlan(w http.ResponseWriter, r *http.Request) (*review.Plan,
 }
 
 func (s *Server) reviewOn(w http.ResponseWriter) bool {
-	if s.Review == nil {
-		jerr(w, http.StatusNotFound, "this workspace was not opened from a bundle file (a stream or a live mirror), so there is nothing to export from")
+	if err := s.ensureReview(); err != nil {
+		jerr(w, http.StatusNotFound, "this workspace was not opened from a bundle file (it is a stream), so there is nothing to export from")
 		return false
 	}
 	return true
@@ -189,6 +193,22 @@ func (s *Server) reviewInventory() []rvCluster {
 				}
 			}
 		}
+		if len(rc.Streams) == 0 {
+			// A live mirror follows logs without a coverage entry per stream.
+			for k, n := range s.WS.LogStreamLines() {
+				if k.Cluster != c {
+					continue
+				}
+				rc.Streams = append(rc.Streams, rvStream{Namespace: k.Namespace, Pod: k.Pod, Container: k.Container, Stream: k.Stream, Lines: n})
+				nn := ns(k.Namespace)
+				nn.LogStreams++
+				nn.LogLines += n
+			}
+			sort.Slice(rc.Streams, func(i, j int) bool {
+				a, b := rc.Streams[i], rc.Streams[j]
+				return a.Namespace+a.Pod+a.Container+a.Stream < b.Namespace+b.Pod+b.Container+b.Stream
+			})
+		}
 		for _, d := range s.WS.Diagnostics(c) {
 			for f, b := range d.Files {
 				rc.Diagnostics = append(rc.Diagnostics, rvFile{Kind: d.Kind, Namespace: d.Namespace, Pod: d.Pod, Component: d.Component, File: f, Bytes: len(b)})
@@ -234,8 +254,11 @@ func (s *Server) reviewState(w http.ResponseWriter, r *http.Request) {
 	rs := s.Review
 	out := map[string]any{"source": rs.Source, "out": rs.Out, "plan": s.currentPlan(), "clusters": s.reviewInventory(),
 		"encrypted": len(rs.Options.Recipients) > 0}
-	if k := rs.Options.Signer; k != nil {
-		out["signer"] = map[string]string{"name": k.Signer, "keyId": k.ID()}
+	if si := s.signerInfo(); si != nil {
+		out["signer"] = si
+	}
+	if !rs.Frozen.IsZero() {
+		out["frozen"], out["live"] = rs.Frozen, true
 	}
 	rs.mu.Lock()
 	out["exports"] = append([]reviewExport{}, rs.exported...)

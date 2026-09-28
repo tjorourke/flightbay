@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/tjorourke/flightbay/internal/sign"
 	"io"
 	"net"
 	"net/http"
@@ -28,7 +29,7 @@ import (
 
 func liveCmd() *cobra.Command {
 	var pf cli.PolicyFlags
-	var kubeconfig, kctx, listen, workdir, shell, saveDir string
+	var kubeconfig, kctx, listen, workdir, shell, saveDir, signKey string
 	var noBrowser, noTerminal, allowRemote, keep, dryRun, jsonOut bool
 	var maxStreams, maxLines int
 	var logTail int64
@@ -185,6 +186,13 @@ verified bundle at any moment.`,
 				srv.RefreshDiagnostics = live.RefreshDiagnostics
 			}
 			srv.SaveBundle = func() (string, error) { return saveLive(ws, saveDir, kctx, p.Compression) }
+			srv.FreezeBundle = func(dir string) (string, error) { return saveLive(ws, dir, kctx, "fastest") }
+			srv.ExportDir = saveDir
+			if signKey != "" {
+				if srv.Signer, err = sign.LoadPrivate(signKey); err != nil {
+					return fmt.Errorf("--sign: %w", err)
+				}
+			}
 			ks := &http.Server{Handler: srv.KubeHandler(), TLSConfig: tlsCfg, ReadHeaderTimeout: 10 * time.Second}
 			go func() { _ = ks.ServeTLS(kln, "", "") }()
 			defer ks.Close()
@@ -258,7 +266,8 @@ verified bundle at any moment.`,
 	c.Flags().IntVar(&maxStreams, "max-log-streams", 100, "container log streams followed at once; beyond it unhealthy pods come first and the rest take turns")
 	c.Flags().Int64Var(&logTail, "log-tail", 500, "lines of history per stream when following starts (within --since)")
 	c.Flags().IntVar(&maxLines, "max-log-lines", 1_000_000, "log lines kept in the workspace; the oldest are dropped first")
-	c.Flags().StringVar(&saveDir, "save-dir", ".", "directory Save as bundle writes to")
+	c.Flags().StringVar(&saveDir, "save-dir", ".", "directory Save as bundle and Review and send write to")
+	c.Flags().StringVar(&signKey, "sign", "", "sign bundles exported from Review and send with this private key (flightbay keygen); the page can also choose or create one")
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "print what would be watched and the RBAC it needs; reads discovery only")
 	c.Flags().BoolVar(&jsonOut, "json", false, "print the dry-run plan as JSON")
 	return c

@@ -274,6 +274,7 @@ func openCmd() *cobra.Command {
 					return err
 				}
 				if signKey != "" {
+					rs.SignerPath = signKey
 					if rs.Options.Signer, err = sign.LoadPrivate(signKey); err != nil {
 						return err
 					}

@@ -2475,8 +2475,9 @@ function renderLiveBanner() {
     badge.innerHTML = `<span class="dot"></span> Live · ${esc(lv.context)} · ${num(lv.objectsWatched)} objects · ${num(lv.logStreams)}${lv.logStreamsTotal > lv.logStreams ? ' of ' + num(lv.logStreamsTotal) : ''} log streams · last change ${esc(liveAgo(lv.lastEvent))}${up ? '' : ' · reconnecting'}`;
   }
   const t = $('#snapshot-time');
-  if (t) t.innerHTML = `<span class="muted">Read-only mirror${lv.logLinesDropped ? ` · ${num(lv.logLinesDropped)} old log lines dropped` : ''}</span> <button id="live-save" class="ghost" title="Write the mirror as it is now to a normal, verified bundle">${LIVE.saving ? 'Saving…' : 'Save as bundle'}</button>`;
+  if (t) t.innerHTML = `<span class="muted">Read-only mirror${lv.logLinesDropped ? ` · ${num(lv.logLinesDropped)} old log lines dropped` : ''}</span> <button id="live-save" class="ghost" title="Write the mirror as it is now to a normal, verified bundle">${LIVE.saving ? 'Saving…' : 'Save as bundle'}</button> <button id="live-review" class="primary" title="Choose what to send, sign it and export it">Export and sign…</button>`;
   const b = $('#live-save'); if (b) b.onclick = liveSave;
+  const rv = $('#live-review'); if (rv) rv.onclick = () => nav('review');
 }
 
 async function liveSave() {

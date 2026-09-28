@@ -178,9 +178,10 @@ Examples:
 | `--qps float32` | API server requests per second |
 | `--redact-extra string` | file of extra redaction patterns (one Go regular expression per line) |
 | `--resources strings` | resource allowlist, e.g. pods,deployments.apps,httproutes.gateway.networking.k8s.io |
-| `--save-dir string` | directory Save as bundle writes to (default ".") |
+| `--save-dir string` | directory Save as bundle and Review and send write to (default ".") |
 | `--secrets string` | omit, metadata or keys (values are never collected) |
 | `--shell string` | shell for the terminal (default /bin/bash) |
+| `--sign string` | sign bundles exported from Review and send with this private key (flightbay keygen); the page can also choose or create one |
 | `--since string` | log window, e.g. 2h |
 | `--solo-diagnostics` | add proxy dumps, control-plane debug and metrics, and allow the port-forward they need |
 | `--workdir string` | workspace directory (default ~/.flightbay/workspaces/ws-*) |

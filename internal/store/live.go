@@ -325,3 +325,20 @@ func (w *Workspace) eventRows(cluster, ns, name string) []string {
 	}
 	return out
 }
+
+// LogStreamLines returns every stream with lines loaded and how many, for
+// workspaces (a live mirror) whose coverage does not list streams one by one.
+func (w *Workspace) LogStreamLines() map[LogStreamKey]int {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	out := make(map[LogStreamKey]int, len(w.streamSeq))
+	for k, n := range w.streamSeq {
+		if n == 0 {
+			continue
+		}
+		if p := strings.SplitN(k, "/", 5); len(p) == 5 {
+			out[LogStreamKey{p[0], p[1], p[2], p[3], p[4]}] = n
+		}
+	}
+	return out
+}

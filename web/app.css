@@ -459,3 +459,11 @@ tr[data-nvrow]{cursor:pointer}
 [data-theme=light] .start-drop:hover,[data-theme=light] .start-drop.over{background:#eef6fb}
 [data-theme=light] .progress-bar{background:#d0d5dd}
 [data-theme=light] .start-opening{background:#f5f6f7d9}
+/* ---------- review and send: what to send, signing ---------- */
+.rv-top{align-items:start;gap:16px}
+.rv-cats{display:grid;gap:6px}
+.rv-cat{display:flex;align-items:flex-start;gap:10px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;cursor:pointer}
+.rv-cat:hover{border-color:var(--teal)}
+.rv-cat input{margin-top:3px}
+.rv-cat span{display:flex;flex-direction:column;gap:1px}
+.rv-bulk{gap:6px;margin:0 0 10px 8px}.rv-bulk button{padding:5px 10px;font-size:12px}

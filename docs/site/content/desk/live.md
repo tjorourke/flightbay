@@ -98,12 +98,16 @@ flightbay-desk open flightbay-live-kind-mesh1-20260928T170412Z.tar.zst
 
 Nothing is asked of the cluster when you save. What is in the bundle is what the mirror held, redacted on the way in. The API is `POST /api/live/save`.
 
+## Export and sign
+
+**Export and sign…** in the banner opens [Review and send](/collect/review/) on the live mirror. It freezes the mirror, lets you untick what you don't want to send (everything is selected to start with, with **Select all** and **Deselect all**), signs the export with a key you choose or create on the page, and writes the reviewed bundle to `--save-dir`. `--sign KEY` starts with that key chosen.
+
 ## The banner and refreshing
 
 The banner that says **Offline snapshot** for a bundle reads, in live mode:
 
 ```text
-● Live · kind-mesh1 · 199 objects · 16 log streams · last change 3s ago     Save as bundle
+● Live · kind-mesh1 · 199 objects · 16 log streams · last change 3s ago     Save as bundle   Export and sign…
 ```
 
 It is green while every watch is connected and amber while any is reconnecting. A watch that drops resumes from the last resourceVersion it saw. A watch whose version has expired (410 Gone) lists again and reconciles, so a missed deletion is still applied.

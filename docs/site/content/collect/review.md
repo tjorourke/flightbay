@@ -32,14 +32,30 @@ The page is not there when the desk was fed a stream (`flightbay collect -o - | 
 | `-i FILE` | An age identity, if the capture itself is encrypted |
 | `--verify-key FILE` | Check the capture's own signature against this key |
 
-## What you can take out
+## What to send
 
-| Tab | Removes |
+Everything is selected to start with. The **What to send** panel at the top has one tickbox per type of content:
+
+| Tickbox | Covers |
 |---|---|
-| Namespaces | Every object, event, log stream and proxy dump in the namespace, and the entries that name it inside other namespaces' proxy and control-plane dumps |
-| Resource types | Every object of the type, for example all ConfigMaps |
-| Log streams | Whole container log streams |
-| Diagnostics and flows | Single proxy or control-plane dump files, attached flow log files, or every event |
+| Objects | Every resource type |
+| Logs | Every container log stream |
+| Events | Every Kubernetes event |
+| Proxy and control-plane dumps | Every Solo diagnostics file |
+| Flow logs | Every attached flow log file |
+
+Untick one to leave that content out, or use **Deselect all** and tick back only what you want to send. **Select all** puts everything back, including objects and lines you removed one at a time. A tickbox shows as partly ticked when you have picked some of it in the tabs below, with a count such as "12 of 19 container log streams selected".
+
+## Choosing in detail
+
+Each tab lists rows with a **Send** tickbox, all ticked to start with, and **Select all** and **Deselect all** buttons. With a filter typed, the buttons act on the rows the filter shows, so "Filter namespaces: team-" then **Deselect all** leaves out every namespace starting `team-`.
+
+| Tab | Rows |
+|---|---|
+| Namespaces | A namespace. Unticking it leaves out every object, event, log stream and proxy dump in it, and the entries that name it inside other namespaces' proxy and control-plane dumps |
+| Resource types | A type, for example all ConfigMaps |
+| Log streams | A whole container log stream |
+| Diagnostics and flows | A proxy or control-plane dump file, an attached flow log file, and every event |
 | Picked items | Objects and log lines you removed one at a time |
 | Redact | Text patterns, log lines to drop, and object fields to remove |
 
@@ -68,6 +84,23 @@ A path cannot remove an object's `kind`, `apiVersion`, name or namespace; remove
 ## What Solo will receive
 
 The panel at the top updates as you choose. It shows what is kept and what is removed for objects, events, log lines, diagnostic files and flow files, plus how many values were redacted, fields removed and names replaced. It runs the real export into nowhere, so the numbers are exactly what the export will do.
+
+## Signing the export
+
+The **Sign the export** panel chooses the key the export is signed with. A signature lets Solo check the bundle came from you and was not changed since.
+
+- **Choose a key** from the list: Flightbay finds signing keys in `~/.flightbay/keys`, in the directory you started from, and next to a key you used before.
+- **Use a key file** anywhere else by typing its path.
+- **Create a signing key**: type who signs (for example "ACME platform team") and choose **Create key**. The private key is saved in `~/.flightbay/keys`, readable only by you, and the page shows the public key with **Copy public key**. Send the public key (the `.pub` file) to Solo once; never send the `.key`.
+- **Don't sign** turns signing off for this export.
+
+`flightbay ui BUNDLE --sign KEY` (or `--live --sign KEY`) starts with that key chosen. The page can change it at any time.
+
+## Exporting from a live cluster
+
+In [live mode](/desk/live/), **Export and sign…** in the live banner (or **Review and send** in the menu) opens this page on the running cluster. The first visit freezes the mirror into a bundle in the workspace, so what you choose applies to a fixed copy and nothing moves while you decide. **Freeze again now** takes a fresh copy, keeping your choices.
+
+The export is written to `--save-dir` (the directory you started from by default) as `flightbay-live-CONTEXT-TIME-reviewed.tar.zst`, signed with the key you chose. Nothing is ever written to the cluster.
 
 ## Export
 

@@ -12,6 +12,7 @@ import (
 	"github.com/tjorourke/flightbay/internal/features"
 	"github.com/tjorourke/flightbay/internal/mcp"
 	"github.com/tjorourke/flightbay/internal/posture"
+	"github.com/tjorourke/flightbay/internal/sign"
 	"io"
 	"io/fs"
 	"net/http"
@@ -85,6 +86,15 @@ type Server struct {
 	// SaveBundle writes the live mirror as a bundle and returns its path;
 	// nil when the workspace is not live.
 	SaveBundle func() (string, error)
+	// FreezeBundle writes the live mirror as a bundle into dir and returns
+	// its path; Review and send exports from that frozen copy. nil when the
+	// workspace is not live.
+	FreezeBundle func(dir string) (string, error)
+	// ExportDir is where reviewed bundles of a live mirror are written.
+	ExportDir string
+	// Signer signs reviewed exports of a live mirror (--sign); the Review
+	// and send page can choose or create another.
+	Signer *sign.PrivateKey
 
 	once   sync.Once
 	api    http.Handler
@@ -294,6 +304,8 @@ func (s *Server) Handler() http.Handler {
 	api("/api/baseline/load", s.baselineLoad)
 	api("/api/suggest", s.suggest)
 	api("/api/review", s.reviewState)
+	api("/api/review/keys", s.reviewKeys)
+	api("/api/review/refreeze", s.reviewRefreeze)
 	api("/api/review/preview", s.reviewPreview)
 	api("/api/review/export", s.reviewExport)
 	api("/api/review/lines", s.reviewLines)
@@ -347,7 +359,7 @@ func (s *Server) workspace(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	out["trust"] = s.WS.Trust()
-	out["exportable"] = s.Review != nil
+	out["exportable"] = s.Review != nil || s.FreezeBundle != nil
 	out["reviewLanding"] = s.Review != nil && s.Review.Landing
 	if m := s.WS.Manifest(); m != nil {
 		out["captureEnd"], out["complete"], out["collectionErrors"] = m.CaptureEnd, m.Complete, m.Errors

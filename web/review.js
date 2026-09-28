@@ -99,21 +99,97 @@ function rvInitPlan(p) {
 // ---------- the Review page ----------
 async function reviewPage() {
   if (!S.ws?.exportable) return head('Review and send', 'Remove objects, logs and namespaces from a bundle and export a new one.') +
-    '<div class="notice info"><div>This workspace was not opened from a bundle file (it is a stream or a live mirror), so there is nothing to export from. Open the bundle file with <code>flightbay ui BUNDLE</code>.</div></div>';
+    '<div class="notice info"><div>This workspace was streamed in, so there is no file to export from. Open the bundle file with <code>flightbay ui BUNDLE</code>.</div></div>';
   if (!S.rv.data) {
     S.rv.data = await api('api/review');
     S.rv.plan = rvInitPlan(S.rv.data.plan);
     setTimeout(rvPreview, 0);
   }
-  if (S.state && S.state.phase !== 'complete') return head('Review and send', 'Waiting for the bundle to finish loading.') + '<div class="notice info"><div>The bundle is still loading. The review lists everything in it once it has been read and verified.</div></div>';
+  if (S.state && S.state.phase !== 'complete' && S.state.phase !== 'live') return head('Review and send', 'Waiting for the bundle to finish loading.') + '<div class="notice info"><div>The bundle is still loading. The review lists everything in it once it has been read and verified.</div></div>';
   const d = S.rv.data;
-  const sign = d.signer ? `<span class="green">Signed with ${esc(d.signer.name)} (${esc(d.signer.keyId)})</span>` : '<span class="amber">Not signed</span>. Open the bundle with <code>flightbay ui BUNDLE --sign KEY</code> so Solo can check it came from you unmodified.';
+  const sign = d.signer ? `<span class="green">It will be signed by ${esc(d.signer.name)} (${esc(d.signer.keyId)})</span>.` : '<span class="amber">It will not be signed</span>: choose or create a key under Sign the export.';
   return head('Review and send', 'Choose what leaves your organisation. The original bundle is not changed; the export is a new file with a ledger of what you removed.',
     `<a class="help-link" href="api/review?format=yaml" download="review-plan.yaml" title="Reuse it with flightbay review --plan">Download plan</a>`) + `
-  <div id="rv-summary">${rvSummary()}</div>
+  ${d.live ? `<div class="notice info"><div><strong>Frozen from the live mirror at ${fmtDateTime(d.frozen)}.</strong> What you choose here applies to that copy, so the cluster changing does not move things under you. <button class="link" id="rv-refreeze">Freeze again now</button></div></div>` : ''}
+  <div class="grid2 rv-top"><section class="panel" id="rv-what">${rvWhat()}</section><section class="panel" id="rv-sign">${rvSignPanel()}</section></div>
+  <div id="rv-summary" class="mt">${rvSummary()}</div>
   <section class="panel mt"><div class="tabs" id="rv-tabs">${rvTabs().map(([k, label, n]) => `<button class="${S.rv.tab === k ? 'active' : ''}" data-rvtab="${k}">${esc(label)}${n != null ? ` (${num(n)})` : ''}</button>`).join('')}</div>
     <div class="panel-body" id="rv-body">${rvBody()}</div></section>
   <p class="muted mt" style="font-size:12px">Export writes <span class="mono">${esc(d.out)}</span>. ${sign}${d.encrypted ? ' It is encrypted to the recipients you gave.' : ''}</p>`;
+}
+
+// ---------- what to send: one switch per content type ----------
+function rvCats() {
+  const d = S.rv.data, r = S.rv.plan.remove || {};
+  const cnt = tab => { const {k, refs} = rvTabRefsAll(tab); const off = refs.filter(ref => rvHas(k, ref)).length; return {total: refs.length, off}; };
+  const events = d.clusters.reduce((n, c) => n + c.events, 0);
+  return [
+    ['types', 'Objects', ['resource type', 'resource types'], cnt('types')],
+    ['logs', 'Logs', ['container log stream', 'container log streams'], cnt('logs')],
+    ['events', 'Events', ['event', 'events'], {total: events, off: r.events ? events : 0}],
+    ['diagnostics', 'Proxy and control-plane dumps', ['dump file', 'dump files'], cnt('diagnostics')],
+    ['flows', 'Flow logs', ['flow file', 'flow files'], cnt('flows')],
+  ];
+}
+// rvTabRefsAll ignores the filter box: the switches act on everything.
+function rvTabRefsAll(tab) { const q = S.rv.q; S.rv.q = ''; const out = rvTabRefs(tab); S.rv.q = q; return out; }
+function rvSetAll(tab, on) { const q = S.rv.q; S.rv.q = ''; if (tab === 'events') rvRemove().events = !on; else rvSet(tab, on); S.rv.q = q; }
+function rvWhat() {
+  const cats = rvCats();
+  const row = ([tab, label, sub, c]) => {
+    const none = !c.total, all = c.off === 0, some = !all && c.off < c.total;
+    return `<label class="rv-cat ${none ? 'muted' : ''}"><input type="checkbox" data-rvcat="${tab}" ${none ? 'disabled' : ''} ${all && !none ? 'checked' : ''} ${some ? 'data-some="1"' : ''}>
+      <span><strong>${esc(label)}</strong><small class="muted">${none ? 'none in this bundle' : some ? `${num(c.total - c.off)} of ${num(c.total)} ${esc(sub[1])} selected` : all ? `${c.total === 1 ? '1 ' + esc(sub[0]) : 'all ' + num(c.total) + ' ' + esc(sub[1])}` : 'not sent'}</small></span></label>`;
+  };
+  return `<div class="panel-head"><h2>What to send</h2><div class="row"><button class="ghost" id="rv-all">Select all</button><button class="ghost" id="rv-none">Deselect all</button></div></div>
+    <div class="panel-body rv-cats">${cats.map(row).join('')}
+    <p class="muted" style="font-size:12px;margin:8px 0 0">Everything is selected to start with. Untick a type of content here, or pick namespaces, resource types, streams and files in the tabs below.</p></div>`;
+}
+function rvWhatOnly() {
+  const el = $('#rv-what'); if (!el) return;
+  el.innerHTML = rvWhat(); rvWireWhat();
+}
+function rvWireWhat() {
+  document.querySelectorAll('[data-rvcat]').forEach(c => { if (c.dataset.some) c.indeterminate = true; c.onchange = () => { rvSetAll(c.dataset.rvcat, c.checked); rvChanged(); render(); }; });
+  const all = $('#rv-all'); if (all) all.onclick = () => { const r = rvRemove(); for (const k of ['namespaces', 'types', 'logStreams', 'diagnostics', 'flows', 'objects', 'logLines']) r[k] = []; r.events = false; rvChanged(); render(); };
+  const none = $('#rv-none'); if (none) none.onclick = () => { for (const t of ['types', 'logs', 'events', 'diagnostics', 'flows']) rvSetAll(t, false); rvChanged(); render(); };
+}
+
+// ---------- signing ----------
+function rvSignPanel() {
+  const k = S.rv.keys, sig = S.rv.data.signer;
+  if (!k) return `<div class="panel-head"><h2>Sign the export</h2></div><div class="panel-body muted">Looking for signing keys…</div>`;
+  const opts = (k.keys || []).map(x => `<option value="${esc(x.path)}" ${sig && sig.path === x.path ? 'selected' : ''}>${esc(x.name || '(no name)')} · ${esc(x.keyId)} · ${esc(x.path.replace(/^.*\/(?=[^/]+\/[^/]+$)/, '…/'))}</option>`).join('');
+  const created = S.rv.created;
+  return `<div class="panel-head"><h2>Sign the export</h2>${sig ? `<span class="badge green">✓ ${esc(sig.name)} (${esc(sig.keyId)})</span>` : '<span class="badge amber">Not signed</span>'}</div><div class="panel-body">
+    <p class="muted" style="font-size:12px;margin:0 0 10px">A signature lets Solo check the bundle came from you and was not changed. Solo needs your public key (.pub) once; the private key (.key) stays with you.</p>
+    <div class="row wrap"><select id="rv-key" style="min-width:320px"><option value="">Don't sign</option>${opts}${sig && !(k.keys || []).some(x => x.path === sig.path) ? `<option selected value="${esc(sig.path || '')}">${esc(sig.name)} · ${esc(sig.keyId)}</option>` : ''}</select></div>
+    <div class="row wrap mt"><input id="rv-keypath" placeholder="or a key file: ~/keys/acme.key" style="min-width:260px"><button id="rv-usekey">Use this key</button></div>
+    <details class="mt" ${created ? 'open' : ''}><summary>Create a signing key</summary>
+      <div class="row wrap mt"><input id="rv-keyname" placeholder="Who signs, e.g. ACME platform team" style="min-width:260px"><button id="rv-newkey" class="primary">Create key</button></div>
+      <p class="muted" style="font-size:12px">Saved in <span class="mono">${esc(k.keysDir)}</span>, readable only by you.</p>
+      ${created ? `<div class="notice info"><div><strong>Key created.</strong> Send this public key to Solo (it is also in <span class="mono">${esc(created.publicPath)}</span>):<pre class="code mt">${esc(created.publicKey)}</pre><button id="rv-copypub">Copy public key</button></div></div>` : ''}
+    </details></div>`;
+}
+async function rvLoadKeys() {
+  try { S.rv.keys = await api('api/review/keys'); } catch (e) { S.rv.keys = {keys: [], keysDir: '~/.flightbay/keys'}; }
+  const el = $('#rv-sign'); if (el) { el.innerHTML = rvSignPanel(); rvWireSign(); }
+}
+async function rvSetKey(body) {
+  try {
+    const r = await apiPost('api/review/keys', body);
+    S.rv.keys = {...S.rv.keys, keys: r.keys}; S.rv.data.signer = r.signer || null;
+    if (r.created) S.rv.created = r.created;
+    toast(r.signer ? `Exports will be signed by ${r.signer.name} (${r.signer.keyId})` : 'Exports will not be signed');
+  } catch (e) { toast(e.message); }
+  const el = $('#rv-sign'); if (el) { el.innerHTML = rvSignPanel(); rvWireSign(); }
+  rvSummaryOnly();
+}
+function rvWireSign() {
+  const sel = $('#rv-key'); if (sel) sel.onchange = () => rvSetKey(sel.value ? {path: sel.value} : {none: true});
+  const use = $('#rv-usekey'); if (use) use.onclick = () => { const v = $('#rv-keypath').value.trim(); if (v) rvSetKey({path: v}); };
+  const nk = $('#rv-newkey'); if (nk) nk.onclick = () => { const v = $('#rv-keyname').value.trim(); if (!v) { toast('Give the key a name'); return; } rvSetKey({create: {name: v}}); };
+  const cp = $('#rv-copypub'); if (cp) cp.onclick = () => navigator.clipboard.writeText(S.rv.created.publicKey).then(() => toast('Public key copied'));
 }
 
 function rvTabs() {
@@ -132,6 +208,7 @@ function rvTabs() {
 
 function rvSummary() {
   const p = S.rv.preview, d = S.rv.data;
+  if (!d) return '';
   if (S.rv.previewErr) return `<div class="notice bad"><div><strong>The plan cannot be applied</strong><br>${esc(S.rv.previewErr)}</div></div>`;
   if (!p) return '<div class="stats"><div class="stat"><div class="eyebrow">What Solo will receive</div><div class="value">…</div><p>Reading the bundle</p></div></div>';
   const k = p.kept || {}, r = p.removed || {}, x = p.redacted || {};
@@ -167,10 +244,34 @@ function rvSummaryOnly() {
   if (tabs) tabs.querySelectorAll('[data-rvtab]').forEach((b, i) => { const t = rvTabs()[i]; b.textContent = t[1] + (t[2] != null ? ` (${num(t[2])})` : ''); });
 }
 
-const rvCheck = (on, data) => `<input type="checkbox" ${on ? 'checked' : ''} data-rv="${attr(data)}" aria-label="Remove">`;
+// Ticked means "send it". The plan still records what is removed; a tick
+// clears the removal, an untick adds it.
+const rvCheck = (removed, data) => `<input type="checkbox" ${removed ? '' : 'checked'} data-rv="${attr(data)}" aria-label="Send">`;
 const rvMatch = (...xs) => !S.rv.q || xs.join(' ').toLowerCase().includes(S.rv.q.toLowerCase());
 const rvFilter = ph => `<input id="rv-q" placeholder="${esc(ph)}" value="${esc(S.rv.q)}" style="width:320px;margin-bottom:10px">`;
 const rvClusterCol = () => S.rv.data.clusters.length > 1;
+
+// The rows of a tab as plan references, for Select all and Deselect all.
+function rvTabRefs(tab) {
+  const d = S.rv.data;
+  switch (tab) {
+    case 'namespaces': return {k: 'namespaces', refs: d.clusters.flatMap(c => c.namespaces.filter(n => rvMatch(n.name)).map(n => ({cluster: c.name, namespace: n.name})))};
+    case 'types': { const seen = new Map(); d.clusters.forEach(c => c.types.forEach(t => { if (rvMatch(t.kind, t.resource, t.group)) seen.set(t.group + '/' + t.resource, {group: t.group, resource: t.resource}); })); return {k: 'types', refs: [...seen.values()]}; }
+    case 'logs': return {k: 'logStreams', refs: d.clusters.flatMap(c => c.streams.filter(x => rvMatch(x.namespace, x.pod, x.container)).map(x => ({cluster: c.name, namespace: x.namespace, pod: x.pod, container: x.container, stream: x.stream})))};
+    case 'diagnostics': return {k: 'diagnostics', refs: d.clusters.flatMap(c => c.diagnostics.filter(f => rvMatch(f.namespace, f.pod, f.file, f.component)).map(f => ({cluster: c.name, namespace: f.namespace, pod: f.pod, file: f.file})))};
+    case 'flows': return {k: 'flows', refs: d.clusters.flatMap(c => c.flows.map(f => ({cluster: c.name, file: f.file})))};
+  }
+  return {k: '', refs: []};
+}
+// rvSet sends (on) or holds back (off) every row of a tab.
+function rvSet(tab, on) {
+  const {k, refs} = rvTabRefs(tab);
+  if (!k) return;
+  let l = rvList(k);
+  for (const ref of refs) { l = l.filter(x => !rvSame(x, ref) && !(on && rvCovers(x, ref))); if (!on) l.push(ref); }
+  rvRemove()[k] = l;
+}
+const rvBulk = (tab, what) => `<div class="row rv-bulk"><button class="ghost" data-rvbulk="${attr({tab, on: true})}">Select all</button><button class="ghost" data-rvbulk="${attr({tab, on: false})}">Deselect all</button>${S.rv.q ? `<small class="muted">applies to the ${esc(what)} shown by the filter</small>` : ''}</div>`;
 
 function rvBody() {
   const d = S.rv.data, p = S.rv.plan, r = p.remove || {};
@@ -182,8 +283,8 @@ function rvBody() {
         return `<tr><td>${rvCheck(rvHas('namespaces', ref), {k: 'namespaces', ref})}</td>${multi ? `<td><span class="tag">${esc(c.name)}</span></td>` : ''}<td class="mono">${esc(n.name)}</td><td>${num(n.objects)}</td><td>${num(n.logStreams)}</td><td>${num(n.logLines)}</td><td>${num(n.events)}</td></tr>`;
       }));
       return `<p class="muted" style="font-size:12px;margin-bottom:10px">Removing a namespace removes its objects, events, logs and proxy dumps, and cuts entries naming it from the dumps of other namespaces.</p>
-        <div class="row wrap">${rvFilter('Filter namespaces')}<label class="row"><input type="checkbox" id="rv-scrub" ${p.scrubNames ? 'checked' : ''}> Also replace the removed namespaces' names wherever they still appear</label></div>
-        <div class="table-scroll" style="max-height:55vh"><table><thead><tr><th>Remove</th>${multi ? '<th>Cluster</th>' : ''}<th>Namespace</th><th>Objects</th><th>Log streams</th><th>Log lines</th><th>Events</th></tr></thead><tbody>${rows.join('') || '<tr><td colspan="7" class="muted">No namespaces</td></tr>'}</tbody></table></div>`;
+        <div class="row wrap">${rvFilter('Filter namespaces')}${rvBulk('namespaces', 'namespaces')}<label class="row"><input type="checkbox" id="rv-scrub" ${p.scrubNames ? 'checked' : ''}> Also replace the removed namespaces' names wherever they still appear</label></div>
+        <div class="table-scroll" style="max-height:55vh"><table><thead><tr><th>Send</th>${multi ? '<th>Cluster</th>' : ''}<th>Namespace</th><th>Objects</th><th>Log streams</th><th>Log lines</th><th>Events</th></tr></thead><tbody>${rows.join('') || '<tr><td colspan="7" class="muted">No namespaces</td></tr>'}</tbody></table></div>`;
     }
     case 'types': {
       const seen = new Map();
@@ -192,18 +293,18 @@ function rvBody() {
         const ref = {group: t.group, resource: t.resource};
         return `<tr><td>${rvCheck(rvHas('types', ref), {k: 'types', ref})}</td><td>${esc(t.kind)}</td><td class="mono">${esc(t.resource)}${t.group ? '.' + esc(t.group) : ''}</td><td>${t.namespaced ? 'namespaced' : 'cluster'}</td><td>${num(t.objects)}</td></tr>`;
       });
-      return `<p class="muted" style="font-size:12px;margin-bottom:10px">A removed type is listed in the ledger by name. Checks that need it show as not applicable instead of failing.</p>${rvFilter('Filter types')}
-        <div class="table-scroll" style="max-height:55vh"><table><thead><tr><th>Remove</th><th>Kind</th><th>Resource</th><th>Scope</th><th>Objects</th></tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
+      return `<p class="muted" style="font-size:12px;margin-bottom:10px">A removed type is listed in the ledger by name. Checks that need it show as not applicable instead of failing.</p><div class="row wrap">${rvFilter('Filter types')}${rvBulk('types', 'types')}</div>
+        <div class="table-scroll" style="max-height:55vh"><table><thead><tr><th>Send</th><th>Kind</th><th>Resource</th><th>Scope</th><th>Objects</th></tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
     }
     case 'logs': {
       const rows = d.clusters.flatMap(c => c.streams.filter(s => rvMatch(s.namespace, s.pod, s.container)).map(s => {
         const ref = {cluster: c.name, namespace: s.namespace, pod: s.pod, container: s.container, stream: s.stream};
         const viaNs = rvHas('namespaces', {cluster: c.name, namespace: s.namespace});
-        return `<tr><td>${viaNs ? '<span class="muted" title="Its namespace is removed">✓</span>' : rvCheck(rvHas('logStreams', ref), {k: 'logStreams', ref})}</td>${multi ? `<td><span class="tag">${esc(c.name)}</span></td>` : ''}<td class="mono">${esc(s.namespace)}</td><td class="mono">${esc(s.pod)}</td><td class="mono">${esc(s.container)}</td><td>${esc(s.stream)}</td><td>${num(s.lines)}</td></tr>`;
+        return `<tr><td>${viaNs ? '<span class="muted" title="Its namespace is not being sent">✕</span>' : rvCheck(rvHas('logStreams', ref), {k: 'logStreams', ref})}</td>${multi ? `<td><span class="tag">${esc(c.name)}</span></td>` : ''}<td class="mono">${esc(s.namespace)}</td><td class="mono">${esc(s.pod)}</td><td class="mono">${esc(s.container)}</td><td>${esc(s.stream)}</td><td>${num(s.lines)}</td></tr>`;
       }));
       return `<p class="muted" style="font-size:12px;margin-bottom:10px">To remove single lines, find them in the <a href="#logs">Log explorer</a>: a line's detail has <em>Remove this line</em>, and the results have <em>Remove matching lines</em>.</p>
-        <div class="row wrap">${rvFilter('Filter by namespace, pod or container')}<label class="row"><input type="checkbox" id="rv-alllogs"> Remove every log stream shown</label></div>
-        <div class="table-scroll" style="max-height:55vh"><table><thead><tr><th>Remove</th>${multi ? '<th>Cluster</th>' : ''}<th>Namespace</th><th>Pod</th><th>Container</th><th>Stream</th><th>Lines</th></tr></thead><tbody>${rows.join('') || '<tr><td colspan="7" class="muted">No log streams</td></tr>'}</tbody></table></div>`;
+        <div class="row wrap">${rvFilter('Filter by namespace, pod or container')}${rvBulk('logs', 'streams')}</div>
+        <div class="table-scroll" style="max-height:55vh"><table><thead><tr><th>Send</th>${multi ? '<th>Cluster</th>' : ''}<th>Namespace</th><th>Pod</th><th>Container</th><th>Stream</th><th>Lines</th></tr></thead><tbody>${rows.join('') || '<tr><td colspan="7" class="muted">No log streams</td></tr>'}</tbody></table></div>`;
     }
     case 'files': {
       const diag = d.clusters.flatMap(c => c.diagnostics.filter(f => rvMatch(f.namespace, f.pod, f.file, f.component)).map(f => {
@@ -216,9 +317,9 @@ function rvBody() {
       }));
       const events = d.clusters.reduce((n, c) => n + c.events, 0);
       return `${rvFilter('Filter by component, pod or file')}
-        <h3>Proxy and control-plane dumps</h3><div class="table-scroll mt" style="max-height:40vh"><table><thead><tr><th>Remove</th>${multi ? '<th>Cluster</th>' : ''}<th>Component</th><th>Pod</th><th>File</th><th>Size</th></tr></thead><tbody>${diag.join('') || '<tr><td colspan="6" class="muted">No diagnostics in this bundle</td></tr>'}</tbody></table></div>
-        <h3 class="mt">Flow log files</h3><div class="table-scroll mt"><table><thead><tr><th>Remove</th>${multi ? '<th>Cluster</th>' : ''}<th>Format</th><th>File</th></tr></thead><tbody>${flows.join('') || '<tr><td colspan="4" class="muted">No flow files in this bundle</td></tr>'}</tbody></table></div>
-        <h3 class="mt">Events</h3><label class="row mt"><input type="checkbox" id="rv-events" ${(p.remove || {}).events ? 'checked' : ''}> Remove all ${num(events)} events</label>`;
+        <h3>Proxy and control-plane dumps</h3>${rvBulk('diagnostics', 'dumps')}<div class="table-scroll mt" style="max-height:40vh"><table><thead><tr><th>Send</th>${multi ? '<th>Cluster</th>' : ''}<th>Component</th><th>Pod</th><th>File</th><th>Size</th></tr></thead><tbody>${diag.join('') || '<tr><td colspan="6" class="muted">No diagnostics in this bundle</td></tr>'}</tbody></table></div>
+        <h3 class="mt">Flow log files</h3>${rvBulk('flows', 'flow files')}<div class="table-scroll mt"><table><thead><tr><th>Send</th>${multi ? '<th>Cluster</th>' : ''}<th>Format</th><th>File</th></tr></thead><tbody>${flows.join('') || '<tr><td colspan="4" class="muted">No flow files in this bundle</td></tr>'}</tbody></table></div>
+        <h3 class="mt">Events</h3><label class="row mt"><input type="checkbox" id="rv-events" ${(p.remove || {}).events ? '' : 'checked'}> Send all ${num(events)} events</label>`;
     }
     case 'picked': {
       const objs = (r.objects || []).map((o, i) => `<tr><td><button class="ghost" data-unpick="${attr({k: 'objects', i})}" title="Keep it">✕</button></td>${multi ? `<td><span class="tag">${esc(o.cluster || '')}</span></td>` : ''}<td class="mono">${esc(o.resource)}${o.group ? '.' + esc(o.group) : ''}</td><td class="mono">${esc(o.namespace || '')}</td><td class="mono">${esc(o.name)}</td></tr>`);
@@ -261,14 +362,19 @@ function rvWireSummary() {
 after.review = () => {
   if (!S.rv.data) return;
   rvWireSummary();
+  rvWireWhat();
+  if (!S.rv.keys) rvLoadKeys(); else rvWireSign();
+  document.querySelectorAll('[data-rvbulk]').forEach(b => b.onclick = () => { const x = JSON.parse(b.dataset.rvbulk); rvSet(x.tab, x.on); rvChanged(); render(); });
+  const rf = $('#rv-refreeze');
+  if (rf) rf.onclick = async () => { rf.disabled = true; rf.textContent = 'Freezing…'; try { await apiPost('api/review/refreeze', {}); S.rv.data = null; S.rv.preview = null; render(); toast('Frozen again from the live mirror'); } catch (e) { toast(e.message); } };
   document.querySelectorAll('[data-rvtab]').forEach(b => b.onclick = () => { S.rv.tab = b.dataset.rvtab; S.rv.q = ''; render(); });
-  document.querySelectorAll('[data-rv]').forEach(c => c.onchange = () => { const d = JSON.parse(c.dataset.rv); rvToggle(d.k, d.ref, c.checked); if (d.k === 'namespaces') rvNsScrubDefault(); });
+  document.querySelectorAll('[data-rv]').forEach(c => c.onchange = () => { const d = JSON.parse(c.dataset.rv); rvToggle(d.k, d.ref, !c.checked); if (d.k === 'namespaces') rvNsScrubDefault(); rvWhatOnly(); });
   document.querySelectorAll('[data-unpick]').forEach(b => b.onclick = () => { const d = JSON.parse(b.dataset.unpick); rvList(d.k).splice(d.i, 1); rvChanged(); render(); });
   const q = $('#rv-q');
   if (q) q.oninput = () => { S.rv.q = q.value; const caret = q.selectionStart; render().then(() => refocus('#rv-q', caret)); };
   const on = (id, fn) => { const el = $(id); if (el) el.onchange = () => fn(el); };
   on('#rv-scrub', el => { S.rv.plan.scrubNames = el.checked; rvChanged(); });
-  on('#rv-events', el => { rvRemove().events = el.checked; rvChanged(); });
+  on('#rv-events', el => { rvRemove().events = !el.checked; rvChanged(); rvWhatOnly(); });
   on('#rv-disclose', el => { S.rv.plan.discloseNames = el.checked; rvChanged(); });
   on('#rv-reviewer', el => { S.rv.plan.reviewer = el.value.trim(); rvChanged(); });
   on('#rv-alllogs', el => {
