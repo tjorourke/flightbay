@@ -393,3 +393,18 @@ td.px-short{white-space:nowrap}td.px-long{white-space:normal;overflow-wrap:anywh
 .help-link{font-size:12px;padding:7px 11px;border:1px solid var(--line);border-radius:6px;color:var(--muted);white-space:nowrap}
 .help-link:hover{color:var(--teal);border-color:var(--teal);text-decoration:none}
 .trust{display:inline-flex;gap:6px;align-items:center}.trust a.badge{text-decoration:none}
+/* ---------- navigator: k9s-style views ---------- */
+.nv-frame:focus{outline:none}
+.nv-text{margin:0;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:12px 14px;height:58vh;overflow:auto;font:12px/1.55 var(--mono);white-space:pre;tab-size:2}
+.nv-text.wrap{white-space:pre-wrap;word-break:break-word}
+.nv-text:focus{outline:1px solid var(--teal)}
+.nv-k{color:var(--teal)}
+.nv-flt{color:var(--amber);font-weight:400}
+.nv-open{font:inherit;color:inherit;text-align:left}
+.nv-open:hover{color:var(--teal)}
+.nv-acts{text-align:right;white-space:nowrap}.nv-acts button{padding:2px 8px;font:11px var(--mono)}
+.nv-help{position:relative;margin:0 0 12px;padding:14px 16px;border:1px solid var(--teal);border-radius:6px;background:var(--panel)}
+.nv-help-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(400px,1fr));gap:14px 26px;margin-top:10px}
+.nv-help h4{margin:0 0 6px;font-size:12px;color:var(--teal);text-transform:uppercase;letter-spacing:.06em}
+.nv-help-row{display:grid;grid-template-columns:170px 1fr;gap:10px;font-size:12px;padding:2px 0}.nv-help-row b{font:600 11.5px var(--mono);color:var(--amber)}
+tr[data-nvrow]{cursor:pointer}

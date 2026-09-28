@@ -163,6 +163,14 @@ fbfind                                        # findings
 fbscore                                       # best-practice scores, failing checks and their fixes
 ```
 
+### Watch a live cluster
+
+With kubectl access, the desk can mirror a cluster live instead of opening a capture. It lists and watches every type in scope, follows logs, and keeps the UI, the Navigator, search, the Scorecard and Agent reach up to date. It only ever reads (a transport guard refuses anything but GET), and **Save as bundle** writes the current mirror as a normal verified bundle.
+
+```bash
+flightbay ui --live --context prod-eu --namespaces 'kagent,agentgateway-system,istio-system'
+```
+
 ### Compare two captures
 
 ```bash

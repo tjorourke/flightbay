@@ -14,9 +14,11 @@ import (
 	"github.com/tjorourke/flightbay/internal/posture"
 	"io"
 	"io/fs"
+	"mime"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -92,6 +94,7 @@ type Server struct {
 	mu     sync.Mutex
 	base   baselineState
 	reachC reachCache
+	descC  describeCache
 	sugg   suggestCache
 }
 
@@ -227,6 +230,20 @@ func (s *Server) Handler() http.Handler {
 	files := http.FileServer(http.FS(static))
 	mux := http.NewServeMux()
 	mux.Handle("/k8s/", s.api)
+	// Icons carry no data, and browsers fetch /favicon.ico without the cookie.
+	for _, f := range []string{"favicon.ico", "favicon.svg", "favicon-32.png", "apple-touch-icon.png"} {
+		name := f
+		mux.HandleFunc("/"+name, func(w http.ResponseWriter, r *http.Request) {
+			b, err := web.FS.ReadFile(name)
+			if err != nil {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", mime.TypeByExtension(path.Ext(name)))
+			w.Header().Set("Cache-Control", "max-age=86400")
+			_, _ = w.Write(b)
+		})
+	}
 	mux.HandleFunc("/docs", s.docs)
 	mux.HandleFunc("/docs/", s.docs)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -285,6 +302,7 @@ func (s *Server) Handler() http.Handler {
 	api("/api/logs/fields", s.logFields)
 	api("/api/posture", s.posture)
 	api("/api/reach", s.reach)
+	api("/api/describe", s.describe)
 	api("/api/features", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"features": features.List(), "enabled": features.Map()})
 	})

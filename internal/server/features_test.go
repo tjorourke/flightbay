@@ -46,3 +46,15 @@ func TestPriorityViewIsGated(t *testing.T) {
 		}
 	}
 }
+
+// A log search that matches nothing returns records: [] (the UI maps over it).
+func TestLogSearchNoMatchIsEmptyList(t *testing.T) {
+	_, srv := newServer(t, false)
+	var res map[string]any
+	if code := get(t, srv, "/api/logs/search?q=zzzz-no-such-line", &res); code != 200 {
+		t.Fatalf("status %d", code)
+	}
+	if recs, ok := res["records"].([]any); !ok || len(recs) != 0 {
+		t.Fatalf("records must be an empty list, got %#v", res["records"])
+	}
+}

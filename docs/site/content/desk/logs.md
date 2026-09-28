@@ -97,7 +97,7 @@ The left panel narrows the search without typing:
 - **Level**, **Namespace**, **Workload**, **Pod** (with a box to find a pod when there are many), **Container**, **Stream**, and **Cluster** when the bundle has several. Each value shows how many matching lines it has. Click to filter, click again to clear.
 - **Fields** lists structured fields parsed from the matching lines, such as `trace_id`, `status`, `method`, `path`, `src.workload` and `dst.addr`, each with its most common values. Click a value to add it to the query.
 
-Active facet filters show as chips above the chart; click × to remove one.
+Active facet filters show as chips above the chart; click × to remove one. **Clear filters**, next to the Search button, resets the query, every facet and the time range in one go. It appears whenever anything is set.
 
 ## Context and following a request
 

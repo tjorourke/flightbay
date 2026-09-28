@@ -541,6 +541,12 @@ func (w *Workspace) SearchLogs(f LogFilter) (*LogResult, error) {
 	default:
 		res.Message = "No matches in the captured logs."
 	}
+	if res.Records == nil {
+		res.Records = []*logs.Record{} // an empty result is [], never null
+	}
+	if res.Histogram == nil {
+		res.Histogram = []Bucket{}
+	}
 	return res, nil
 }
 

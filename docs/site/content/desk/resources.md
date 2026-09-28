@@ -8,6 +8,8 @@ description: Browse captured objects by type, and open any object for its YAML, 
 
 Resources lists captured objects one type at a time, with the same columns `kubectl get` prints. Use it to browse: what Gateways are there, which pods are not ready, what does this policy look like.
 
+If you would rather stay on the keyboard, the [Navigator](/desk/navigator/) lists the same objects k9s-style and opens describe, YAML, events and logs in place.
+
 ## The type list
 
 Down the left are the types that have captured objects, grouped by area (Workloads, Networking, Gateway API, Istio, agentgateway and kgateway, kagent, Solo, and Config, access and storage), each with its object count and a dot for its collection state. Types with no captured objects are hidden; the note at the bottom says how many, and links to [Coverage](/desk/coverage/) for types that were excluded or failed.

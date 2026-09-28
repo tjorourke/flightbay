@@ -16,7 +16,7 @@ const S = {
   compare: null, findingSev: '', term: null,
   search: {q: '', limit: 200},
   pst: {tab: 'summary', area: '', status: 'attention', q: '', open: null},
-  nv: {resource: 'pods', group: '', ns: '', q: '', sel: 0, cmd: false},
+  nv: {resource: 'pods', group: '', ns: '', q: '', sel: 0, cmd: false, view: 'list', obj: null, text: '', textErr: '', wrap: false, help: false, hist: []},
   reach: {sel: '', q: '', type: '', dq: '', dchip: 'all', echip: 'all', fixOpen: {}, list: null, listRev: null, detail: null, detailKey: '', scroll: false, gview: '', gexpand: {}, gz: null, gfull: false},
 };
 
@@ -419,7 +419,17 @@ function groupKinds(types) {
 const kindLabel = t => `${esc(t.kind || t.resource)}${t.dup ? `<span class="grp">${esc(t.group || 'core')}</span>` : ''}`;
 
 // ---------- navigator (k9s-style, keyboard first) ----------
+// The Navigator behaves like k9s: a table of one resource type, and in-place
+// views of the selected object (describe, YAML, events, logs) that Esc backs
+// out of. ":" switches type, namespace or cluster; "/" filters; "?" shows
+// every key. It reads the same read-only API the terminal's kubectl uses.
 const nvQuick = [['pods', ''], ['deployments', 'apps'], ['services', ''], ['gateways', 'gateway.networking.k8s.io'], ['httproutes', 'gateway.networking.k8s.io'], ['events', '']];
+const nvKeys = [
+  ['List', [['↑ ↓  j k', 'move'], ['g  G', 'first, last'], ['Enter  d', 'describe (Enter on a namespace opens its pods)'], ['y', 'YAML'], ['e', 'events'], ['l  p', 'logs, previous logs'], ['o', 'open in the side drawer'], ['s', 'open this type in k9s (terminal)'], ['Ctrl-D', 'kubectl describe in the terminal']]],
+  ['Views', [['Esc  q', 'back to the list'], ['↑ ↓  PgUp PgDn', 'scroll'], ['g  G', 'top, bottom'], ['w', 'wrap long lines'], ['c', 'copy'], ['d y e l', 'switch view']]],
+  ['Commands', [[':pods', 'switch type (any kind, plural, short name: po, deploy, svc, httproute…)'], [':pods kube-system', 'type in a namespace'], [':pods all', 'all namespaces'], [':ns', 'namespaces (Enter drills in)'], [':ns kagent', 'stay on this type, in kagent'], [':ctx 2  or  :ctx mesh2', 'switch cluster'], [':help', 'this help']]],
+  ['Filter', [['/checkout', 'name, status or content contains'], ['/!Running', 'does not contain'], ['/-l app=web', 'label selector (also label:app=web)'], ['Esc', 'clear the filter'], ['0-9', 'cluster (0 is all)'], ['?', 'help']]],
+];
 
 async function navigator() {
   const N = S.nv, w = S.ws || await api('api/workspace');
@@ -428,109 +438,267 @@ async function navigator() {
   const have = types.filter(t => t.count > 0);
   let cur = types.find(t => t.resource === N.resource && t.group === N.group) || have.find(t => t.resource === 'pods') || have[0];
   if (!cur) return head('Navigator', 'Nothing captured yet.');
-  N.resource = cur.resource; N.group = cur.group;
-  const list = await api('api/objects', {cluster: S.cluster, group: N.group, resource: N.resource, namespace: N.ns, q: N.q});
-  N.rows = list.rows; N.sel = Math.min(N.sel, Math.max(0, list.rows.length - 1));
+  N.resource = cur.resource; N.group = cur.group; N.cur = cur;
+  // "/!text" and "-l" are handled here; everything else goes to the server filter.
+  const f = nvFilter(N.q);
+  const list = await api('api/objects', {cluster: S.cluster, group: N.group, resource: N.resource, namespace: N.ns, q: f.server});
+  let rows = list.rows;
+  if (f.not) rows = rows.filter(r => !(r.name + ' ' + r.cells.join(' ')).toLowerCase().includes(f.not));
+  N.rows = rows; N.sel = Math.min(N.sel, Math.max(0, rows.length - 1));
   const nss = [...new Set(list.rows.map(r => r.namespace).filter(Boolean))].sort();
   if (N.ns && !nss.includes(N.ns)) nss.unshift(N.ns);
-  const ctx = (w.clusters || []).map((c, i) => `<option value="${esc(c.name)}" ${S.cluster === c.name ? 'selected' : ''}>${i + 1} ${esc(c.name)}@snapshot</option>`).join('');
+  const live = !!w.live;
+  const suffix = live ? 'live' : 'snapshot';
+  const ctx = (w.clusters || []).map((c, i) => `<option value="${esc(c.name)}" ${S.cluster === c.name ? 'selected' : ''}>${i + 1} ${esc(c.name)}@${suffix}</option>`).join('');
   const quick = nvQuick.filter(([r, g]) => have.some(t => t.resource === r && t.group === g));
   const statusCol = list.columns.indexOf('Status');
-  const sel = list.rows[N.sel];
-  return `<div class="nv">
-    <div class="nv-head">
-      <dl><dt>Bundle:</dt><dd>${esc(w.case ? 'case ' + w.case : w.bundleId || 'snapshot')}</dd>
+  const sel = rows[N.sel];
+  const conn = live ? `<dd style="color:var(--teal)">● live · read-only${w.live.context ? ' · ' + esc(w.live.context) : ''}</dd>` : '<dd style="color:var(--teal)">offline · read-only</dd>';
+  const headKeys = `<div class="nv-keys"><b>↑↓ jk</b><span>move</span><b>Enter d</b><span>describe</span><b>y</b><span>yaml</span><b>e</b><span>events</span><b>l p</b><span>logs</span></div>
+      <div class="nv-keys"><b>:</b><span>type, ns, ctx</span><b>/</b><span>filter</span><b>0-9</b><span>cluster</span><b>Esc</b><span>back</span><b>?</b><span>help</span></div>`;
+  const header = `<div class="nv-head">
+      <dl><dt>Bundle:</dt><dd>${esc(live ? 'live mirror' : w.case ? 'case ' + w.case : w.bundleId || 'snapshot')}</dd>
         <dt>Context:</dt><dd><select id="nv-ctx"><option value="">0 all clusters</option>${ctx}</select></dd>
-        <dt>Snapshot:</dt><dd style="color:var(--amber)">${fmtDateTime(w.snapshot)}</dd>
-        <dt>Connection:</dt><dd style="color:var(--teal)">offline · read-only</dd></dl>
-      <div class="nv-keys"><b>↑ ↓ / j k</b><span>navigate</span><b>/</b><span>filter</span><b>:</b><span>resource type</span><b>0-9</b><span>cluster</span></div>
-      <div class="nv-keys"><b>Enter</b><span>describe object</span><b>y</b><span>captured YAML</span><b>l · p</b><span>logs · previous logs</span><b>s</b><span>open in k9s</span><b>Esc</b><span>back</span></div>
-      <div class="nv-logo"> ┌─┐ ┌─┐ ┌─┐\n │ │ │ │ │ │  flightbay\n │ └─┘ │ │ │  snapshot\n └─────┘ └─┘  navigator</div>
-    </div>
-    <div class="nv-frame"><div class="nv-title">${esc(cur.kind || cur.resource)}(${esc(N.ns || 'all')}) [${list.rows.length}]</div>
-      ${N.cmd ? `<div class="nv-cmd"><span>:</span><input id="nv-cmdline" placeholder="pods, deploy, svc, httproute, gateway…  (Enter to switch, Esc to cancel)" autocomplete="off" spellcheck="false"></div>` : ''}
+        <dt>${live ? 'Now:' : 'Snapshot:'}</dt><dd style="color:var(--amber)">${fmtDateTime(w.snapshot)}</dd>
+        <dt>Connection:</dt>${conn}</dl>
+      ${headKeys}
+      <div class="nv-logo"> ┌─┐ ┌─┐ ┌─┐\n │ │ │ │ │ │  flightbay\n │ └─┘ │ │ │  ${live ? 'live     ' : 'snapshot '}\n └─────┘ └─┘  navigator</div>
+    </div>`;
+  const cmdline = N.cmd ? `<div class="nv-cmd"><span>:</span><input id="nv-cmdline" placeholder="pods · deploy kube-system · ns kagent · ctx 2 · help   (Tab completes, Enter runs, Esc cancels)" autocomplete="off" spellcheck="false"></div>` : '';
+  const help = N.help ? `<div class="nv-help" id="nv-help"><div class="row between"><strong>Keys</strong><small class="muted">Esc or ? to close</small></div><div class="nv-help-grid">${nvKeys.map(([t, ks]) => `<div><h4>${t}</h4>${ks.map(([k, d]) => `<div class="nv-help-row"><b>${esc(k)}</b><span>${esc(d)}</span></div>`).join('')}</div>`).join('')}</div></div>` : '';
+  let body;
+  if (N.view !== 'list' && N.obj) {
+    const o = N.obj;
+    const vt = {describe: 'describe', yaml: 'yaml', events: 'events', logs: N.prevLogs ? 'logs (previous)' : 'logs'}[N.view];
+    const isPod = o.resource === 'pods' && !o.group, canLogs = isPod || workloadKinds.includes(o.kind);
+    const tabs = [['describe', 'd'], ['yaml', 'y'], ['events', 'e']].concat(canLogs ? [['logs', 'l']] : []);
+    body = `<div class="nv-title">${esc(cur.kind || cur.resource)}(${esc(N.ns || 'all')}) › <b>${esc(vt)}</b> ${esc(o.namespace ? o.namespace + '/' : '')}${esc(o.name)}</div>
+      <div class="nv-bar">${tabs.map(([v, k]) => `<button class="nv-type ${N.view === v ? 'on' : ''}" data-nvview="${v}">${k} ${v}</button>`).join('')}
+        <span style="flex:1"></span><button class="ghost" data-nvact="wrap">w wrap ${N.wrap ? 'on' : 'off'}</button><button class="ghost" data-nvact="copy">c copy</button><button class="ghost" data-nvact="drawer">o drawer</button><button data-nvact="back">Esc back</button></div>
+      <pre class="nv-text ${N.wrap ? 'wrap' : ''}" id="nv-text" tabindex="0">${N.textErr ? `<span class="red">${esc(N.textErr)}</span>` : N.text === null ? '<span class="muted">Loading…</span>' : nvColour(N.view, N.text) || '<span class="muted">Nothing to show.</span>'}</pre>
+      <div class="nv-status"><span>${esc(o.name)}${o.namespace ? ' · ' + esc(o.namespace) : ''} · ${esc(o.cluster)}@${suffix}</span><span><b>Esc</b> back · <b>d y e l</b> views · <b>w</b> wrap · <b>c</b> copy · <b>?</b> help</span></div>`;
+  } else {
+    body = `<div class="nv-title">${esc(cur.kind || cur.resource)}(${esc(N.ns || 'all')})${N.q ? ` <span class="nv-flt">/${esc(N.q)}</span>` : ''} [${rows.length}]</div>
       <div class="nv-bar">${quick.map(([r, g]) => `<button class="nv-type ${r === N.resource && g === N.group ? 'on' : ''}" data-nvtype="${attr({r, g})}">:${r}</button>`).join('')}
         <span style="flex:1"></span><select id="nv-ns"><option value="">All namespaces</option>${nss.map(n => `<option ${n === N.ns ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
-        <input id="nv-q" placeholder="/ filter by name, status or label:" value="${esc(N.q)}" style="width:280px" autocomplete="off" spellcheck="false"></div>
-      <div class="table-scroll" style="max-height:58vh"><table><thead><tr>${cur.namespaced ? '<th>Namespace</th>' : ''}${list.columns.map(c => `<th>${esc(c)}</th>`).join('')}<th></th></tr></thead><tbody>
-        ${list.rows.map((r, i) => `<tr class="${i === N.sel ? 'sel' : ''}" data-nvrow="${i}">${cur.namespaced ? `<td>${esc(r.namespace)}</td>` : ''}${r.cells.map((c, j) => `<td>${j === 0 && i === N.sel ? '› ' : ''}${j === statusCol ? statusCell(c) : esc(c)}</td>`).join('')}
-          <td style="text-align:right"><button class="ghost" data-nvyaml="${i}">YAML</button>${(N.resource === 'pods' && !N.group) || workloadKinds.includes(r.kind) ? `<button class="ghost" data-nvlogs="${i}">Logs</button>` : ''}</td></tr>`).join('') || `<tr><td colspan="9" class="muted">No ${esc(cur.kind || cur.resource)} objects${N.q ? ' match the filter' : ''}.</td></tr>`}
+        <input id="nv-q" placeholder="/ filter · !exclude · -l app=web" value="${esc(N.q)}" style="width:280px" autocomplete="off" spellcheck="false"></div>
+      <div class="table-scroll" style="max-height:58vh"><table class="nv-table"><thead><tr>${cur.namespaced ? '<th>Namespace</th>' : ''}${list.columns.map(c => `<th>${esc(c)}</th>`).join('')}<th></th></tr></thead><tbody>
+        ${rows.map((r, i) => `<tr class="${i === N.sel ? 'sel' : ''}" data-nvrow="${i}">${cur.namespaced ? `<td>${esc(r.namespace)}</td>` : ''}${r.cells.map((c, j) => `<td>${j === 0 ? `<button class="link nv-open" data-nvopen="${i}">${i === N.sel ? '› ' : ''}${esc(c)}</button>` : j === statusCol ? statusCell(c) : esc(c)}</td>`).join('')}
+          <td class="nv-acts"><button class="ghost" data-nvgo="${attr({i, v: 'describe'})}" title="Describe (d)">d</button><button class="ghost" data-nvgo="${attr({i, v: 'yaml'})}" title="YAML (y)">y</button>${(N.resource === 'pods' && !N.group) || workloadKinds.includes(r.kind) ? `<button class="ghost" data-nvgo="${attr({i, v: 'logs'})}" title="Logs (l)">l</button>` : ''}</td></tr>`).join('') || `<tr><td colspan="9" class="muted">No ${esc(cur.kind || cur.resource)} objects${N.q ? ' match the filter' : ''}.</td></tr>`}
       </tbody></table></div>
-      <div class="nv-status"><span>${sel ? `${esc(sel.name)}${sel.namespace ? ' · ' + esc(sel.namespace) : ''}${!S.cluster ? ' · ' + esc(sel.cluster) : ''}` : ''}</span><span><b>Enter</b> describe · <b>y</b> yaml · <b>l</b> logs · <b>:</b> type · <b>/</b> filter</span></div>
-    </div></div>`;
+      <div class="nv-status"><span>${sel ? `${esc(sel.name)}${sel.namespace ? ' · ' + esc(sel.namespace) : ''}${!S.cluster ? ' · ' + esc(sel.cluster) : ''}` : ''}</span><span><b>Enter</b> describe · <b>y</b> yaml · <b>e</b> events · <b>l</b> logs · <b>:</b> command · <b>/</b> filter · <b>?</b> help</span></div>`;
+  }
+  return `<div class="nv">${header}<div class="nv-frame" id="nv-frame" tabindex="-1">${cmdline}${help}${body}</div></div>`;
+}
+
+// nvFilter turns a k9s-style filter into the server query plus a client-side
+// exclusion: "/!text" excludes, "-l k=v" is a label selector.
+function nvFilter(q) {
+  q = (q || '').trim();
+  if (q.startsWith('!')) return {server: '', not: q.slice(1).toLowerCase()};
+  const m = q.match(/^-l\s+(.+)$/);
+  if (m) return {server: m[1].split(',').map(x => 'label:' + x.trim()).join(' '), not: ''};
+  return {server: q, not: ''};
+}
+
+// nvColour gives describe and YAML output a little k9s colour: keys, values
+// and warnings.
+function nvColour(view, text) {
+  const t = esc(text || '');
+  if (view === 'yaml') return t.replace(/^(\s*-?\s*)([\w.\/-]+):/gm, '$1<span class="nv-k">$2</span>:');
+  if (view === 'describe') return t.replace(/^([A-Z][\w ()\/-]*):/gm, '<span class="nv-k">$1</span>:').replace(/\b(Warning|Failed|Error|CrashLoopBackOff|BackOff|Unhealthy|OOMKilled)\b/g, '<span class="red">$1</span>');
+  if (view === 'logs') return t.replace(/^(.*\b(ERROR|error|Error|FATAL|panic)\b.*)$/gm, '<span class="red">$1</span>').replace(/^(.*\b(WARN|warn|Warning)\b.*)$/gm, '<span class="amber">$1</span>');
+  return t;
+}
+
+async function nvLoad(view) {
+  const N = S.nv, o = N.obj;
+  N.view = view; N.text = null; N.textErr = '';
+  render();
+  try {
+    if (view === 'describe') {
+      N.text = (await api('api/describe', {cluster: o.cluster, group: o.group, resource: o.resource, namespace: o.namespace, name: o.name})).text;
+    } else if (view === 'yaml') {
+      N.text = (await api('api/object', nvRef(o))).yaml;
+    } else if (view === 'events') {
+      const d = await api('api/object', nvRef(o));
+      const ev = d.events || [];
+      N.text = ev.length ? ['LAST SEEN            TYPE      REASON                   COUNT  MESSAGE'].concat(ev.map(e => `${(fmtDateTime(e.lastTimestamp || e.eventTime) || '').padEnd(20)} ${(e.type || '').padEnd(9)} ${(e.reason || '').padEnd(24)} ${String(e.count || 1).padEnd(6)} ${e.message || ''}`)).join('\n') : 'No events for this object.';
+    } else if (view === 'logs') {
+      const isPod = o.resource === 'pods' && !o.group;
+      const params = isPod ? {pod: o.name, namespace: o.namespace} : {workload: `${o.kind}/${o.name}`, namespace: o.namespace};
+      const res = await api('api/logs/search', {...params, cluster: o.cluster, stream: N.prevLogs ? 'previous' : '', limit: 1000});
+      const recs = (res.records || []).slice().reverse();
+      N.text = recs.length ? recs.map(r => `${(r.ts || '').slice(11, 23)} ${isPod ? (r.container || '') : r.pod}  ${r.raw || r.msg}`).join('\n') + (res.total > recs.length ? `\n\n… ${num(res.total - recs.length)} older lines: press L for the log explorer` : '') : `No ${N.prevLogs ? 'previous ' : ''}log lines captured.`;
+    }
+  } catch (e) { N.textErr = e.message; }
+  if (S.view === 'navigator') {
+    await render();
+    const pre = $('#nv-text');
+    if (pre) { pre.focus(); if (view === 'logs') pre.scrollTop = pre.scrollHeight; }
+  }
 }
 
 const labelKey = [{value: 'label', hint: 'label key or key=value', example: 'label:app=checkout'}];
 // nvTypeSuggestions lists the captured types for the : command line, matching
-// the resource name, kind, singular name or a short name.
+// the resource name, kind, singular name or a short name, plus the commands.
 function nvTypeSuggestions(p) {
   const w = (p || '').toLowerCase().replace(/^:/, '');
   const types = S.nvTypes || [];
   const dup = {}; types.forEach(t => { dup[t.resource] = (dup[t.resource] || 0) + 1; });
-  return types.filter(t => !w || t.resource.startsWith(w) || (t.kind || '').toLowerCase().startsWith(w) || (t.singularName || '').startsWith(w) || (t.shortNames || []).some(s => s.startsWith(w)))
+  const cmds = [['ns', 'namespaces, or ns <name> to switch'], ['ctx', 'clusters, or ctx <n|name>'], ['help', 'every key and command']].filter(([c]) => !w || c.startsWith(w)).map(([value, hint]) => ({value, hint}));
+  const t = types.filter(t => !w || t.resource.startsWith(w) || (t.kind || '').toLowerCase().startsWith(w) || (t.singularName || '').startsWith(w) || (t.shortNames || []).some(s => s.startsWith(w)))
     .sort((a, b) => (b.count > 0) - (a.count > 0) || b.count - a.count || a.resource.localeCompare(b.resource)).slice(0, 40)
     .map(t => ({value: dup[t.resource] > 1 ? t.name : t.resource, count: t.count, hint: `${t.kind}${(t.shortNames || []).length ? ' · ' + t.shortNames.join(', ') : ''}${t.group ? ' · ' + t.group : ''}${t.count ? '' : ' · none captured'}`}));
+  return cmds.concat(t);
 }
 
 function nvRef(r) { return {cluster: r.cluster, group: r.group, resource: r.resource, namespace: r.namespace, name: r.name}; }
 
+function nvOpen(i, view) {
+  const N = S.nv, r = N.rows[i];
+  if (!r) return;
+  N.sel = i;
+  if (view === 'describe' && N.resource === 'namespaces' && !N.group) { N.ns = r.name; N.resource = 'pods'; N.group = ''; N.sel = 0; N.q = ''; render(); return; }
+  N.obj = r; N.prevLogs = false;
+  nvLoad(view);
+}
+
+function nvBack() {
+  const N = S.nv;
+  if (N.help) { N.help = false; render(); return; }
+  if (N.view !== 'list') { N.view = 'list'; N.obj = null; N.text = ''; render().then(nvFocus); return; }
+  if (N.q) { N.q = ''; N.sel = 0; render().then(nvFocus); }
+}
+
+function nvFocus() { const f = $('#nv-frame'); if (f && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName)) f.focus({preventScroll: true}); }
+
+// nvCommand runs a ":" command: a type (with an optional namespace), ns, ctx or help.
+async function nvCommand(value) {
+  const N = S.nv;
+  const parts = value.trim().replace(/^:/, '').split(/\s+/).filter(Boolean);
+  if (!parts.length) { N.cmd = false; render().then(nvFocus); return; }
+  const [c0, arg] = [parts[0].toLowerCase(), parts[1]];
+  const done = () => { N.cmd = false; N.view = 'list'; N.obj = null; N.sel = 0; render().then(nvFocus); };
+  if (c0 === 'help' || c0 === '?' || c0 === 'h') { N.cmd = false; N.help = true; render(); return; }
+  if (c0 === 'q' || c0 === 'quit') { N.cmd = false; nav('overview'); return; }
+  if (['ctx', 'context', 'contexts'].includes(c0)) {
+    const cs = S.ws?.clusters || [];
+    if (!arg) { N.cmd = false; toast(cs.map((c, i) => `${i + 1} ${c.name}`).join(' · ') + ' · 0 all'); render().then(nvFocus); return; }
+    const pick = /^\d+$/.test(arg) ? (arg === '0' ? {name: ''} : cs[+arg - 1]) : cs.find(c => c.name === arg || c.name.includes(arg));
+    if (!pick) { toast(`No cluster ${arg}`); return; }
+    N.cmd = false; setCluster(pick.name); return;
+  }
+  if ((c0 === 'ns' || c0 === 'namespace' || c0 === 'namespaces') && arg) { N.ns = arg === 'all' || arg === '-A' ? '' : arg; done(); return; }
+  const types = S.nvTypes || await api('api/resources', {cluster: S.cluster});
+  const want = (c0 === 'ns' ? 'namespaces' : c0);
+  const exact = x => x.resource === want || x.name === want || (x.kind || '').toLowerCase() === want || x.singularName === want || (x.shortNames || []).includes(want);
+  let m = types.filter(exact);
+  if (!m.length) m = types.filter(x => x.resource.startsWith(want) || (x.kind || '').toLowerCase().startsWith(want));
+  m.sort((a, b) => b.count - a.count || (a.group ? 1 : 0) - (b.group ? 1 : 0));
+  if (!m.length) { toast(`No type matches "${want}"`); return; }
+  N.resource = m[0].resource; N.group = m[0].group; N.q = '';
+  if (arg) N.ns = arg === 'all' || arg === '-A' ? '' : arg;
+  done();
+}
+
 after.navigator = () => {
   const N = S.nv;
-  const setType = (r, g) => { N.resource = r; N.group = g; N.sel = 0; N.q = ''; N.cmd = false; render(); };
+  const setType = (r, g) => { N.resource = r; N.group = g; N.sel = 0; N.q = ''; N.cmd = false; N.view = 'list'; N.obj = null; render().then(nvFocus); };
   document.querySelectorAll('[data-nvtype]').forEach(b => b.onclick = () => { const t = JSON.parse(b.dataset.nvtype); setType(t.r, t.g); });
-  document.querySelectorAll('[data-nvrow]').forEach(tr => { tr.onclick = () => { N.sel = +tr.dataset.nvrow; render(); }; tr.ondblclick = () => openObject(nvRef(N.rows[+tr.dataset.nvrow])); });
-  document.querySelectorAll('[data-nvyaml]').forEach(b => b.onclick = e => { e.stopPropagation(); openObject(nvRef(N.rows[+b.dataset.nvyaml]), 'yaml'); });
-  document.querySelectorAll('[data-nvlogs]').forEach(b => b.onclick = e => { e.stopPropagation(); const r = N.rows[+b.dataset.nvlogs]; openLogs(r.kind === 'Pod' ? {pod: r.name, namespace: r.namespace} : {workload: `${r.kind}/${r.name}`, namespace: r.namespace}); });
-  $('#nv-ns').onchange = e => { N.ns = e.target.value; N.sel = 0; render(); };
+  document.querySelectorAll('[data-nvrow]').forEach(tr => {
+    // One click opens the object (describe), as Enter does.
+    tr.onclick = e => { if (e.target.closest('button') || getSelection().toString()) return; nvOpen(+tr.dataset.nvrow, 'describe'); };
+  });
+  document.querySelectorAll('[data-nvopen]').forEach(b => b.onclick = e => { e.stopPropagation(); nvOpen(+b.dataset.nvopen, 'describe'); });
+  document.querySelectorAll('[data-nvgo]').forEach(b => b.onclick = e => { e.stopPropagation(); const x = JSON.parse(b.dataset.nvgo); nvOpen(x.i, x.v); });
+  document.querySelectorAll('[data-nvview]').forEach(b => b.onclick = () => { N.prevLogs = false; nvLoad(b.dataset.nvview); });
+  document.querySelectorAll('[data-nvact]').forEach(b => b.onclick = () => nvAct(b.dataset.nvact));
+  const ns = $('#nv-ns'); if (ns) ns.onchange = e => { N.ns = e.target.value; N.sel = 0; render().then(nvFocus); };
   $('#nv-ctx').onchange = e => setCluster(e.target.value);
-  let t; $('#nv-q').oninput = e => { clearTimeout(t); t = setTimeout(() => { const c = e.target.selectionStart, v = e.target.value; N.q = v; N.sel = 0; render().then(() => refocus('#nv-q', c, v)); }, 200); };
-  typeahead($('#nv-q'), {scope: 'objects', keys: labelKey, alias: {l: 'label'}, extraQ: () => `kind:${N.resource}${N.group ? '.' + N.group : ''}${N.ns ? ' ns:' + N.ns : ''}`});
-  $('#nv-q').onkeydown = e => { if (e.key === 'Escape' || e.key === 'Enter') { e.target.blur(); } };
+  $('#nv-frame').onmousedown = e => { if (!e.target.closest('input,select,button,a')) setTimeout(nvFocus, 0); };
+  const q = $('#nv-q');
+  if (q) {
+    let t; q.oninput = e => { clearTimeout(t); t = setTimeout(() => { const c = e.target.selectionStart, v = e.target.value; N.q = v; N.sel = 0; render().then(() => refocus('#nv-q', c, v)); }, 200); };
+    typeahead(q, {scope: 'objects', keys: labelKey, alias: {l: 'label'}, extraQ: () => `kind:${N.resource}${N.group ? '.' + N.group : ''}${N.ns ? ' ns:' + N.ns : ''}`});
+    q.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); nvFocus(); } if (e.key === 'Escape') { N.q = ''; q.value = ''; render().then(nvFocus); } };
+  }
   const cl = $('#nv-cmdline');
   if (cl) {
-    const go = async value => {
-      const want = value.trim().toLowerCase().replace(/^:/, '');
-      const types = await api('api/resources', {cluster: S.cluster});
-      const exact = x => x.resource === want || x.name === want || (x.kind || '').toLowerCase() === want || x.singularName === want || (x.shortNames || []).includes(want);
-      let m = types.filter(exact);
-      if (!m.length) m = types.filter(x => x.resource.startsWith(want) || (x.kind || '').toLowerCase().startsWith(want));
-      m.sort((a, b) => b.count - a.count || (a.group ? 1 : 0) - (b.group ? 1 : 0));
-      if (m.length) setType(m[0].resource, m[0].group); else toast(`No type matches "${want}" in this bundle`);
-    };
-    typeahead(cl, {keys: [], bareValues: nvTypeSuggestions, onAccept: i => go(i.value)});
+    // Tab completes a suggestion; Enter runs the command (the highlighted
+    // suggestion if the menu is open), once.
+    let lastKey = '', ran = false;
+    cl.addEventListener('keydown', e => { lastKey = e.key; ran = false; }, true);
+    typeahead(cl, {keys: [], bareValues: nvTypeSuggestions, onAccept: i => { if (lastKey === 'Enter') { ran = true; nvCommand(i.value); } }});
     cl.focus();
     cl.onkeydown = e => {
-      if (e.key === 'Escape') { N.cmd = false; render(); return; }
-      if (e.key === 'Enter') go(cl.value);
+      if (e.key === 'Escape') { N.cmd = false; render().then(nvFocus); return; }
+      if (e.key === 'Enter' && !ran) nvCommand(cl.value);
     };
-    // Show the captured types straight away, as k9s does.
     setTimeout(() => cl.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowDown'})), 0);
+  } else if (!N.help && N.view === 'list') {
+    setTimeout(nvFocus, 0);
   }
 };
 
-// Keyboard: only while the navigator is showing and nothing else has focus.
+function nvAct(a) {
+  const N = S.nv;
+  if (a === 'back') nvBack();
+  else if (a === 'wrap') { N.wrap = !N.wrap; render(); }
+  else if (a === 'copy') navigator.clipboard.writeText(N.text || '').then(() => toast('Copied'), () => toast('Clipboard unavailable'));
+  else if (a === 'drawer' && N.obj) openObject(nvRef(N.obj));
+}
+
+// Keyboard: while the navigator is showing and no input, the terminal, a
+// drawer or a modal has focus.
 document.addEventListener('keydown', e => {
-  if (S.view !== 'navigator' || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (S.view !== 'navigator' || e.metaKey || e.altKey) return;
   if (/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName) || document.activeElement?.closest?.('.xterm')) return;
   if (S.drawerOpen || document.querySelector('.modal-backdrop')) return;
-  const N = S.nv, rows = N.rows || [], r = rows[N.sel];
-  const move = d => { N.sel = Math.max(0, Math.min(rows.length - 1, N.sel + d)); document.querySelectorAll('[data-nvrow]').forEach(tr => tr.classList.toggle('sel', +tr.dataset.nvrow === N.sel)); document.querySelector('tr.sel')?.scrollIntoView({block: 'nearest'}); const st = document.querySelector('.nv-status span'); if (st && rows[N.sel]) st.textContent = rows[N.sel].name + (rows[N.sel].namespace ? ' · ' + rows[N.sel].namespace : ''); };
-  const k = e.key;
+  const N = S.nv, rows = N.rows || [], r = rows[N.sel], k = e.key;
+  if (e.ctrlKey) {
+    if ((k === 'd' || k === 'D') && (r || N.obj)) { const o = N.obj || r; e.preventDefault(); termRun(`kubectl --context ${o.cluster}@${S.ws?.live ? 'live' : 'snapshot'} describe ${o.resource}${o.group ? '.' + o.group : ''} ${o.name}${o.namespace ? ' -n ' + o.namespace : ''}`); }
+    return;
+  }
+  if (N.help) { if (k === 'Escape' || k === '?' || k === 'q') { N.help = false; render().then(nvFocus); e.preventDefault(); } return; }
+  if (k === '?') { N.help = true; render(); e.preventDefault(); return; }
+  if (k === ':') { N.cmd = true; render(); e.preventDefault(); return; }
+  if (N.view !== 'list') {
+    const pre = $('#nv-text'), page = pre ? pre.clientHeight * 0.9 : 400;
+    const o = N.obj, canLogs = o && ((o.resource === 'pods' && !o.group) || workloadKinds.includes(o.kind));
+    if (k === 'Escape' || k === 'q') { nvBack(); e.preventDefault(); }
+    else if (k === 'j' || k === 'ArrowDown') { pre && (pre.scrollTop += 40); e.preventDefault(); }
+    else if (k === 'k' || k === 'ArrowUp') { pre && (pre.scrollTop -= 40); e.preventDefault(); }
+    else if (k === 'PageDown' || k === ' ') { pre && (pre.scrollTop += page); e.preventDefault(); }
+    else if (k === 'PageUp') { pre && (pre.scrollTop -= page); e.preventDefault(); }
+    else if (k === 'g') pre && (pre.scrollTop = 0);
+    else if (k === 'G') pre && (pre.scrollTop = pre.scrollHeight);
+    else if (k === 'w') nvAct('wrap');
+    else if (k === 'c') nvAct('copy');
+    else if (k === 'o') nvAct('drawer');
+    else if (k === 'd') nvLoad('describe');
+    else if (k === 'y') nvLoad('yaml');
+    else if (k === 'e') nvLoad('events');
+    else if ((k === 'l' || k === 'p') && canLogs) { N.prevLogs = k === 'p'; nvLoad('logs'); }
+    else if (k === 'L' && canLogs) openLogs(o.resource === 'pods' ? {pod: o.name, namespace: o.namespace} : {workload: `${o.kind}/${o.name}`, namespace: o.namespace});
+    return;
+  }
+  const move = d => { N.sel = Math.max(0, Math.min(rows.length - 1, N.sel + d)); document.querySelectorAll('[data-nvrow]').forEach(tr => tr.classList.toggle('sel', +tr.dataset.nvrow === N.sel)); document.querySelectorAll('.nv-open').forEach((b, i) => { b.textContent = (i === N.sel ? '› ' : '') + b.textContent.replace(/^› /, ''); }); document.querySelector('tr.sel')?.scrollIntoView({block: 'nearest'}); const st = document.querySelector('.nv-status span'); if (st && rows[N.sel]) st.textContent = rows[N.sel].name + (rows[N.sel].namespace ? ' · ' + rows[N.sel].namespace : ''); };
   if (k === 'j' || k === 'ArrowDown') { move(1); e.preventDefault(); }
   else if (k === 'k' || k === 'ArrowUp') { move(-1); e.preventDefault(); }
-  else if (k === 'g') move(-rows.length);
-  else if (k === 'G') move(rows.length);
-  else if (k === 'Enter' && r && !(N.resource === 'namespaces' && !N.group)) openObject(nvRef(r));
-  else if (k === 'y' && r) openObject(nvRef(r), 'yaml');
-  else if ((k === 'l' || k === 'p') && r && N.resource === 'pods' && !N.group) openLogs({pod: r.name, namespace: r.namespace, stream: k === 'p' ? 'previous' : ''});
-  else if ((k === 'l' || k === 'p') && r && workloadKinds.includes(r.kind)) openLogs({workload: `${r.kind}/${r.name}`, namespace: r.namespace, stream: k === 'p' ? 'previous' : ''});
-  else if (k === 'Enter' && r && N.resource === 'namespaces' && !N.group) { N.ns = r.name; N.resource = 'pods'; N.sel = 0; render(); }
-  else if (k === 'd' && r) openObject(nvRef(r), 'events');
+  else if (k === 'PageDown') { move(15); e.preventDefault(); }
+  else if (k === 'PageUp') { move(-15); e.preventDefault(); }
+  else if (k === 'g' || k === 'Home') move(-rows.length);
+  else if (k === 'G' || k === 'End') move(rows.length);
+  else if ((k === 'Enter' || k === 'd') && r) { nvOpen(N.sel, 'describe'); e.preventDefault(); }
+  else if (k === 'y' && r) nvOpen(N.sel, 'yaml');
+  else if (k === 'e' && r) nvOpen(N.sel, 'events');
+  else if ((k === 'l' || k === 'p') && r && ((N.resource === 'pods' && !N.group) || workloadKinds.includes(r.kind))) { S.nv.prevLogs = k === 'p'; N.obj = r; nvLoad('logs'); }
+  else if (k === 'o' && r) openObject(nvRef(r));
   else if (k === 's') openK9s(N.resource + (N.group ? '.' + N.group : ''), N.ns);
-  else if (k === ':') { N.cmd = true; render(); e.preventDefault(); }
   else if (k === '/') { $('#nv-q')?.focus(); e.preventDefault(); }
   else if (/^[0-9]$/.test(k)) { const cs = S.ws?.clusters || []; if (k === '0') setCluster(''); else if (cs[+k - 1]) setCluster(cs[+k - 1].name); }
-  else if (k === 'Escape') { if (N.q) { N.q = ''; render(); } }
+  else if (k === 'Escape') nvBack();
 });
 
 // ---------- best practices ----------
@@ -1631,13 +1799,15 @@ async function logs() {
   const fieldList = fields.length ? `<h3>Fields <small class="muted" style="text-transform:none;letter-spacing:0">click a value to filter</small></h3>` + fields.map(f => `<details class="field" ${L.openField === f.field ? 'open' : ''} data-fieldname="${esc(f.field)}"><summary><span class="mono">${esc(f.field)}</span><small>${num(f.count)}</small></summary>
       ${f.values.map(v => `<button class="facet" data-addterm="${attr(fieldTerm(f.field, v.value))}" title="${esc(f.field)}:${esc(v.value)}"><span></span><span class="mono" style="font-size:11px">${esc(v.value || '""')}</span><small>${num(v.count)}</small></button>`).join('')}</details>`).join('') : '';
   const chips = ['namespace', 'workload', 'pod', 'container', 'level', 'stream'].filter(k => L[k]).map(k => `<button class="chip" data-clear="${k}">${k}: ${esc(L[k])} ×</button>`).join('');
+  const anyFilter = L.q || L.from || L.to || ['namespace', 'workload', 'pod', 'container', 'level', 'stream'].some(k => L[k]);
   const hist = res.histogram || [];
   const max = Math.max(1, ...hist.map(b => b.count));
   const span = res.to && res.from ? new Date(res.to) - new Date(res.from) : 0;
   const bars = hist.map((b, i) => `<div data-bucket="${i}" style="height:${b.count ? Math.max(3, b.count / max * 96) : 0}px" title="${fmtDateTime(b.start)} · ${num(b.count)} lines"></div>`).join('');
   const axis = hist.length ? `<div class="hist-axis"><span>${fmtAxis(res.from, span)}</span><span>${fmtAxis(new Date((new Date(res.from).getTime() + new Date(res.to).getTime()) / 2).toISOString(), span)}</span><span>${fmtAxis(res.to, span)}</span></div>` : '';
   const zoomed = !!(L.from || L.to);
-  const rows = res.records.map(r => `<div class="log-row ${r.level === 'error' ? 'error' : r.level === 'warn' ? 'warn' : ''}" data-log="${r.id}" tabindex="0">
+  const records = res.records || [];
+  const rows = records.map(r => `<div class="log-row ${r.level === 'error' ? 'error' : r.level === 'warn' ? 'warn' : ''}" data-log="${r.id}" tabindex="0">
       <span class="muted">${fmtTime(r.ts)}</span><span class="${r.level === 'error' ? 'red' : r.level === 'warn' ? 'amber' : 'green'}">${esc(r.level.toUpperCase())}</span>
       <span class="pod" title="${esc(r.cluster)} ${esc(r.namespace)}/${esc(r.pod)}">${esc(r.pod)}<br><span class="muted">${esc(r.container)}${r.stream === 'previous' ? ' · previous' : ''}</span></span>
       <span class="msg">${esc(r.msg)}${Object.entries(r.fields || {}).filter(([k]) => /trace|request_id|connection/.test(k)).map(([k, v]) => ` <span class="blue">${esc(k)}=${esc(v)}</span>`).join('')}</span></div>${L.expanded === r.id ? '<div id="log-detail"></div>' : ''}`).join('');
@@ -1645,7 +1815,7 @@ async function logs() {
   <div class="log-layout"><aside class="facets" aria-label="Filters">${facet('level', 'level', 'Level')}${facet('namespace', 'namespace', 'Namespace')}${workloadFacet}${facet('pod', 'pod', 'Pod', podPicker)}${facet('container', 'container', 'Container')}${facet('stream', 'stream', 'Stream')}${!S.cluster ? facet('cluster', 'cluster_', 'Cluster') : ''}
     ${fieldList}
     <h3>Syntax</h3><div class="muted mono" style="font-size:10px;line-height:1.8">level:error<br>ns:payments pod:checkout*<br>trace_id:a4e98f02<br>"connection reset"<br>-healthz · a OR b<br>status:5* · since:15m</div></aside>
-  <section><form class="query" id="log-form"><span class="green">⌕</span><input id="log-q" value="${esc(L.q)}" placeholder='Search logs. Try level: ns: pod: container: since: or "free text"' autocomplete="off" spellcheck="false" aria-label="Log query"><button class="primary">Search ↵</button></form>
+  <section><form class="query" id="log-form"><span class="green">⌕</span><input id="log-q" value="${esc(L.q)}" placeholder='Search logs. Try level: ns: pod: container: since: or "free text"' autocomplete="off" spellcheck="false" aria-label="Log query"><button class="primary">Search ↵</button>${anyFilter ? '<button type="button" id="log-clear" title="Clear the query, filters and time range">Clear filters</button>' : ''}</form>
     <div class="help-row"><span>Examples</span>${logExamples.map(([t, q]) => `<button data-try="${esc(q)}" title="${esc(q)}">${esc(t)}</button>`).join('')}</div>
     ${res.error ? `<div class="notice bad">${esc(res.error)}</div>` : ''}
     <div class="time-bar"><select id="quick-range" aria-label="Quick range">${quickRanges.map(([t, m]) => `<option value="${m}">${t}${m ? ' of the capture' : ' of the capture'}</option>`).join('')}<option value="custom" ${zoomed ? 'selected' : ''}>Custom range</option></select>
@@ -1658,7 +1828,7 @@ async function logs() {
     <div class="panel"><div class="panel-head"><span><strong>${num(res.total)}</strong> <span class="muted">matching lines · ${num(res.scanned)} searched${res.loading ? ' · <span class="blue">bundle still loading</span>' : ''}</span></span><small>Newest first · click a line for context</small></div>
     <div class="table-scroll" style="max-height:60vh"><div class="log-table"><div class="log-row log-head"><span>TIME (UTC)</span><span>LEVEL</span><span>POD / CONTAINER</span><span>MESSAGE</span></div>
     ${rows || `<div class="empty"><strong>${esc(res.message || 'No matches')}</strong>${res.loading ? 'Log batches are still arriving; results update as they load.' : zoomed ? 'Nothing in this time range. Zoom out or pick another range.' : 'Remove a filter or broaden the search.'}</div>`}</div></div>
-    ${res.total > res.records.length ? `<div class="table-foot"><span>Showing ${res.records.length} of ${num(res.total)}</span><button id="more">Show more</button></div>` : ''}</div>
+    ${res.total > records.length ? `<div class="table-foot"><span>Showing ${records.length} of ${num(res.total)}</span><button id="more">Show more</button></div>` : ''}</div>
   </section></div>`;
 }
 
@@ -1683,6 +1853,13 @@ after.logs = () => {
   document.querySelectorAll('[data-addterm]').forEach(b => b.onclick = () => addTerm(JSON.parse(b.dataset.addterm)));
   document.querySelectorAll('details.field').forEach(d => d.ontoggle = () => { if (d.open) L.openField = d.dataset.fieldname; });
   document.querySelectorAll('[data-clear]').forEach(b => b.onclick = () => { L[b.dataset.clear] = ''; render(); });
+  const lc = $('#log-clear');
+  if (lc) lc.onclick = () => {
+    for (const k of ['q', 'namespace', 'workload', 'pod', 'container', 'level', 'stream', 'from', 'to', 'podFilter']) L[k] = '';
+    L.expanded = null; L.limit = 200;
+    if (location.hash.includes('?')) history.replaceState(null, '', '#logs');
+    render();
+  };
   document.querySelectorAll('[data-log]').forEach(el => { const go = () => expandLog(Number(el.dataset.log)); el.onclick = go; el.onkeydown = e => { if (e.key === 'Enter') go(); }; });
   const pf = $('#pod-filter'); if (pf) { let t; pf.oninput = e => { clearTimeout(t); t = setTimeout(() => { L.podFilter = e.target.value; render().then(() => { const i = $('#pod-filter'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }); }, 200); }; }
   $('#follow').onchange = e => { L.follow = e.target.checked; if (L.follow) render(); };

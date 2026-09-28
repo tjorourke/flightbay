@@ -3,6 +3,9 @@
 <title>{{ if .IsHome }}{{ site.Title }}{{ else }}{{ .Title }} · {{ site.Title }}{{ end }}</title>
 <meta name="description" content="{{ .Description }}">
 <script>document.documentElement.dataset.theme = localStorage.getItem('flightbay-theme') || 'dark';</script>
+<link rel="icon" href="{{ "favicon.svg" | relURL }}" type="image/svg+xml">
+<link rel="icon" href="{{ "favicon-32.png" | relURL }}" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="{{ "apple-touch-icon.png" | relURL }}">
 <link rel="stylesheet" href="{{ "docs.css" | relURL }}">
 </head><body>
 <header class="top"><a class="brand" href="{{ "/" | relURL }}"><b>///</b> flightbay <small>docs</small></a><span class="sp"></span>

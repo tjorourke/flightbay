@@ -256,6 +256,9 @@ func (s *Server) docs(w http.ResponseWriter, r *http.Request) {
 var docTmpl = template.Must(template.New("doc").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{.Page.Title}} · Flightbay docs</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <script>document.documentElement.dataset.theme = localStorage.getItem('flightbay-theme') || 'dark';</script>
 <style>
 :root{--bg:#101316;--panel:#161a1e;--raised:#1c2126;--line:#2a3036;--text:#e1e6ea;--muted:#939ea8;--teal:#72d6be;--red:#f18e92;--amber:#efbe72;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--sans:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
