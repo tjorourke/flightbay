@@ -21,6 +21,7 @@ func uiCmd() *cobra.Command {
 		Example: `  flightbay ui                                   # newest bundle here
   flightbay ui flightbay-DEMO-20260927T1842Z.tar.zst
   flightbay ui ~/Downloads                         # newest bundle in a folder
+  flightbay ui BUNDLE --sign flightbay-signing.key # remove objects, logs or namespaces on Review and send, export a signed copy
   flightbay ui --live --context kind-mesh1 --namespaces kagent   # mirror a cluster live, read-only`,
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true, // flags go to flightbay-desk open

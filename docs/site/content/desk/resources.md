@@ -56,7 +56,7 @@ Buttons in the summary:
 - **Open logs of all its pods** (Deployments, DaemonSets, StatefulSets, ReplicaSets, Jobs and CronJobs) opens the logs of every pod it owns.
 - **kubectl describe** runs `kubectl describe` for this object in the terminal.
 - **Compare across clusters** (bundles with more than one cluster) shows how the object differs between clusters. See [Compare](/desk/compare/).
-- **Remove from the bundle** (review mode only) leaves this object out of the bundle you export; press it again (**Keep in the bundle**) to undo. See [Reviewing before you send](/collect/review/).
+- **Remove from the bundle** (bundles opened from a file) leaves this object out of the bundle you export; press it again (**Keep in the bundle**) to undo. See [Reviewing before you send](/collect/review/).
 
 ## Terminal shortcuts
 

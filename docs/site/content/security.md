@@ -51,7 +51,7 @@ Credentials that turn up elsewhere (tokens in env vars, keys in ConfigMaps, `Aut
 ## Review before sending
 
 ```bash
-flightbay review BUNDLE --sign KEY       # choose what to send in the UI, export signed
+flightbay ui BUNDLE --sign KEY           # Review and send: choose what to send, export signed
 flightbay inspect BUNDLE --redactions    # verify, list contents, count replacements
 flightbay inspect BUNDLE --policy        # the policy recorded in the bundle
 flightbay extract BUNDLE ./review        # unpack and read any file
@@ -63,7 +63,7 @@ The redaction report records how many values each rule replaced in each file, ne
 
 `manifest.json`, the last file in every bundle, holds a SHA-256 of every other file, plus the capture end time and whether collection completed. `flightbay inspect`, `flightbay extract` and the desk check every file against it. A bundle that fails verification is reported as such; the desk shows what it could read, marked as unverified, and never as verified.
 
-The manifest proves the bundle has not been damaged or altered since it was written. A signature proves who wrote it: `flightbay collect --sign KEY` (or `flightbay review --sign KEY`) signs the manifest with the customer's Ed25519 key, and `flightbay inspect --verify-key` and the desk check it against the customer's public key. Solo only ever holds public keys. See [Signing and approved policies](/collect/signing/).
+The manifest proves the bundle has not been damaged or altered since it was written. A signature proves who wrote it: `flightbay collect --sign KEY` (or `flightbay ui BUNDLE --sign KEY` for what you export from the Review and send page) signs the manifest with the customer's Ed25519 key, and `flightbay inspect --verify-key` and the desk check it against the customer's public key. Solo only ever holds public keys. See [Signing and approved policies](/collect/signing/).
 
 ## Approved policies
 
@@ -71,7 +71,7 @@ A security team can sign the collection policy file (`flightbay policy sign`). W
 
 ## Reviewing a capture
 
-`flightbay review` opens a capture on the customer's machine, lets them remove namespaces, types, objects, log streams, lines and files, and redact more, and exports a new signed bundle with a ledger of what was removed. By default the ledger holds counts only, and nothing inside a removed namespace, including its name, reaches the export. See [Reviewing before you send](/collect/review/).
+The **Review and send** page in `flightbay ui` lets the customer, on their own machine, remove namespaces, types, objects, log streams, lines and files, and redact more, and exports a new signed bundle with a ledger of what was removed. By default the ledger holds counts only, and nothing inside a removed namespace, including its name, reaches the export. See [Reviewing before you send](/collect/review/).
 
 ## Which build wrote it
 

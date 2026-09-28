@@ -81,10 +81,10 @@ When you limit namespaces, proxy and control-plane dumps are filtered as well. z
 
 ```bash
 flightbay keygen --name "ACME platform team"                     # flightbay-signing.key stays with you; send Solo the .pub
-flightbay review flightbay-*.tar.zst --sign flightbay-signing.key --encrypt-to age1...
+flightbay ui flightbay-*.tar.zst --sign flightbay-signing.key --encrypt-to age1...
 ```
 
-`flightbay review` opens the capture in the UI in review mode. Take out whole namespaces, resource types, single objects, log streams or lines, proxy dumps and flow files, add redaction patterns, and see exactly what Solo will receive before you export. The export is a new bundle, signed with your key, with `review-ledger.json` counting what was removed (names only if you choose to list them). Solo's desk shows "Signed by ACME platform team, unmodified" and marks checks that need removed data as not applicable instead of failing them. `--plan review.yaml` runs the same review without the UI. See [Reviewing before you send](docs/site/content/collect/review.md) and [Signing and approved policies](docs/site/content/collect/signing.md).
+Every bundle you open in the UI has a **Review and send** page, and a **Remove from the bundle** button on each object. Take out whole namespaces, resource types, single objects, log streams or lines, proxy dumps and flow files, add redaction patterns, and see exactly what Solo will receive before you export. The export is a new bundle, signed with your key, with `review-ledger.json` counting what was removed (names only if you choose to list them). Solo's desk shows "Signed by ACME platform team, unmodified" and marks checks that need removed data as not applicable instead of failing them. `flightbay review BUNDLE --plan review.yaml` runs the same removals without the UI. See [Reviewing before you send](docs/site/content/collect/review.md) and [Signing and approved policies](docs/site/content/collect/signing.md).
 
 One thing is deliberately left out. The agentgateway and kgateway controllers are built on a library called krt, which keeps an in-memory copy of every Kubernetes object the controller watches. That includes Gateways, routes and policies, but also the Secrets it reads, such as TLS keys and API keys for LLM providers. The controller's admin port can dump all of that as one large JSON document. It would be useful for debugging the controller, but it covers every namespace and contains Secret values, so it can't respect "only these namespaces" or "never Secret values". Flightbay collects the controllers' logs, metrics and the objects themselves instead.
 
@@ -208,7 +208,7 @@ The MCP server only talks to your local workspace. Snapshot data reaches a model
 | `flightbay scan [PATH...]` | Build a bundle from a code repository and score it; `--fail-on` makes it a CI gate |
 | `flightbay ui [bundle \| dir]` | Open the UI on a capture (default: the newest in this directory) |
 | `flightbay inspect BUNDLE` | Verify a bundle and show what's in it; `--verify-key` checks the signature |
-| `flightbay review BUNDLE` | Choose what to send in the UI and export a trimmed, signed bundle; `--plan` without the UI |
+| `flightbay review BUNDLE --plan FILE` | Remove objects, logs and namespaces from a bundle without the UI and export a signed copy (in the UI it is the Review and send page) |
 | `flightbay keygen` | Create an Ed25519 signing key pair |
 | `flightbay policy sign / verify` | Approve a collection policy file, and check an approval |
 | `flightbay extract BUNDLE DIR` | Verify and unpack it (it's also a normal `tar.zst`: `tar --zstd -xf`) |

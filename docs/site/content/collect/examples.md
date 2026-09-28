@@ -147,7 +147,8 @@ Capture without encryption, pick what to leave out in the UI, and export a signe
 
 ```bash
 flightbay collect --context prod-eu --namespaces payments,istio-system
-flightbay review flightbay-nocase-*.tar.zst --sign flightbay-signing.key --encrypt-to age1...
+flightbay ui flightbay-nocase-*.tar.zst --sign flightbay-signing.key --encrypt-to age1...
+# pick what to leave out on Review and send (or Remove from the bundle on any object), then Export bundle
 ```
 
 The same review from a saved plan, without the UI:

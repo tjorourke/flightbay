@@ -139,6 +139,7 @@ func openCmd() *cobra.Command {
   flightbay collect -o - | flightbay-desk open -
   flightbay-desk open bundle.tar.zst.age -i ~/.flightbay/support.key
   flightbay-desk open bundle.tar.zst --defer logs      # load logs later from the UI
+  flightbay-desk open bundle.tar.zst --sign my.key     # remove objects, logs or namespaces, export a signed copy
   flightbay-desk open bundle.tar.zst --flows hubble.jsonl,vpc-flows.log@mesh2   # add flow logs (not signed)`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -255,11 +256,13 @@ func openCmd() *cobra.Command {
 				srv.BundlePath = path
 			}
 			srv.Identities = ids
-			if reviewMode {
-				if path == "-" {
-					return errors.New("review mode needs a bundle file, not a stream")
-				}
-				rs := &server.ReviewSession{Source: path, Plan: review.Plan{Reviewer: reviewer, ScrubNames: true}}
+			if reviewMode && path == "-" {
+				return errors.New("--review needs a bundle file: a stream cannot be read twice to export from it")
+			}
+			// Any bundle opened from a file can be trimmed and exported from
+			// the Review and send page; a stream cannot be re-read.
+			if path != "-" {
+				rs := &server.ReviewSession{Source: path, Landing: reviewMode, Plan: review.Plan{Reviewer: reviewer, ScrubNames: true}}
 				rs.Options = review.Options{Identities: ids, Trusted: trusted, Tool: "flightbay-desk " + version}
 				if rs.Options.Recipients, err = cli.ParseRecipients(encryptTo); err != nil {
 					return err
@@ -386,11 +389,11 @@ func openCmd() *cobra.Command {
 	c.Flags().StringVar(&shell, "shell", "", "shell for the terminal (default /bin/bash)")
 	c.Flags().StringVar(&baseline, "baseline", "", "an earlier bundle from the same customer to compare against (Compare view)")
 	c.Flags().StringSliceVar(&verifyKeys, "verify-key", nil, "public keys to check the bundle's signature against (default: ~/.flightbay/trusted-keys/*.pub)")
-	c.Flags().BoolVar(&reviewMode, "review", false, "review mode: choose what to send to Solo and export a trimmed, signed bundle (flightbay review)")
-	c.Flags().StringVar(&signKey, "sign", "", "review mode: sign the exported bundle with this private key")
-	c.Flags().StringSliceVar(&encryptTo, "encrypt-to", nil, "review mode: encrypt the exported bundle to these age recipients (age1...) or @file")
-	c.Flags().StringVar(&reviewer, "reviewer", "", "review mode: who is reviewing, recorded in the ledger")
-	c.Flags().StringVar(&reviewOut, "review-out", "", "review mode: file to export to (default NAME-reviewed.tar.zst next to the bundle)")
+	c.Flags().BoolVar(&reviewMode, "review", false, "open on the Review and send page (removing objects and exporting works from any bundle file without it)")
+	c.Flags().StringVar(&signKey, "sign", "", "sign bundles exported from the Review and send page with this private key (flightbay keygen)")
+	c.Flags().StringSliceVar(&encryptTo, "encrypt-to", nil, "encrypt bundles exported from the Review and send page to these age recipients (age1...) or @file")
+	c.Flags().StringVar(&reviewer, "reviewer", "", "who is removing things, recorded in the exported bundle's ledger")
+	c.Flags().StringVar(&reviewOut, "review-out", "", "file to export to (default NAME-reviewed.tar.zst next to the bundle)")
 	return c
 }
 

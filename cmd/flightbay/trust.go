@@ -137,15 +137,15 @@ func reviewCmd() *cobra.Command {
 	var discloseNames, noBrowser bool
 	c := &cobra.Command{
 		Use:   "review BUNDLE",
-		Short: "Decide what to send to Solo: remove namespaces, types, objects, logs and files, redact more, then sign the result",
-		Long: `Opens the bundle in the Flightbay UI in review mode. The Review page lists everything in it; take out
-what you do not want to send, add redaction patterns, check what Solo will receive, and export. The export is
-a new bundle, signed with your key if you give one, with a ledger of what was removed (counts only unless you
+		Short: "Remove namespaces, types, objects, logs and files from a bundle without the UI (--plan), and export a signed copy",
+		Long: `The same removals as the Review and send page in flightbay ui, applied from a plan file (YAML or JSON)
+without opening the UI. Download a plan from the Review and send page, or write one by hand. The export is a
+new bundle, signed with your key if you give one, with a ledger of what was removed (counts only unless you
 choose to list names).
 
-With --plan the same review runs without the UI, from a plan file (YAML or JSON), for repeatable reviews.`,
-		Example: `  flightbay review flightbay-01234567-20260928T1012Z.tar.zst --sign flightbay-signing.key
-  flightbay review bundle.tar.zst --plan review.yaml --sign flightbay-signing.key --encrypt-to age1...`,
+Without --plan this opens flightbay ui on the Review and send page, the same as flightbay ui BUNDLE --review.`,
+		Example: `  flightbay review bundle.tar.zst --plan review.yaml --sign flightbay-signing.key --encrypt-to age1...
+  flightbay ui bundle.tar.zst --sign flightbay-signing.key      # the same, choosing in the UI`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if strings.HasSuffix(args[0], ".age") && len(identities) == 0 {

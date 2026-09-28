@@ -1,33 +1,36 @@
 ---
 title: Reviewing before you send
 weight: 65
-description: Open your capture in review mode, take out what you do not want to send, redact more, check what Solo will receive, and export a signed bundle with a ledger of what you removed.
+description: Open your capture in the UI, take out what you do not want to send, redact more, check what Solo will receive, and export a signed bundle with a ledger of what you removed.
 ---
 
 # Reviewing before you send
 
-The collection policy decides what Flightbay reads. Review is the second look, after capture and before anything leaves your organisation. You open the bundle on your own machine, see everything in it, take out what you do not want to send, and export a new bundle. The original is never changed.
+The collection policy decides what Flightbay reads. Review is the second look, after capture and before anything leaves your organisation. You open the bundle in the UI on your own machine, see everything in it, take out what you do not want to send, and export a new bundle. The original is never changed.
 
 ![Review and send](/images/review.png)
 
-## Open the capture in review mode
+## Open the capture
 
-Capture without `--encrypt-to` (you need to be able to read the bundle to review it), then:
+Capture without `--encrypt-to` (you need to be able to read the bundle to review it), then open it as usual:
 
 ```bash
-flightbay review flightbay-01234567-20260928T1012Z.tar.zst --sign flightbay-signing.key
+flightbay ui flightbay-01234567-20260928T1012Z.tar.zst --sign flightbay-signing.key
 ```
 
-The desk opens on the **Review and send** page. Every other page works as normal, so you can search, read logs and open objects to decide what should go.
+Any bundle opened from a file has a **Review and send** page in the sidebar, and a **Remove from the bundle** button on every object. Every other page works as normal, so you can search, read logs and open objects to decide what should go, then remove it where you found it. Nothing is removed until you choose to.
 
-| Option | Does |
+The page is not there when the desk was fed a stream (`flightbay collect -o - | flightbay-desk open -`) or is mirroring a live cluster, because there is no file to export from. A live mirror can be saved as a bundle first.
+
+| Option on `flightbay ui` | Does |
 |---|---|
-| `--sign KEY` | Sign the exported bundle with your private key, so Solo can check it came from you unmodified. See [Signing](/collect/signing/). |
-| `--encrypt-to age1...` | Encrypt the exported bundle to Solo's recipient |
-| `--reviewer "Jane Smith, platform"` | Who reviewed it, recorded in the ledger |
+| `--sign KEY` | Sign what you export with your private key, so Solo can check it came from you unmodified. See [Signing](/collect/signing/). Without it the export is unsigned. |
+| `--encrypt-to age1...` | Encrypt what you export to Solo's recipient |
+| `--reviewer "Jane Smith, platform"` | Who reviewed it, recorded in the ledger (also editable on the Redact tab) |
+| `--review` | Open on the Review and send page instead of the Overview |
+| `--review-out FILE` | Where the export goes |
 | `-i FILE` | An age identity, if the capture itself is encrypted |
 | `--verify-key FILE` | Check the capture's own signature against this key |
-| `--no-browser` | Print the address instead of opening a browser |
 
 ## What you can take out
 
@@ -97,7 +100,7 @@ Resource type names are always listed. Solo's desk uses them to mark the checks 
 
 ## Repeatable reviews with a plan
 
-**Download plan** saves your choices as YAML. Apply the same plan to later captures without opening the desk:
+**Download plan** saves your choices as YAML. Apply the same plan to later captures without opening the UI:
 
 ```bash
 flightbay review flightbay-01234567-20260929T0900Z.tar.zst --plan review-plan.yaml --sign flightbay-signing.key --encrypt-to age1...

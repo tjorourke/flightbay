@@ -222,6 +222,7 @@ Examples:
   flightbay collect -o - | flightbay-desk open -
   flightbay-desk open bundle.tar.zst.age -i ~/.flightbay/support.key
   flightbay-desk open bundle.tar.zst --defer logs      # load logs later from the UI
+  flightbay-desk open bundle.tar.zst --sign my.key     # remove objects, logs or namespaces, export a signed copy
   flightbay-desk open bundle.tar.zst --flows hubble.jsonl,vpc-flows.log@mesh2   # add flow logs (not signed)
 ```
 
@@ -230,18 +231,18 @@ Examples:
 | `--allow-remote` | allow a non-loopback --listen (for containers); the token is still required |
 | `--baseline string` | an earlier bundle from the same customer to compare against (Compare view) |
 | `--defer strings` | categories to load later from the UI: objects, logs, events, diagnostics |
-| `--encrypt-to strings` | review mode: encrypt the exported bundle to these age recipients (age1...) or @file |
+| `--encrypt-to strings` | encrypt bundles exported from the Review and send page to these age recipients (age1...) or @file |
 | `--flows strings` | flow log files to add, FILE or FILE@CLUSTER (Hubble, Calico, AWS/GCP/Azure VPC, generic CSV/JSONL); marked as added by the reviewer, not signed |
 | `-i, --identity strings` | age identity file for encrypted bundles |
 | `--keep` | keep the workspace directory (DuckDB file, kubeconfig) after closing |
 | `--listen string` | loopback address for the UI and API (default "127.0.0.1:8484") |
 | `--no-browser` | do not open a browser |
 | `--no-terminal` | disable the in-browser terminal |
-| `--review` | review mode: choose what to send to Solo and export a trimmed, signed bundle (flightbay review) |
-| `--review-out string` | review mode: file to export to (default NAME-reviewed.tar.zst next to the bundle) |
-| `--reviewer string` | review mode: who is reviewing, recorded in the ledger |
+| `--review` | open on the Review and send page (removing objects and exporting works from any bundle file without it) |
+| `--review-out string` | file to export to (default NAME-reviewed.tar.zst next to the bundle) |
+| `--reviewer string` | who is removing things, recorded in the exported bundle's ledger |
 | `--shell string` | shell for the terminal (default /bin/bash) |
-| `--sign string` | review mode: sign the exported bundle with this private key |
+| `--sign string` | sign bundles exported from the Review and send page with this private key (flightbay keygen) |
 | `--throttle string` | limit import speed, e.g. 512KiB (rehearse slow uploads) |
 | `--verify-key strings` | public keys to check the bundle's signature against (default: ~/.flightbay/trusted-keys/*.pub) |
 | `--workdir string` | workspace directory (default ~/.flightbay/workspaces/ws-*) |

@@ -1,7 +1,7 @@
 'use strict';
-// Review mode (flightbay review) and trust display: signature, approved
-// policy and the review ledger. Loaded after app.js; app.js calls the rv*
-// hooks when they exist.
+// Review and send: removing things from a bundle opened from a file and
+// exporting a new one. Also the trust display: signature, approved policy and
+// the review ledger. Loaded after app.js; app.js calls the rv* hooks.
 
 S.rv = {data: null, plan: null, preview: null, previewErr: '', busy: false, tab: 'namespaces', q: '', exported: null, timer: null, seq: 0};
 
@@ -43,8 +43,8 @@ function onWorkspace(w) {
   const el = $('#trust');
   if (el) el.innerHTML = trustBadge(w);
   const link = document.querySelector('.nav a[data-view="review"]');
-  if (link) link.classList.toggle('hidden', !w.reviewMode);
-  if (w.reviewMode && !rvStarted) {
+  if (link) link.classList.toggle('hidden', !w.exportable);
+  if (w.reviewLanding && !rvStarted) {
     rvStarted = true;
     if (!location.hash || location.hash === '#overview') location.hash = 'review';
   }
@@ -92,8 +92,8 @@ function rvInitPlan(p) {
 
 // ---------- the Review page ----------
 async function reviewPage() {
-  if (!S.ws?.reviewMode) return head('Review and send', 'Open a bundle with <code>flightbay review BUNDLE</code> to choose what to send to Solo.') +
-    '<div class="notice info"><div>This workspace was not opened in review mode. Run <code>flightbay review</code> on the bundle you captured, pick what to remove here, and export a new bundle to send.</div></div>';
+  if (!S.ws?.exportable) return head('Review and send', 'Remove objects, logs and namespaces from a bundle and export a new one.') +
+    '<div class="notice info"><div>This workspace was not opened from a bundle file (it is a stream or a live mirror), so there is nothing to export from. Open the bundle file with <code>flightbay ui BUNDLE</code>.</div></div>';
   if (!S.rv.data) {
     S.rv.data = await api('api/review');
     S.rv.plan = rvInitPlan(S.rv.data.plan);
@@ -101,7 +101,7 @@ async function reviewPage() {
   }
   if (S.state && S.state.phase !== 'complete') return head('Review and send', 'Waiting for the bundle to finish loading.') + '<div class="notice info"><div>The bundle is still loading. The review lists everything in it once it has been read and verified.</div></div>';
   const d = S.rv.data;
-  const sign = d.signer ? `<span class="green">Signed with ${esc(d.signer.name)} (${esc(d.signer.keyId)})</span>` : '<span class="amber">Not signed</span>. Start again with <code>--sign KEY</code> so Solo can check it came from you unmodified.';
+  const sign = d.signer ? `<span class="green">Signed with ${esc(d.signer.name)} (${esc(d.signer.keyId)})</span>` : '<span class="amber">Not signed</span>. Open the bundle with <code>flightbay ui BUNDLE --sign KEY</code> so Solo can check it came from you unmodified.';
   return head('Review and send', 'Choose what leaves your organisation. The original bundle is not changed; the export is a new file with a ledger of what you removed.',
     `<a class="help-link" href="api/review?format=yaml" download="review-plan.yaml" title="Reuse it with flightbay review --plan">Download plan</a>`) + `
   <div id="rv-summary">${rvSummary()}</div>
@@ -289,7 +289,7 @@ function rvNsScrubDefault() {
 
 // ---------- hooks from other pages ----------
 function rvObjectButton(o) {
-  if (!S.ws?.reviewMode) return '';
+  if (!S.ws?.exportable) return '';
   const ref = {cluster: o.cluster, group: o.group || '', resource: o.resource, namespace: o.namespace || '', name: o.name};
   const picked = S.rv.plan && rvHas('objects', ref);
   return `<button id="d-rvremove" data-ref="${attr(ref)}">${picked ? 'Keep in the bundle' : 'Remove from the bundle'}</button>`;
@@ -309,7 +309,7 @@ function rvWireObject() {
   };
 }
 function rvLineButton(r) {
-  return S.ws?.reviewMode ? `<button id="lc-rvremove" data-id="${r.id}">Remove this line from the bundle</button>` : '';
+  return S.ws?.exportable ? `<button id="lc-rvremove" data-id="${r.id}">Remove this line from the bundle</button>` : '';
 }
 function rvWireLine() {
   const b = $('#lc-rvremove'); if (!b) return;
@@ -328,7 +328,7 @@ function rvAddLines(refs) {
   toast(`${num(n)} line${n === 1 ? '' : 's'} will not be sent (${num(rvList('logLines').length)} picked in all)`);
 }
 function rvLogsAction() {
-  return S.ws?.reviewMode ? '<button id="log-rvremove" title="Leave every line matching this search out of the reviewed bundle">Remove matching lines</button>' : '';
+  return S.ws?.exportable ? '<button id="log-rvremove" title="Leave every line matching this search out of the reviewed bundle">Remove matching lines</button>' : '';
 }
 function rvWireLogs() {
   const b = $('#log-rvremove'); if (!b) return;

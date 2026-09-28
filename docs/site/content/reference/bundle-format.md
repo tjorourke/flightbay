@@ -241,4 +241,4 @@ What the customer removed in review. See [Reviewing before you send](/collect/re
 
 ## File names
 
-`flightbay-<case>-<YYYYMMDDTHHMMZ>.tar.zst`, with `nocase` when no case was given and `.age` appended when encrypted. `flightbay review` writes `NAME-reviewed.tar.zst` next to the original. While a capture runs the file is `NAME.partial`, renamed when complete.
+`flightbay-<case>-<YYYYMMDDTHHMMZ>.tar.zst`, with `nocase` when no case was given and `.age` appended when encrypted. Exporting from Review and send (or `flightbay review --plan`) writes `NAME-reviewed.tar.zst` next to the original. While a capture runs the file is `NAME.partial`, renamed when complete.

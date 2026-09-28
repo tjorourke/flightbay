@@ -29,6 +29,7 @@ type ReviewSession struct {
 	Out     string         // where the export goes
 	Options review.Options // identities, signer, recipients, trusted keys, tool
 	Plan    review.Plan    // starting plan (reviewer name)
+	Landing bool           // open the UI on the Review and send page (--review)
 
 	mu       sync.Mutex
 	exported []reviewExport
@@ -85,7 +86,7 @@ func (s *Server) readPlan(w http.ResponseWriter, r *http.Request) (*review.Plan,
 
 func (s *Server) reviewOn(w http.ResponseWriter) bool {
 	if s.Review == nil {
-		jerr(w, http.StatusNotFound, "not in review mode; open the bundle with flightbay review")
+		jerr(w, http.StatusNotFound, "this workspace was not opened from a bundle file (a stream or a live mirror), so there is nothing to export from")
 		return false
 	}
 	return true

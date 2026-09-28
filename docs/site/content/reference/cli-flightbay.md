@@ -230,12 +230,12 @@ Examples:
 
 ## flightbay review
 
-Opens the bundle in the Flightbay UI in review mode. The Review page lists everything in it; take out
-what you do not want to send, add redaction patterns, check what Solo will receive, and export. The export is
-a new bundle, signed with your key if you give one, with a ledger of what was removed (counts only unless you
+The same removals as the Review and send page in flightbay ui, applied from a plan file (YAML or JSON)
+without opening the UI. Download a plan from the Review and send page, or write one by hand. The export is a
+new bundle, signed with your key if you give one, with a ledger of what was removed (counts only unless you
 choose to list names).
 
-With --plan the same review runs without the UI, from a plan file (YAML or JSON), for repeatable reviews.
+Without --plan this opens flightbay ui on the Review and send page, the same as flightbay ui BUNDLE --review.
 
 ```text
 flightbay review BUNDLE [flags]
@@ -244,8 +244,8 @@ flightbay review BUNDLE [flags]
 Examples:
 
 ```bash
-  flightbay review flightbay-01234567-20260928T1012Z.tar.zst --sign flightbay-signing.key
   flightbay review bundle.tar.zst --plan review.yaml --sign flightbay-signing.key --encrypt-to age1...
+  flightbay ui bundle.tar.zst --sign flightbay-signing.key      # the same, choosing in the UI
 ```
 
 | Flag | Description |
@@ -325,6 +325,7 @@ Examples:
   flightbay ui                                   # newest bundle here
   flightbay ui flightbay-DEMO-20260927T1842Z.tar.zst
   flightbay ui ~/Downloads                         # newest bundle in a folder
+  flightbay ui BUNDLE --sign flightbay-signing.key # remove objects, logs or namespaces on Review and send, export a signed copy
   flightbay ui --live --context kind-mesh1 --namespaces kagent   # mirror a cluster live, read-only
 ```
 

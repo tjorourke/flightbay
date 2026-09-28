@@ -13,7 +13,7 @@ Flightbay does not upload anything. You send the file however you normally share
 ## The usual order
 
 1. Capture without encryption, so you can read it: `flightbay collect --context prod-eu --case 01234567`.
-2. Review it and take out anything you do not want to send, then export it signed and encrypted: `flightbay review BUNDLE --sign flightbay-signing.key --encrypt-to age1...`. See [Reviewing before you send](/collect/review/).
+2. Open it with `flightbay ui BUNDLE --sign flightbay-signing.key --encrypt-to age1...`, take out anything you do not want to send, and press **Export bundle** on the Review and send page. See [Reviewing before you send](/collect/review/).
 3. Check what you are sending. Only the recipient can open an encrypted export, so to browse it yourself, export once without `--encrypt-to`, open it with `flightbay ui NAME-reviewed.tar.zst`, then export again with encryption.
 4. Send the reviewed file.
 
@@ -127,7 +127,7 @@ flightbay collect --context mesh1 --encrypt-to age1... -o - | ssh jump 'cat > ca
 ```text
 flightbay-<case>-<UTC time>.tar.zst        e.g. flightbay-01234567-20260927T1012Z.tar.zst
 flightbay-<case>-<UTC time>.tar.zst.age    with --encrypt-to
-flightbay-<case>-<UTC time>-reviewed.tar.zst   exported by flightbay review
+flightbay-<case>-<UTC time>-reviewed.tar.zst   exported from Review and send
 ```
 
 Without `--case` the case part is `nocase`. `flightbay ui` and `flightbay-desk open` with no argument open the newest `flightbay-*.tar.zst` or `flightbay-*.tar.zst.age` in the current directory; given a directory, the newest in that directory.

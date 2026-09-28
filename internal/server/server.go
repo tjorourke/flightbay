@@ -372,7 +372,8 @@ func (s *Server) workspace(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	out["trust"] = s.WS.Trust()
-	out["reviewMode"] = s.Review != nil
+	out["exportable"] = s.Review != nil
+	out["reviewLanding"] = s.Review != nil && s.Review.Landing
 	if m := s.WS.Manifest(); m != nil {
 		out["captureEnd"], out["complete"], out["collectionErrors"] = m.CaptureEnd, m.Complete, m.Errors
 	}

@@ -111,11 +111,11 @@ To make sure only Solo can read the file, encrypt it to the age recipient your S
 flightbay collect --context my-cluster --case 01234567 --encrypt-to age1...
 ```
 
-To decide exactly what leaves, open the capture in review mode first. You can take out namespaces, types, objects and log lines, then export a signed copy:
+To decide exactly what leaves, open the capture in the UI first. On the Review and send page you can take out namespaces, types, objects and log lines, then export a signed copy:
 
 ```bash
 flightbay keygen --name "Your team"
-flightbay review flightbay-01234567-*.tar.zst --sign flightbay-signing.key
+flightbay ui flightbay-01234567-*.tar.zst --sign flightbay-signing.key
 ```
 
 See [Reviewing before you send](/collect/review/) and [Signing](/collect/signing/).

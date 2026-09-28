@@ -106,6 +106,6 @@ JSON held inside a string, such as the `kubectl.kubernetes.io/last-applied-confi
 - `manifest.sig` (last, with `--sign KEY`): your Ed25519 signature over the manifest, so Solo can check the bundle came from you unmodified. Solo only ever holds your public key.
 - The SHA-256 of the collector binary, and with `--config` the policy file's SHA-256 and who approved it (`flightbay policy sign`).
 
-Before sending, `flightbay review BUNDLE` lets you remove namespaces, resource types, objects, log streams, log lines and files and redact more, then exports a new signed bundle with `review-ledger.json`, a count of what you removed.
+Before sending, the Review and send page in `flightbay ui BUNDLE` (or `flightbay review BUNDLE --plan FILE` without the UI) lets you remove namespaces, resource types, objects, log streams, log lines and files and redact more, then exports a new signed bundle with `review-ledger.json`, a count of what you removed.
 
 The bundle is a plain tar stream compressed with zstd. Open it with standard tools: `tar --zstd -tvf BUNDLE`. With `--encrypt-to` it is wrapped in age encryption and only the holder of the matching identity can read it.

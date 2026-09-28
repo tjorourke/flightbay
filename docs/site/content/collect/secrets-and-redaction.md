@@ -133,7 +133,7 @@ Redactions: 52 (values are never recorded)
   clusters/kind-flightbay-e2e/resources/secrets: last-applied=1, secret-value=7
 ```
 
-To remove whole namespaces, types, objects or log lines, or to redact more, open the bundle in review mode: see [Reviewing before you send](/collect/review/).
+To remove whole namespaces, types, objects or log lines, or to redact more, use the Review and send page in `flightbay ui`: see [Reviewing before you send](/collect/review/).
 
 A count where you did not expect one is worth a look: extract the bundle and check the file (see [Sending a bundle](/collect/sending/)). The same report is on the [Coverage](/desk/coverage/) page in the desk.
 

@@ -91,13 +91,17 @@ flightbay ui flightbay-01234567-20260927T1012Z.tar.zst.age -i ~/.flightbay/suppo
 |---|---|---|
 | Signed by NAME, key not trusted | The bundle is unchanged since it was signed, but by a key you have not trusted | Get the customer's `.pub` through a channel you trust and put it in `~/.flightbay/trusted-keys/`, or pass `--verify-key` |
 | Signature invalid | The manifest changed after it was signed, or the signature is damaged | Treat the bundle as untrusted and ask for it again |
-| Not signed | No `manifest.sig` | Ask for `flightbay collect --sign` or `flightbay review --sign` |
+| Not signed | No `manifest.sig` | Ask for `flightbay collect --sign`, or for the export to be made with `flightbay ui BUNDLE --sign` |
 
 `flightbay inspect BUNDLE --verify-key customer.pub` gives the same answer on the command line and fails unless the bundle is signed by that key.
 
-### Review: "this bundle is encrypted; review needs the identity that opens it"
+### "this bundle is encrypted; review needs the identity that opens it"
 
-You can only review what you can read. Capture without `--encrypt-to`, review, and encrypt the reviewed bundle with `flightbay review --encrypt-to`. If you do hold the identity, pass it with `-i`.
+You can only review what you can read. Capture without `--encrypt-to`, open it with `flightbay ui BUNDLE --encrypt-to age1...` and export: the export is encrypted, the capture you reviewed is not. If you do hold the identity, pass it with `-i`.
+
+### There is no Review and send page
+
+The desk was fed a stream (`-o - | flightbay-desk open -`) or is a live mirror, so there is no file to export from. Open the bundle file with `flightbay ui BUNDLE`, or save the live mirror as a bundle first.
 
 ### Review: "the original bundle did not verify"
 

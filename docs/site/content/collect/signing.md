@@ -34,7 +34,7 @@ flightbay collect --context prod-eu --case 01234567 --sign flightbay-signing.key
 
 The signature covers `manifest.json`, which already holds a SHA-256 of every other file, so one signature covers the whole bundle. It is stored as `manifest.sig`, the last file in the bundle. It works the same with `--encrypt-to`: the signature is inside the encryption.
 
-If you review the capture before sending, sign the reviewed bundle instead with `flightbay review --sign`. See [Reviewing before you send](/collect/review/).
+If you review the capture before sending, open it with `flightbay ui BUNDLE --sign KEY` and the bundle you export is signed. See [Reviewing before you send](/collect/review/).
 
 ## Check a signature
 
