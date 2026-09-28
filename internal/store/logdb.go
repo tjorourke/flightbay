@@ -60,7 +60,7 @@ func openDB(path string) (*logDB, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := db.Exec(schema); err != nil {
+	if _, err := db.Exec(schema + flowsSchema); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -196,9 +196,15 @@ func (w *Workspace) QueueLogLines(cluster, ns, pod, container, stream string, li
 func (w *Workspace) appendLines(firstID int64, seq int, cluster, ns, pod, container, stream, node, chunk, wkind, wname string, kept []string) {
 	rows := make([][]driver.Value, 0, len(kept))
 	var start, end time.Time
+	type lineInfo struct {
+		scope, rest string
+		fields      map[string]string
+	}
+	info := make([]lineInfo, len(kept))
 	for i, l := range kept {
 		ts, rest := logs.SplitTimestamp(l)
 		p := logs.Parse(rest)
+		info[i] = lineInfo{p.Scope, rest, p.Fields}
 		var tsn int64
 		if !ts.IsZero() {
 			tsn = ts.UnixNano()
@@ -215,6 +221,21 @@ func (w *Workspace) appendLines(firstID int64, seq int, cluster, ns, pod, contai
 	if err := w.ldb.appendRows("log_lines", rows); err != nil {
 		w.SetState(func(s *ImportState) { s.Error = "log store: " + err.Error() })
 		return
+	}
+	// Envoy and CoreDNS flows are parsed once, here, while the line is at hand.
+	w.mu.RLock()
+	ep := w.envoyPodLocked(cluster, ns, pod, wname)
+	var nss []string
+	if strings.Contains(container, "coredns") || strings.HasPrefix(pod, "coredns") {
+		nss = w.namespacesLocked(cluster)
+	}
+	w.mu.RUnlock()
+	if fs := flowsFromLines(cluster, container, ep, nss, kept, func(i int) (string, map[string]string, string) {
+		return info[i].scope, info[i].fields, info[i].rest
+	}); len(fs) > 0 {
+		if err := w.AddFlows(fs); err != nil {
+			w.SetState(func(s *ImportState) { s.Error = "log store: flows: " + err.Error() })
+		}
 	}
 	w.mu.Lock()
 	w.state.LogLines += len(rows)
@@ -653,7 +674,7 @@ var sqlStart = regexp.MustCompile(`(?is)^\s*(select|with|from|describe|show|summ
 var ErrNotReadOnly = errors.New("only read-only queries are allowed: SELECT, WITH, FROM, DESCRIBE, SHOW, SUMMARIZE, EXPLAIN")
 
 // SQL runs one read-only statement against the workspace database: tables
-// log_lines, objects and events, and the view logs. It runs inside a
+// log_lines, objects, events and flows, and the view logs. It runs inside a
 // transaction that is always rolled back, and the database has no access to
 // the local file system.
 func (w *Workspace) SQL(query string, limit int) (*SQLResult, error) {

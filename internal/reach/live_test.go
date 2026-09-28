@@ -42,6 +42,10 @@ func TestLive(t *testing.T) {
 				fmt.Printf("   -> %-60s %s %s obs=%d decl=%v %v %s\n", e.To, e.Verdict, e.Risk, e.Observed, e.Declared, e.ObsMethods, e.Why)
 			}
 		}
+		fmt.Printf("   observed by: %v\n", a.ObservedBy)
+		for _, x := range a.External {
+			fmt.Printf("   ext %-40s %-9s %-14s gw=%s route=%s authn=%v ro=%v verdict=%s direct=%s risk=%s creds=%v obs=%d %v src=%v in=%v\n", x.Host, x.Class, x.ReachedVia, x.Gateway, x.Route, x.Authn, x.ReadOnly, x.Verdict, x.DirectEgress, x.Risk, x.Credentials, x.Observed, x.Methods, x.Sources, x.DeclaredIn)
+		}
 		fmt.Printf("   graph: %d nodes %d edges\n", len(a.Nodes), len(a.Edges))
 	}
 	if out := os.Getenv("FLIGHTBAY_REACH_JSON"); out != "" {

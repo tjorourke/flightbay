@@ -1,0 +1,5 @@
+src_ip,src_namespace,src_pod,dst_host,dst_ip,dst_port,protocol,method,path,action,count
+10.244.1.7,payments,checkout-7d9f8c-x2k,api.stripe.com,,443,tcp,,,allow,12
+10.244.1.7,payments,checkout-7d9f8c-x2k,api.stripe.com,,443,tcp,,,allow,3
+10.244.2.3,kagent,demo-agent-6b8,github.com,140.82.121.4,443,tcp,,,deny,2
+10.244.2.3,kagent,demo-agent-6b8,,10.244.3.9,8080,http,POST,/mcp?session=1,allow,

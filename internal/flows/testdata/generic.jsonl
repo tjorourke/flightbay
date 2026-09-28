@@ -1,0 +1,2 @@
+{"srcIp":"10.1.2.3","srcNamespace":"shop","srcPod":"web-1","fqdn":"s3.eu-west-2.amazonaws.com","destPort":443,"proto":"TCP","verdict":"ALLOW","packets":40}
+{"source_ip":"10.1.2.4","dest_ip":"10.1.9.9","dest_port":5432,"protocol":"6","action":"DROP"}

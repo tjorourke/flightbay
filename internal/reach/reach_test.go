@@ -74,25 +74,44 @@ func incidentWith(t *testing.T, fixes string, extra []map[string]any) *store.Wor
 	ws.AddObjects("c", rNS, []map[string]any{o("Namespace", "", "agents", amb, nil), o("Namespace", "", "tools", amb, nil),
 		o("Namespace", "", "kube-system", nil, nil)}, "ns")
 	agent := pod("agents", "eval-agent", "eval-agent", map[string]any{"app": "eval-agent"}, true, nil)
+	agent["status"].(map[string]any)["podIP"] = "10.244.0.11"
+	ct := agent["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)
+	var env []any
 	if strings.Contains(fixes, "declared") { // configured to install packages through the registry
-		ct := agent["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)
-		ct["env"] = []any{map[string]any{"name": "PIP_INDEX_URL", "value": "http://artifactory.tools:8081/api/pypi/pypi/simple"}}
+		env = append(env, map[string]any{"name": "PIP_INDEX_URL", "value": "http://artifactory.tools:8081/api/pypi/pypi/simple"})
+	}
+	// The incident as it happened: the registry is outside the cluster, and
+	// the agent holds a token for it.
+	external := strings.Contains(fixes, "ext-registry")
+	if external {
+		env = append(env, map[string]any{"name": "PIP_INDEX_URL", "value": "https://acme.jfrog.io/artifactory/api/pypi/pypi/simple"},
+			map[string]any{"name": "ARTIFACTORY_TOKEN", "valueFrom": map[string]any{"secretKeyRef": map[string]any{"name": "artifactory-creds", "key": "token"}}})
+	}
+	if strings.Contains(fixes, "exfil") {
+		env = append(env, map[string]any{"name": "RESULTS_WEBHOOK_URL", "value": "https://webhook.site/0b1c2d3e"})
+	}
+	if env != nil {
+		ct["env"] = env
 	}
 	pods := []map[string]any{
 		agent,
 		pod("agents", "eval-agent-2", map[bool]string{true: "eval-agent", false: "eval-agent-2"}[strings.Contains(fixes, "shared-sa")], map[string]any{"app": "eval-agent-2", "agent": "true"}, true, nil),
-		pod("tools", "artifactory", "artifactory", map[string]any{"app": "artifactory"}, true, nil),
 		pod("tools", "postgres", "postgres", map[string]any{"app": "postgres"}, true, nil),
 		pod("kube-system", "coredns", "coredns", map[string]any{"k8s-app": "kube-dns"}, false, nil),
+	}
+	if !external {
+		pods = append(pods, pod("tools", "artifactory", "artifactory", map[string]any{"app": "artifactory"}, true, nil))
 	}
 	if !noWaypoint {
 		pods = append(pods, pod("tools", "waypoint", "waypoint", map[string]any{"gateway.networking.k8s.io/gateway-name": "waypoint"}, false, nil))
 	}
 	ws.AddObjects("c", rPod, pods, "p")
 	svcs := []map[string]any{
-		svc("tools", "artifactory", map[string]any{"app": "artifactory"}, 8081, regLabels),
 		svc("tools", "postgres", map[string]any{"app": "postgres"}, 5432, nil),
 		svc("kube-system", "kube-dns", map[string]any{"k8s-app": "kube-dns"}, 53, nil),
+	}
+	if !external {
+		svcs = append(svcs, svc("tools", "artifactory", map[string]any{"app": "artifactory"}, 8081, regLabels))
 	}
 	if !noWaypoint { // the Service Istio creates for a waypoint
 		svcs = append(svcs, svc("tools", "waypoint", map[string]any{"gateway.networking.k8s.io/gateway-name": "waypoint"}, 15008,

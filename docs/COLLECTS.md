@@ -62,6 +62,23 @@ Read only from pods in the selected namespaces, only when port-forward is allowe
 | agentgateway and kgateway controllers | metrics | 9092 | `/metrics` |  |
 | agentgateway and kgateway controllers | | | | Not read: the admin krt snapshot is not collected: it spans every namespace and can include Secret contents, so it cannot honour the collection policy |
 
+## Observed traffic (flows)
+
+Who actually called whom comes from logs already selected above, plus optional flow logs. Nothing extra is read from the cluster unless you ask for it.
+
+| Source | Where it comes from | Notes |
+|---|---|---|
+| ztunnel | ztunnel access logs (`access`, `http_access`) | Counted once per connection even when both ends log it. |
+| agentgateway | agentgateway request logs (scope `request`, text or JSON) | Route, gateway, backend endpoint, `jwt.sub`, MCP method and tool, A2A method, LLM provider. 401 and 403 count as denied. |
+| envoy | `istio-proxy` access logs of sidecars, Istio gateways and waypoints (Istio's default text format or its JSON encoding) | Upstream cluster gives the destination; RBAC, ext_authz, 401/403 and BlackHoleCluster count as denied. |
+| coredns | CoreDNS query logs | External names only: in-cluster names, reverse lookups and search-path expansions are skipped. The CoreDNS `log` plugin is **off by default**; add `log` to the Corefile for these to exist. |
+| hubble, calico, aws-vpc, gcp-vpc, azure-vnet, generic | `flightbay collect --attach-flows FILE[@CONTEXT]` | Customer-supplied flow logs embedded under `clusters/<context>/flows/<format>/<file>` and covered by the manifest. Records naming namespaces outside the selection are removed and every line is redacted before writing. |
+| hubble (live) | `flightbay collect --hubble-flows[=N]` (default N = 20000) | Port-forward to the `hubble-relay` pod in `kube-system` (port 4245) and run the local `hubble observe --last N -o jsonpb`, with `--namespace` for each selected namespace. Needs port-forward, `pods` get/list and `pods/portforward` create in `kube-system`, and the `hubble` CLI on PATH; the dry run says whether it was found. Flows naming namespaces outside the selection are removed and HTTP paths redacted before writing. |
+
+Flow files can also be added when a bundle is opened (`flightbay-desk open BUNDLE --flows FILE[@CLUSTER]`); those are marked as added by the reviewer and are not part of the signed bundle.
+
+Supported flow log formats, detected per file: Cilium Hubble (`hubble observe -o json` or `-o jsonpb`), Calico Enterprise / Cloud flow logs (JSON), AWS VPC flow logs (default version 2 format, or a custom format with a header line), GCP VPC flow logs and firewall logs (Cloud Logging JSON export, as JSON Lines or an array), Azure NSG and VNet flow logs (JSON), and a generic CSV or JSON Lines file with any of these columns: `src_ip|source_ip|srcaddr`, `dst_ip|dest_ip|dstaddr`, `dst_port|dest_port|dstport`, `src_namespace`, `src_pod`, `dst_namespace`, `dst_pod`, `dst_host|dest_domain|fqdn`, `protocol|proto`, `method`, `path`, `action|verdict`, `count|packets`. The generic form is the way in for any other CNI or firewall (Antrea, Weave, kube-router, a firewall export or a SIEM query).
+
 ## Redaction
 
 Runs in memory before anything is written, over object specs, ConfigMap data, environment variables, log lines and diagnostic output:
@@ -83,7 +100,7 @@ JSON held inside a string, such as the `kubectl.kubernetes.io/last-applied-confi
 
 - `bundle.json` (first): identity, case, contexts, capture start and the resolved collection policy.
 - `collection-log.jsonl`: every call, including failures (RBAC denied, timeouts, truncation), so a missing file never looks like a missing object.
-- `coverage/*.json`: per collection, what was expected and whether it completed, failed, was excluded or truncated.
+- `coverage/*.json`: per collection, what was expected and whether it completed, failed, was excluded or truncated. Attached and hubble flow files have a `flows` coverage entry each, with the detected format.
 - `manifest.json` (last): capture end, completion state and a SHA-256 for every member. `flightbay inspect` verifies them.
 
 The bundle is a plain tar stream compressed with zstd. Open it with standard tools: `tar --zstd -tvf BUNDLE`. With `--encrypt-to` it is wrapped in age encryption and only the holder of the matching identity can read it.

@@ -65,6 +65,7 @@ type workload struct {
 	agentType string // set for agents
 	agentWhy  string
 	classes   []string // fetcher, store, credentials, dns, gateway, llm, mcp
+	decl      *decls   // what it is configured to call, computed once
 }
 
 func (w *workload) principal() string { return "ns/" + w.ns + "/sa/" + w.sa }
@@ -95,22 +96,27 @@ type svcPort struct {
 }
 
 type cluster struct {
-	ws       *store.Workspace
-	name     string
-	nsLabels map[string]map[string]string
-	nsKnown  bool
-	works    []*workload
-	byPod    map[string]*workload // ns/pod -> workload
-	services []*service
-	svcByKey map[string]*service // ns/name
-	netpols  []*store.Object
-	authz    []*store.Object
-	peerAuth []*store.Object
-	npKnown  bool
-	apKnown  bool
-	rootNS   string
-	platform string // kind, eks, gke, aks, openshift or ""
-	notes    []string
+	ws         *store.Workspace
+	name       string
+	nsLabels   map[string]map[string]string
+	nsKnown    bool
+	works      []*workload
+	byPod      map[string]*workload // ns/pod -> workload
+	services   []*service
+	svcByKey   map[string]*service // ns/name
+	netpols    []*store.Object
+	authz      []*store.Object
+	peerAuth   []*store.Object
+	npKnown    bool
+	apKnown    bool
+	rootNS     string
+	platform   string // kind, eks, gke, aks, openshift or ""
+	notes      []string
+	ipx        *ipIndex
+	enterprise bool // Enterprise agentgateway CRDs are in use
+	agwPol     map[string][]map[string]any
+	agwT       map[*service][]agwTarget
+	seByHost   map[string]seInfo
 }
 
 func key(ns, name string) string { return ns + "/" + name }
@@ -157,6 +163,32 @@ func newCluster(ws *store.Workspace, name string) *cluster {
 	c.platform = detectPlatform(ws, name)
 	c.buildWorkloads()
 	c.buildServices()
+	c.enterprise = len(c.list("enterpriseagentgateway.solo.io", "enterpriseagentgatewaybackends")) > 0 || len(c.list("enterpriseagentgateway.solo.io", "enterpriseagentgatewaypolicies")) > 0
+	for _, gw := range c.list("gateway.networking.k8s.io", "gateways") {
+		if strings.Contains(s(path(gw.Obj, "spec", "gatewayClassName")), "enterprise-agentgateway") {
+			c.enterprise = true
+		}
+	}
+	// A Service that is an agent's HTTP proxy, or an ExternalName pointing
+	// at a registry, fetches on request like any registry in the cluster.
+	for _, sv := range c.services {
+		if sv.external != "" {
+			if cls, _ := classifyHost(sv.external); fetcherClass(cls) {
+				sv.classes = union(sv.classes, []string{"fetcher"})
+			}
+		}
+	}
+	for _, w := range c.works {
+		if w.gateway || strings.HasPrefix(w.ns, "kube-") {
+			continue
+		}
+		if d := c.declarations(w); d.proxy != "" {
+			if sv := c.svcByKey[d.proxy]; sv != nil {
+				sv.classes = union(sv.classes, []string{"fetcher"})
+			}
+		}
+		w.decl = nil // agent types are not known yet; computed again for agents
+	}
 	c.netpols = c.list("networking.k8s.io", "networkpolicies")
 	c.npKnown = c.known("networking.k8s.io", "networkpolicies", "NetworkPolicy")
 	c.authz = c.list("security.istio.io", "authorizationpolicies")

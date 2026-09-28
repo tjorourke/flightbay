@@ -26,7 +26,11 @@ func (e *engine) findings(w *workload, a Agent, reach []pair, all []*workload, d
 			}
 		}
 	}
-	egressFix := e.egressPolicy(w, needed, declHosts)
+	hosts := map[string]bool{}
+	for _, h := range neededHosts(a) {
+		hosts[h] = true
+	}
+	egressFix := e.egressPolicy(w, needed, hosts)
 
 	if len(a.Identity.HostAccess) > 0 {
 		add("critical", "Runs with host access",
@@ -215,6 +219,7 @@ func (e *engine) findings(w *workload, a Agent, reach []pair, all []*workload, d
 			"The agent runs in an ordinary container. A kernel exploit is one step to root on the node, as in the incident. Run agents that execute code under a sandbox runtime.",
 			"spec:\n  runtimeClassName: gvisor")
 	}
+	out = append(out, e.externalFindings(w, a)...)
 	sort.SliceStable(out, func(i, j int) bool { return sevRank[out[i].Severity] < sevRank[out[j].Severity] })
 	return out
 }
@@ -327,7 +332,10 @@ func (e *engine) egressPolicy(w *workload, needed []*service, hosts map[string]b
 		b.WriteString("  # add one rule per Service the agent needs; nothing it called or declared was found\n")
 	}
 	if len(hosts) > 0 {
-		fmt.Fprintf(&b, "# External hosts it is configured to call (%s): send them through agentgateway\n# and allow only the gateway here, rather than opening 0.0.0.0/0.\n", strings.Join(sortedKeys(hosts), ", "))
+		b.WriteString("# External hosts it needs (configured or called). Send them through agentgateway\n# and allow only the gateway here, rather than opening 0.0.0.0/0:\n")
+		for _, h := range sortedKeys(hosts) {
+			fmt.Fprintf(&b, "#   %s\n", h)
+		}
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

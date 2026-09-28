@@ -143,7 +143,7 @@ func tools() []tool {
 				return s.get("/api/objects/search", url.Values{"q": {arg(a, "query")}, "cluster": {arg(a, "cluster")}, "limit": {limit}})
 			}},
 		{Name: "run_sql", Title: "Read-only SQL",
-			Description: "Run one read-only DuckDB SQL statement. Tables: logs (id, time, cluster, namespace, pod, container, stream, node, level, scope, msg, fields map, raw), objects (cluster, api_group, version, resource, kind, namespace, name, labels map, object JSON text: use object->>'$.status.phase'), events (cluster, namespace, type, reason, object_kind, object_name, message, count, last_seen). Use it for counts, grouping and joins the other tools cannot do.",
+			Description: "Run one read-only DuckDB SQL statement. Tables: logs (id, time, cluster, namespace, pod, container, stream, node, level, scope, msg, fields map, raw), objects (cluster, api_group, version, resource, kind, namespace, name, labels map, object JSON text: use object->>'$.status.phase'), events (cluster, namespace, type, reason, object_kind, object_name, message, count, last_seen), flows (observed traffic from Envoy and CoreDNS logs and imported flow logs: cluster, source, src_ip, src_namespace, src_pod, dst_ip, dst_port, dst_host, dst_namespace, dst_workload, protocol, method, path, tool, via, verdict, count, file, origin; sum(count) per group). Use it for counts, grouping and joins the other tools cannot do.",
 			InputSchema: obj(map[string]any{"query": str("SELECT ..."), "limit": integer("max rows, default 200")}, "query"),
 			call: func(s *Server, a map[string]any) (string, error) {
 				limit := arg(a, "limit")

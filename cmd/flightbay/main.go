@@ -241,6 +241,9 @@ func printPlan(w io.Writer, pl *collect.DryRunPlan, showRBAC bool) {
 			break
 		}
 	}
+	for _, f := range pl.Flows {
+		fmt.Fprintf(w, "  Flows: %s\n", f)
+	}
 	fmt.Fprintln(w, "  Secret values are never collected. A dry run reads discovery only, no objects or logs.")
 	if showRBAC {
 		fmt.Fprintf(w, "\nRequired RBAC:\n%s\n", pl.RBAC)
@@ -251,7 +254,7 @@ func collectCmd() *cobra.Command {
 	var pf cli.PolicyFlags
 	var kf kubeFlags
 	var out, saveConfig string
-	var encryptTo []string
+	var encryptTo, attachFlows []string
 	var dryRun, interactiveMode, assumeYes, quiet, jsonOut bool
 	var window int
 	c := &cobra.Command{
@@ -261,7 +264,9 @@ func collectCmd() *cobra.Command {
 		Example: `  flightbay collect --context mesh1,mesh2 --case 01234567 --since 24h
   flightbay collect --namespaces payments,istio-system --exclude-resources configmaps,secrets --no-portforward
   flightbay collect --config collection.yaml --dry-run
-  flightbay collect --interactive`,
+  flightbay collect --interactive
+  flightbay collect --attach-flows hubble.jsonl,vpc-flows.log    # embed flow logs in the bundle
+  flightbay collect --hubble-flows                               # last 20000 flows from hubble-relay`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			p, err := pf.Resolve(cmd.Flags())
 			if err != nil {
@@ -273,6 +278,20 @@ func collectCmd() *cobra.Command {
 			}
 			p.Contexts = ctxs
 			stderr := cmd.ErrOrStderr()
+			attached, err := cli.ParseFlowFiles(attachFlows)
+			if err != nil {
+				return err
+			}
+			for _, a := range attached {
+				// Refuse an unreadable file before anything is collected.
+				if _, err := collect.DetectFlowFile(a.Path); err != nil {
+					return err
+				}
+				if a.Cluster != "" && !contains(ctxs, a.Cluster) {
+					return fmt.Errorf("--attach-flows %s@%s: %s is not one of the contexts being collected (%s)", a.Path, a.Cluster, a.Cluster, strings.Join(ctxs, ", "))
+				}
+				p.Flows.Attach = append(p.Flows.Attach, filepath.Base(a.Path))
+			}
 			if interactiveMode {
 				if p, err = interactive(p, bufio.NewReader(cmd.InOrStdin()), stderr); err != nil {
 					return err
@@ -383,6 +402,15 @@ func collectCmd() *cobra.Command {
 					fmt.Fprintf(stderr, "  %s: %v (recorded in the collection log)\n", kctx, err)
 				}
 			}
+			for _, a := range attached {
+				cluster := a.Cluster
+				if cluster == "" && len(ctxs) > 0 {
+					cluster = ctxs[0]
+				}
+				if err := col.AttachFlowFile(cluster, a.Path); err != nil {
+					return err
+				}
+			}
 			if err := col.Finish(); err != nil {
 				return err
 			}
@@ -410,7 +438,17 @@ func collectCmd() *cobra.Command {
 	c.Flags().BoolVarP(&assumeYes, "yes", "y", false, "do not ask for confirmation in --interactive mode")
 	c.Flags().StringVar(&saveConfig, "save-config", "", "write the resolved policy to this file for repeatable runs")
 	c.Flags().BoolVarP(&quiet, "quiet", "q", false, "less progress output")
+	c.Flags().StringSliceVar(&attachFlows, "attach-flows", nil, "flow log files to embed in the bundle, FILE or FILE@CONTEXT (Hubble, Calico, AWS/GCP/Azure VPC flow logs, generic CSV/JSONL); covered by the manifest")
 	return c
+}
+
+func contains(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
 }
 
 func openInput(path string) (io.ReadCloser, error) {

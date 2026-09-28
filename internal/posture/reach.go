@@ -67,6 +67,8 @@ func reachChecks(ws *store.Workspace) []Check {
 			for _, a := range agents {
 				if f, ok := hasFinding(a, "Inherits internet access"); ok {
 					c.Items = append(c.Items, item(a, Fail, f.Title+": "+pathOf(a, "fetcher")))
+				} else if f, ok := hasFinding(a, "Can reach an external registry"); ok {
+					c.Items = append(c.Items, item(a, Fail, f.Title+": "+pathOf(a, "registry")))
 				} else if a.Internet != reach.Unknown {
 					c.Items = append(c.Items, item(a, Pass, "no fetcher on its call list reaches the internet"))
 				}

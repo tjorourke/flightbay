@@ -71,6 +71,7 @@ type Collector struct {
 	LogRetryDelay time.Duration // wait between those retries
 	MaxDiagBytes  int64         // largest single diagnostic response kept
 	Progress      func(string)
+	Hubble        HubbleRunner // runs the hubble CLI; nil = exec hubble from PATH
 
 	mu         sync.Mutex
 	entries    []LogEntry
@@ -267,6 +268,7 @@ type DryRunPlan struct {
 	LogStreams  []string `json:"logStreams,omitempty"`
 	LogSince    string   `json:"logSince,omitempty"`
 	LogMaxBytes int64    `json:"logMaxBytesPerStream,omitempty"`
+	Flows       []string `json:"flows,omitempty"`
 	RBAC        string   `json:"rbac"`
 }
 
@@ -294,6 +296,7 @@ func (c *Collector) DryRun(_ context.Context, cluster string, cl Clients) (*DryR
 	if plan.Selected(policy.CatLogs) {
 		out.LogStreams, out.LogSince, out.LogMaxBytes = c.Policy.Logs.Streams, c.Policy.Logs.Since, c.Policy.Logs.MaxBytes
 	}
+	out.Flows = c.flowPlan()
 	out.RBAC = c.Policy.RBAC(disc)
 	return out, nil
 }
@@ -389,6 +392,11 @@ func (c *Collector) CollectCluster(ctx context.Context, cluster string, cl Clien
 			kinds[r.Group+"/"+r.Kind] = r.Resource
 		}
 		if err := c.collectDiagnostics(ctx, cluster, cl, pods, kinds); err != nil {
+			return err
+		}
+	}
+	if c.Policy.HubbleSelected() {
+		if err := c.collectHubble(ctx, cluster, cl); err != nil {
 			return err
 		}
 	}

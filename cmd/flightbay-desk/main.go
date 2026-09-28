@@ -28,6 +28,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/tjorourke/flightbay/internal/apiserver"
+	"github.com/tjorourke/flightbay/internal/bundle"
 	"github.com/tjorourke/flightbay/internal/cli"
 	"github.com/tjorourke/flightbay/internal/diff"
 	"github.com/tjorourke/flightbay/internal/importer"
@@ -40,7 +41,7 @@ var version = "0.1.0-dev"
 
 func main() {
 	root := &cobra.Command{Use: "flightbay-desk", Short: "Flightbay by Solo: investigate a snapshot bundle offline", SilenceUsage: true}
-	root.AddCommand(openCmd(), shellCmd(), queryCmd(), findingsCmd(), proxyConfigCmd(), searchCmd(), sqlCmd(), postureCmd(), reachCmd(), featuresCmd(), diffCmd(), mcpCmd(), keygenCmd(), &cobra.Command{
+	root.AddCommand(openCmd(), shellCmd(), queryCmd(), findingsCmd(), proxyConfigCmd(), searchCmd(), sqlCmd(), flowsCmd(), postureCmd(), reachCmd(), featuresCmd(), diffCmd(), mcpCmd(), keygenCmd(), &cobra.Command{
 		Use: "version", Short: "Print the version", Run: func(*cobra.Command, []string) { fmt.Println("flightbay-desk", version) },
 	})
 	if err := root.Execute(); err != nil {
@@ -117,7 +118,7 @@ func parseSize(s string) (int64, error) {
 
 func openCmd() *cobra.Command {
 	var listen, workdir, throttle, shell, baseline string
-	var identities, deferCats []string
+	var identities, deferCats, flowFiles []string
 	var noBrowser, noTerminal, allowRemote, keep bool
 	c := &cobra.Command{
 		Use:   "open [BUNDLE | DIR | -]",
@@ -126,7 +127,8 @@ func openCmd() *cobra.Command {
   flightbay-desk open flightbay-01234567-20260927T1012Z.tar.zst
   flightbay collect -o - | flightbay-desk open -
   flightbay-desk open bundle.tar.zst.age -i ~/.flightbay/support.key
-  flightbay-desk open bundle.tar.zst --defer logs      # load logs later from the UI`,
+  flightbay-desk open bundle.tar.zst --defer logs      # load logs later from the UI
+  flightbay-desk open bundle.tar.zst --flows hubble.jsonl,vpc-flows.log@mesh2   # add flow logs (not signed)`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !loopback(listen) && !allowRemote {
@@ -140,6 +142,10 @@ func openCmd() *cobra.Command {
 				return err
 			}
 			rate, err := parseSize(throttle)
+			if err != nil {
+				return err
+			}
+			reviewerFlows, err := cli.ParseFlowFiles(flowFiles)
 			if err != nil {
 				return err
 			}
@@ -276,6 +282,25 @@ func openCmd() *cobra.Command {
 			if err := srv.Prepare(); err != nil {
 				return err
 			}
+			for _, ff := range reviewerFlows {
+				cluster := ff.Cluster
+				if cluster == "" {
+					if cs := ws.Clusters(); len(cs) > 0 {
+						cluster = cs[0]
+					}
+				}
+				f, err := os.Open(ff.Path)
+				if err != nil {
+					return err
+				}
+				res, err := ws.AddReviewerFlows(bundle.SafeID(cluster), filepath.Base(ff.Path), f, "")
+				f.Close()
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "Flows from %s not loaded: %v\n", ff.Path, err)
+					continue
+				}
+				fmt.Fprintf(cmd.ErrOrStderr(), "Added %d %s flow records (%d flows) from %s to %s; marked as added by the reviewer, not part of the signed bundle.\n", res.Events, res.Format, res.Flows, ff.Path, cluster)
+			}
 			info := deskInfo{URL: base, Token: srv.Token, Kubeconfig: srv.KubeconfigPath(), WorkDir: workdir, Bundle: path, PID: os.Getpid()}
 			b, _ := json.MarshalIndent(info, "", "  ")
 			_ = os.WriteFile(filepath.Join(workdir, "desk.json"), b, 0o600)
@@ -287,7 +312,7 @@ func openCmd() *cobra.Command {
 				fmt.Fprintf(errOut, "warning: could not record the open workspace for helpers: %v\n", err)
 			}
 			url := base + "/?token=" + srv.Token
-			fmt.Fprintf(errOut, "\nFlightbay desk is ready while the bundle loads.\n  UI:          %s\n  kubectl:     export KUBECONFIG=%s   (snapshot API on %s)\n  Shell:       flightbay-desk shell   (kubectl, k9s, stern, fbq, fbsearch, fbsql, fbfind, fbpc)\n  Press Ctrl+C to close the workspace.\n\n", url, srv.KubeconfigPath(), srv.KubeURL)
+			fmt.Fprintf(errOut, "\nFlightbay desk is ready while the bundle loads.\n  UI:          %s\n  kubectl:     export KUBECONFIG=%s   (snapshot API on %s)\n  Shell:       flightbay-desk shell   (kubectl, k9s, stern, fbq, fbsearch, fbsql, fbfind, fbpc, fbflows)\n  Press Ctrl+C to close the workspace.\n\n", url, srv.KubeconfigPath(), srv.KubeURL)
 			if !noBrowser {
 				openBrowser(url)
 			}
@@ -316,6 +341,7 @@ func openCmd() *cobra.Command {
 	c.Flags().StringVar(&listen, "listen", "127.0.0.1:8484", "loopback address for the UI and API")
 	c.Flags().StringSliceVarP(&identities, "identity", "i", nil, "age identity file for encrypted bundles")
 	c.Flags().StringSliceVar(&deferCats, "defer", nil, "categories to load later from the UI: objects, logs, events, diagnostics")
+	c.Flags().StringSliceVar(&flowFiles, "flows", nil, "flow log files to add, FILE or FILE@CLUSTER (Hubble, Calico, AWS/GCP/Azure VPC, generic CSV/JSONL); marked as added by the reviewer, not signed")
 	c.Flags().StringVar(&throttle, "throttle", "", "limit import speed, e.g. 512KiB (rehearse slow uploads)")
 	c.Flags().StringVar(&workdir, "workdir", "", "workspace directory (default ~/.flightbay/workspaces/ws-*)")
 	c.Flags().BoolVar(&noBrowser, "no-browser", false, "do not open a browser")
@@ -572,7 +598,7 @@ func searchCmd() *cobra.Command {
 func sqlCmd() *cobra.Command {
 	var limit int
 	c := &cobra.Command{
-		Use: "sql [QUERY]", Short: "Run read-only SQL over logs, objects and events (the fbsql helper); no query starts a prompt",
+		Use: "sql [QUERY]", Short: "Run read-only SQL over logs, objects, events and flows (the fbsql helper); no query starts a prompt",
 		Example: `  fbsql "SELECT pod, count(*) FROM logs WHERE level = 'error' GROUP BY ALL ORDER BY 2 DESC"
   fbsql            # interactive; type help for the tables`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -614,6 +640,30 @@ func sqlCmd() *cobra.Command {
 		},
 	}
 	c.Flags().IntVar(&limit, "limit", 200, "maximum rows")
+	return c
+}
+
+func flowsCmd() *cobra.Command {
+	var cluster, source string
+	var limit int
+	c := &cobra.Command{
+		Use:   "flows",
+		Short: "Observed traffic, grouped by source and destination (the fbflows helper)",
+		Long: "Who actually called whom: ztunnel, agentgateway, Envoy (sidecars, gateways, waypoints) and CoreDNS logs in the capture,\n" +
+			"plus flow logs attached with flightbay collect --attach-flows or added with flightbay-desk open --flows\n" +
+			"(Cilium Hubble, Calico, AWS / GCP / Azure VPC flow logs, generic CSV or JSON Lines).",
+		Example: "  fbflows\n  fbflows --source agentgateway\n  fbflows --source hubble --cluster mesh1",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			u, t, err := deskEnv()
+			if err != nil {
+				return err
+			}
+			return cli.Flows(cmd.OutOrStdout(), u, t, cluster, source, limit)
+		},
+	}
+	c.Flags().StringVar(&cluster, "cluster", "", "only this cluster")
+	c.Flags().StringVar(&source, "source", "", "ztunnel, agentgateway, envoy, coredns, hubble, calico, aws-vpc, gcp-vpc, azure-vnet or generic")
+	c.Flags().IntVar(&limit, "limit", 200, "maximum source/destination pairs")
 	return c
 }
 

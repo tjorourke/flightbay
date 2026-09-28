@@ -125,7 +125,7 @@ func (s *Server) Prepare() error {
 	if err := os.WriteFile(s.RCFile(), []byte(shellRC), 0o600); err != nil {
 		return err
 	}
-	helpers := map[string]string{"fbq": "query", "fbfind": "findings", "fbpc": "proxy-config", "fbsearch": "search", "fbsql": "sql", "fbscore": "posture", "fbreach": "reach"}
+	helpers := map[string]string{"fbq": "query", "fbfind": "findings", "fbpc": "proxy-config", "fbsearch": "search", "fbsql": "sql", "fbscore": "posture", "fbreach": "reach", "fbflows": "flows"}
 	for name, sub := range helpers {
 		script := fmt.Sprintf("#!/bin/sh\n# Flightbay helper: runs `flightbay-desk %s` against this workspace.\nexec %q %s \"$@\"\n", sub, s.DeskBinary, sub)
 		if err := os.WriteFile(filepath.Join(s.WorkDir, "bin", name), []byte(script), 0o700); err != nil {
@@ -252,6 +252,7 @@ func (s *Server) Handler() http.Handler {
 		writeJSON(w, 200, map[string]any{"features": features.List(), "enabled": features.Map()})
 	})
 	api("/api/sql", s.sqlQuery)
+	api("/api/flows", s.flowsList)
 	api("/api/coverage", s.coverage)
 	api("/api/terminal", s.terminal)
 	api("/api/load", s.load)

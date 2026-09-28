@@ -49,6 +49,24 @@ type LogPolicy struct {
 	Containers []string `json:"containers,omitempty"` // container name globs; empty = all
 }
 
+// FlowPolicy declares observed-traffic sources beyond the captured logs.
+type FlowPolicy struct {
+	// Hubble is how many recent flows to read from Cilium's hubble-relay
+	// (svc/hubble-relay in kube-system) through port-forward and the local
+	// hubble CLI; 0 = off. Flows naming namespaces outside the selection are
+	// dropped and HTTP paths are redacted before writing.
+	Hubble int `json:"hubble,omitempty"`
+	// Attach lists flow log files supplied by the customer and embedded in the
+	// bundle (base names; the content is covered by the manifest).
+	Attach []string `json:"attach,omitempty"`
+}
+
+// HubbleNamespace and HubbleRelay locate Cilium's flow relay.
+const (
+	HubbleNamespace = "kube-system"
+	HubbleRelay     = "hubble-relay"
+)
+
 // Policy is the resolved collection policy. It is written into every bundle.
 type Policy struct {
 	Profile           string     `json:"profile,omitempty"`
@@ -72,6 +90,7 @@ type Policy struct {
 	RedactExtra       []string   `json:"redactExtra,omitempty"`
 	QPS               float32    `json:"qps,omitempty"`
 	Burst             int        `json:"burst,omitempty"`
+	Flows             FlowPolicy `json:"flows,omitempty"`
 }
 
 // Profile returns a named starting policy.
@@ -161,6 +180,9 @@ func (p *Policy) Validate() error {
 		if _, err := time.ParseDuration(p.Logs.Since); err != nil {
 			return fmt.Errorf("logs.since: %w", err)
 		}
+	}
+	if p.Flows.Hubble < 0 {
+		return fmt.Errorf("flows.hubble must be 0 (off) or a number of flows, got %d", p.Flows.Hubble)
 	}
 	for _, g := range append(append([]string{}, p.Namespaces...), p.ExcludeNamespaces...) {
 		if _, err := path.Match(g, ""); err != nil {
@@ -295,8 +317,14 @@ func (p *Policy) Plan() Plan {
 			pl.Categories = append(pl.Categories, c)
 		}
 	}
+	if p.Flows.Hubble > 0 && !p.PortForward {
+		pl.Unavailable = append(pl.Unavailable, "hubble flows: needs port-forward to hubble-relay, which this policy does not allow")
+	}
 	return pl
 }
+
+// HubbleSelected reports whether flows will be read from hubble-relay.
+func (p *Policy) HubbleSelected() bool { return p.Flows.Hubble > 0 && p.PortForward }
 
 // APIResource is a discovered resource type.
 type APIResource struct {
@@ -427,6 +455,13 @@ func (p *Policy) RBAC(discovered []APIResource) string {
 		b.WriteString("    verbs: [get]\n")
 		fmt.Fprintf(&b, "---\napiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRoleBinding\nmetadata:\n  name: flightbay-crd-reader\nroleRef:\n  apiGroup: rbac.authorization.k8s.io\n  kind: ClusterRole\n  name: flightbay-crd-reader\nsubjects:\n%s", subject)
 	}
+	hubbleRole := func() {
+		if !p.HubbleSelected() {
+			return
+		}
+		fmt.Fprintf(&b, "---\n# Recent flows from Cilium's hubble-relay (--hubble-flows): find the relay pod and port-forward to it.\napiVersion: rbac.authorization.k8s.io/v1\nkind: Role\nmetadata:\n  name: flightbay-hubble-flows\n  namespace: %s\nrules:\n  - apiGroups: [\"\"]\n    resources: [pods]\n    verbs: [get, list]\n  - apiGroups: [\"\"]\n    resources: [pods/portforward]\n    verbs: [create]\n", HubbleNamespace)
+		fmt.Fprintf(&b, "---\napiVersion: rbac.authorization.k8s.io/v1\nkind: RoleBinding\nmetadata:\n  name: flightbay-hubble-flows\n  namespace: %s\nroleRef:\n  apiGroup: rbac.authorization.k8s.io\n  kind: Role\n  name: flightbay-hubble-flows\nsubjects:\n%s", HubbleNamespace, subject)
+	}
 	if len(namespaces) > 0 {
 		for _, ns := range namespaces {
 			fmt.Fprintf(&b, "---\napiVersion: rbac.authorization.k8s.io/v1\nkind: Role\nmetadata:\n  name: flightbay-reader\n  namespace: %s\nrules:\n", ns)
@@ -448,6 +483,7 @@ func (p *Policy) RBAC(discovered []APIResource) string {
 			fmt.Fprintf(&b, "---\napiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRoleBinding\nmetadata:\n  name: flightbay-namespace-reader\nroleRef:\n  apiGroup: rbac.authorization.k8s.io\n  kind: ClusterRole\n  name: flightbay-namespace-reader\nsubjects:\n%s", subject)
 		}
 		crdRole()
+		hubbleRole()
 		return b.String()
 	}
 	for g, rs := range clusterRules {
@@ -465,5 +501,6 @@ func (p *Policy) RBAC(discovered []APIResource) string {
 	if len(crdNames) > 0 && !(nsRules["*"] != nil && nsRules["*"]["*"]) {
 		crdRole()
 	}
+	hubbleRole()
 	return b.String()
 }

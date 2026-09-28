@@ -111,3 +111,8 @@ func (s *forwardSession) Close() {
 		close(s.stop)
 	}
 }
+
+// LocalPort is the 127.0.0.1 port a remote port is forwarded to (0 if not
+// forwarded), for clients that speak something other than HTTP GET, such as
+// the hubble CLI talking gRPC to hubble-relay.
+func (s *forwardSession) LocalPort(remote int) int { return s.local[remote] }

@@ -10,7 +10,7 @@ import (
 // that matter drawn one by one (risky, used, configured, sensitive, or in the
 // agent's own namespace), the rest folded into one node per namespace, and
 // the onward paths to the internet.
-func (e *engine) graph(w *workload, a Agent, reach []pair, via []Path, declHosts map[string]bool, obs map[string]*observed) ([]Node, []Edge) {
+func (e *engine) graph(w *workload, a Agent, reach []pair, via []Path) ([]Node, []Edge) {
 	c := e.c
 	agentID := "agent:" + w.id
 	nodes := []Node{{ID: agentID, Type: "agent", Label: w.ns + "/" + w.name, Namespace: w.ns, Depth: 0, Risk: riskOfAgent(a), Ref: refOf(w.obj), Detail: a.Type}}
@@ -89,13 +89,14 @@ func (e *engine) graph(w *workload, a Agent, reach []pair, via []Path, declHosts
 			continue
 		}
 		for _, b := range c.agwBackends(n.sv) {
-			id := "ext:" + b.label
-			typ := "external"
-			if b.svc != nil {
-				id, typ = "svc:"+b.svc.id, "service"
+			if b.svc == nil {
+				continue // external backends are drawn from a.External below
 			}
-			addNode(Node{ID: id, Type: typ, Label: b.label, Depth: 2, Risk: b.risk, Detail: b.why, Classes: b.classes})
-			edges = append(edges, Edge{From: "svc:" + n.sv.id, To: id, Verdict: Allowed, Via: "agentgateway route " + b.route, Risk: b.risk, Why: b.why})
+			id := "svc:" + b.svc.id
+			addNode(Node{ID: id, Type: "service", Label: b.label, Depth: 2, Risk: b.risk, Detail: b.why, Classes: b.classes})
+			if !hasEdge(edges, "svc:"+n.sv.id, id) {
+				edges = append(edges, Edge{From: "svc:" + n.sv.id, To: id, Verdict: Allowed, Via: "agentgateway route " + b.route, Risk: b.risk, Why: b.why})
+			}
 		}
 	}
 
@@ -158,7 +159,6 @@ func (e *engine) graph(w *workload, a Agent, reach []pair, via []Path, declHosts
 			prev = id
 		}
 	}
-	addNode(internetNode)
 	if a.Metadata != "" && a.Metadata != Denied {
 		risk, why := "red", "cloud node credentials"
 		if c.platform == "kind" {
@@ -169,24 +169,61 @@ func (e *engine) graph(w *workload, a Agent, reach []pair, via []Path, declHosts
 		addNode(Node{ID: "metadata", Type: "metadata", Label: "169.254.169.254", Depth: 1, Risk: risk, Detail: why})
 		edges = append(edges, Edge{From: agentID, To: "metadata", Verdict: a.Metadata, Risk: risk, Why: why})
 	}
-	for _, h := range sortedKeys(declHosts) {
-		id := "ext:" + h
-		risk := "amber"
-		if a.Internet != Allowed {
-			risk = "grey"
-		}
-		addNode(Node{ID: id, Type: "external", Label: h, Depth: maxDepth, Risk: risk, Detail: "configured in the agent"})
-		edges = append(edges, Edge{From: inet, To: id, Verdict: a.Internet, Declared: true, Risk: risk, Why: "configured dependency"})
-	}
-	for k, o := range obs {
-		if !strings.HasPrefix(k, "ext:") {
+	// Destinations outside the cluster, in the last column: through the
+	// gateway that carries them, or out through the internet node.
+	drawnExt := 0
+	for _, x := range a.External {
+		if x.ReachedVia == ViaNode || drawnExt >= 24 {
 			continue
 		}
-		addNode(Node{ID: k, Type: "external", Label: strings.TrimPrefix(k, "ext:"), Depth: maxDepth, Risk: "amber", Detail: fmt.Sprintf("called %d times", o.requests)})
-		edges = append(edges, Edge{From: inet, To: k, Verdict: Allowed, Observed: o.requests, ObsMethods: o.methods, Risk: "amber", Why: "seen in the access logs"})
+		drawnExt++
+		id := "ext:" + x.Host
+		tag := extTag[x.Class]
+		cls := []string{}
+		if tag != "" {
+			cls = append(cls, tag)
+		}
+		via := x.ReachedVia
+		if x.ReachedVia == ViaGateway && x.Authn {
+			via += ", authn"
+		}
+		if x.Observed > 0 {
+			via += fmt.Sprintf(", %d call%s", x.Observed, plural(x.Observed))
+		}
+		detail := x.Product + ". " + x.Why
+		if len(x.Credentials) > 0 {
+			detail += ". Holds " + strings.Join(x.Credentials, ", ")
+		}
+		addNode(Node{ID: id, Type: "external", Label: x.Host, Depth: maxDepth + 1, Risk: x.Risk, Classes: cls, Detail: detail, Via: via})
+		ed := Edge{To: id, Verdict: x.Verdict, Risk: x.Risk, Why: x.Why, Observed: x.Observed, ObsMethods: x.Methods, Tools: x.Tools, ObservedBy: x.Sources, Declared: len(x.DeclaredIn) > 0}
+		from := inet
+		if x.ReachedVia == ViaGateway && x.Gateway != "" {
+			if sv := c.svcByKey[x.Gateway]; sv != nil && have["svc:"+sv.id] {
+				from = "svc:" + sv.id
+				ed.Via = "agentgateway route " + x.Route
+			}
+		} else if x.ReachedVia == ViaProxy {
+			if sv := c.svcByKey[x.Gateway]; sv != nil && have["svc:"+sv.id] {
+				from = "svc:" + sv.id
+				ed.Via = "HTTP proxy " + x.Gateway
+			}
+		}
+		if from == inet && a.Internet != Allowed && x.Verdict == Allowed {
+			internetNode.Risk = "amber" // an allowed host through otherwise closed egress
+		}
+		if x.Verdict == Denied {
+			ed.Risk = "grey"
+		}
+		ed.From = from
+		edges = append(edges, ed)
+	}
+	if !have[inet] {
+		addNode(internetNode)
 	}
 	return nodes, edges
 }
+
+var extTag = map[string]string{"registry": "registry", "proxy": "proxy", "llm": "llm", "git": "git", "storage": "storage", "exfil": "exfil", "metadata": "metadata"}
 
 func hasEdge(es []Edge, from, to string) bool {
 	for _, e := range es {

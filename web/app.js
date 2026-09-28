@@ -17,7 +17,7 @@ const S = {
   search: {q: '', limit: 200},
   pst: {tab: 'summary', area: '', status: 'attention', q: '', open: null},
   nv: {resource: 'pods', group: '', ns: '', q: '', sel: 0, cmd: false},
-  reach: {sel: '', q: '', type: '', dq: '', dchip: 'all', fixOpen: {}, list: null, listRev: null, detail: null, detailKey: '', scroll: false, gview: '', gexpand: {}, gz: null, gfull: false},
+  reach: {sel: '', q: '', type: '', dq: '', dchip: 'all', echip: 'all', fixOpen: {}, list: null, listRev: null, detail: null, detailKey: '', scroll: false, gview: '', gexpand: {}, gz: null, gfull: false},
 };
 
 async function api(path, params) {
@@ -666,6 +666,11 @@ const rcCap = s => s ? s[0].toUpperCase() + s.slice(1) : '';
 const rcBadge = (v, cls, label) => `<span class="rc-badge ${cls || ''}">${esc(label ?? v ?? '—')}</span>`;
 const rcTypePill = t => `<span class="rc-type rc-type-${esc(t)}">${esc(rcTypes[t] || t)}</span>`;
 const rcRisk = r => `<span class="rc-risk rc-${esc(r)}"><i></i>${esc(r)}</span>`;
+// Flow sources as small badges: which logs saw a call.
+const rcSrcs = xs => (xs || []).map(x => `<span class="rc-src rc-src-${esc(x)}">${esc(x)}</span>`).join('');
+const rcSrcList = xs => (xs || []).length ? xs.join(', ') : '';
+const rcClsTag = {registry: 'registry', proxy: 'proxy', llm: 'llm', git: 'git', storage: 'storage', exfil: 'exfil', metadata: 'metadata', unknown: 'unknown'};
+const rcVia = x => ({direct: 'direct egress', gateway: 'through agentgateway', 'egress-gateway': 'egress waypoint', proxy: 'HTTP proxy', blocked: 'blocked', node: 'image pulls (node)'})[x.reachedVia] || x.reachedVia;
 // svc:<cluster>/<ns>/svc/<name> -> {namespace, name}
 const rcSvc = id => { if (!id || !id.startsWith('svc:')) return null; const p = id.slice(4).split('/'); return p.length >= 3 ? {namespace: p[p.length - 3], name: p[p.length - 1]} : null; };
 const rcFields = {type: a => [a.type], ns: a => [a.namespace], namespace: a => [a.namespace], radius: a => [a.radius], internet: a => [a.internet]};
@@ -737,13 +742,14 @@ function rcDetail(a) {
     tile(`${c.direct}<small> / ${c.services}</small>`, '', `Reaches ${c.direct} of ${c.services} Services`, 'Direct'),
     tile(String(c.closure), '', `${c.closure} in any number of hops`, 'Total'),
     tile(String(c.write), c.write ? 'red' : 'green', `Can write to ${c.write}`, 'Write'),
-    a.observed ? tile(String(c.observed), '', `Called ${c.observed} in the capture`, 'Used') : tile('—', 'muted', 'no access logs for this agent', 'Used'),
-    a.observed ? tile(String(c.neverUsed), c.neverUsed ? 'amber' : 'green', `${c.neverUsed} allowed but never used`, 'Never used') : tile('—', 'muted', 'needs access logs to tell', 'Never used'),
+    a.observed ? tile(String(c.observed), '', `Called ${c.observed} in the capture, seen by ${esc(rcSrcList(a.observedBy))}`, 'Used') : tile('—', 'muted', 'no flow logs cover this agent', 'Used'),
+    a.observed ? tile(String(c.neverUsed), c.neverUsed ? 'amber' : 'green', `${c.neverUsed} allowed but never called, per ${esc(rcSrcList(a.observedBy))}`, 'Never used') : tile('—', 'muted', 'needs flow logs (ztunnel, agentgateway, Hubble…) to tell', 'Never used'),
+    tile(String(c.external || 0), (a.external || []).some(x => x.risk === 'red') ? 'red' : '', `hosts outside the cluster${(a.external || []).filter(x => x.reachedVia === 'gateway').length ? `, ${(a.external || []).filter(x => x.reachedVia === 'gateway').length} through the gateway` : ''}`, 'External'),
   ].join('');
   const header = `<section class="panel mt" id="rc-detail"><div class="panel-body">
     <div class="row between wrap" style="align-items:flex-start"><div class="row wrap"><h2 class="mono" style="font-size:17px">${esc(rcName(a))}</h2>${rcTypePill(a.type)}<span class="tag">${esc(a.kind)}</span>${(R.list?.clusters || []).length > 1 ? `<span class="tag">${esc(a.cluster)}</span>` : ''}</div>
       <div class="row wrap">${a.ref ? `<button id="rc-obj">Open ${esc(a.kind)}</button>` : ''}<button id="rc-logs">Logs from this agent</button><button id="rc-term">&gt;_ fbreach in terminal</button><button class="ghost" id="rc-close" title="Back to the list" aria-label="Close">✕</button></div></div>
-    <p class="rc-summary">${esc(a.summary)}</p><p class="muted" style="font-size:12px;margin-top:4px">Why it is listed: ${esc(a.why)}</p>
+    <p class="rc-summary">${esc(a.summary)}</p><p class="muted" style="font-size:12px;margin-top:4px">Why it is listed: ${esc(a.why)}${a.observed ? ` · Observed by ${esc(rcSrcList(a.observedBy))}` : ' · No flow logs cover this agent, so what it actually calls is unknown'}</p>
     <div class="rc-tiles">${tiles}</div></div></section>`;
   const G = rcGraphModel(a);
   const vbtn = (v, label, hint) => `<button class="chip ${G.view === v ? 'on' : ''}" data-rgview="${v}" title="${esc(hint)}">${label}</button>`;
@@ -752,8 +758,8 @@ function rcDetail(a) {
       ${Object.keys(R.gexpand).length ? '<button class="ghost" id="rg-collapse">Fold namespaces</button>' : ''}<small class="muted">${G.folded ? `${G.shown} of ${G.total} shown one by one, ${G.folded} folded into ${G.groups} namespace${G.groups === 1 ? '' : 's'}` : `all ${G.total} destinations`}</small></div>
       <div class="row rc-zoom"><button id="rg-out" title="Zoom out (-)">−</button><span id="rg-pct" class="mono muted">100%</span><button id="rg-in" title="Zoom in (+)">+</button><button id="rg-fit" title="Fit (0)">Fit</button><button id="rg-full" title="${R.gfull ? 'Exit full screen (Esc)' : 'Full screen (f)'}">${R.gfull ? '⤡ Exit' : '⤢ Full screen'}</button></div></div>
     <div class="rg-vp" id="rg-vp" tabindex="0">${rcGraph(a, G)}</div>
-    <div class="rc-legend"><span><i class="rc-sw red"></i>open, write access or internet</span><span><i class="rc-sw amber"></i>allowed with no request-level rule, or unknown</span><span><i class="rc-sw green"></i>read-only or blocked</span><span><i class="rc-sw grey"></i>blocked or not applicable</span><span><i class="rc-sw dash"></i>denied or unknown verdict</span><span class="muted">Drag to move · pinch or Ctrl+scroll to zoom · click a box to open it</span></div></section>`;
-  const kindCls = {internet: 'red', fetcher: 'red', metadata: 'red', credentials: 'red', store: 'amber', service: 'amber'};
+    <div class="rc-legend"><span><i class="rc-sw red"></i>open, write access or internet</span><span><i class="rc-sw amber"></i>allowed with no request-level rule, or unknown</span><span><i class="rc-sw green"></i>read-only or blocked</span><span><i class="rc-sw grey"></i>blocked or not applicable</span><span><i class="rc-sw dash"></i>denied or unknown verdict</span><span class="muted">Last column: hosts outside the cluster</span><span class="muted">Drag to move · pinch or Ctrl+scroll to zoom · click a box to open it</span></div></section>`;
+  const kindCls = {internet: 'red', fetcher: 'red', registry: 'red', exfil: 'red', metadata: 'red', credentials: 'red', store: 'amber', service: 'amber'};
   const paths = (a.paths || []).map(p => `<div class="rc-path"><span class="rc-kind ${kindCls[p.kind] || ''}">${esc(p.kind)}</span>
     <div class="rc-chain">${p.hops.map(h => `<span class="rc-hop ${h === 'internet' || h === '169.254.169.254' ? 'net' : ''}">${esc(h)}</span>`).join('<span class="rc-arrow">→</span>')}</div>
     <small class="muted rc-why">${esc(p.why)}</small></div>`).join('');
@@ -774,7 +780,7 @@ function rcDetail(a) {
     return `<div class="rc-finding ${open ? 'open' : ''}"><button class="rc-fhead" data-rcfopen="${i}">
       <span class="pst-sev pst-sev-${esc(f.severity)}">${esc(f.severity)}</span><strong>${esc(f.title)}</strong>
       ${n ? `<span class="tag">${n} affected</span>` : ''}<span style="flex:1"></span>${f.fix ? '<small class="muted">fix included</small>' : ''}<span class="muted">${open ? '▾' : '▸'}</span></button>
-      ${open ? `<div class="rc-fbody"><p>${esc(f.detail)}</p>${itemTable(f)}
+      ${open ? `<div class="rc-fbody"><p>${esc(f.detail)}</p>${itemTable(f)}${(f.advice || []).length ? `<h3 class="mt">Beyond the YAML</h3><ul class="rc-advice">${f.advice.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
         ${f.fix ? `<div class="row between mt"><h3>How to fix</h3><div class="row"><button data-rccopy="${i}">Copy YAML</button>${f.source ? `<a href="${esc(f.source)}" target="_blank" rel="noopener">Read the guide ↗</a>` : ''}</div></div><pre class="code mt">${esc(f.fix)}</pre>`
           : f.source ? `<p class="mt"><a href="${esc(f.source)}" target="_blank" rel="noopener">Read the guide ↗</a></p>` : ''}</div>` : ''}</div>`;
   }).join('');
@@ -805,7 +811,7 @@ function rcDetail(a) {
   const counts = Object.fromEntries(['all', 'risky', 'used', 'never'].map(k => [k, direct.filter(e => chipOk(e, k)).length]));
   const dchip = (k, label) => `<button class="chip ${R.dchip === k ? 'on' : ''}" data-rcd="${k}">${label} <small>${counts[k]}</small></button>`;
   const cl = a.cluster;
-  const destTable = `<section class="panel mt"><div class="panel-head"><h2>Destinations</h2><small class="muted">Every Service it can reach in one hop, riskiest first</small></div><div class="panel-body" style="padding-bottom:0">
+  const destTable = `<section class="panel mt"><div class="panel-head"><h2>Destinations</h2><small class="muted">Every Service it can reach in one hop, riskiest first${a.observed ? ` · calls seen by ${esc(rcSrcList(a.observedBy))}` : ''}. Hosts outside the cluster are on the External tab</small></div><div class="panel-body" style="padding-bottom:0">
     <div class="toolbar"><div class="row wrap">${dchip('all', 'All')}${dchip('risky', 'Risky')}${dchip('used', 'Used')}${dchip('never', 'Never used')}</div>
       <input id="rc-dq" placeholder="Filter destinations" value="${esc(R.dq)}" autocomplete="off" spellcheck="false" style="min-width:240px"></div></div>
     <div class="table-scroll" style="max-height:60vh">${drows.length ? `<table class="rc-dest"><thead><tr><th>Risk</th><th>Destination</th><th>Verdict</th><th>Methods</th><th>Called</th><th>Configured</th><th>Why</th></tr></thead><tbody>
@@ -813,15 +819,43 @@ function rcDetail(a) {
         <td class="mono rc-dst">${s ? `<button class="link" data-rcsvc="${attr({cluster: cl, group: '', resource: 'services', namespace: s.namespace, name: s.name})}">${esc(dest(e))}</button>` : esc(dest(e))}${never.has(dest(e)) ? '<br><small class="muted">never used</small>' : ''}</td>
         <td class="${e.verdict === 'allowed' ? '' : e.verdict === 'denied' ? 'green' : 'amber'}">${esc(e.verdict)}${e.layer ? ` <small class="muted">${esc(e.layer)}</small>` : ''}</td>
         <td class="mono rc-small">${e.methods == null ? '<span class="muted">any method</span>' : esc(e.methods.join(', ') || 'none')}${e.write ? ' <span class="red">· write</span>' : ''}</td>
-        <td class="rc-small">${e.observed ? `${num(e.observed)}${(e.observedMethods || []).length ? ` <span class="muted mono">${esc(e.observedMethods.join(', '))}</span>` : ''}` : '<span class="muted">not seen</span>'}</td>
+        <td class="rc-small">${e.observed ? `${num(e.observed)}${(e.observedMethods || []).length ? ` <span class="muted mono">${esc(e.observedMethods.join(', '))}</span>` : ''}${e.observedDenied ? ` <span class="amber">· ${num(e.observedDenied)} denied</span>` : ''}${(e.tools || []).length ? `<div class="rc-tools">tools ${e.tools.map(t => `<span class="mono">${esc(t)}</span>`).join(', ')}</div>` : ''}<div class="rc-srcs">${rcSrcs(e.observedBy)}</div>` : '<span class="muted">not seen</span>'}</td>
         <td>${e.declared ? '<span class="green">yes</span>' : '<span class="muted">no</span>'}</td>
         <td class="rc-wrap">${esc(e.why)}${(e.reasons || []).length ? `<br><small class="muted">${esc(e.reasons.join('; '))}</small>` : ''}${e.via ? `<br><small class="muted">via ${esc(e.via)}</small>` : ''}</td></tr>`; }).join('')}
     </tbody></table>` : `<div class="empty"><strong>${direct.length ? 'No destinations match' : 'No destinations'}</strong>${direct.length ? 'Change the filter above.' : 'Nothing in the cluster is reachable from this agent.'}</div>`}</div></section>`;
-  const tabs = [['graph', 'Blast radius', ''], ['findings', 'Findings', (a.findings || []).length], ['paths', 'Paths', (a.paths || []).length], ['dest', 'Destinations', direct.length], ['identity', 'Identity', '']];
+  const ext = a.external || [];
+  const eChipOk = (x, k) => k === 'registries' ? (x.class === 'registry' || x.class === 'proxy') : k === 'llm' ? x.class === 'llm' : k === 'direct' ? x.reachedVia === 'direct' : k === 'gateway' ? x.reachedVia === 'gateway' : k === 'observed' ? (x.observed > 0 || x.lookups > 0) : true;
+  const echips = [['all', 'All'], ['registries', 'Registries'], ['llm', 'LLM'], ['direct', 'Direct'], ['gateway', 'Through gateway'], ['observed', 'Observed']];
+  const erows = ext.filter(x => eChipOk(x, R.echip));
+  const eHow = x => {
+    const bits = [`<strong>${esc(rcVia(x))}</strong>`];
+    if (x.reachedVia === 'gateway') bits.push(`<div class="mono rc-small">${esc(x.gateway || '')}${x.route ? ` · route ${esc(x.route)}` : ''}</div><div class="rc-small">${x.authn ? '<span class="green">authn required</span>' : '<span class="amber">no authn</span>'}${x.readOnly ? ' · <span class="green">read-only</span>' : ' · <span class="amber">any method</span>'}</div>`);
+    else if (x.gateway) bits.push(`<div class="mono rc-small">${esc(x.gateway)}</div>`);
+    if (x.reachedVia !== 'node' && x.verdict && x.reachedVia !== 'blocked') bits.push(`<div class="rc-small">${x.reachedVia === 'gateway' ? `direct egress <span class="${rcNetCls[x.directEgress] || ''}">${esc(x.directEgress || '—')}</span>` : `egress <span class="${rcNetCls[x.verdict] || ''}">${esc(x.verdict)}</span>`}</div>`);
+    if (x.gatewayRoute) bits.push(`<div class="rc-small muted">a route exists: ${esc(x.gatewayRoute)}</div>`);
+    return bits.join('');
+  };
+  const eCred = x => (x.credentials || []).length || (x.gatewayCredentials || []).length
+    ? `${(x.credentials || []).map(c => `<div class="mono rc-small red">${esc(c)}</div>`).join('')}${(x.gatewayCredentials || []).map(c => `<div class="mono rc-small amber" title="The gateway adds this on the way">${esc(c)} <span class="muted">gateway</span></div>`).join('')}`
+    : '<span class="muted">none seen</span>';
+  const eObs = x => x.observed || x.lookups
+    ? `${x.observed ? num(x.observed) : ''}${(x.methods || []).length ? ` <span class="mono ${x.writeSeen ? 'red' : 'muted'}">${esc(x.methods.join(', '))}</span>` : ''}${x.lookups ? `<div class="rc-small muted">${num(x.lookups)} DNS lookup${x.lookups === 1 ? '' : 's'}</div>` : ''}${(x.tools || []).length ? `<div class="rc-tools">tools ${x.tools.map(t => `<span class="mono">${esc(t)}</span>`).join(', ')}</div>` : ''}<div class="rc-srcs">${rcSrcs(x.sources)}</div>`
+    : '<span class="muted">not seen</span>';
+  const extTable = `<section class="panel mt"><div class="panel-head"><h2>External</h2><small class="muted">Every host outside the cluster it is configured for, was seen calling, or can reach through a gateway. A registry out there lends its reach just like one inside.</small></div><div class="panel-body" style="padding-bottom:0">
+    <div class="toolbar"><div class="row wrap">${echips.map(([k, label]) => `<button class="chip ${R.echip === k ? 'on' : ''}" data-rce="${k}">${label} <small>${ext.filter(x => eChipOk(x, k)).length}</small></button>`).join('')}</div></div></div>
+    <div class="table-scroll" style="max-height:62vh">${erows.length ? `<table class="rc-ext"><thead><tr><th>Host</th><th>What it is</th><th>How it's reached</th><th>Credential</th><th>Observed</th><th>Configured in</th><th>Risk</th></tr></thead><tbody>
+      ${erows.map(x => `<tr class="${x.reachedVia === 'node' ? 'rc-dim' : ''}"><td class="mono rc-host">${esc(x.host)}${x.ip && x.ip !== x.host ? `<br><small class="muted">${esc(x.ip)}</small>` : ''}</td>
+        <td class="rc-what"><span class="rc-cls rc-cls-${esc(x.class)}">${esc(rcClsTag[x.class] || x.class)}</span><div class="rc-small">${esc(x.product || '')}</div></td>
+        <td class="rc-how">${eHow(x)}</td><td class="rc-cred">${eCred(x)}</td><td class="rc-small rc-obs">${eObs(x)}</td>
+        <td class="rc-small rc-in">${(x.declaredIn || []).map(d => `<div>${esc(d)}</div>`).join('') || '<span class="muted">not configured</span>'}</td>
+        <td class="rc-riskcell">${rcRisk(x.risk)}<div class="rc-small muted">${esc(x.why)}</div></td></tr>`).join('')}
+    </tbody></table>` : `<div class="empty"><strong>${ext.length ? 'No hosts match' : 'No external destinations'}</strong>${ext.length ? 'Choose another filter above.' : 'Nothing in its configuration, its gateways or the flow logs points outside the cluster.'}</div>`}</div></section>`;
+  const tabs = [['graph', 'Blast radius', ''], ['findings', 'Findings', (a.findings || []).length], ['paths', 'Paths', (a.paths || []).length], ['dest', 'Destinations', direct.length], ['external', 'External', ext.filter(x => x.reachedVia !== 'node').length], ['identity', 'Identity', '']];
   const tab = R.dtab || 'graph';
   const crit = (c.critical || 0) + (c.high || 0);
-  const tabBar = `<nav class="pst-tabs rc-tabs">${tabs.map(([k, label, n]) => `<button class="pst-tab ${tab === k ? 'on' : ''}" data-rctab="${k}">${label}${n !== '' && n ? `<span class="pst-tab-n ${k === 'findings' && crit ? 'red' : ''}">${n}</span>` : ''}</button>`).join('')}</nav>`;
-  const body = {graph: graph + pathsPanel, findings: `<div class="mt">${findingsPanel}</div>`, paths: pathsPanel, dest: destTable, identity: `<div class="mt">${identity}</div>`}[tab] || graph;
+  const tabRed = k => (k === 'findings' && crit) || (k === 'external' && ext.some(x => x.risk === 'red'));
+  const tabBar = `<nav class="pst-tabs rc-tabs">${tabs.map(([k, label, n]) => `<button class="pst-tab ${tab === k ? 'on' : ''}" data-rctab="${k}">${label}${n !== '' && n ? `<span class="pst-tab-n ${tabRed(k) ? 'red' : ''}">${n}</span>` : ''}</button>`).join('')}</nav>`;
+  const body = {graph: graph + pathsPanel, findings: `<div class="mt">${findingsPanel}</div>`, paths: pathsPanel, dest: destTable, external: extTable, identity: `<div class="mt">${identity}</div>`}[tab] || graph;
   return header + tabBar + body;
 }
 
@@ -882,7 +916,7 @@ function rcGraph(a, G) {
   for (const n of nodes) {
     if (n.type === 'agent') col[n.id] = 0;
     else if (n.type === 'internet' || n.type === 'metadata') col[n.id] = E;
-    else if (n.type === 'external') col[n.id] = (inbound[n.id] || []).includes('internet') ? E + 1 : E;
+    else if (n.type === 'external') col[n.id] = E + 1; // every host outside the cluster in the last column
   }
   const ncol = Math.max(...Object.values(col)) + 1;
   const cols = Array.from({length: ncol}, () => []);
@@ -972,13 +1006,14 @@ function rcGraph(a, G) {
       const g1 = sx + 12 + (i % 6) * 5, g2 = Math.max(4, nodeX(e.to) - 18 - (i % 6) * 5);
       d = `M${sx},${sy} H${g1} V${ly} H${g2} V${ty} H${tx}`;
     }
-    const tip = [`${labelOf(e.from)} → ${labelOf(e.to)}`, `${e.verdict}${e.layer ? ' (' + e.layer + ')' : ''}: ${e.why || ''}`, ...(e.reasons || []), e.via ? 'via ' + e.via : '', e.methods ? 'methods: ' + e.methods.join(', ') : '', e.observed ? `called ${e.observed} times` : ''].filter(Boolean).join('\n');
+    const tip = [`${labelOf(e.from)} → ${labelOf(e.to)}`, `${e.verdict}${e.layer ? ' (' + e.layer + ')' : ''}: ${e.why || ''}`, ...(e.reasons || []), e.via ? 'via ' + e.via : '', e.methods ? 'methods: ' + e.methods.join(', ') : '', e.observed ? `called ${e.observed} times${(e.observedBy || []).length ? ' (seen by ' + e.observedBy.join(', ') + ')' : ''}` : '', (e.tools || []).length ? 'tools: ' + e.tools.join(', ') : ''].filter(Boolean).join('\n');
     return `<g class="rg-edge rg-${risk(e.risk)} ${dash(e) ? 'rg-dash' : ''}"><title>${esc(tip)}</title><path class="rg-hit" d="${d}"/><path class="rg-line" d="${d}" marker-end="url(#rga-${risk(e.risk)})"/></g>`;
   }).join('');
   const split = n => n.type === 'service' && n.label.includes('/') ? [n.label.slice(n.label.indexOf('/') + 1), n.label.slice(0, n.label.indexOf('/'))] : [n.label, ''];
   const title = n => n.type === 'group' ? `${n.label} (${n.count})` : split(n)[0];
   const sub = n => n.type === 'agent' ? (rcTypes[a.type] || a.type) : n.type === 'group' ? `${n.count} Service${n.count === 1 ? '' : 's'} · click to open up` : n.type === 'internet' ? 'outside the cluster' : n.type === 'metadata' ? 'cloud instance metadata'
-    : [...(n.classes || []), split(n)[1]].filter(Boolean).join(' · ') || (n.type === 'external' ? 'external host' : 'service');
+    : n.type === 'external' ? [...(n.classes || []), n.via].filter(Boolean).join(' · ') || 'external host'
+    : [...(n.classes || []), split(n)[1]].filter(Boolean).join(' · ') || 'service';
   const nodeSvg = nodes.map(n => {
     const click = n.type === 'group' || n.ref || rcSvc(n.id);
     const tip = [n.label, n.namespace && n.type !== 'group' ? 'namespace ' + n.namespace : '', (n.classes || []).join(', '), n.detail, click ? (n.type === 'group' ? 'Click to open the namespace up' : 'Click to open') : ''].filter(Boolean).join('\n');
@@ -1088,6 +1123,7 @@ after.reach = () => {
   document.querySelectorAll('[data-rctab]').forEach(b => b.onclick = () => { R.dtab = b.dataset.rctab; const y = scrollY; render().then(() => scrollTo(0, y)); });
   document.querySelectorAll('[data-rccopy]').forEach(b => b.onclick = () => { const f = a.findings[+b.dataset.rccopy]; navigator.clipboard.writeText(f.fix).then(() => toast('Fix copied'), () => toast('Clipboard unavailable')); });
   document.querySelectorAll('[data-rcd]').forEach(b => b.onclick = () => { R.dchip = b.dataset.rcd; const y = scrollY; render().then(() => scrollTo(0, y)); });
+  document.querySelectorAll('[data-rce]').forEach(b => b.onclick = () => { R.echip = b.dataset.rce; const y = scrollY; render().then(() => scrollTo(0, y)); });
   const dq = $('#rc-dq');
   if (dq) { let t; dq.oninput = e => { clearTimeout(t); t = setTimeout(() => { const c = e.target.selectionStart, v = e.target.value, y = scrollY; R.dq = v; render().then(() => { scrollTo(0, y); refocus('#rc-dq', c, v); }); }, 250); }; }
 };

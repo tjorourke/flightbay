@@ -214,3 +214,36 @@ func TestDeferredCategoriesLoadLater(t *testing.T) {
 		t.Fatalf("deferred logs not loaded later: %+v", st)
 	}
 }
+
+// A flow log attached at collection is imported once, even when the bundle
+// is loaded again (Reload), and is marked as part of the signed bundle.
+func TestImportAttachedFlows(t *testing.T) {
+	var buf bytes.Buffer
+	w, err := bundle.NewWriter(&buf, bundle.WriterOptions{Compression: "fastest"})
+	must(t, err)
+	must(t, w.WriteHeader(header()))
+	name := bundle.FlowsPath("mesh1", "aws-vpc", "vpc.log")
+	must(t, w.Add(name, []byte("2 123456789010 eni-1235b8ca123456789 172.31.16.139 172.31.16.21 20641 22 6 20 4249 1418530010 1418530070 ACCEPT OK\n")))
+	must(t, w.Add(bundle.FlowsPath("mesh1", "bogus", "junk.csv"), []byte("not,a,flow\n")))
+	must(t, w.Close(bundle.Manifest{Complete: true}))
+	ws := store.New()
+	for i := 0; i < 2; i++ {
+		must(t, Run(context.Background(), bytes.NewReader(buf.Bytes()), ws, Options{}))
+	}
+	fs := ws.FlowsFrom("mesh1", "aws-vpc")
+	if len(fs) != 1 || fs[0].Count != 1 || fs[0].Origin != store.OriginBundle || fs[0].File != "vpc.log" || fs[0].DstPort != 22 {
+		t.Fatalf("%+v", fs)
+	}
+	if !ws.State().Verified {
+		t.Fatalf("a bad flow file must not fail the import: %+v", ws.State())
+	}
+	if !strings.Contains(string(bytes.Join(func() [][]byte {
+		var o [][]byte
+		for _, l := range ws.CollectionLog() {
+			o = append(o, l)
+		}
+		return o
+	}(), nil)), "import-flows") {
+		t.Fatal("bad flow file not recorded in the collection log")
+	}
+}

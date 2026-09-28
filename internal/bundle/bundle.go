@@ -64,6 +64,9 @@ const (
 	CoverageEvents   = "events"
 	// CoverageDiagnostic is a proxy dump, control-plane debug output or metrics scrape.
 	CoverageDiagnostic = "diagnostic"
+	// CoverageFlows is a flow log file attached to the bundle (Hubble, Calico,
+	// VPC flow logs, generic CSV/JSON) or collected from hubble-relay.
+	CoverageFlows = "flows"
 
 	StateComplete  = "complete"
 	StateFailed    = "failed"
@@ -533,6 +536,7 @@ const (
 	PathRedaction  = "redaction"
 	PathCollection = "collection-log"
 	PathSolo       = "solo"
+	PathFlows      = "flows"
 )
 
 // PathInfo classifies a member name.
@@ -584,6 +588,12 @@ func SoloPath(cluster, kind, ns, pod, file string) string {
 		return "clusters/" + SafeID(cluster) + "/solo/" + file
 	}
 	return "clusters/" + SafeID(cluster) + "/solo/" + kind + "/" + SafeID(ns) + "/" + SafeID(pod) + "/" + file
+}
+
+// FlowsPath is clusters/<c>/flows/<format>/<file>: a flow log file attached
+// to the bundle, in a format internal/flows reads.
+func FlowsPath(cluster, format, file string) string {
+	return "clusters/" + SafeID(cluster) + "/flows/" + SafeID(format) + "/" + SafeID(file)
 }
 
 func DiscoveryPath(cluster, file string) string {
@@ -650,6 +660,11 @@ func ParsePath(name string) (PathInfo, bool) {
 		info.Kind, info.ID = PathCoverage, strings.TrimSuffix(s[3], ".json")
 	case "discovery":
 		info.Kind, info.File = PathDiscovery, strings.Join(s[3:], "/")
+	case "flows":
+		if len(s) != 5 || s[3] == "" || s[4] == "" {
+			return PathInfo{}, false
+		}
+		info.Kind, info.Sub, info.File = PathFlows, s[3], s[4]
 	case "solo":
 		// solo/summary.json or solo/<kind>/<ns>/<pod>/<file>
 		info.Kind = PathSolo

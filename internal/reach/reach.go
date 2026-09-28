@@ -57,10 +57,14 @@ type Edge struct {
 	Via        string   `json:"via,omitempty"`
 	Reasons    []string `json:"reasons"`
 	Conditions []string `json:"conditions,omitempty"`
-	Observed   int      `json:"observed"` // requests seen in the access logs
+	Observed   int      `json:"observed"` // requests seen in the flows (the most any one source saw)
 	ObsMethods []string `json:"observedMethods,omitempty"`
-	Declared   bool     `json:"declared"` // configured as a dependency (env URL, ModelConfig, tool server)
-	Risk       string   `json:"risk"`     // red, amber, green, grey
+	ObsPaths   []string `json:"observedPaths,omitempty"`
+	ObsDenied  int      `json:"observedDenied,omitempty"` // of those, denied
+	Tools      []string `json:"tools,omitempty"`          // MCP tools called
+	ObservedBy []string `json:"observedBy,omitempty"`     // flow sources that saw it: ztunnel, agentgateway, hubble...
+	Declared   bool     `json:"declared"`                 // configured as a dependency (env URL, ModelConfig, tool server)
+	Risk       string   `json:"risk"`                     // red, amber, green, grey
 	Why        string   `json:"why"`
 }
 
@@ -76,6 +80,7 @@ type Node struct {
 	Count     int      `json:"count,omitempty"` // for group nodes
 	Ref       *Ref     `json:"ref,omitempty"`
 	Detail    string   `json:"detail,omitempty"`
+	Via       string   `json:"via,omitempty"` // external hosts: how it is reached
 }
 
 // Path is a chain from the agent to something that matters.
@@ -93,6 +98,7 @@ type Finding struct {
 	Detail   string        `json:"detail"` // one or two sentences
 	Items    []FindingItem `json:"items,omitempty"`
 	Fix      string        `json:"fix,omitempty"`
+	Advice   []string      `json:"advice,omitempty"` // steps that are not YAML
 	Source   string        `json:"source"`
 }
 
@@ -107,27 +113,29 @@ type FindingItem struct {
 
 // Agent is the blast radius of one agent-like workload.
 type Agent struct {
-	ID        string    `json:"id"`
-	Cluster   string    `json:"cluster"`
-	Namespace string    `json:"namespace"`
-	Name      string    `json:"name"`
-	Kind      string    `json:"kind"`
-	Type      string    `json:"type"` // kagent-agent, mcp-server, agentgateway, possible-agent
-	Why       string    `json:"why"`
-	Ref       *Ref      `json:"ref"`
-	Identity  Identity  `json:"identity"`
-	Summary   string    `json:"summary"`
-	Radius    string    `json:"radius"` // contained, narrow, wide, open
-	Internet  string    `json:"internet"`
-	Metadata  string    `json:"metadata"`
-	Direct    []Edge    `json:"direct"`
-	Paths     []Path    `json:"paths"`
-	Findings  []Finding `json:"findings"`
-	Nodes     []Node    `json:"nodes"`
-	Edges     []Edge    `json:"edges"`
-	Counts    Counts    `json:"counts"`
-	NeverUsed []string  `json:"neverUsed"`
-	Observed  bool      `json:"observed"` // access logs covered this agent
+	ID         string     `json:"id"`
+	Cluster    string     `json:"cluster"`
+	Namespace  string     `json:"namespace"`
+	Name       string     `json:"name"`
+	Kind       string     `json:"kind"`
+	Type       string     `json:"type"` // kagent-agent, mcp-server, agentgateway, possible-agent
+	Why        string     `json:"why"`
+	Ref        *Ref       `json:"ref"`
+	Identity   Identity   `json:"identity"`
+	Summary    string     `json:"summary"`
+	Radius     string     `json:"radius"` // contained, narrow, wide, open
+	Internet   string     `json:"internet"`
+	Metadata   string     `json:"metadata"`
+	Direct     []Edge     `json:"direct"`
+	Paths      []Path     `json:"paths"`
+	Findings   []Finding  `json:"findings"`
+	Nodes      []Node     `json:"nodes"`
+	Edges      []Edge     `json:"edges"`
+	Counts     Counts     `json:"counts"`
+	NeverUsed  []string   `json:"neverUsed"`
+	Observed   bool       `json:"observed"`   // some flow source covers this agent, so "never used" means something
+	ObservedBy []string   `json:"observedBy"` // the flow sources that cover it
+	External   []External `json:"external"`
 }
 
 // Counts summarise an agent's reach.
@@ -138,6 +146,7 @@ type Counts struct {
 	Write     int `json:"write"`     // direct destinations it can change data on
 	Observed  int `json:"observed"`  // destinations it actually called
 	NeverUsed int `json:"neverUsed"` // allowed, not declared, never called
+	External  int `json:"external"`  // destinations outside the cluster (not counting image pulls)
 	Critical  int `json:"critical"`
 	High      int `json:"high"`
 }
@@ -423,103 +432,18 @@ func (c *cluster) rbacFor(w *workload) (rules, dangerous []string, complete bool
 
 // ---------- declared dependencies ----------
 
-var urlRe = regexp.MustCompile(`https?://[A-Za-z0-9._-]+(:[0-9]+)?`)
-
 // declared returns the Service keys and external hosts a workload is
-// configured to call: URLs in its env, and for kagent agents the ModelConfig
-// base URL and tool servers.
+// configured to call (see declarations in external.go).
 func (c *cluster) declared(w *workload) (svcs map[string]bool, hosts map[string]bool) {
 	svcs, hosts = map[string]bool{}, map[string]bool{}
-	addURL := func(raw, ns string) {
-		u, err := url.Parse(raw)
-		if err != nil || u.Hostname() == "" {
-			return
-		}
-		if k := svcKeyFromHost(u.Hostname(), ns); k != "" && c.svcByKey[k] != nil {
-			svcs[k] = true
-		} else if strings.Contains(u.Hostname(), ".") {
-			hosts[u.Hostname()] = true
-		}
+	d := c.declarations(w)
+	for k := range d.svcs {
+		svcs[k] = true
 	}
-	for _, ct := range l(w.spec["containers"]) {
-		for _, e := range l(m(ct)["env"]) {
-			for _, u := range urlRe.FindAllString(s(m(e)["value"]), -1) {
-				addURL(u, w.ns)
-			}
-		}
-	}
-	if w.agentType == "kagent-agent" {
-		a := c.ws.Get(c.name, "kagent.dev", "agents", w.ns, w.name)
-		if a != nil {
-			decl := m(path(a.Obj, "spec", "declarative"))
-			if mc := s(decl["modelConfig"]); mc != "" {
-				if o := c.ws.Get(c.name, "kagent.dev", "modelconfigs", w.ns, mc); o != nil {
-					for _, p := range []string{"openAI", "anthropic", "ollama", "azureOpenAI"} {
-						for _, f := range []string{"baseUrl", "host", "azureEndpoint"} {
-							addURL(s(path(o.Obj, "spec", p, f)), w.ns)
-						}
-					}
-				}
-			}
-			for _, t := range l(decl["tools"]) {
-				ms := m(m(t)["mcpServer"])
-				if n := s(ms["name"]); n != "" {
-					ns := s(ms["namespace"])
-					if ns == "" {
-						ns = w.ns
-					}
-					if o := c.ws.Get(c.name, "kagent.dev", "remotemcpservers", ns, n); o != nil {
-						addURL(s(path(o.Obj, "spec", "url")), ns)
-					} else if c.svcByKey[key(ns, n)] != nil {
-						svcs[key(ns, n)] = true
-					}
-				}
-			}
-		}
+	for h := range d.hosts {
+		hosts[h] = true
 	}
 	return
-}
-
-// ---------- observed traffic ----------
-
-type observed struct {
-	requests int
-	methods  []string
-}
-
-func (c *cluster) observedBy(edges []store.AccessEdge) (map[*workload]map[string]*observed, map[*workload]bool, string) {
-	out := map[*workload]map[string]*observed{}
-	covered := map[*workload]bool{}
-	trustDomain := ""
-	for _, e := range edges {
-		w := c.byPod[key(e.SrcNamespace, e.SrcPod)]
-		if w == nil {
-			continue
-		}
-		if trustDomain == "" && strings.HasPrefix(e.SrcIdentity, "spiffe://") {
-			trustDomain = strings.SplitN(strings.TrimPrefix(e.SrcIdentity, "spiffe://"), "/", 2)[0]
-		}
-		covered[w] = true
-		k := svcKeyFromHost(e.DstService, e.DstNamespace)
-		if k == "" || c.svcByKey[k] == nil {
-			host := e.DstService
-			if i := strings.LastIndex(host, ":"); i > 0 {
-				host = host[:i]
-			}
-			k = "ext:" + host
-		}
-		if out[w] == nil {
-			out[w] = map[string]*observed{}
-		}
-		o := out[w][k]
-		if o == nil {
-			o = &observed{}
-			out[w][k] = o
-		}
-		o.requests += e.Requests
-		o.methods = union(o.methods, e.Methods)
-	}
-	return out, covered, trustDomain
 }
 
 // Workloads with ztunnel access logs in the capture: ztunnel only logs pods
@@ -586,22 +510,22 @@ func svcLabel(sv *service) string { return sv.ns + "/" + sv.name }
 
 // Evaluate computes the reach of every agent in the workspace.
 func Evaluate(ws *store.Workspace) Report {
+	return evaluate(ws, func(cl string) []store.Flow { return ws.Flows(cl) })
+}
+
+// evaluate takes the flows as a function, so tests can add flows from
+// sources the store does not parse yet.
+func evaluate(ws *store.Workspace, flows func(cluster string) []store.Flow) Report {
 	r := Report{Agents: []Agent{}, Notes: []string{}, Clusters: ws.Clusters()}
 	flat := true
-	access := ws.AccessEdges("")
 	for _, cl := range ws.Clusters() {
 		c := newCluster(ws, cl)
 		if len(c.netpols) > 0 || len(c.authz) > 0 {
 			flat = false
 		}
 		r.Notes = append(r.Notes, c.notes...)
-		var clEdges []store.AccessEdge
-		for _, a := range access {
-			if a.Cluster == cl {
-				clEdges = append(clEdges, a)
-			}
-		}
-		obs, covered, td := c.observedBy(clEdges)
+		fs := c.observe(flows(cl))
+		td := fs.td
 		if td == "" {
 			td = "cluster.local"
 		}
@@ -609,7 +533,7 @@ func Evaluate(ws *store.Workspace) Report {
 		e := &engine{c: c, cache: map[string]hop{}, internet: map[*workload]string{}, td: td}
 		agents := c.findAgents()
 		for _, w := range agents {
-			r.Agents = append(r.Agents, e.agent(w, agents, obs[w], covered[w] || (logs && w.inMesh)))
+			r.Agents = append(r.Agents, e.agent(w, agents, fs.byW[w], c.coverage(fs, w, logs)))
 		}
 	}
 	r.Flat = flat && len(r.Agents) > 0
@@ -629,10 +553,11 @@ func Evaluate(ws *store.Workspace) Report {
 	return r
 }
 
-func (e *engine) agent(w *workload, all []*workload, obs map[string]*observed, observedCovered bool) Agent {
+func (e *engine) agent(w *workload, all []*workload, obs map[string]*observed, coveredBy []string) Agent {
 	c := e.c
+	observedCovered := len(coveredBy) > 0
 	a := Agent{ID: w.id, Cluster: c.name, Namespace: w.ns, Name: w.name, Kind: w.kind, Type: w.agentType, Why: w.agentWhy, Ref: refOf(w.obj),
-		Direct: []Edge{}, Paths: []Path{}, Findings: []Finding{}, NeverUsed: []string{}, Observed: observedCovered}
+		Direct: []Edge{}, Paths: []Path{}, Findings: []Finding{}, NeverUsed: []string{}, Observed: observedCovered, ObservedBy: append([]string{}, coveredBy...), External: []External{}}
 	a.Identity = c.identity(w)
 	a.Identity.SharedVolumes = c.sharedVolumes(w, all)
 	declSvcs, declHosts := c.declared(w)
@@ -641,6 +566,7 @@ func (e *engine) agent(w *workload, all []*workload, obs map[string]*observed, o
 	// Direct reach.
 	agentNode := "agent:" + w.id
 	var reach []pair
+	var deniedSeen []pair // the policies deny it, but traffic was seen getting through
 	for _, sv := range c.services {
 		if has(sv.classes, "apiserver") || has(sv.classes, "waypoint") {
 			continue // the API server: through the token and RBAC; a waypoint: through the services it serves
@@ -656,18 +582,29 @@ func (e *engine) agent(w *workload, all []*workload, obs map[string]*observed, o
 		}
 		h := e.hop(w, sv)
 		if h.verdict == Denied {
+			if o := obs[key(sv.ns, sv.name)]; o != nil && o.requests > o.denied {
+				deniedSeen = append(deniedSeen, pair{sv, h})
+			}
 			continue
 		}
 		reach = append(reach, pair{sv, h})
 	}
-	for _, d := range reach {
+	for _, d := range append(append([]pair{}, reach...), deniedSeen...) {
 		k := key(d.sv.ns, d.sv.name)
 		ed := Edge{From: agentNode, To: "svc:" + d.sv.id, Verdict: d.h.verdict, Layer: d.h.layer, Methods: d.h.methods, Paths: d.h.paths,
 			Reasons: d.h.reasons, Conditions: d.h.conds, Declared: declSvcs[k], Write: canWrite(d.sv, d.h)}
 		if o := obs[k]; o != nil {
-			ed.Observed, ed.ObsMethods = o.requests, o.methods
+			ed.Observed, ed.ObsMethods, ed.ObsPaths, ed.ObsDenied, ed.Tools, ed.ObservedBy = o.requests, o.methods, o.paths, o.denied, o.tools, o.sources
 		}
 		ed.Risk, ed.Why = edgeRisk(w, d.sv, ed)
+		if ed.Verdict == Denied {
+			ed.Risk, ed.Why = "amber", fmt.Sprintf("the policies deny it, yet %d requests got through in the capture: the policy changed while it was recorded, or something here is not evaluated", ed.Observed-ed.ObsDenied)
+			a.Direct = append(a.Direct, ed)
+			continue
+		}
+		if ed.ObsDenied > 0 && ed.Verdict == Allowed {
+			ed.Why += fmt.Sprintf("; %d of the observed requests were denied, although the policies allow it", ed.ObsDenied)
+		}
 		a.Direct = append(a.Direct, ed)
 		if ed.Verdict == Allowed {
 			a.Counts.Direct++
@@ -764,6 +701,15 @@ func (e *engine) agent(w *workload, all []*workload, obs map[string]*observed, o
 		a.Paths = append(a.Paths, Path{Hops: []string{w.ns + "/" + w.name, "169.254.169.254"}, Target: "metadata", Kind: "metadata", Why: "the cloud instance metadata endpoint hands out node credentials"})
 	}
 
+	// Destinations outside the cluster.
+	a.External = e.externals(w, &a, reach, obs)
+	for _, x := range a.External {
+		if x.ReachedVia != ViaNode {
+			a.Counts.External++
+		}
+	}
+	a.Paths = append(a.Paths, externalPaths(w, a)...)
+
 	a.Findings = e.findings(w, a, reach, all, declSvcs, declHosts)
 	for _, f := range a.Findings {
 		switch f.Severity {
@@ -775,7 +721,7 @@ func (e *engine) agent(w *workload, all []*workload, obs map[string]*observed, o
 	}
 	a.Radius = radius(a)
 	a.Summary = summary(w, a, internetVia)
-	a.Nodes, a.Edges = e.graph(w, a, reach, internetVia, declHosts, obs)
+	a.Nodes, a.Edges = e.graph(w, a, reach, internetVia)
 	return a
 }
 
@@ -831,6 +777,9 @@ func summary(w *workload, a Agent, via []Path) string {
 	switch {
 	case len(via) > 0 && via[0].Kind == "fetcher":
 		return fmt.Sprintf("%s reaches the internet in %d hops through %s, which fetches on request (%s).", name, len(via[0].Hops)-1, via[0].Hops[1], strings.Join(via[0].Hops, " → "))
+	case a.Internet != Allowed && externalFetcher(a) != nil:
+		x := externalFetcher(a)
+		return fmt.Sprintf("%s has no open internet egress, but reaches %s, %s outside the cluster that fetches from the internet on request.", name, x.Host, article(x.Product))
 	case a.Internet == Allowed:
 		return fmt.Sprintf("%s reaches the internet directly and %d of %d Services in the cluster (%d in any number of hops).", name, a.Counts.Direct, a.Counts.Services, a.Counts.Closure)
 	case len(via) > 0:
@@ -839,6 +788,15 @@ func summary(w *workload, a Agent, via []Path) string {
 		return fmt.Sprintf("%s is contained: no Service or internet destination is allowed.", name)
 	}
 	return fmt.Sprintf("%s reaches %d Services directly and %d in total; no path to the internet was found.", name, a.Counts.Direct, a.Counts.Closure)
+}
+
+func externalFetcher(a Agent) *External {
+	for i, x := range a.External {
+		if x.Fetcher && x.Verdict == Allowed && x.ReachedVia != ViaNode && !(x.ReachedVia == ViaGateway && x.Authn && x.ReadOnly && x.DirectEgress != Allowed) {
+			return &a.External[i]
+		}
+	}
+	return nil
 }
 
 // sharedVolumes lists PersistentVolumeClaims this workload mounts that other

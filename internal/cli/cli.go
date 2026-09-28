@@ -39,6 +39,7 @@ type PolicyFlags struct {
 	qps                                           float32
 	burst                                         int
 	redactExtra                                   string
+	hubbleFlows                                   int
 }
 
 // Register adds the flags to a flag set.
@@ -71,6 +72,8 @@ func (f *PolicyFlags) Register(fs *pflag.FlagSet) {
 	fs.Float32Var(&f.qps, "qps", 0, "API server requests per second")
 	fs.IntVar(&f.burst, "burst", 0, "API server request burst")
 	fs.StringVar(&f.redactExtra, "redact-extra", "", "file of extra redaction patterns (one Go regular expression per line)")
+	fs.IntVar(&f.hubbleFlows, "hubble-flows", 0, "read the last N flows from Cilium hubble-relay (kube-system) through port-forward and the local hubble CLI; --hubble-flows alone means 20000")
+	fs.Lookup("hubble-flows").NoOptDefVal = "20000"
 }
 
 // Resolve builds the policy: profile, then config file, then changed flags.
@@ -161,6 +164,12 @@ func (f *PolicyFlags) Resolve(fs *pflag.FlagSet) (*policy.Policy, error) {
 	}
 	if ch("portforward") {
 		p.PortForward = f.portForward
+	}
+	if ch("hubble-flows") {
+		p.Flows.Hubble = f.hubbleFlows
+		if f.hubbleFlows > 0 && !ch("portforward") {
+			p.PortForward = true // asking for hubble flows is asking for the port-forward they need
+		}
 	}
 	if f.noPortForward {
 		p.PortForward = false
@@ -741,12 +750,17 @@ const SQLHelp = `Tables (read-only, DuckDB SQL):
   log_lines   the same with ts as Unix nanoseconds, seq and chunk
   objects     cluster, api_group, version, resource, kind, namespace, name, labels (map), object (JSON text)
   events      cluster, namespace, type, reason, object_kind, object_name, message, count, last_seen, event (JSON text)
+  flows       observed traffic parsed from Envoy and CoreDNS logs and imported flow logs: cluster, source, src_ip,
+              src_namespace, src_pod, src_identity, dst_ip, dst_port, dst_host, dst_namespace, dst_workload, protocol,
+              method, path, tool, route, via, verdict, direction, count, file, origin (logs, bundle, reviewer).
+              ztunnel and agentgateway flows are read from logs directly: see fbflows or GET /api/flows.
 Examples:
   SELECT level, count(*) FROM logs GROUP BY ALL ORDER BY 2 DESC;
   SELECT namespace, name, object->>'$.status.phase' AS phase FROM objects WHERE kind = 'Pod';
   SELECT pod, count(*) FROM logs WHERE level = 'error' GROUP BY ALL ORDER BY 2 DESC LIMIT 10;
   SELECT reason, object_name, message FROM events WHERE type = 'Warning';
-  SELECT fields['trace_id'] AS trace, count(*) FROM logs WHERE fields['trace_id'] IS NOT NULL GROUP BY ALL;`
+  SELECT fields['trace_id'] AS trace, count(*) FROM logs WHERE fields['trace_id'] IS NOT NULL GROUP BY ALL;
+  SELECT source, src_pod, dst_host, dst_port, sum(count) FROM flows GROUP BY ALL ORDER BY 5 DESC;`
 
 // Posture prints best-practice scores and what to fix.
 func Posture(w io.Writer, base, token, area string, all bool, top int) error {
@@ -846,8 +860,16 @@ func Reach(w io.Writer, base, token, agent string, showFix bool) error {
 	type finding struct{ Severity, Title, Detail, Fix string }
 	type agentT struct {
 		Namespace, Name, Type, Summary, Radius, Internet, Metadata string
-		Counts                                                     struct{ Services, Direct, Closure, Write, Observed, NeverUsed, Critical, High int }
-		Identity                                                   struct {
+		Counts                                                     struct{ Services, Direct, Closure, Write, Observed, NeverUsed, External, Critical, High int }
+		Observed                                                   bool
+		ObservedBy                                                 []string
+		External                                                   []struct {
+			Host, Class, Product, ReachedVia, Gateway, Route, Verdict, Risk, Why string
+			Authn, ReadOnly, WriteSeen                                           bool
+			Credentials, Methods, Tools, Sources, DeclaredIn                     []string
+			Observed                                                             int
+		}
+		Identity struct {
 			ServiceAccount           string
 			InMesh, TokenMounted     bool
 			Dangerous, Secrets, RBAC []string
@@ -861,6 +883,7 @@ func Reach(w io.Writer, base, token, agent string, showFix bool) error {
 		Direct   []struct {
 			To, Verdict, Risk, Why string
 			Methods, ObsMethods    []string
+			Tools, ObservedBy      []string
 			Observed               int
 			Declared, Write        bool
 		}
@@ -879,9 +902,9 @@ func Reach(w io.Writer, base, token, agent string, showFix bool) error {
 			return nil
 		}
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "AGENT\tTYPE\tRADIUS\tINTERNET\tDIRECT\tTOTAL\tWRITE\tCRIT\tHIGH")
+		fmt.Fprintln(tw, "AGENT\tTYPE\tRADIUS\tINTERNET\tDIRECT\tTOTAL\tWRITE\tEXTERNAL\tCRIT\tHIGH")
 		for _, a := range r.Agents {
-			fmt.Fprintf(tw, "%s/%s\t%s\t%s\t%s\t%d/%d\t%d\t%d\t%d\t%d\n", a.Namespace, a.Name, a.Type, a.Radius, a.Internet, a.Counts.Direct, a.Counts.Services, a.Counts.Closure, a.Counts.Write, a.Counts.Critical, a.Counts.High)
+			fmt.Fprintf(tw, "%s/%s\t%s\t%s\t%s\t%d/%d\t%d\t%d\t%d\t%d\t%d\n", a.Namespace, a.Name, a.Type, a.Radius, a.Internet, a.Counts.Direct, a.Counts.Services, a.Counts.Closure, a.Counts.Write, a.Counts.External, a.Counts.Critical, a.Counts.High)
 		}
 		tw.Flush()
 		for _, n := range r.Notes {
@@ -895,8 +918,13 @@ func Reach(w io.Writer, base, token, agent string, showFix bool) error {
 		return err
 	}
 	fmt.Fprintf(w, "%s/%s (%s): radius %s\n%s\n\n", a.Namespace, a.Name, a.Type, a.Radius, a.Summary)
-	fmt.Fprintf(w, "Reach: %d of %d Services directly, %d in any number of hops; internet %s; can write to %d; called %d; %d allowed but never used\n",
-		a.Counts.Direct, a.Counts.Services, a.Counts.Closure, a.Internet, a.Counts.Write, a.Counts.Observed, a.Counts.NeverUsed)
+	fmt.Fprintf(w, "Reach: %d of %d Services directly, %d in any number of hops; internet %s; can write to %d; %d external hosts\n",
+		a.Counts.Direct, a.Counts.Services, a.Counts.Closure, a.Internet, a.Counts.Write, a.Counts.External)
+	if a.Observed {
+		fmt.Fprintf(w, "Observed by %s: called %d; %d allowed but never used\n", strings.Join(a.ObservedBy, ", "), a.Counts.Observed, a.Counts.NeverUsed)
+	} else {
+		fmt.Fprintln(w, "Observed: no flow source covers this agent, so what it uses is unknown")
+	}
 	id := a.Identity
 	fmt.Fprintf(w, "Identity: %s, in mesh %v, API token mounted %v", id.ServiceAccount, id.InMesh, id.TokenMounted)
 	if id.CloudRole != "" {
@@ -921,6 +949,52 @@ func Reach(w io.Writer, base, token, agent string, showFix bool) error {
 			}
 		}
 	}
+	if len(a.External) > 0 {
+		fmt.Fprintln(w, "\nExternal (outside the cluster):")
+		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(tw, "  RISK\tHOST\tWHAT\tREACHED\tCREDENTIAL\tOBSERVED\tCONFIGURED IN")
+		for _, x := range a.External {
+			via := x.ReachedVia
+			if x.Gateway != "" {
+				via += " " + x.Gateway
+			}
+			if x.ReachedVia == "gateway" {
+				if x.Authn {
+					via += " (authn"
+				} else {
+					via += " (no authn"
+				}
+				if x.ReadOnly {
+					via += ", read-only"
+				}
+				via += ")"
+			}
+			obs := "-"
+			if x.Observed > 0 {
+				obs = fmt.Sprintf("%dx %s by %s", x.Observed, strings.Join(x.Methods, ","), strings.Join(x.Sources, ","))
+				if len(x.Tools) > 0 {
+					obs += " tools " + strings.Join(x.Tools, ",")
+				}
+			}
+			cred := strings.Join(x.Credentials, ", ")
+			if cred == "" {
+				cred = "-"
+			}
+			in := strings.Join(x.DeclaredIn, "; ")
+			if len(in) > 70 {
+				in = in[:67] + "..."
+			}
+			what := x.Class
+			if x.Product != "" && x.Product != x.Class {
+				what += ": " + x.Product
+			}
+			if len(what) > 40 {
+				what = what[:37] + "..."
+			}
+			fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\t%s\t%s\t%s\n", x.Risk, x.Host, what, via, cred, obs, in)
+		}
+		tw.Flush()
+	}
 	shown := 0
 	fmt.Fprintln(w, "\nDestinations (risky, used or configured first):")
 	for _, e := range a.Direct {
@@ -935,6 +1009,12 @@ func Reach(w io.Writer, base, token, agent string, showFix bool) error {
 		used := ""
 		if e.Observed > 0 {
 			used = fmt.Sprintf(" called %dx %s", e.Observed, strings.Join(e.ObsMethods, ","))
+			if len(e.Tools) > 0 {
+				used += " tools " + strings.Join(e.Tools, ",")
+			}
+			if len(e.ObservedBy) > 0 {
+				used += " [" + strings.Join(e.ObservedBy, ",") + "]"
+			}
 		}
 		if e.Declared {
 			used += " configured"
@@ -946,4 +1026,167 @@ func Reach(w io.Writer, base, token, agent string, showFix bool) error {
 		fmt.Fprintln(w, "\nAdd --fix for the YAML to lock each finding down.")
 	}
 	return nil
+}
+
+// Flows prints observed traffic grouped by source and destination (the
+// fbflows helper): who actually called whom, from every flow source.
+func Flows(w io.Writer, base, token, cluster, source string, limit int) error {
+	var res struct {
+		Total     int            `json:"total"`
+		Records   int            `json:"records"`
+		BySource  map[string]int `json:"bySource"`
+		Truncated bool           `json:"truncated"`
+		Flows     []struct {
+			Source, SrcIP, SrcNamespace, SrcPod, SrcIdentity string
+			DstIP, DstHost, DstNamespace, DstWorkload        string
+			DstPort                                          int
+			Protocol, Method, Path, Tool, Via, Verdict, File string
+			Count                                            int
+		} `json:"flows"`
+	}
+	q := url.Values{"limit": {"100000"}}
+	if cluster != "" {
+		q.Set("cluster", cluster)
+	}
+	if source != "" {
+		q.Set("source", source)
+	}
+	if err := deskGet(base, token, "/api/flows", q, &res); err != nil {
+		return err
+	}
+	type group struct {
+		source, from, to, proto, verdict, via string
+		count                                 int
+		details                               map[string]int
+	}
+	idx := map[string]*group{}
+	var groups []*group
+	for _, f := range res.Flows {
+		from := f.SrcIP
+		switch {
+		case f.SrcPod != "" && f.SrcNamespace != "":
+			from = f.SrcNamespace + "/" + f.SrcPod
+		case f.SrcIdentity != "":
+			from = f.SrcIdentity
+		case from == "" && f.SrcNamespace != "":
+			from = f.SrcNamespace + "/*"
+		}
+		to := f.DstHost
+		switch {
+		case to != "":
+		case f.DstWorkload != "" && f.DstNamespace != "":
+			to = f.DstNamespace + "/" + f.DstWorkload
+		default:
+			to = f.DstIP
+		}
+		if f.DstPort > 0 {
+			to += ":" + strconv.Itoa(f.DstPort)
+		}
+		k := strings.Join([]string{f.Source, from, to, f.Protocol, f.Verdict, f.Via}, "\x00")
+		g := idx[k]
+		if g == nil {
+			g = &group{source: f.Source, from: from, to: to, proto: f.Protocol, verdict: f.Verdict, via: f.Via, details: map[string]int{}}
+			idx[k] = g
+			groups = append(groups, g)
+		}
+		g.count += f.Count
+		d := strings.TrimSpace(f.Method + " " + firstNonEmpty(f.Tool, f.Path))
+		if d != "" {
+			g.details[d] += f.Count
+		}
+	}
+	sort.SliceStable(groups, func(i, j int) bool {
+		if groups[i].source != groups[j].source {
+			return groups[i].source < groups[j].source
+		}
+		return groups[i].count > groups[j].count
+	})
+	if limit > 0 && len(groups) > limit {
+		groups = groups[:limit]
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "SOURCE\tFROM\tTO\tPROTO\tVERDICT\tCOUNT\tVIA\tTOP")
+	for _, g := range groups {
+		var ds []string
+		for d := range g.details {
+			ds = append(ds, d)
+		}
+		sort.Slice(ds, func(i, j int) bool {
+			return g.details[ds[i]] > g.details[ds[j]] || g.details[ds[i]] == g.details[ds[j]] && ds[i] < ds[j]
+		})
+		top := ""
+		if len(ds) > 0 {
+			top = ds[0]
+			if len(top) > 60 {
+				top = top[:60] + "…"
+			}
+			if len(ds) > 1 {
+				top += fmt.Sprintf(" (+%d more)", len(ds)-1)
+			}
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n", g.source, g.from, g.to, dashIfEmpty(g.proto), dashIfEmpty(g.verdict), g.count, dashIfEmpty(g.via), top)
+	}
+	_ = tw.Flush()
+	var srcs []string
+	for k, n := range res.BySource {
+		srcs = append(srcs, fmt.Sprintf("%s %d", k, n))
+	}
+	sort.Strings(srcs)
+	fmt.Fprintf(w, "-- %d source/destination pairs (showing %d) from %d records", len(idx), len(groups), res.Records)
+	if len(srcs) > 0 {
+		fmt.Fprintf(w, ": %s", strings.Join(srcs, ", "))
+	}
+	fmt.Fprintln(w)
+	if res.Total == 0 {
+		fmt.Fprintln(w, "No observed traffic. Flows come from ztunnel, agentgateway, Envoy and CoreDNS logs in the capture, and from flow logs attached with flightbay collect --attach-flows or flightbay-desk open --flows.")
+	}
+	return nil
+}
+
+func firstNonEmpty(v ...string) string {
+	for _, s := range v {
+		if s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+func dashIfEmpty(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}
+
+// FlowFile is one --flows / --attach-flows argument: FILE or FILE@CLUSTER.
+type FlowFile struct {
+	Path    string
+	Cluster string // "" = the first cluster in the bundle
+}
+
+// ParseFlowFiles splits FILE[@CLUSTER] arguments and checks each file exists.
+func ParseFlowFiles(args []string) ([]FlowFile, error) {
+	var out []FlowFile
+	for _, a := range args {
+		a = strings.TrimSpace(a)
+		if a == "" {
+			continue
+		}
+		ff := FlowFile{Path: a}
+		if _, err := os.Stat(a); err != nil {
+			if i := strings.LastIndex(a, "@"); i > 0 {
+				ff.Path, ff.Cluster = a[:i], a[i+1:]
+			}
+		}
+		st, err := os.Stat(ff.Path)
+		if err != nil {
+			return nil, fmt.Errorf("flow file: %w", err)
+		}
+		if st.IsDir() {
+			return nil, fmt.Errorf("flow file %s is a directory", ff.Path)
+		}
+		out = append(out, ff)
+	}
+	return out, nil
 }

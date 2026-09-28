@@ -38,6 +38,8 @@ func category(kind string) string {
 		return "events"
 	case bundle.PathSolo:
 		return "diagnostics"
+	case bundle.PathFlows:
+		return "flows"
 	}
 	return ""
 }
@@ -238,6 +240,12 @@ func apply(ws *store.Workspace, m *bundle.Member, r *bundle.Reader) error {
 		ws.AddCollectionLog(lines)
 	case bundle.PathRedaction:
 		ws.SetRedaction(json.RawMessage(m.Data))
+	case bundle.PathFlows:
+		// A flow log attached at collection. A file that no longer parses is
+		// recorded, not fatal: the rest of the bundle is still good.
+		if _, err := ws.ImportFlowFile(info.Cluster, info.File, bytes.NewReader(m.Data), info.Sub, store.OriginBundle); err != nil {
+			ws.AddCollectionLog([]json.RawMessage{mustJSON(map[string]string{"cluster": info.Cluster, "operation": "import-flows", "target": info.File, "result": "failed", "error": err.Error()})})
+		}
 	case bundle.PathSolo:
 		if info.Sub == "" {
 			if info.File == "summary.json" {
@@ -248,4 +256,9 @@ func apply(ws *store.Workspace, m *bundle.Member, r *bundle.Reader) error {
 		ws.AddDiagnostic(info.Cluster, info.Sub, info.Namespace, info.Pod, info.File, m.Data)
 	}
 	return nil
+}
+
+func mustJSON(v any) json.RawMessage {
+	b, _ := json.Marshal(v)
+	return b
 }
