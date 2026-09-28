@@ -38,10 +38,11 @@ type rule struct {
 
 // Redactor applies the built-in scrubbers plus customer-supplied patterns.
 type Redactor struct {
-	rules []rule
-	mu    sync.Mutex
-	locs  map[string]map[string]int
-	total int
+	rules  []rule
+	fields FieldRules
+	mu     sync.Mutex
+	locs   map[string]map[string]int
+	total  int
 }
 
 // Report is written to redaction-report.json.
@@ -181,6 +182,7 @@ func (r *Redactor) Object(loc string, obj map[string]any) map[string]any {
 	if md, ok := out["metadata"].(map[string]any); ok {
 		delete(md, "managedFields")
 	}
+	r.dropFields(loc, out)
 	return out
 }
 
@@ -303,6 +305,7 @@ func (r *Redactor) Secret(loc string, obj map[string]any, mode SecretMode, helm 
 		info["keys"] = list
 	}
 	out["x-flightbay"] = info
+	r.dropFields(loc, out)
 	return out
 }
 

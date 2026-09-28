@@ -86,11 +86,13 @@ Several Scorecard checks (RBAC wildcards, cluster-admin bindings, node versions)
 | Flag | Effect |
 |---|---|
 | `--exclude-resources configmaps,secrets` | Never read these types. Exclusions win over everything. |
-| `--resources pods,deployments.apps,httproutes.gateway.networking.k8s.io` | Only read these types. |
+| `--include-resources pods,deployments.apps,httproutes.gateway.networking.k8s.io` | Allowlist: only read these types. `--resources` is the same flag under its older name. |
 | `--secrets omit` | Skip Secrets entirely (same effect as excluding them). |
 | `--configmaps omit` | Skip ConfigMaps entirely. |
 
 Types are named as `resource` for core types and `resource.group` for the rest. The plural name, the full name and the kind all match, and globs work: `*.istio.io`.
+
+With an allowlist, nothing outside it is read, and `--exclude-resources` still takes types out of it: `--include-resources 'pods,*.istio.io' --exclude-resources sidecars.networking.istio.io` reads pods and every Istio type except Sidecars. The dry run lists the resulting types, and `flightbay rbac` grants exactly those instead of a wildcard. In a config file the allowlist is `resources:`.
 
 ## Label selector
 

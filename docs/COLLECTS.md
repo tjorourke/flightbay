@@ -91,6 +91,7 @@ Runs in memory before anything is written, over object specs, ConfigMap data, en
 - `url-credentials`: user:password@ in URLs
 - `sensitive-key`: the value of any key or variable whose name contains password, passwd, secret, token, api_key or credential
 - your own patterns from `--redact-extra` (one Go regular expression per line)
+- fields you name with `--drop-field PATH` or `dropFields` in a config file, removed from every object, e.g. `metadata.annotations["corp.example/*"]`
 
 JSON held inside a string, such as the `kubectl.kubernetes.io/last-applied-configuration` annotation or a JSON file in a ConfigMap, is parsed and redacted with the same rules, so an environment variable or key inside an embedded manifest is caught too.
 
@@ -101,6 +102,10 @@ JSON held inside a string, such as the `kubectl.kubernetes.io/last-applied-confi
 - `bundle.json` (first): identity, case, contexts, capture start and the resolved collection policy.
 - `collection-log.jsonl`: every call, including failures (RBAC denied, timeouts, truncation), so a missing file never looks like a missing object.
 - `coverage/*.json`: per collection, what was expected and whether it completed, failed, was excluded or truncated. Attached and hubble flow files have a `flows` coverage entry each, with the detected format.
-- `manifest.json` (last): capture end, completion state and a SHA-256 for every member. `flightbay inspect` verifies them.
+- `manifest.json`: capture end, completion state and a SHA-256 for every member. `flightbay inspect` verifies them.
+- `manifest.sig` (last, with `--sign KEY`): your Ed25519 signature over the manifest, so Solo can check the bundle came from you unmodified. Solo only ever holds your public key.
+- The SHA-256 of the collector binary, and with `--config` the policy file's SHA-256 and who approved it (`flightbay policy sign`).
+
+Before sending, `flightbay review BUNDLE` lets you remove namespaces, resource types, objects, log streams, log lines and files and redact more, then exports a new signed bundle with `review-ledger.json`, a count of what you removed.
 
 The bundle is a plain tar stream compressed with zstd. Open it with standard tools: `tar --zstd -tvf BUNDLE`. With `--encrypt-to` it is wrapped in age encryption and only the holder of the matching identity can read it.

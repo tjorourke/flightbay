@@ -33,6 +33,7 @@ import (
 	"github.com/tjorourke/flightbay/internal/collect"
 	"github.com/tjorourke/flightbay/internal/policy"
 	"github.com/tjorourke/flightbay/internal/redact"
+	"github.com/tjorourke/flightbay/internal/sign"
 )
 
 var version = "0.1.0-dev"
@@ -40,7 +41,7 @@ var version = "0.1.0-dev"
 // newRoot builds the command tree (also used to generate the CLI reference).
 func newRoot() *cobra.Command {
 	root := &cobra.Command{Use: "flightbay", Short: "Flightbay by Solo: collect an offline, redacted snapshot of Kubernetes clusters", SilenceUsage: true}
-	root.AddCommand(collectCmd(), scanCmd(), inspectCmd(), extractCmd(), rbacCmd(), docsCmd(), uiCmd(), &cobra.Command{
+	root.AddCommand(collectCmd(), scanCmd(), inspectCmd(), extractCmd(), rbacCmd(), docsCmd(), uiCmd(), keygenCmd(), policyCmd(), reviewCmd(), &cobra.Command{
 		Use: "version", Short: "Print the version", Run: func(*cobra.Command, []string) { fmt.Println("flightbay", version) },
 	})
 	return root
@@ -263,7 +264,7 @@ func printPlan(w io.Writer, pl *collect.DryRunPlan, showRBAC bool) {
 func collectCmd() *cobra.Command {
 	var pf cli.PolicyFlags
 	var kf kubeFlags
-	var out, saveConfig string
+	var out, saveConfig, signKey string
 	var encryptTo, attachFlows []string
 	var dryRun, interactiveMode, assumeYes, quiet, jsonOut bool
 	var window int
@@ -315,7 +316,11 @@ func collectCmd() *cobra.Command {
 				}
 				fmt.Fprintf(stderr, "Saved collection config to %s (reuse with --config)\n", saveConfig)
 			}
-			rd, err := redact.New(p.RedactExtra)
+			rd, err := cli.NewRedactor(p)
+			if err != nil {
+				return err
+			}
+			signer, err := loadSigner(signKey)
 			if err != nil {
 				return err
 			}
@@ -380,11 +385,11 @@ func collectCmd() *cobra.Command {
 				defer f.Close()
 				dst = f
 			}
-			w, err := bundle.NewWriter(dst, bundle.WriterOptions{Compression: p.Compression, WindowSize: window, Recipients: recips})
+			w, err := bundle.NewWriter(dst, bundle.WriterOptions{Compression: p.Compression, WindowSize: window, Recipients: recips, Signer: signer})
 			if err != nil {
 				return err
 			}
-			col := &collect.Collector{Policy: p, Redactor: rd, Writer: w, Version: version}
+			col := &collect.Collector{Policy: p, Redactor: rd, Writer: w, Version: version, PolicySource: pf.Source(), CollectorSHA256: selfSHA256()}
 			if !quiet {
 				col.Progress = func(s string) { fmt.Fprintf(stderr, "  %s\n", s) }
 			}
@@ -441,6 +446,7 @@ func collectCmd() *cobra.Command {
 	kf.register(c)
 	c.Flags().StringVarP(&out, "out", "o", ".", "output directory or file; - streams the bundle to stdout")
 	c.Flags().StringSliceVar(&encryptTo, "encrypt-to", nil, "age recipients (age1...) or @file; the bundle becomes .tar.zst.age")
+	c.Flags().StringVar(&signKey, "sign", "", "sign the bundle with this private key (flightbay keygen); Solo verifies it with your public key")
 	c.Flags().IntVar(&window, "window-size", 0, "zstd window in bytes (default 8 MiB, max 128 MiB for stock tools)")
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "print what would be collected and the RBAC it needs; reads discovery only")
 	c.Flags().BoolVar(&jsonOut, "json", false, "print the dry-run plan as JSON")
@@ -470,7 +476,7 @@ func openInput(path string) (io.ReadCloser, error) {
 
 func inspectCmd() *cobra.Command {
 	var o cli.InspectOptions
-	var identities []string
+	var identities, verifyKeys []string
 	c := &cobra.Command{
 		Use: "inspect BUNDLE", Short: "Verify a bundle and show what it contains before you send it", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -479,6 +485,10 @@ func inspectCmd() *cobra.Command {
 				return err
 			}
 			o.Identities = ids
+			if o.Trusted, err = sign.Trusted(verifyKeys); err != nil {
+				return err
+			}
+			o.RequireTrusted = len(verifyKeys) > 0
 			f, err := openInput(args[0])
 			if err != nil {
 				return err
@@ -490,6 +500,7 @@ func inspectCmd() *cobra.Command {
 	c.Flags().BoolVar(&o.Contents, "contents", false, "list every file in the bundle")
 	c.Flags().BoolVar(&o.Redactions, "redactions", false, "show redaction counts per location")
 	c.Flags().BoolVar(&o.Policy, "policy", false, "print the collection policy recorded in the bundle")
+	c.Flags().StringSliceVar(&verifyKeys, "verify-key", nil, "public key(s) the bundle must be signed by (default: any in ~/.flightbay/trusted-keys, not required)")
 	c.Flags().StringSliceVarP(&identities, "identity", "i", nil, "age identity file for encrypted bundles")
 	return c
 }

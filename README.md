@@ -58,6 +58,10 @@ The default `standard` profile collects objects, events, the last 24 hours of lo
 | `--namespaces`, `--exclude-namespaces` | Limit the capture (globs work: `team-*`) |
 | `--since 2h`, `--max-log-bytes 10485760`, `--no-logs` | Control log volume |
 | `--exclude-resources configmaps,secrets` | Never read these types |
+| `--include-resources pods,httproutes.gateway.networking.k8s.io` | Read only these types (exclusions still win) |
+| `--drop-field 'metadata.annotations["corp.example/*"]'` | Remove a field from every object before writing |
+| `--sign flightbay-signing.key` | Sign the bundle with your key (`flightbay keygen`) |
+| `--config policy.yaml --policy-key approver.pub` | Only run with a policy your security team signed (`flightbay policy sign`) |
 | `--solo-diagnostics` | Also read the admin endpoints of ztunnel, Envoy, agentgateway, istiod and gateway controllers through port-forward |
 | `--cluster-scoped` | Also capture nodes, CRDs and other cluster-wide objects |
 | `--profile minimal` | Object metadata and events only |
@@ -72,6 +76,15 @@ The default `standard` profile collects objects, events, the last 24 hours of lo
 Secret values are never collected: Secrets become names, types, labels and key names. Credentials in object specs, environment variables, ConfigMaps, logs and proxy dumps are replaced before anything is written. That includes JSON embedded inside a field, such as `kubectl.kubernetes.io/last-applied-configuration`. `redaction-report.json` counts what was replaced, and never records the values. [docs/COLLECTS.md](docs/COLLECTS.md) lists everything, and a test regenerates it from the collector's own code so the two can't drift apart.
 
 When you limit namespaces, proxy and control-plane dumps are filtered as well. ztunnel, agentgateway and istiod describe the whole mesh, so any entry that names another namespace is removed before it's written, and the bundle records how many were removed.
+
+### Decide what to send, and sign it
+
+```bash
+flightbay keygen --name "ACME platform team"                     # flightbay-signing.key stays with you; send Solo the .pub
+flightbay review flightbay-*.tar.zst --sign flightbay-signing.key --encrypt-to age1...
+```
+
+`flightbay review` opens the capture in the UI in review mode. Take out whole namespaces, resource types, single objects, log streams or lines, proxy dumps and flow files, add redaction patterns, and see exactly what Solo will receive before you export. The export is a new bundle, signed with your key, with `review-ledger.json` counting what was removed (names only if you choose to list them). Solo's desk shows "Signed by ACME platform team, unmodified" and marks checks that need removed data as not applicable instead of failing them. `--plan review.yaml` runs the same review without the UI. See [Reviewing before you send](docs/site/content/collect/review.md) and [Signing and approved policies](docs/site/content/collect/signing.md).
 
 One thing is deliberately left out. The agentgateway and kgateway controllers are built on a library called krt, which keeps an in-memory copy of every Kubernetes object the controller watches. That includes Gateways, routes and policies, but also the Secrets it reads, such as TLS keys and API keys for LLM providers. The controller's admin port can dump all of that as one large JSON document. It would be useful for debugging the controller, but it covers every namespace and contains Secret values, so it can't respect "only these namespaces" or "never Secret values". Flightbay collects the controllers' logs, metrics and the objects themselves instead.
 
@@ -186,7 +199,10 @@ The MCP server only talks to your local workspace. Snapshot data reaches a model
 | `flightbay collect` | Capture a cluster (alias `capture`) |
 | `flightbay scan [PATH...]` | Build a bundle from a code repository and score it; `--fail-on` makes it a CI gate |
 | `flightbay ui [bundle \| dir]` | Open the UI on a capture (default: the newest in this directory) |
-| `flightbay inspect BUNDLE` | Verify a bundle and show what's in it |
+| `flightbay inspect BUNDLE` | Verify a bundle and show what's in it; `--verify-key` checks the signature |
+| `flightbay review BUNDLE` | Choose what to send in the UI and export a trimmed, signed bundle; `--plan` without the UI |
+| `flightbay keygen` | Create an Ed25519 signing key pair |
+| `flightbay policy sign / verify` | Approve a collection policy file, and check an approval |
 | `flightbay extract BUNDLE DIR` | Verify and unpack it (it's also a normal `tar.zst`: `tar --zstd -xf`) |
 | `flightbay rbac` | Least-privilege RBAC for your options |
 | `flightbay docs collects` | What is and isn't collected |
@@ -196,11 +212,11 @@ The MCP server only talks to your local workspace. Snapshot data reaches a model
 | `flightbay-desk drift REPO CLUSTER` | Compare a repo scan with a capture |
 | `flightbay-desk mcp` | MCP server for agents |
 | `flightbay-desk features` | Flightbay Enterprise features and whether they are on |
-| `flightbay-desk keygen` | Create a key pair for `--encrypt-to` |
+| `flightbay-desk keygen` | Create an age key pair for `--encrypt-to` |
 
 ## How it works
 
-- **The bundle** is a plain `tar` stream compressed with zstd. `bundle.json` comes first, with the capture policy; `manifest.json` comes last, with a SHA-256 for every file. Logs are written early and bulky diagnostics late, so the UI can open before the file has finished reading.
+- **The bundle** is a plain `tar` stream compressed with zstd. `bundle.json` comes first, with the capture policy; `manifest.json` comes last, with a SHA-256 for every file, followed only by `manifest.sig` when the bundle is signed. Logs are written early and bulky diagnostics late, so the UI can open before the file has finished reading.
 - **The collector** is a single static Go binary with no dependencies. It redacts in memory and never writes unredacted data to disk.
 - **The UI** (`flightbay-desk`) stores logs, objects and events in DuckDB in a temporary workspace. It keeps about 90 bytes per log line on disk: 10 million lines is 0.8 GB and loads in about 35 seconds. Searching 10 million lines takes 20–250 ms for structured queries and under a second for free text. It also serves a read-only Kubernetes API, which is what `kubectl` and `k9s` talk to.
 

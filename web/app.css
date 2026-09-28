@@ -392,3 +392,4 @@ body.rg-noscroll{overflow:hidden}
 td.px-short{white-space:nowrap}td.px-long{white-space:normal;overflow-wrap:anywhere;min-width:260px;max-width:560px}
 .help-link{font-size:12px;padding:7px 11px;border:1px solid var(--line);border-radius:6px;color:var(--muted);white-space:nowrap}
 .help-link:hover{color:var(--teal);border-color:var(--teal);text-decoration:none}
+.trust{display:inline-flex;gap:6px;align-items:center}.trust a.badge{text-decoration:none}

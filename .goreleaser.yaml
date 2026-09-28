@@ -17,6 +17,12 @@ builds:
     ldflags: ["-s -w -X main.version={{ .Version }}"]
     goos: [linux, darwin, windows]
     goarch: [amd64, arm64]
+    hooks:
+      # Every bundle records the SHA-256 of the binary that wrote it
+      # (collectorSha256). Publishing the binaries' own hashes, covered by the
+      # signed checksum file, lets either side match a bundle to a release.
+      post:
+        - sh -c 'printf "%s  %s\n" "$(shasum -a 256 "{{ .Path }}" | cut -d" " -f1)" "{{ .Os }}_{{ .Arch }}/{{ .Name }}" >> dist/binaries-flightbay.sha256'
 
 archives:
   - id: flightbay
@@ -30,6 +36,8 @@ archives:
 
 checksum:
   name_template: checksums-flightbay.txt
+  extra_files:
+    - glob: dist/binaries-flightbay.sha256
 
 sboms:
   - artifacts: archive
@@ -64,5 +72,7 @@ krews:
 
 release:
   github: {owner: tjorourke, name: flightbay}
+  extra_files:
+    - glob: dist/binaries-flightbay.sha256
   draft: true
   mode: keep-existing

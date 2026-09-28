@@ -65,6 +65,7 @@ Every object spec, ConfigMap value, environment variable, log line and diagnosti
 | `url-credentials` | `user:password@` in URLs. |
 | `sensitive-key` | The value of any key or variable whose name contains `password`, `passwd`, `secret`, `token`, `api_key` or `credential`. |
 | `extra-N` | Your own patterns from `--redact-extra`. |
+| `drop-field-N` | Fields removed by your `--drop-field` rules. |
 
 Replaced values become `[REDACTED]` (or `[REDACTED PRIVATE KEY]`), so you can still see that a value was there. Names that point at a credential rather than hold one, such as `secretName`, `tokenPath` or `apiKeyRef`, are left alone, as are plain numbers and booleans.
 
@@ -90,6 +91,32 @@ flightbay collect --redact-extra redact-extra.txt --dry-run
 
 A pattern that does not compile stops the run before anything is read.
 
+### Removing fields
+
+`--drop-field PATH` removes a field from every object before it is written. Repeat it for more paths, or list them under `dropFields:` in a config file.
+
+```bash
+flightbay collect --drop-field 'metadata.annotations["corp.example/*"]' --drop-field 'spec.template.spec.containers[*].env'
+```
+
+```yaml
+dropFields:
+  - metadata.annotations["corp.example/*"]
+  - metadata.labels["cost-centre"]
+  - data.license
+```
+
+| Path syntax | Means |
+|---|---|
+| `spec.replicas` | Keys separated by dots |
+| `["corp.example/owner"]` | A key containing dots or slashes, such as an annotation or label |
+| `*` and `?` | Globs within a key: `metadata.annotations["corp.example/*"]` |
+| `[*]` | Every item of a list: `spec.containers[*].env` |
+
+The rules apply to every object, including Secret metadata, and inside `kubectl.kubernetes.io/last-applied-configuration`. Each removal is counted in the redaction report as `drop-field-N`, where N is the rule's position. A path that would remove an object's `kind`, `apiVersion`, name or namespace is refused before anything is read.
+
+To take things out after capture instead, see [Reviewing before you send](/collect/review/).
+
 ## Review before you send
 
 `redaction-report.json` in the bundle counts how many replacements each rule made in each file. It never records the values. Read it with:
@@ -105,6 +132,8 @@ Redactions: 52 (values are never recorded)
   clusters/kind-flightbay-e2e/resources/deployments.apps: authorization=2, sensitive-key=2
   clusters/kind-flightbay-e2e/resources/secrets: last-applied=1, secret-value=7
 ```
+
+To remove whole namespaces, types, objects or log lines, or to redact more, open the bundle in review mode: see [Reviewing before you send](/collect/review/).
 
 A count where you did not expect one is worth a look: extract the bundle and check the file (see [Sending a bundle](/collect/sending/)). The same report is on the [Coverage](/desk/coverage/) page in the desk.
 

@@ -32,6 +32,11 @@ const (
 	StateFailed       = "failed"
 	StateTruncated    = "truncated"
 	StateNotCollected = "not-collected"
+	// StateRemoved: the customer took the whole type out in review.
+	StateRemoved = "removed"
+	// StateTrimmed: the customer removed some objects of the type in review;
+	// the rest are here, but absence proves nothing.
+	StateTrimmed = "trimmed"
 )
 
 // ImportState is the progress of the running import.
@@ -113,6 +118,7 @@ type Workspace struct {
 	logStart   time.Time                            // oldest log timestamp, the histogram's left edge
 	diags      map[string]*Diagnostic               // cluster/kind/ns/pod -> captured diagnostics
 	soloSum    map[string]json.RawMessage           // cluster -> solo/summary.json
+	trust      Trust                                // signature and review ledger
 }
 
 // Diagnostic is one Solo component's captured admin output.
@@ -615,6 +621,11 @@ func (w *Workspace) CollectionState(cluster, group, resource, kind string, names
 				st = StateFailed
 			case bundle.StateTruncated:
 				st = StateTruncated
+			case bundle.StateRemoved:
+				st = StateRemoved
+			}
+			if t := c.Trimmed; t != nil && t.Objects > 0 && st != StateRemoved {
+				return Collection{State: StateTrimmed, Reason: fmt.Sprintf("%d removed by the customer before sending; the rest are here", t.Objects), Items: c.Items}
 			}
 			return Collection{State: st, Reason: c.Reason, Items: c.Items}
 		}

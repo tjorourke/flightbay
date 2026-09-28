@@ -45,6 +45,8 @@ flightbay ui                                # open the newest capture in your br
 | Proxy dumps, istiod debug output and metrics | [Solo diagnostics](/collect/solo-diagnostics/) |
 | Who called whom: access logs and flow logs | [Observed traffic](/collect/observed-traffic/) |
 | Least-privilege RBAC for the collector | [RBAC](/collect/rbac/) |
+| Decide what to send, and take out the rest | [Reviewing before you send](/collect/review/) |
+| Sign bundles and approve collection policies | [Signing and approved policies](/collect/signing/) |
 | Encryption, verification and the bundle file | [Sending a bundle](/collect/sending/) |
 | Build a bundle from a Git repository and score it before it is deployed | [Scanning a repository](/scan/) |
 | Fail a pull request on new failing checks, with SARIF | [Using it in CI](/scan/ci/) |

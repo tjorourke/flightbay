@@ -30,14 +30,21 @@ import (
 
 	"filippo.io/age"
 	"github.com/klauspost/compress/zstd"
+
+	"github.com/tjorourke/flightbay/internal/sign"
 )
 
 const (
-	SchemaVersion    = 1
-	HeaderName       = "bundle.json"
-	ManifestName     = "manifest.json"
-	RedactionName    = "redaction-report.json"
-	CollectionLog    = "collection-log.jsonl"
+	SchemaVersion = 1
+	HeaderName    = "bundle.json"
+	ManifestName  = "manifest.json"
+	RedactionName = "redaction-report.json"
+	CollectionLog = "collection-log.jsonl"
+	// SignatureName is the customer's signature over manifest.json. It is the
+	// only member allowed after the manifest, and it is optional.
+	SignatureName = "manifest.sig"
+	// LedgerName records what a customer removed in review (flightbay review).
+	LedgerName       = "review-ledger.json"
 	MaxWindow        = 128 << 20 // stock zstd and tar --zstd open this without extra flags
 	DefaultWindow    = 8 << 20
 	ageMagic         = "age-encryption.org/v1"
@@ -59,6 +66,33 @@ type Header struct {
 	// repository (flightbay scan): declared state, with no status, pods or logs.
 	Source string    `json:"source,omitempty"`
 	Repo   *RepoInfo `json:"repo,omitempty"`
+	// CollectorSHA256 is the SHA-256 of the collector binary that wrote the
+	// bundle, so either side can match it to a signed release.
+	CollectorSHA256 string `json:"collectorSha256,omitempty"`
+	// PolicySource describes the approved collection policy file, when one was used.
+	PolicySource *PolicySource `json:"policySource,omitempty"`
+	// Review is set on a bundle the customer trimmed with flightbay review.
+	Review *ReviewInfo `json:"review,omitempty"`
+}
+
+// PolicySource records which collection policy file a capture used and who approved it.
+type PolicySource struct {
+	File   string `json:"file"`
+	SHA256 string `json:"sha256"`
+	// Signature is the check of POLICY.sig at collection time; nil when the
+	// file was not signed.
+	Signature *sign.Result `json:"signature,omitempty"`
+	// ChangedBy lists the command-line flags that refined the file.
+	ChangedBy []string `json:"changedBy,omitempty"`
+}
+
+// ReviewInfo links a reviewed bundle to the capture it was made from. The
+// original's manifest hash and signature are in review-ledger.json, which is
+// written at the end, once the original has been read and verified.
+type ReviewInfo struct {
+	OriginalBundleID string    `json:"originalBundleId"`
+	Reviewer         string    `json:"reviewer,omitempty"`
+	ReviewedAt       time.Time `json:"reviewedAt"`
 }
 
 // SourceRepo marks a bundle built by flightbay scan from a code repository.
@@ -96,6 +130,8 @@ const (
 	StateFailed    = "failed"
 	StateExcluded  = "excluded"
 	StateTruncated = "truncated"
+	// StateRemoved marks data the customer took out in review before sending.
+	StateRemoved = "removed"
 )
 
 // Coverage says what one collection produced, so absence can be told apart
@@ -119,6 +155,17 @@ type Coverage struct {
 	Reason     string   `json:"reason,omitempty"`
 	Source     string   `json:"source,omitempty"`   // repo scan: the input path
 	Renderer   string   `json:"renderer,omitempty"` // repo scan: yaml, helm, kustomize, argocd, flux
+	// Trimmed counts what the customer removed from this collection in review
+	// while keeping the rest of it.
+	Trimmed *Trimmed `json:"trimmed,omitempty"`
+}
+
+// Trimmed says how a collection was cut down in review.
+type Trimmed struct {
+	Objects     int `json:"objects,omitempty"`     // removed one by one
+	ByNamespace int `json:"byNamespace,omitempty"` // removed with a whole namespace
+	Lines       int `json:"lines,omitempty"`       // log lines
+	Files       int `json:"files,omitempty"`       // diagnostic or flow files
 }
 
 // Manifest is manifest.json, written last.
@@ -138,6 +185,8 @@ type WriterOptions struct {
 	WindowSize  int    // bytes, power of two, capped at MaxWindow
 	Recipients  []age.Recipient
 	FlushEvery  time.Duration
+	// Signer, when set, signs manifest.json and writes manifest.sig after it.
+	Signer *sign.PrivateKey
 }
 
 type countingWriter struct {
@@ -165,6 +214,7 @@ type Writer struct {
 	lastFlush  time.Time
 	flushEvery time.Duration
 	closed     bool
+	signer     *sign.PrivateKey
 }
 
 func level(name string) zstd.EncoderLevel {
@@ -208,7 +258,7 @@ func NewWriter(w io.Writer, o WriterOptions) (*Writer, error) {
 	if fe == 0 {
 		fe = 250 * time.Millisecond
 	}
-	return &Writer{out: cw, enc: enc, zw: zw, tw: tar.NewWriter(zw), hashes: map[string]string{}, flushEvery: fe}, nil
+	return &Writer{out: cw, enc: enc, zw: zw, tw: tar.NewWriter(zw), hashes: map[string]string{}, flushEvery: fe, signer: o.Signer}, nil
 }
 
 var safeSegment = regexp.MustCompile(`^[A-Za-z0-9._@:+=,\-]+$`)
@@ -295,7 +345,7 @@ func (w *Writer) Add(name string, data []byte) error {
 	if err := ValidName(name); err != nil {
 		return err
 	}
-	if name == HeaderName || name == ManifestName {
+	if name == HeaderName || name == ManifestName || name == SignatureName {
 		return fmt.Errorf("%s is reserved", name)
 	}
 	if _, dup := w.hashes[name]; dup {
@@ -370,6 +420,11 @@ func (w *Writer) Close(m Manifest) error {
 	if err := w.write(ManifestName, b); err != nil {
 		return err
 	}
+	if w.signer != nil {
+		if err := w.write(SignatureName, w.signer.Sign(sign.PurposeBundle, b).Marshal()); err != nil {
+			return err
+		}
+	}
 	w.closed = true
 	if err := w.tw.Close(); err != nil {
 		return err
@@ -405,6 +460,8 @@ type Reader struct {
 	seen      map[string]string
 	header    *Header
 	manifest  *Manifest
+	rawMan    []byte
+	sig       []byte
 	total     int64
 	eof       bool
 	err       error
@@ -469,8 +526,11 @@ func (r *Reader) Next() (*Member, error) {
 	if r.header == nil && h.Name != HeaderName {
 		return r.fail(fmt.Errorf("first member must be %s, got %s", HeaderName, h.Name))
 	}
-	if r.manifest != nil {
+	if r.manifest != nil && (h.Name != SignatureName || r.sig != nil) {
 		return r.fail(fmt.Errorf("member %s after %s", h.Name, ManifestName))
+	}
+	if h.Name == SignatureName && r.manifest == nil {
+		return r.fail(fmt.Errorf("%s before %s", SignatureName, ManifestName))
 	}
 	if _, dup := r.seen[h.Name]; dup {
 		return r.fail(fmt.Errorf("duplicate member %s", h.Name))
@@ -504,6 +564,9 @@ func (r *Reader) Next() (*Member, error) {
 			return r.fail(fmt.Errorf("parse %s: %w", ManifestName, err))
 		}
 		r.manifest = &m
+		r.rawMan = data
+	case SignatureName:
+		r.sig = data
 	}
 	return &Member{Name: h.Name, Data: data, SHA256: sum}, nil
 }
@@ -513,6 +576,35 @@ func (r *Reader) Header() *Header { return r.header }
 
 // Manifest returns manifest.json once read.
 func (r *Reader) Manifest() *Manifest { return r.manifest }
+
+// ManifestSHA256 is the hex SHA-256 of manifest.json once read: the one
+// value that identifies the exact content of a bundle.
+func (r *Reader) ManifestSHA256() string {
+	if r.rawMan == nil {
+		return ""
+	}
+	return sha(r.rawMan)
+}
+
+// Signed reports whether the bundle carries manifest.sig (read so far).
+func (r *Reader) Signed() bool { return r.sig != nil }
+
+// Signature checks manifest.sig against manifest.json and the trusted keys.
+// Call it after reading to the end. A bundle that also fails Verify is
+// modified however its signature reads.
+func (r *Reader) Signature(trusted []sign.PublicKey) sign.Result {
+	if r.sig == nil {
+		return sign.Result{}
+	}
+	if r.rawMan == nil {
+		return sign.Result{Signed: true, Error: "manifest.json is missing"}
+	}
+	s, err := sign.Parse(r.sig)
+	if err != nil {
+		return sign.Result{Signed: true, Error: err.Error()}
+	}
+	return sign.Verify(s, sign.PurposeBundle, r.rawMan, trusted)
+}
 
 // Verify checks the finished stream against the manifest.
 func (r *Reader) Verify() error {
@@ -536,7 +628,7 @@ func (r *Reader) Verify() error {
 		}
 	}
 	for name := range r.seen {
-		if name == ManifestName {
+		if name == ManifestName || name == SignatureName {
 			continue
 		}
 		if _, ok := r.manifest.Members[name]; !ok {
@@ -563,6 +655,8 @@ const (
 	PathCollection = "collection-log"
 	PathSolo       = "solo"
 	PathFlows      = "flows"
+	PathSignature  = "signature"
+	PathLedger     = "ledger"
 )
 
 // PathInfo classifies a member name.
@@ -645,6 +739,10 @@ func ParsePath(name string) (PathInfo, bool) {
 		return PathInfo{Kind: PathRedaction}, true
 	case CollectionLog:
 		return PathInfo{Kind: PathCollection}, true
+	case SignatureName:
+		return PathInfo{Kind: PathSignature}, true
+	case LedgerName:
+		return PathInfo{Kind: PathLedger}, true
 	}
 	s := strings.Split(name, "/")
 	if len(s) < 4 || s[0] != "clusters" {

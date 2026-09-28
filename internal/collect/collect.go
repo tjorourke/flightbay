@@ -73,6 +73,11 @@ type Collector struct {
 	Progress      func(string)
 	Hubble        HubbleRunner // runs the hubble CLI; nil = exec hubble from PATH
 
+	// Recorded in bundle.json: the approved policy file used, and the
+	// collector binary's own hash.
+	PolicySource    *bundle.PolicySource
+	CollectorSHA256 string
+
 	mu         sync.Mutex
 	entries    []LogEntry
 	budgetHit  bool
@@ -128,6 +133,7 @@ func (c *Collector) Begin(contexts []string) error {
 	return c.Writer.WriteHeader(bundle.Header{
 		Case: c.Policy.Case, Collector: "flightbay " + c.Version, CaptureStart: time.Now().UTC(),
 		Contexts: contexts, Policy: pol, Planned: planned, Unavailable: plan.Unavailable,
+		PolicySource: c.PolicySource, CollectorSHA256: c.CollectorSHA256,
 	})
 }
 

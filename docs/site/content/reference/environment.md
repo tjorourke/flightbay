@@ -11,7 +11,7 @@ description: Every environment variable flightbay and flightbay-desk read, and t
 | Variable | Read by | Default | Effect |
 |---|---|---|---|
 | `KUBECONFIG` | `flightbay` | `~/.kube/config` | The kubeconfig to read contexts from, as with `kubectl`. `--kubeconfig` overrides it. |
-| `FLIGHTBAY_HOME` | `flightbay-desk` | `~/.flightbay` | Where workspaces (`workspaces/ws-*`) and `current.json` (the most recently opened desk) live. The container image sets it to `/home/flightbay/.flightbay`. |
+| `FLIGHTBAY_HOME` | `flightbay-desk`, `flightbay` | `~/.flightbay` | Where workspaces (`workspaces/ws-*`), `current.json` (the most recently opened desk) and `trusted-keys/*.pub` (public keys that bundle signatures are checked against, for the desk and `flightbay inspect`) live. The container image sets it to `/home/flightbay/.flightbay`. |
 | `FLIGHTBAY_URL` | `flightbay-desk` helpers, `shell`, `mcp` | from `current.json` | The desk to talk to. Set in workspace shells. Used together with `FLIGHTBAY_TOKEN`; when both are set, `current.json` is not read. |
 | `FLIGHTBAY_TOKEN` | `flightbay-desk` helpers, `shell`, `mcp` | from `current.json` | The desk's token. Set in workspace shells. |
 | `FLIGHTBAY_ENTERPRISE` | `flightbay-desk` | off | `1`, `true`, `yes` or `on` turns on every [Flightbay Enterprise](/enterprise/) feature. |

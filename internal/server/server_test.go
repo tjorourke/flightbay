@@ -461,3 +461,23 @@ func TestProxiesAPI(t *testing.T) {
 		t.Fatalf("unknown file should 404, got %d", code)
 	}
 }
+
+// Two desks on the same host keep separate sessions: cookies ignore the port.
+func TestTwoDesksOneBrowser(t *testing.T) {
+	_, a := newServer(t, false)
+	sb := &Server{WS: workspace(t), Token: "other-token", WorkDir: t.TempDir()}
+	b := httptest.NewServer(sb.Handler())
+	t.Cleanup(func() { b.Close(); sb.Close() })
+	jar, _ := cookiejar.New(nil)
+	c := &http.Client{Jar: jar}
+	for _, login := range []string{a.URL + "/?token=" + tok, b.URL + "/?token=other-token"} {
+		if resp, err := c.Get(login); err != nil || resp.StatusCode != 200 {
+			t.Fatalf("login %s: %v", login, err)
+		}
+	}
+	for _, u := range []string{a.URL, b.URL} {
+		if resp, _ := c.Get(u + "/api/workspace"); resp.StatusCode != 200 {
+			t.Fatalf("%s lost its session after the other desk signed in: %d", u, resp.StatusCode)
+		}
+	}
+}

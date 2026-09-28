@@ -15,7 +15,7 @@ This page is for the security team that has to approve sending a bundle, and for
 - **Least privilege is generated for you.** `flightbay rbac` prints Roles and bindings for exactly your policy. See [RBAC](/collect/rbac/).
 - **Redaction happens in memory.** Objects, ConfigMap data, environment variables, log lines and diagnostic output are redacted before they are written. Unredacted data is never written to disk.
 - **It writes locally.** The bundle is written to a local file, or to standard output with `-o -`. Flightbay never uploads anything.
-- **It is one static binary** with no dependencies: pure Go, no cgo.
+- **It is one static binary** with no dependencies: pure Go, no cgo. Release checksums are signed with cosign, and each bundle records the binary's own SHA-256.
 
 ## What leaves the cluster
 
@@ -51,6 +51,7 @@ Credentials that turn up elsewhere (tokens in env vars, keys in ConfigMaps, `Aut
 ## Review before sending
 
 ```bash
+flightbay review BUNDLE --sign KEY       # choose what to send in the UI, export signed
 flightbay inspect BUNDLE --redactions    # verify, list contents, count replacements
 flightbay inspect BUNDLE --policy        # the policy recorded in the bundle
 flightbay extract BUNDLE ./review        # unpack and read any file
@@ -62,7 +63,19 @@ The redaction report records how many values each rule replaced in each file, ne
 
 `manifest.json`, the last file in every bundle, holds a SHA-256 of every other file, plus the capture end time and whether collection completed. `flightbay inspect`, `flightbay extract` and the desk check every file against it. A bundle that fails verification is reported as such; the desk shows what it could read, marked as unverified, and never as verified.
 
-The manifest proves the bundle has not been damaged or altered since it was written. It does not prove who wrote it: bundles are not signed yet.
+The manifest proves the bundle has not been damaged or altered since it was written. A signature proves who wrote it: `flightbay collect --sign KEY` (or `flightbay review --sign KEY`) signs the manifest with the customer's Ed25519 key, and `flightbay inspect --verify-key` and the desk check it against the customer's public key. Solo only ever holds public keys. See [Signing and approved policies](/collect/signing/).
+
+## Approved policies
+
+A security team can sign the collection policy file (`flightbay policy sign`). With `--policy-key`, the collector refuses a policy that is unsigned, signed by someone else, or edited since, and refuses command-line flags that would widen it. Every bundle records the policy file's SHA-256 and who approved it.
+
+## Reviewing a capture
+
+`flightbay review` opens a capture on the customer's machine, lets them remove namespaces, types, objects, log streams, lines and files, and redact more, and exports a new signed bundle with a ledger of what was removed. By default the ledger holds counts only, and nothing inside a removed namespace, including its name, reaches the export. See [Reviewing before you send](/collect/review/).
+
+## Which build wrote it
+
+Each bundle records the SHA-256 of the collector binary. Release checksums are signed with cosign keyless signing and include the binaries' own hashes, so a bundle can be matched to the release that wrote it.
 
 ## Encryption
 
@@ -75,7 +88,7 @@ Solo does not yet publish a shared support key, so the recipient comes from your
 The desk keeps the snapshot on the engineer's machine:
 
 - **Local only.** The UI and API listen on `127.0.0.1` by default. A non-loopback address is refused unless you pass `--allow-remote` (meant for containers), and then the desk warns that anyone who can reach the port and has the token can read the snapshot.
-- **A token on every request.** Each desk makes a random token. The browser gets it once in the URL, which sets an HttpOnly, SameSite=Strict cookie. The API, the terminal websocket and the MCP endpoint all require the token or the cookie. Responses are sent with `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` and `Referrer-Policy: no-referrer`.
+- **A token on every request.** Each desk makes a random token. The browser gets it once in the URL, which sets an HttpOnly, SameSite=Strict cookie named for the desk's port, so several desks can be open in one browser at once. The API, the terminal websocket and the MCP endpoint all require the token or the cookie. Responses are sent with `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` and `Referrer-Policy: no-referrer`.
 - **A read-only snapshot API.** `kubectl`, `k9s` and `stern` talk to an API that serves the bundle over TLS on `127.0.0.1`, with a certificate made for the session. Every write returns "this is a read-only snapshot", and excluded types return 403.
 - **Read-only SQL.** Queries must be a single read-only statement and run in a transaction that is rolled back.
 - **Temporary workspaces.** The DuckDB workspace and kubeconfig live in a directory under `~/.flightbay/workspaces` that is deleted when the desk closes, unless you pass `--keep` or your own `--workdir`. Directories left by a desk that was killed are removed after seven days.
@@ -87,4 +100,4 @@ The Enterprise feature switches decide what the desk shows. They are not a secur
 
 ## Still to come
 
-These are planned and not built yet: bundles signed with a customer key and verified in the desk, signed release binaries, a customer-side review mode for trimming a bundle before sending, a signed policy file that a security team approves, and field-level redaction rules.
+Planned and not built yet: a hosted service for uploading bundles to Solo, which will check each bundle against the public key registered for that customer.

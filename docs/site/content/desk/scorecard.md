@@ -77,7 +77,8 @@ Each area also shows a score per category (Authentication, Isolation, Resilience
 
 A check is **not applicable** (N/A) when:
 
-- the data it needs was not captured, for example RBAC checks without `--cluster-scoped`, or a type the customer excluded; or
+- the data it needs was not captured, for example RBAC checks without `--cluster-scoped`, or a type the customer excluded;
+- the customer removed the type, or some of its objects, in review before sending ("networkpolicies.networking.k8s.io was removed by the customer before sending"); or
 - there is nothing for it to apply to, for example waypoint checks in a cluster with no waypoints.
 
 Not applicable checks carry their reason ("clusterrolebindings.rbac.authorization.k8s.io was not captured (excluded)") and do not count towards the score. A check never fails on data the customer chose not to collect. A CRD that is not installed at all counts as "there are none", which is a real answer, not missing data.

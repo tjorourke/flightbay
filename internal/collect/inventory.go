@@ -114,7 +114,8 @@ func InventoryMarkdown() string {
 	for _, r := range redact.Rules {
 		w("- `%s`: %s\n", r.Name, r.Description)
 	}
-	w("- your own patterns from `--redact-extra` (one Go regular expression per line)\n\n")
+	w("- your own patterns from `--redact-extra` (one Go regular expression per line)\n")
+	w("- fields you name with `--drop-field PATH` or `dropFields` in a config file, removed from every object, e.g. `metadata.annotations[\"corp.example/*\"]`\n\n")
 	w("JSON held inside a string, such as the `kubectl.kubernetes.io/last-applied-configuration` annotation or a JSON file in a ConfigMap, is parsed and redacted with the same rules, so an environment variable or key inside an embedded manifest is caught too.\n\n")
 	w("`redaction-report.json` in the bundle records how many replacements were made in each file, never the values. Review it with `flightbay inspect BUNDLE --redactions` before sending.\n\n")
 
@@ -122,7 +123,10 @@ func InventoryMarkdown() string {
 	w("- `bundle.json` (first): identity, case, contexts, capture start and the resolved collection policy.\n")
 	w("- `collection-log.jsonl`: every call, including failures (RBAC denied, timeouts, truncation), so a missing file never looks like a missing object.\n")
 	w("- `coverage/*.json`: per collection, what was expected and whether it completed, failed, was excluded or truncated. Attached and hubble flow files have a `flows` coverage entry each, with the detected format.\n")
-	w("- `manifest.json` (last): capture end, completion state and a SHA-256 for every member. `flightbay inspect` verifies them.\n\n")
+	w("- `manifest.json`: capture end, completion state and a SHA-256 for every member. `flightbay inspect` verifies them.\n")
+	w("- `manifest.sig` (last, with `--sign KEY`): your Ed25519 signature over the manifest, so Solo can check the bundle came from you unmodified. Solo only ever holds your public key.\n")
+	w("- The SHA-256 of the collector binary, and with `--config` the policy file's SHA-256 and who approved it (`flightbay policy sign`).\n\n")
+	w("Before sending, `flightbay review BUNDLE` lets you remove namespaces, resource types, objects, log streams, log lines and files and redact more, then exports a new signed bundle with `review-ledger.json`, a count of what you removed.\n\n")
 	w("The bundle is a plain tar stream compressed with zstd. Open it with standard tools: `tar --zstd -tvf BUNDLE`. With `--encrypt-to` it is wrapped in age encryption and only the holder of the matching identity can read it.\n")
 	return b.String()
 }

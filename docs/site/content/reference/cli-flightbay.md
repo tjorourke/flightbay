@@ -37,14 +37,16 @@ Examples:
 | `--cluster-scoped` | also collect cluster-scoped objects (nodes, namespaces, CRDs, ClusterRoles) |
 | `--collect strings` | categories: objects,logs,events,nodes,helm,proxies,control-plane,metrics |
 | `--compression string` | best, better, default or fastest |
-| `--config string` | collection config file (YAML); flags refine it, exclusions always win |
+| `--config string` | collection config file (YAML); flags refine it, exclusions always win. A CONFIG.sig next to it is checked |
 | `--configmaps string` | omit, metadata or scrubbed |
 | `--context strings` | kubeconfig contexts to collect (default: current context) |
+| `--drop-field stringArray` | remove this path from every object before writing, e.g. 'metadata.annotations["corp.example/*"]' (repeatable) |
 | `--dry-run` | print what would be collected and the RBAC it needs; reads discovery only |
 | `--encrypt-to strings` | age recipients (age1...) or @file; the bundle becomes .tar.zst.age |
 | `--exclude-namespaces strings` | namespaces to exclude (globs allowed) |
 | `--exclude-resources strings` | resources never to read, e.g. configmaps,secrets |
 | `--hubble-flows int[=20000]` | read the last N flows from Cilium hubble-relay (kube-system) through port-forward and the local hubble CLI; --hubble-flows alone means 20000 |
+| `--include-resources strings` | allowlist: read only these resource types (same as --resources); --exclude-resources still wins |
 | `--interactive` | choose categories and scope with prompts, preview, then confirm |
 | `--json` | print the dry-run plan as JSON |
 | `--kubeconfig string` | kubeconfig file (default: $KUBECONFIG or ~/.kube/config) |
@@ -60,6 +62,7 @@ Examples:
 | `--no-proxy-dumps` | do not collect proxy config dumps |
 | `--object-detail string` | metadata or full |
 | `-o, --out string` | output directory or file; - streams the bundle to stdout (default ".") |
+| `--policy-key strings` | public keys of whoever approves collection policies; --config must then be signed by one of them and flags may only narrow it |
 | `--portforward` | allow port-forward based diagnostics |
 | `--profile string` | starting profile: minimal, standard or custom (default "standard") |
 | `--qps float32` | API server requests per second |
@@ -68,6 +71,7 @@ Examples:
 | `--resources strings` | resource allowlist, e.g. pods,deployments.apps,httproutes.gateway.networking.k8s.io |
 | `--save-config string` | write the resolved policy to this file for repeatable runs |
 | `--secrets string` | omit, metadata or keys (values are never collected) |
+| `--sign string` | sign the bundle with this private key (flightbay keygen); Solo verifies it with your public key |
 | `--since string` | log window, e.g. 2h |
 | `--solo-diagnostics` | add proxy dumps, control-plane debug and metrics, and allow the port-forward they need |
 | `--window-size int` | zstd window in bytes (default 8 MiB, max 128 MiB for stock tools) |
@@ -111,6 +115,63 @@ flightbay inspect BUNDLE [flags]
 | `-i, --identity strings` | age identity file for encrypted bundles |
 | `--policy` | print the collection policy recorded in the bundle |
 | `--redactions` | show redaction counts per location |
+| `--verify-key strings` | public key(s) the bundle must be signed by (default: any in ~/.flightbay/trusted-keys, not required) |
+
+## flightbay keygen
+
+Create an Ed25519 signing key pair: sign bundles and policies with the .key, give Solo the .pub
+
+```text
+flightbay keygen [flags]
+```
+
+Examples:
+
+```bash
+  flightbay keygen --name "ACME platform team"                 # writes flightbay-signing.key and .pub
+  flightbay keygen --name "ACME security" -o approver           # approver.key and approver.pub, for policies
+```
+
+| Flag | Description |
+|---|---|
+| `--force` | overwrite existing key files |
+| `--name string` | who signs with this key, e.g. "ACME platform team" (shown to Solo when a bundle verifies) |
+| `-o, --output string` | file name without extension: writes NAME.key and NAME.pub (default "flightbay-signing") |
+
+## flightbay policy
+
+Sign and check collection policy files your security team approves
+
+## flightbay policy sign
+
+Approve a collection policy: writes POLICY.sig next to it
+
+```text
+flightbay policy sign POLICY [flags]
+```
+
+Examples:
+
+```bash
+  flightbay policy sign collection.yaml --key approver.key
+  flightbay collect --config collection.yaml --policy-key approver.pub   # refuses an unsigned or edited policy
+```
+
+| Flag | Description |
+|---|---|
+| `--key string` | approver's private key |
+
+## flightbay policy verify
+
+Check POLICY.sig: unmodified since it was signed, and by whom
+
+```text
+flightbay policy verify POLICY [flags]
+```
+
+| Flag | Description |
+|---|---|
+| `--key strings` | approver public key(s) it must be signed by |
 
 ## flightbay rbac
 
@@ -127,13 +188,15 @@ flightbay rbac [flags]
 | `--cluster-scoped` | also collect cluster-scoped objects (nodes, namespaces, CRDs, ClusterRoles) |
 | `--collect strings` | categories: objects,logs,events,nodes,helm,proxies,control-plane,metrics |
 | `--compression string` | best, better, default or fastest |
-| `--config string` | collection config file (YAML); flags refine it, exclusions always win |
+| `--config string` | collection config file (YAML); flags refine it, exclusions always win. A CONFIG.sig next to it is checked |
 | `--configmaps string` | omit, metadata or scrubbed |
 | `--context strings` | kubeconfig contexts to collect (default: current context) |
 | `--discover` | use cluster discovery to list resources explicitly instead of a wildcard |
+| `--drop-field stringArray` | remove this path from every object before writing, e.g. 'metadata.annotations["corp.example/*"]' (repeatable) |
 | `--exclude-namespaces strings` | namespaces to exclude (globs allowed) |
 | `--exclude-resources strings` | resources never to read, e.g. configmaps,secrets |
 | `--hubble-flows int[=20000]` | read the last N flows from Cilium hubble-relay (kube-system) through port-forward and the local hubble CLI; --hubble-flows alone means 20000 |
+| `--include-resources strings` | allowlist: read only these resource types (same as --resources); --exclude-resources still wins |
 | `--kubeconfig string` | kubeconfig file (default: $KUBECONFIG or ~/.kube/config) |
 | `--label-selector string` | only collect namespaced objects matching this label selector |
 | `--log-containers strings` | only collect logs from containers matching these globs |
@@ -146,6 +209,7 @@ flightbay rbac [flags]
 | `--no-portforward` | never use port-forward |
 | `--no-proxy-dumps` | do not collect proxy config dumps |
 | `--object-detail string` | metadata or full |
+| `--policy-key strings` | public keys of whoever approves collection policies; --config must then be signed by one of them and flags may only narrow it |
 | `--portforward` | allow port-forward based diagnostics |
 | `--profile string` | starting profile: minimal, standard or custom (default "standard") |
 | `--qps float32` | API server requests per second |
@@ -154,6 +218,38 @@ flightbay rbac [flags]
 | `--secrets string` | omit, metadata or keys (values are never collected) |
 | `--since string` | log window, e.g. 2h |
 | `--solo-diagnostics` | add proxy dumps, control-plane debug and metrics, and allow the port-forward they need |
+
+## flightbay review
+
+Opens the bundle in the Flightbay UI in review mode. The Review page lists everything in it; take out
+what you do not want to send, add redaction patterns, check what Solo will receive, and export. The export is
+a new bundle, signed with your key if you give one, with a ledger of what was removed (counts only unless you
+choose to list names).
+
+With --plan the same review runs without the UI, from a plan file (YAML or JSON), for repeatable reviews.
+
+```text
+flightbay review BUNDLE [flags]
+```
+
+Examples:
+
+```bash
+  flightbay review flightbay-01234567-20260928T1012Z.tar.zst --sign flightbay-signing.key
+  flightbay review bundle.tar.zst --plan review.yaml --sign flightbay-signing.key --encrypt-to age1...
+```
+
+| Flag | Description |
+|---|---|
+| `--disclose-names` | list removed namespaces, objects and streams by name in the ledger (default: counts only) |
+| `--encrypt-to strings` | encrypt the reviewed bundle to these age recipients (age1...) or @file |
+| `-i, --identity strings` | age identity to open an encrypted bundle |
+| `--no-browser` | do not open a browser (UI mode) |
+| `-o, --out string` | reviewed bundle to write (default: NAME-reviewed.tar.zst next to the original) |
+| `--plan string` | apply this review plan without the UI (YAML or JSON) |
+| `--reviewer string` | who reviewed it, recorded in the ledger |
+| `--sign string` | sign the reviewed bundle with this private key |
+| `--verify-key strings` | public keys to check the original's signature against |
 
 ## flightbay scan
 

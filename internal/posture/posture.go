@@ -157,6 +157,12 @@ func (e env) evaluable(group, resource, kind string, namespaced bool) (bool, str
 	if group != "" {
 		name += "." + group
 	}
+	switch st.State {
+	case store.StateRemoved:
+		return false, name + " was removed by the customer before sending"
+	case store.StateTrimmed:
+		return false, name + ": " + st.Reason
+	}
 	return false, fmt.Sprintf("%s was not captured (%s)", name, strings.TrimSpace(st.State+" "+st.Reason))
 }
 

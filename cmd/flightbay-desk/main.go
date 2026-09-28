@@ -33,7 +33,9 @@ import (
 	"github.com/tjorourke/flightbay/internal/diff"
 	"github.com/tjorourke/flightbay/internal/importer"
 	"github.com/tjorourke/flightbay/internal/mcp"
+	"github.com/tjorourke/flightbay/internal/review"
 	"github.com/tjorourke/flightbay/internal/server"
+	"github.com/tjorourke/flightbay/internal/sign"
 	"github.com/tjorourke/flightbay/internal/store"
 	_ "github.com/tjorourke/flightbay/internal/store/duckdb" // SQL and log search
 )
@@ -126,6 +128,9 @@ func openCmd() *cobra.Command {
 	var listen, workdir, throttle, shell, baseline string
 	var identities, deferCats, flowFiles []string
 	var noBrowser, noTerminal, allowRemote, keep bool
+	var reviewMode bool
+	var signKey, reviewer, reviewOut string
+	var encryptTo, verifyKeys []string
 	c := &cobra.Command{
 		Use:   "open [BUNDLE | DIR | -]",
 		Short: "Open a bundle and start investigating while it loads (default: the newest bundle here)",
@@ -144,6 +149,10 @@ func openCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "warning: listening beyond loopback. Anyone who can reach this port and has the token can read the snapshot.")
 			}
 			ids, err := cli.LoadIdentities(identities)
+			if err != nil {
+				return err
+			}
+			trusted, err := sign.Trusted(verifyKeys)
 			if err != nil {
 				return err
 			}
@@ -198,7 +207,7 @@ func openCmd() *cobra.Command {
 			for _, d := range deferCats {
 				skip[strings.TrimSpace(d)] = true
 			}
-			opts := importer.Options{Source: path, Throttle: rate, Skip: skip}
+			opts := importer.Options{Source: path, Throttle: rate, Skip: skip, Trusted: trusted}
 			opts.Reader.Identities = ids
 			importDone := make(chan error, 1)
 			go func() {
@@ -237,7 +246,7 @@ func openCmd() *cobra.Command {
 						return err
 					}
 					defer f.Close()
-					o := importer.Options{Source: path}
+					o := importer.Options{Source: path, Trusted: trusted}
 					o.Reader.Identities = ids
 					return importer.Run(context.Background(), f, ws, o)
 				}
@@ -246,6 +255,26 @@ func openCmd() *cobra.Command {
 				srv.BundlePath = path
 			}
 			srv.Identities = ids
+			if reviewMode {
+				if path == "-" {
+					return errors.New("review mode needs a bundle file, not a stream")
+				}
+				rs := &server.ReviewSession{Source: path, Plan: review.Plan{Reviewer: reviewer, ScrubNames: true}}
+				rs.Options = review.Options{Identities: ids, Trusted: trusted, Tool: "flightbay-desk " + version}
+				if rs.Options.Recipients, err = cli.ParseRecipients(encryptTo); err != nil {
+					return err
+				}
+				if signKey != "" {
+					if rs.Options.Signer, err = sign.LoadPrivate(signKey); err != nil {
+						return err
+					}
+				}
+				rs.Out = reviewOut
+				if rs.Out == "" {
+					rs.Out = review.OutputName(path, len(rs.Options.Recipients) > 0)
+				}
+				srv.Review = rs
+			}
 			// Loads an earlier bundle for the Compare view, from --baseline or
 			// picked in the UI.
 			srv.LoadBaseline = func(p string) error {
@@ -356,6 +385,12 @@ func openCmd() *cobra.Command {
 	c.Flags().BoolVar(&allowRemote, "allow-remote", false, "allow a non-loopback --listen (for containers); the token is still required")
 	c.Flags().StringVar(&shell, "shell", "", "shell for the terminal (default /bin/bash)")
 	c.Flags().StringVar(&baseline, "baseline", "", "an earlier bundle from the same customer to compare against (Compare view)")
+	c.Flags().StringSliceVar(&verifyKeys, "verify-key", nil, "public keys to check the bundle's signature against (default: ~/.flightbay/trusted-keys/*.pub)")
+	c.Flags().BoolVar(&reviewMode, "review", false, "review mode: choose what to send to Solo and export a trimmed, signed bundle (flightbay review)")
+	c.Flags().StringVar(&signKey, "sign", "", "review mode: sign the exported bundle with this private key")
+	c.Flags().StringSliceVar(&encryptTo, "encrypt-to", nil, "review mode: encrypt the exported bundle to these age recipients (age1...) or @file")
+	c.Flags().StringVar(&reviewer, "reviewer", "", "review mode: who is reviewing, recorded in the ledger")
+	c.Flags().StringVar(&reviewOut, "review-out", "", "review mode: file to export to (default NAME-reviewed.tar.zst next to the bundle)")
 	return c
 }
 

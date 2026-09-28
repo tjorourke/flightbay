@@ -4,7 +4,10 @@
 package cli
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -23,6 +26,8 @@ import (
 	"github.com/tjorourke/flightbay/internal/bundle"
 	"github.com/tjorourke/flightbay/internal/policy"
 	"github.com/tjorourke/flightbay/internal/redact"
+	"github.com/tjorourke/flightbay/internal/review"
+	"github.com/tjorourke/flightbay/internal/sign"
 	"github.com/tjorourke/flightbay/internal/solodocs"
 )
 
@@ -41,18 +46,39 @@ type PolicyFlags struct {
 	burst                                         int
 	redactExtra                                   string
 	hubbleFlows                                   int
+	includeResources, dropFields                  []string
+	policyKeys                                    []string
+	source                                        *bundle.PolicySource
+	own                                           map[string]bool // the flags Register added
 }
+
+// narrowing flags only ever collect less, so they may refine an approved policy.
+var narrowing = map[string]bool{"case": true, "exclude-namespaces": true, "exclude-resources": true, "no-logs": true,
+	"no-proxy-dumps": true, "no-portforward": true, "drop-field": true, "redact-extra": true, "policy-key": true, "config": true}
 
 // Register adds the flags to a flag set.
 func (f *PolicyFlags) Register(fs *pflag.FlagSet) {
+	before := map[string]bool{}
+	fs.VisitAll(func(fl *pflag.Flag) { before[fl.Name] = true })
+	defer func() {
+		f.own = map[string]bool{}
+		fs.VisitAll(func(fl *pflag.Flag) {
+			if !before[fl.Name] {
+				f.own[fl.Name] = true
+			}
+		})
+	}()
 	fs.StringVar(&f.profile, "profile", "standard", "starting profile: minimal, standard or custom")
-	fs.StringVar(&f.config, "config", "", "collection config file (YAML); flags refine it, exclusions always win")
+	fs.StringVar(&f.config, "config", "", "collection config file (YAML); flags refine it, exclusions always win. A CONFIG.sig next to it is checked")
+	fs.StringSliceVar(&f.policyKeys, "policy-key", nil, "public keys of whoever approves collection policies; --config must then be signed by one of them and flags may only narrow it")
 	fs.StringVar(&f.caseID, "case", "", "support case number, recorded in the bundle")
 	fs.StringSliceVar(&f.namespaces, "namespaces", nil, "namespaces to include (globs allowed); default all")
 	fs.StringSliceVar(&f.excludeNamespaces, "exclude-namespaces", nil, "namespaces to exclude (globs allowed)")
 	fs.StringSliceVar(&f.collect, "collect", nil, "categories: objects,logs,events,nodes,helm,proxies,control-plane,metrics")
 	fs.StringSliceVar(&f.resources, "resources", nil, "resource allowlist, e.g. pods,deployments.apps,httproutes.gateway.networking.k8s.io")
+	fs.StringSliceVar(&f.includeResources, "include-resources", nil, "allowlist: read only these resource types (same as --resources); --exclude-resources still wins")
 	fs.StringSliceVar(&f.excludeResources, "exclude-resources", nil, "resources never to read, e.g. configmaps,secrets")
+	fs.StringArrayVar(&f.dropFields, "drop-field", nil, `remove this path from every object before writing, e.g. 'metadata.annotations["corp.example/*"]' (repeatable)`)
 	fs.StringVar(&f.labelSelector, "label-selector", "", "only collect namespaced objects matching this label selector")
 	fs.BoolVar(&f.clusterScoped, "cluster-scoped", false, "also collect cluster-scoped objects (nodes, namespaces, CRDs, ClusterRoles)")
 	fs.StringVar(&f.objectDetail, "object-detail", "", "metadata or full")
@@ -86,6 +112,21 @@ func (f *PolicyFlags) Resolve(fs *pflag.FlagSet) (*policy.Policy, error) {
 		if err == nil && fs.Changed("profile") {
 			err = fmt.Errorf("use either --profile or the profile field in --config, not both")
 		}
+		if err == nil {
+			f.source, err = PolicySource(f.config, f.policyKeys)
+		}
+		if err == nil {
+			fs.Visit(func(fl *pflag.Flag) {
+				if f.own[fl.Name] && !narrowing[fl.Name] {
+					f.source.ChangedBy = append(f.source.ChangedBy, "--"+fl.Name)
+				}
+			})
+			if len(f.policyKeys) > 0 && len(f.source.ChangedBy) > 0 {
+				err = fmt.Errorf("the approved policy %s can only be narrowed on the command line; %s would change what it allows. Edit the file and have it signed again", f.config, strings.Join(f.source.ChangedBy, ", "))
+			}
+		}
+	} else if len(f.policyKeys) > 0 {
+		err = errors.New("--policy-key needs --config: the approved policy file to check")
 	} else {
 		p, err = policy.Profile(f.profile)
 	}
@@ -132,6 +173,10 @@ func (f *PolicyFlags) Resolve(fs *pflag.FlagSet) (*policy.Policy, error) {
 	if ch("resources") {
 		p.Resources = f.resources
 	}
+	if ch("include-resources") {
+		p.Resources = append(p.Resources[:len(p.Resources):len(p.Resources)], f.includeResources...)
+	}
+	p.DropFields = append(p.DropFields, f.dropFields...)
 	p.ExcludeResources = append(p.ExcludeResources, f.excludeResources...)
 	if ch("label-selector") {
 		p.LabelSelector = f.labelSelector
@@ -198,10 +243,67 @@ func (f *PolicyFlags) Resolve(fs *pflag.FlagSet) (*policy.Policy, error) {
 			}
 		}
 	}
-	if _, err := redact.New(p.RedactExtra); err != nil {
+	if _, err := NewRedactor(p); err != nil {
 		return nil, err
 	}
 	return p, p.Validate()
+}
+
+// Source describes the policy file used, with its signature check; nil
+// without --config. Valid after Resolve.
+func (f *PolicyFlags) Source() *bundle.PolicySource { return f.source }
+
+// PolicySource hashes a policy file and checks FILE.sig when it exists. With
+// trusted keys the signature is required and must be by one of them.
+func PolicySource(file string, keyFiles []string) (*bundle.PolicySource, error) {
+	raw, err := os.ReadFile(file)
+	if err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256(raw)
+	src := &bundle.PolicySource{File: filepath.Base(file), SHA256: hex.EncodeToString(sum[:])}
+	var trusted []sign.PublicKey
+	if len(keyFiles) > 0 {
+		if trusted, err = sign.LoadPublic(keyFiles...); err != nil {
+			return nil, err
+		}
+	}
+	sigRaw, err := os.ReadFile(file + ".sig")
+	switch {
+	case os.IsNotExist(err):
+		if len(keyFiles) > 0 {
+			return nil, fmt.Errorf("%s is not signed (no %s.sig); an approver signs it with: flightbay policy sign %s --key approver.key", file, filepath.Base(file), file)
+		}
+		return src, nil
+	case err != nil:
+		return nil, err
+	}
+	sg, err := sign.Parse(sigRaw)
+	if err != nil {
+		return nil, fmt.Errorf("%s.sig: %w", file, err)
+	}
+	res := sign.Verify(sg, sign.PurposePolicy, raw, trusted)
+	if !res.Valid {
+		return nil, fmt.Errorf("%s does not match its approval signature (%s); it may have been edited after it was signed", file, res.Error)
+	}
+	if len(keyFiles) > 0 && !res.Trusted {
+		return nil, fmt.Errorf("%s is signed by %s (%s), which is not one of the --policy-key keys", file, res.Signer, res.KeyID)
+	}
+	src.Signature = &res
+	return src, nil
+}
+
+// NewRedactor builds the redactor a policy asks for: the built-in scrubbers,
+// the customer's extra patterns and the fields to drop.
+func NewRedactor(p *policy.Policy) (*redact.Redactor, error) {
+	rd, err := redact.New(p.RedactExtra)
+	if err != nil {
+		return nil, err
+	}
+	if err := rd.DropFields(p.DropFields); err != nil {
+		return nil, err
+	}
+	return rd, nil
 }
 
 // LoadIdentities reads age identity files.
@@ -226,6 +328,8 @@ func LoadIdentities(files []string) ([]age.Identity, error) {
 type InspectOptions struct {
 	Contents, Redactions, Policy bool
 	Identities                   []age.Identity
+	Trusted                      []sign.PublicKey // keys to check the signature against
+	RequireTrusted               bool             // fail unless signed by one of Trusted
 }
 
 // Inspect reads a whole bundle, verifies it and prints what it contains.
@@ -243,6 +347,7 @@ func Inspect(w io.Writer, src io.Reader, o InspectOptions) error {
 	var covs []bundle.Coverage
 	var rep redact.Report
 	var gaps []string
+	var ledger *review.Ledger
 	var readErr error
 	for {
 		m, err := r.Next()
@@ -272,6 +377,11 @@ func Inspect(w io.Writer, src io.Reader, o InspectOptions) error {
 			}
 		case bundle.PathRedaction:
 			_ = json.Unmarshal(m.Data, &rep)
+		case bundle.PathLedger:
+			ledger = &review.Ledger{}
+			if json.Unmarshal(m.Data, ledger) != nil {
+				ledger = nil
+			}
 		case bundle.PathCollection:
 			for _, line := range strings.Split(strings.TrimSpace(string(m.Data)), "\n") {
 				if strings.Contains(line, `"failed"`) || strings.Contains(line, `"partial"`) {
@@ -321,6 +431,51 @@ func Inspect(w io.Writer, src io.Reader, o InspectOptions) error {
 		fmt.Fprintf(w, "Verified: NO: %v\n", verr)
 	} else {
 		fmt.Fprintln(w, "Verified: yes (every member matches the manifest checksum)")
+	}
+	sig := r.Signature(o.Trusted)
+	fmt.Fprintf(w, "Signature: %s\n", sig.Summary())
+	if sig.Trusted && sig.TrustedFrom != "" {
+		fmt.Fprintf(w, "Trusted key: %s\n", sig.TrustedFrom)
+	}
+	if verr == nil && o.RequireTrusted && !(sig.Valid && sig.Trusted) {
+		verr = fmt.Errorf("the bundle is not signed by any of the --verify-key keys (%s)", sig.Summary())
+	}
+	if sum := r.ManifestSHA256(); sum != "" {
+		fmt.Fprintf(w, "Manifest SHA-256: %s\n", sum)
+	}
+	if h != nil && h.CollectorSHA256 != "" {
+		fmt.Fprintf(w, "Collector binary SHA-256: %s\n", h.CollectorSHA256)
+	}
+	if h != nil && h.PolicySource != nil {
+		ps := h.PolicySource
+		fmt.Fprintf(w, "Policy file: %s (sha256 %s)", ps.File, ps.SHA256)
+		if ps.Signature != nil {
+			fmt.Fprintf(w, ", approved by %s (%s)", ps.Signature.Signer, ps.Signature.KeyID)
+		} else {
+			fmt.Fprint(w, ", not signed")
+		}
+		if len(ps.ChangedBy) > 0 {
+			fmt.Fprintf(w, ", refined by %s", strings.Join(ps.ChangedBy, " "))
+		}
+		fmt.Fprintln(w)
+	}
+	if h != nil && h.Review != nil {
+		fmt.Fprintf(w, "Reviewed: by %s at %s, from bundle %s\n", orDash(h.Review.Reviewer), h.Review.ReviewedAt.Format(time.RFC3339), h.Review.OriginalBundleID)
+	}
+	if ledger != nil {
+		fmt.Fprintf(w, "Original manifest SHA-256: %s\n", ledger.Original.ManifestSHA256)
+		if s := ledger.Original.Signature; s != nil {
+			fmt.Fprintf(w, "Original signature: %s\n", s.Summary())
+		}
+		fmt.Fprintf(w, "Removed in review: %s\n", ledger.Summary())
+		if len(ledger.Types) > 0 {
+			fmt.Fprintf(w, "Types removed: %s\n", strings.Join(ledger.Types, ", "))
+		}
+		for _, l := range [][2]any{{"Namespaces removed", ledger.Namespaces}, {"Objects removed", ledger.Objects}, {"Log streams removed", ledger.LogStreams}, {"Files removed", ledger.Files}} {
+			if list := l[1].([]string); len(list) > 0 {
+				fmt.Fprintf(w, "%s: %s\n", l[0], strings.Join(list, ", "))
+			}
+		}
 	}
 	fmt.Fprintln(w, "Secret values: never collected")
 	if o.Policy && h != nil && len(h.Policy) > 0 {
@@ -1229,6 +1384,44 @@ func ParseFlowFiles(args []string) ([]FlowFile, error) {
 			return nil, fmt.Errorf("flow file %s is a directory", ff.Path)
 		}
 		out = append(out, ff)
+	}
+	return out, nil
+}
+
+// ResolveFile loads a policy file the way --config does, with no flags.
+func (f *PolicyFlags) ResolveFile(file string) (*policy.Policy, error) {
+	p, err := policy.Load(file)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := NewRedactor(p); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+// ParseRecipients reads age recipients: age1... strings or @file.
+func ParseRecipients(specs []string) ([]age.Recipient, error) {
+	var out []age.Recipient
+	for _, s := range specs {
+		if strings.HasPrefix(s, "@") {
+			f, err := os.Open(strings.TrimPrefix(s, "@"))
+			if err != nil {
+				return nil, err
+			}
+			rs, err := age.ParseRecipients(f)
+			f.Close()
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, rs...)
+			continue
+		}
+		r, err := age.ParseX25519Recipient(s)
+		if err != nil {
+			return nil, fmt.Errorf("--encrypt-to %q: %w", s, err)
+		}
+		out = append(out, r)
 	}
 	return out, nil
 }

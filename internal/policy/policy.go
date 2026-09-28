@@ -88,6 +88,7 @@ type Policy struct {
 	EncryptTo         []string   `json:"encryptTo,omitempty"`
 	MaxBundleBytes    int64      `json:"maxBundleBytes,omitempty"`
 	RedactExtra       []string   `json:"redactExtra,omitempty"`
+	DropFields        []string   `json:"dropFields,omitempty"` // object paths removed before writing (redact.FieldRule)
 	QPS               float32    `json:"qps,omitempty"`
 	Burst             int        `json:"burst,omitempty"`
 	Flows             FlowPolicy `json:"flows,omitempty"`

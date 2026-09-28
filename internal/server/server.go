@@ -33,8 +33,21 @@ import (
 	"github.com/tjorourke/flightbay/web"
 )
 
-// CookieName holds the per-process session token in the browser.
+// CookieName prefixes the cookie that holds the per-process session token in
+// the browser. Browsers scope cookies by host, not port, so the listening
+// port is appended: two desks open on 127.0.0.1 at once keep separate sessions.
 const CookieName = "flightbay_token"
+
+// cookieName is CookieName plus the port the request came in on.
+func cookieName(r *http.Request) string {
+	host := r.Host
+	if i := strings.LastIndexByte(host, ':'); i >= 0 && !strings.HasSuffix(host, "]") {
+		if port := host[i+1:]; port != "" && strings.Trim(port, "0123456789") == "" {
+			return CookieName + "_" + port
+		}
+	}
+	return CookieName
+}
 
 // Server serves one workspace.
 type Server struct {
@@ -62,6 +75,8 @@ type Server struct {
 	BaselineDirs []string
 	// Identities decrypt bundle headers when listing baseline candidates.
 	Identities []age.Identity
+	// Review is set in review mode (flightbay review).
+	Review *ReviewSession
 
 	once   sync.Once
 	api    http.Handler
@@ -88,8 +103,10 @@ func (s *Server) authed(r *http.Request) bool {
 	if check(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")) {
 		return true
 	}
-	if c, err := r.Cookie(CookieName); err == nil && check(c.Value) {
-		return true
+	for _, c := range r.Cookies() {
+		if (c.Name == cookieName(r) || c.Name == CookieName) && check(c.Value) {
+			return true
+		}
 	}
 	return false
 }
@@ -200,7 +217,7 @@ func (s *Server) Handler() http.Handler {
 				http.Error(w, "flightbay: invalid token. Open the URL printed by flightbay-desk.", http.StatusUnauthorized)
 				return
 			}
-			http.SetCookie(w, &http.Cookie{Name: CookieName, Value: s.Token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode})
+			http.SetCookie(w, &http.Cookie{Name: cookieName(r), Value: s.Token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode})
 			http.Redirect(w, r, "/", http.StatusFound)
 			return
 		}
@@ -265,6 +282,10 @@ func (s *Server) Handler() http.Handler {
 	api("/api/baseline/candidates", s.baselineCandidates)
 	api("/api/baseline/load", s.baselineLoad)
 	api("/api/suggest", s.suggest)
+	api("/api/review", s.reviewState)
+	api("/api/review/preview", s.reviewPreview)
+	api("/api/review/export", s.reviewExport)
+	api("/api/review/lines", s.reviewLines)
 	// MCP for agents that connect over HTTP (kagent RemoteMCPServer, hosted
 	// desks). Same token as the API; tools call back into this server.
 	api("/mcp", func(w http.ResponseWriter, r *http.Request) {
@@ -305,7 +326,10 @@ func (s *Server) workspace(w http.ResponseWriter, r *http.Request) {
 		if h.Declared() {
 			out["source"], out["repo"] = h.Source, h.Repo // a repo scan: declared state
 		}
+		out["collectorSha256"], out["policySource"], out["review"] = h.CollectorSHA256, h.PolicySource, h.Review
 	}
+	out["trust"] = s.WS.Trust()
+	out["reviewMode"] = s.Review != nil
 	if m := s.WS.Manifest(); m != nil {
 		out["captureEnd"], out["complete"], out["collectionErrors"] = m.CaptureEnd, m.Complete, m.Errors
 	}
@@ -413,7 +437,7 @@ func (s *Server) clustersFor(c string) []string {
 	return s.WS.Clusters()
 }
 
-var stateRank = map[string]int{store.StateFailed: 0, store.StateTruncated: 1, store.StateLoading: 2, store.StateExcluded: 3, store.StateNotCollected: 4, store.StateComplete: 5}
+var stateRank = map[string]int{store.StateFailed: 0, store.StateTruncated: 1, store.StateLoading: 2, store.StateRemoved: 3, store.StateExcluded: 3, store.StateTrimmed: 4, store.StateNotCollected: 4, store.StateComplete: 5}
 
 func (s *Server) resources(w http.ResponseWriter, r *http.Request) {
 	type row struct {

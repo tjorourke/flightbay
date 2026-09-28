@@ -261,3 +261,52 @@ func TestSecretsInsideEmbeddedJSONAreRedacted(t *testing.T) {
 		t.Fatal("non-JSON string changed")
 	}
 }
+
+func TestDropFields(t *testing.T) {
+	r, _ := New(nil)
+	if err := r.DropFields([]string{`metadata.annotations["corp.example/*"]`, `spec.containers[*].env`, `data.license`}); err != nil {
+		t.Fatal(err)
+	}
+	obj := map[string]any{
+		"kind": "Pod",
+		"metadata": map[string]any{"name": "a", "annotations": map[string]any{
+			"corp.example/owner": "jane", "corp.example/cost-centre": "42", "keep.me/x": "y",
+			LastApplied: `{"metadata":{"annotations":{"corp.example/owner":"jane"}},"spec":{"containers":[{"name":"c","env":[{"name":"A","value":"b"}]}]}}`,
+		}},
+		"spec": map[string]any{"containers": []any{map[string]any{"name": "c", "env": []any{map[string]any{"name": "A", "value": "b"}}}}},
+		"data": map[string]any{"license": "XYZ", "other": "ok"},
+	}
+	out := r.Object("clusters/x/resources/pods", obj)
+	ann := out["metadata"].(map[string]any)["annotations"].(map[string]any)
+	if _, ok := ann["corp.example/owner"]; ok {
+		t.Fatal("annotation glob")
+	}
+	if ann["keep.me/x"] != "y" {
+		t.Fatal("other annotations kept")
+	}
+	if strings.Contains(ann[LastApplied].(string), "corp.example") || strings.Contains(ann[LastApplied].(string), `"env"`) {
+		t.Fatalf("rules apply inside last-applied-configuration: %s", ann[LastApplied])
+	}
+	c := out["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)
+	if _, ok := c["env"]; ok || c["name"] != "c" {
+		t.Fatal("list step")
+	}
+	if d := out["data"].(map[string]any); d["license"] != nil || d["other"] != "ok" {
+		t.Fatal("plain path")
+	}
+	rep := r.Report()
+	got := 0
+	for rule, n := range rep.Locations["clusters/x/resources/pods"] {
+		if strings.HasPrefix(rule, "drop-field-") {
+			got += n
+		}
+	}
+	if got != 6 { // two annotations, env, license, and annotation and env inside last-applied
+		t.Fatalf("counted %d removals: %v", got, rep.Locations)
+	}
+	for _, bad := range []string{"", "metadata.name", "kind", "spec..x", `metadata.annotations["x`, "spec.containers[*]"} {
+		if _, err := ParseFieldRule(bad); err == nil {
+			t.Errorf("%q should be refused", bad)
+		}
+	}
+}

@@ -81,6 +81,8 @@ flightbay docs collects                                         # the full list 
 | [Solo diagnostics](/collect/solo-diagnostics/) | Envoy, ztunnel, agentgateway and istiod admin endpoints |
 | [Observed traffic](/collect/observed-traffic/) | Access logs and flow logs for who called whom |
 | [RBAC](/collect/rbac/) | Least-privilege permissions for your policy |
+| [Reviewing before you send](/collect/review/) | Remove namespaces, types, objects, logs and files in the UI, redact more, export a signed bundle |
+| [Signing and approved policies](/collect/signing/) | Sign bundles with your key, have your security team sign the policy, check the collector build |
 | [Sending a bundle](/collect/sending/) | Encryption, verification, streaming and the file format |
 
 The command-line reference for every flag is in [flightbay CLI](/reference/cli-flightbay/).

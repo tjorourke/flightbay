@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/tjorourke/flightbay/internal/bundle"
+	"github.com/tjorourke/flightbay/internal/sign"
 	"github.com/tjorourke/flightbay/internal/store"
 )
 
@@ -26,6 +27,8 @@ type Options struct {
 	// Skip defers categories ("objects", "logs", "events", "diagnostics"): their members are
 	// still verified but not loaded. A later Run without Skip loads them.
 	Skip map[string]bool
+	// Trusted are the public keys a signature is checked against.
+	Trusted []sign.PublicKey
 }
 
 func category(kind string) string {
@@ -149,7 +152,15 @@ func Run(ctx context.Context, src io.Reader, ws *store.Workspace, o Options) err
 		ws.SetState(func(s *store.ImportState) { s.Members++; s.BytesReceived = cr.n.Load() })
 	}
 	if err := r.Verify(); err != nil {
+		if r.Signed() {
+			ws.SetSignature(sign.Result{Signed: true, Error: "the bundle failed verification, so its signature cannot vouch for it"})
+		}
 		return fail(err)
+	}
+	if r.Signed() {
+		ws.SetSignature(r.Signature(o.Trusted))
+	} else {
+		ws.SetSignature(sign.Result{})
 	}
 	ws.WaitLogs() // every queued log chunk is committed before "complete"
 	if e := ws.State().Error; strings.HasPrefix(e, "log store") {
@@ -240,6 +251,8 @@ func apply(ws *store.Workspace, m *bundle.Member, r *bundle.Reader) error {
 		ws.AddCollectionLog(lines)
 	case bundle.PathRedaction:
 		ws.SetRedaction(json.RawMessage(m.Data))
+	case bundle.PathLedger:
+		ws.SetLedger(json.RawMessage(m.Data))
 	case bundle.PathFlows:
 		// A flow log attached at collection. A file that no longer parses is
 		// recorded, not fatal: the rest of the bundle is still good.

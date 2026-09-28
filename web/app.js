@@ -35,7 +35,7 @@ function toast(msg) {
 }
 
 function stateBadge(st, reason) {
-  const label = {complete: 'complete', loading: 'loading', excluded: 'excluded by customer', failed: 'not collected', truncated: 'truncated', 'not-collected': 'not in bundle'}[st] || st;
+  const label = {complete: 'complete', loading: 'loading', excluded: 'excluded by customer', failed: 'not collected', truncated: 'truncated', 'not-collected': 'not in bundle', removed: 'removed by customer', trimmed: 'some removed by customer'}[st] || st;
   return `<span class="badge state-${esc(st)}" title="${esc(reason || '')}"><span class="dot"></span>${esc(label)}</span>`;
 }
 
@@ -74,7 +74,7 @@ function openLogs(filters) {
 async function render() {
   const seq = ++S.renderSeq;
   document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('active', a.dataset.view === S.view));
-  const views = {navigator, search, overview, scorecard: posture, reach, resources, logs, timeline, findings, compare, proxies, coverage};
+  const views = {navigator, search, overview, scorecard: posture, reach, resources, logs, timeline, findings, compare, proxies, coverage, ...(typeof reviewPage === 'function' ? {review: reviewPage} : {})};
   const fn = views[S.view] || overview;
   $('#crumb').textContent = S.ws ? `Workspace / ${S.ws.case ? 'Case ' + S.ws.case : 'Snapshot'} / ${S.view}` : 'Workspace';
   try {
@@ -91,7 +91,7 @@ const after = {};
 
 // Each view links to its page in the built-in documentation.
 const docPages = {overview: 'desk/overview/', search: 'desk/search/', navigator: 'desk/navigator/', resources: 'desk/resources/', logs: 'desk/logs/', timeline: 'desk/timeline/',
-  findings: 'desk/findings/', scorecard: 'desk/scorecard/', reach: 'desk/agent-reach/', compare: 'desk/compare/', proxies: 'desk/proxy-configs/', coverage: 'desk/coverage/'};
+  findings: 'desk/findings/', scorecard: 'desk/scorecard/', reach: 'desk/agent-reach/', compare: 'desk/compare/', proxies: 'desk/proxy-configs/', coverage: 'desk/coverage/', review: 'collect/review/'};
 function head(title, sub, actions = '') {
   const doc = docPages[S.view];
   const help = doc ? `<a class="help-link" href="/docs/${doc}" target="_blank" rel="noopener" title="How to use ${esc(title)}">? Docs</a>` : '';
@@ -338,6 +338,7 @@ async function loadWorkspace() {
   document.querySelector('.nav a[data-view="reach"]')?.classList.toggle('hidden', !feature('reach'));
   if (w.terminal) $('#terminal').classList.remove('hidden');
   if (!S.state) { S.state = w.state; renderImportStatus(); }
+  if (typeof onWorkspace === 'function') onWorkspace(w);
 }
 
 // ---------- overview ----------
@@ -1550,7 +1551,7 @@ async function openObject(ref, tab = 'summary') {
           ${o.object.spec?.nodeName ? `<dt>Node</dt><dd>${esc(o.object.spec.nodeName)}</dd>` : ''}${st.phase ? `<dt>Phase</dt><dd>${statusCell(st.phase)}</dd>` : ''}</dl>
           ${cs ? `<h3 class="mt">Containers</h3><div class="table-scroll"><table><thead><tr><th>Name</th><th>Ready</th><th>State</th><th>Restarts</th><th>Last termination</th></tr></thead><tbody>${cs}</tbody></table></div>` : ''}
           ${o.object['x-flightbay'] ? '<div class="notice info mt">Secret values were never collected. Only metadata' + (o.object['x-flightbay'].keys ? ', key names and byte lengths are' : ' is') + ' shown.</div>' : ''}
-          <div class="row wrap mt">${isPod ? `<button class="primary" id="d-logs">Open pod logs →</button>` : ''}${workloadKinds.includes(o.kind) ? `<button class="primary" id="d-wlogs">Open logs of all its pods →</button>` : ''}<button id="d-describe">&gt;_ kubectl describe</button>${(S.ws?.clusters || []).length > 1 ? '<button id="d-compare">Compare across clusters</button>' : ''}</div>`;
+          <div class="row wrap mt">${isPod ? `<button class="primary" id="d-logs">Open pod logs →</button>` : ''}${workloadKinds.includes(o.kind) ? `<button class="primary" id="d-wlogs">Open logs of all its pods →</button>` : ''}<button id="d-describe">&gt;_ kubectl describe</button>${(S.ws?.clusters || []).length > 1 ? '<button id="d-compare">Compare across clusters</button>' : ''}${typeof rvObjectButton === 'function' ? rvObjectButton(o) : ''}</div>`;
       },
       yaml: () => `<div class="row between" style="margin-bottom:10px"><small>Captured object (redacted)</small><button id="d-copy">Copy YAML</button></div><pre class="code">${esc(d.yaml)}</pre>`,
       json: () => `<pre class="code">${esc(d.json)}</pre>`,
@@ -1572,6 +1573,7 @@ async function openObject(ref, tab = 'summary') {
     const dd = $('#d-describe'); if (dd) dd.onclick = () => { closeDrawer(); termRun(`kubectl --context ${o.cluster}@snapshot describe ${o.resource}${o.group ? '.' + o.group : ''} ${o.name}${o.namespace ? ' -n ' + o.namespace : ''}`); };
     const dc = $('#d-compare'); if (dc) dc.onclick = () => { S.compare = {group: o.group, resource: o.resource, namespace: o.namespace, name: o.name, kind: o.kind}; closeDrawer(); nav('compare'); };
     const cp = $('#d-copy'); if (cp) cp.onclick = () => navigator.clipboard.writeText(d.yaml).then(() => toast('YAML copied'), () => toast('Clipboard unavailable'));
+    if (typeof rvWireObject === 'function') rvWireObject();
   };
   draw();
 }
@@ -1639,7 +1641,7 @@ async function logs() {
       <span class="muted">${fmtTime(r.ts)}</span><span class="${r.level === 'error' ? 'red' : r.level === 'warn' ? 'amber' : 'green'}">${esc(r.level.toUpperCase())}</span>
       <span class="pod" title="${esc(r.cluster)} ${esc(r.namespace)}/${esc(r.pod)}">${esc(r.pod)}<br><span class="muted">${esc(r.container)}${r.stream === 'previous' ? ' · previous' : ''}</span></span>
       <span class="msg">${esc(r.msg)}${Object.entries(r.fields || {}).filter(([k]) => /trace|request_id|connection/.test(k)).map(([k, v]) => ` <span class="blue">${esc(k)}=${esc(v)}</span>`).join('')}</span></div>${L.expanded === r.id ? '<div id="log-detail"></div>' : ''}`).join('');
-  return head('Log explorer', 'Search every captured log line. Drag across the chart to zoom into a time range; pinch or scroll over it to zoom around the cursor.', `<label class="row"><input type="checkbox" id="follow" ${L.follow ? 'checked' : ''}> Follow incoming data</label><button id="log-term">&gt;_ fbq in terminal</button>`) + `
+  return head('Log explorer', 'Search every captured log line. Drag across the chart to zoom into a time range; pinch or scroll over it to zoom around the cursor.', `<label class="row"><input type="checkbox" id="follow" ${L.follow ? 'checked' : ''}> Follow incoming data</label><button id="log-term">&gt;_ fbq in terminal</button>${typeof rvLogsAction === 'function' ? rvLogsAction() : ''}`) + `
   <div class="log-layout"><aside class="facets" aria-label="Filters">${facet('level', 'level', 'Level')}${facet('namespace', 'namespace', 'Namespace')}${workloadFacet}${facet('pod', 'pod', 'Pod', podPicker)}${facet('container', 'container', 'Container')}${facet('stream', 'stream', 'Stream')}${!S.cluster ? facet('cluster', 'cluster_', 'Cluster') : ''}
     ${fieldList}
     <h3>Syntax</h3><div class="muted mono" style="font-size:10px;line-height:1.8">level:error<br>ns:payments pod:checkout*<br>trace_id:a4e98f02<br>"connection reset"<br>-healthz · a OR b<br>status:5* · since:15m</div></aside>
@@ -1670,6 +1672,7 @@ function setRange(from, to) {
 
 after.logs = () => {
   const L = S.logs;
+  if (typeof rvWireLogs === 'function') rvWireLogs();
   $('#log-form').onsubmit = e => { e.preventDefault(); L.q = $('#log-q').value; L.expanded = null; L.limit = 200; render(); };
   typeahead($('#log-q'), {scope: 'logs', alias: {namespace: 'ns', deploy: 'workload', deployment: 'workload'}, onAccept: i => {
     const keep = {value: i.value, caret: i.selectionStart};
@@ -1754,10 +1757,11 @@ async function showLogDetail(id) {
   const pivots = Object.entries(r.fields || {}).filter(([k]) => /trace|request|connection|span|correlation/i.test(k));
   el.innerHTML = `<div class="line-detail"><div class="row between"><strong>Context in ${esc(r.namespace)}/${esc(r.pod)} · ${esc(r.container)} (${esc(r.stream)})</strong><span class="tag">${esc(r.cluster)}</span></div>
     <pre>${ctx.map(x => `${x.id === id ? '›' : ' '} ${fmtTime(x.ts)} ${esc(x.raw)}`).join('\n')}</pre>
-    <div class="row wrap"><button id="lc-pod">Inspect pod →</button><button id="lc-stream">All lines from this stream</button>${pivots.map(([k, v]) => `<button class="active" data-pivot="${attr({k, v})}">Follow ${esc(k)}=${esc(v)} across pods →</button>`).join('')}</div>
+    <div class="row wrap"><button id="lc-pod">Inspect pod →</button><button id="lc-stream">All lines from this stream</button>${typeof rvLineButton === 'function' ? rvLineButton(r) : ''}${pivots.map(([k, v]) => `<button class="active" data-pivot="${attr({k, v})}">Follow ${esc(k)}=${esc(v)} across pods →</button>`).join('')}</div>
     ${Object.keys(r.fields || {}).length ? `<pre>${esc(JSON.stringify(r.fields, null, 2))}</pre>` : ''}</div>`;
   $('#lc-pod').onclick = () => openObject({cluster: r.cluster, group: '', resource: 'pods', namespace: r.namespace, name: r.pod});
   $('#lc-stream').onclick = () => openLogs({namespace: r.namespace, pod: r.pod, container: r.container, stream: r.stream});
+  if (typeof rvWireLine === 'function') rvWireLine();
   document.querySelectorAll('[data-pivot]').forEach(b => b.onclick = () => { const p = JSON.parse(b.dataset.pivot); openLogs({q: `${p.k}:${p.v}`}); toast(`Following ${p.k} across every pod`); });
 }
 
@@ -2144,6 +2148,7 @@ async function coverage() {
     ${(c.collectionLog || []).map(e => `<tr><td>${esc(e.cluster)}</td><td>${esc(e.operation)}</td><td class="mono">${esc(e.target || '')} ${esc(e.namespace || '')}</td><td class="${/fail|partial/.test(e.result) ? 'red' : ''}">${esc(e.result)}</td><td class="muted" style="white-space:normal">${esc(e.error || '')}</td></tr>`).join('')}
     </tbody></table></div></section>
   </div><div>
+    ${typeof rvCoveragePanel === 'function' ? rvCoveragePanel() + '<div class="mt"></div>' : ''}
     <section class="panel"><div class="panel-head"><h2>Import</h2>${st.verified ? '<span class="badge green">verified</span>' : `<span class="badge amber">${esc(st.phase)}</span>`}</div><div class="panel-body"><dl class="metadata">
       <dt>Source</dt><dd class="mono">${esc(st.source)}</dd><dt>Received</dt><dd>${bytes(st.bytesReceived)} in ${num(st.members)} members</dd><dt>Objects</dt><dd>${num(st.objects)}</dd><dt>Log lines</dt><dd>${num(st.logLines)}</dd><dt>Events</dt><dd>${num(st.events)}</dd>
       <dt>Started</dt><dd>${fmtDateTime(st.started)}</dd><dt>Finished</dt><dd>${fmtDateTime(st.finished)}</dd>${st.error ? `<dt>Error</dt><dd class="red">${esc(st.error)}</dd>` : ''}${st.deferred?.length ? `<dt>Deferred</dt><dd>${esc(st.deferred.join(', '))}</dd>` : ''}</dl></div></section>

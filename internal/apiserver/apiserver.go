@@ -471,6 +471,11 @@ func (s *Server) availability(w http.ResponseWriter, cluster string, r served) b
 	case store.StateTruncated:
 		w.Header().Add("Warning", fmt.Sprintf(`299 - "flightbay: %s on %s is truncated: %s"`, name, cluster, st.Reason))
 		return true
+	case store.StateTrimmed:
+		w.Header().Add("Warning", fmt.Sprintf(`299 - "flightbay: %s on %s: %s"`, name, cluster, st.Reason))
+		return true
+	case store.StateRemoved:
+		status(w, http.StatusForbidden, metav1.StatusReasonForbidden, fmt.Sprintf("flightbay: %s on %s was removed by the customer before sending", name, cluster))
 	case store.StateLoading:
 		w.Header().Set("Retry-After", "1")
 		status(w, http.StatusServiceUnavailable, metav1.StatusReasonServiceUnavailable, fmt.Sprintf("flightbay: %s on %s is still loading from the bundle; retry shortly", name, cluster))

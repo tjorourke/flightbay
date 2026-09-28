@@ -1,7 +1,7 @@
 ---
 title: Sending a bundle
 weight: 70
-description: Encrypt a bundle so only Solo can read it, verify it before you send it, and unpack or stream it with standard tools.
+description: Review and sign a bundle, encrypt it so only Solo can read it, verify it before you send it, and unpack or stream it with standard tools.
 ---
 
 # Sending a bundle
@@ -9,6 +9,15 @@ description: Encrypt a bundle so only Solo can read it, verify it before you sen
 A capture produces one file. This page covers making sure only the right person can read it, checking it has not been changed, and what is inside.
 
 Flightbay does not upload anything. You send the file however you normally share files with Solo.
+
+## The usual order
+
+1. Capture without encryption, so you can read it: `flightbay collect --context prod-eu --case 01234567`.
+2. Review it and take out anything you do not want to send, then export it signed and encrypted: `flightbay review BUNDLE --sign flightbay-signing.key --encrypt-to age1...`. See [Reviewing before you send](/collect/review/).
+3. Check what you are sending. Only the recipient can open an encrypted export, so to browse it yourself, export once without `--encrypt-to`, open it with `flightbay ui NAME-reviewed.tar.zst`, then export again with encryption.
+4. Send the reviewed file.
+
+If you do not need to review, `flightbay collect --sign KEY --encrypt-to age1...` does it in one step. Signing is covered in [Signing and approved policies](/collect/signing/).
 
 ## Encrypting to a recipient
 
@@ -73,9 +82,12 @@ It then lists every collection with its item count and state, the collection log
 | `--contents` | Every file in the bundle |
 | `--redactions` | Redaction counts per file and rule |
 | `--policy` | The collection policy recorded in the bundle |
+| `--verify-key FILE` | Fail unless the bundle is signed by this public key. See [Signing](/collect/signing/). |
 | `-i FILE` | An age identity, for encrypted bundles |
 
-The desk verifies as it imports too. The header bar says **Verified** once every checksum has matched, and findings are marked provisional until then.
+`inspect` also prints the signature (`Signature: signed by ACME platform team (fb:2c5e7e25308477c5), unmodified`), the manifest's own SHA-256, the collector binary's SHA-256, the approved policy file if one was used, and, for a reviewed bundle, who reviewed it and what was removed.
+
+The desk verifies as it imports too. The header bar says **Verified** once every checksum has matched, and findings are marked provisional until then. It then shows the signature next to it.
 
 ## Unpacking
 
@@ -115,6 +127,7 @@ flightbay collect --context mesh1 --encrypt-to age1... -o - | ssh jump 'cat > ca
 ```text
 flightbay-<case>-<UTC time>.tar.zst        e.g. flightbay-01234567-20260927T1012Z.tar.zst
 flightbay-<case>-<UTC time>.tar.zst.age    with --encrypt-to
+flightbay-<case>-<UTC time>-reviewed.tar.zst   exported by flightbay review
 ```
 
 Without `--case` the case part is `nocase`. `flightbay ui` and `flightbay-desk open` with no argument open the newest `flightbay-*.tar.zst` or `flightbay-*.tar.zst.age` in the current directory; given a directory, the newest in that directory.
@@ -128,4 +141,6 @@ The layout is described in full in [Bundle format](/reference/bundle-format/). I
 - Every collection is followed by a coverage record saying whether it completed, failed, was excluded or was truncated.
 - `collection-log.jsonl` records every call, including failures.
 - `redaction-report.json` counts replacements.
-- `manifest.json` comes last: capture end, completion state and a SHA-256 for every member.
+- `manifest.json` comes next: capture end, completion state and a SHA-256 for every member.
+- `manifest.sig`, only in a signed bundle, is the very last file: your signature over the manifest.
+- `review-ledger.json`, only in a reviewed bundle, records what you removed.

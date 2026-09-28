@@ -15,6 +15,7 @@
     <div class="bundle"><div class="row between"><span class="eyebrow">Workspace</span><span id="phase-dot" class="dot"></span></div><strong id="bundle-case">Loading…</strong><small id="bundle-sub"></small></div>
     <div class="eyebrow nav-label">Investigate</div>
     <nav class="nav" aria-label="Main navigation">
+      <a data-view="review" href="#review" class="hidden"><span class="nav-icon">⇪</span><span class="nav-text">Review and send</span></a>
       <a data-view="search" href="#search"><span class="nav-icon">⌕</span><span class="nav-text">Search</span></a>
       <a data-view="navigator" href="#navigator"><span class="nav-icon">⌨</span><span class="nav-text">Navigator</span></a>
       <a data-view="overview" href="#overview"><span class="nav-icon">◫</span><span class="nav-text">Overview</span></a>
@@ -41,6 +42,7 @@
     <div class="snapshot" id="snapshot-bar">
       <span class="badge green"><span class="dot"></span> Offline snapshot</span>
       <span id="snapshot-time"></span>
+      <span id="trust" class="trust"></span>
       <span class="spacer"></span>
       <span id="import-status" class="import-status"></span>
     </div>
@@ -63,5 +65,6 @@
 <script src="static/vendor/xterm.js"></script>
 <script src="static/vendor/addon-fit.js"></script>
 <script src="static/app.js"></script>
+<script src="static/review.js"></script>
 </body>
 </html>
