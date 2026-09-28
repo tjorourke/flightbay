@@ -192,16 +192,17 @@ func related(ws *store.Workspace, o *store.Object) []Rel {
 
 // TimelineItem is one entry on the incident timeline.
 type TimelineItem struct {
-	Time     time.Time `json:"time"`
-	Cluster  string    `json:"cluster"`
-	Kind     string    `json:"kind"` // event, termination, rollout, error-spike
-	Severity string    `json:"severity"`
-	Title    string    `json:"title"`
-	Detail   string    `json:"detail,omitempty"`
-	Object   *Rel      `json:"object,omitempty"`
-	LogQuery string    `json:"logQuery,omitempty"`
-	From     time.Time `json:"from,omitempty"`
-	To       time.Time `json:"to,omitempty"`
+	Time      time.Time `json:"time"`
+	Cluster   string    `json:"cluster"`
+	Namespace string    `json:"namespace,omitempty"`
+	Kind      string    `json:"kind"` // event, termination, rollout, error-spike
+	Severity  string    `json:"severity"`
+	Title     string    `json:"title"`
+	Detail    string    `json:"detail,omitempty"`
+	Object    *Rel      `json:"object,omitempty"`
+	LogQuery  string    `json:"logQuery,omitempty"`
+	From      time.Time `json:"from,omitempty"`
+	To        time.Time `json:"to,omitempty"`
 }
 
 func parseTime(vals ...any) time.Time {
@@ -230,7 +231,7 @@ func buildTimeline(ws *store.Workspace, cluster string) []TimelineItem {
 			if ss(e.Obj["type"]) == "Warning" {
 				sev = "warning"
 			}
-			item := TimelineItem{Time: t, Cluster: c, Kind: "event", Severity: sev, Title: fmt.Sprintf("%s: %s/%s", ss(e.Obj["reason"]), ss(io["kind"]), ss(io["name"])), Detail: ss(e.Obj["message"])}
+			item := TimelineItem{Time: t, Cluster: c, Kind: "event", Severity: sev, Namespace: firstNonEmpty(ss(io["namespace"]), ss(mm(e.Obj["metadata"])["namespace"])), Title: fmt.Sprintf("%s: %s/%s", ss(e.Obj["reason"]), ss(io["kind"]), ss(io["name"])), Detail: ss(e.Obj["message"])}
 			if o := findByKind(ws, c, ss(io["kind"]), ss(io["namespace"]), ss(io["name"])); o != nil {
 				r := rel("", o)
 				item.Object = &r
@@ -246,7 +247,7 @@ func buildTimeline(ws *store.Workspace, cluster string) []TimelineItem {
 					continue
 				}
 				r := rel("", p)
-				out = append(out, TimelineItem{Time: t, Cluster: c, Kind: "termination", Severity: "critical", Object: &r,
+				out = append(out, TimelineItem{Time: t, Cluster: c, Namespace: p.Namespace, Kind: "termination", Severity: "critical", Object: &r,
 					Title:    fmt.Sprintf("%s/%s container %s exited", p.Namespace, p.Name, ss(cm["name"])),
 					Detail:   fmt.Sprintf("%s, exit code %v", ss(term["reason"]), term["exitCode"]),
 					LogQuery: fmt.Sprintf("pod:%s container:%s stream:previous", p.Name, ss(cm["name"]))})
@@ -262,17 +263,80 @@ func buildTimeline(ws *store.Workspace, cluster string) []TimelineItem {
 				owner = ss(mm(ref)["kind"]) + " " + ss(mm(ref)["name"])
 			}
 			r := rel("", rs)
-			out = append(out, TimelineItem{Time: t, Cluster: c, Kind: "rollout", Severity: "info", Object: &r,
+			out = append(out, TimelineItem{Time: t, Cluster: c, Namespace: rs.Namespace, Kind: "rollout", Severity: "info", Object: &r,
 				Title: fmt.Sprintf("ReplicaSet %s/%s created", rs.Namespace, rs.Name), Detail: strings.TrimSpace("Rollout of " + owner)})
 		}
 	}
-	// Error spikes: minutes with three or more error lines in a namespace.
-	for _, e := range ws.ErrorMinutes(cluster, 3) {
-		out = append(out, TimelineItem{Time: e.Minute, From: e.Minute, To: e.Minute.Add(time.Minute), Cluster: e.Cluster, Kind: "error-spike", Severity: "warning",
-			Title: fmt.Sprintf("%d error log lines in %s", e.Count, e.Namespace), LogQuery: fmt.Sprintf("level:error ns:%s", e.Namespace)})
-	}
+	out = append(out, errorRuns(ws.ErrorMinutes(cluster, 3))...)
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Time.Before(out[j].Time) })
 	return out
 }
 
 var _ = bundle.APIResource{}
+
+func firstNonEmpty(v ...string) string {
+	for _, x := range v {
+		if x != "" {
+			return x
+		}
+	}
+	return ""
+}
+
+// errorRuns folds minutes with error lines into runs per namespace. A steady
+// trickle of errors becomes one ranged entry instead of one per minute; a
+// minute at least three times the run's median is called out as a spike.
+func errorRuns(mins []store.ErrorMinute) []TimelineItem {
+	sort.Slice(mins, func(i, j int) bool {
+		if mins[i].Cluster+mins[i].Namespace != mins[j].Cluster+mins[j].Namespace {
+			return mins[i].Cluster+mins[i].Namespace < mins[j].Cluster+mins[j].Namespace
+		}
+		return mins[i].Minute.Before(mins[j].Minute)
+	})
+	var out []TimelineItem
+	flush := func(run []store.ErrorMinute) {
+		if len(run) == 0 {
+			return
+		}
+		first, last := run[0], run[len(run)-1]
+		counts := make([]int, len(run))
+		total := 0
+		for i, m := range run {
+			counts[i], total = m.Count, total+m.Count
+		}
+		sort.Ints(counts)
+		median := counts[len(counts)/2]
+		q := fmt.Sprintf("level:error ns:%s", first.Namespace)
+		if len(run) == 1 {
+			out = append(out, TimelineItem{Time: first.Minute, From: first.Minute, To: first.Minute.Add(time.Minute), Cluster: first.Cluster, Namespace: first.Namespace,
+				Kind: "error-spike", Severity: "warning", Title: fmt.Sprintf("%d error log lines in %s", first.Count, first.Namespace), LogQuery: q})
+			return
+		}
+		mins := int(last.Minute.Sub(first.Minute)/time.Minute) + 1
+		out = append(out, TimelineItem{Time: first.Minute, From: first.Minute, To: last.Minute.Add(time.Minute), Cluster: first.Cluster, Namespace: first.Namespace,
+			Kind: "error-spike", Severity: "warning", LogQuery: q,
+			Title:  fmt.Sprintf("Errors in %s for %d minutes (%d lines, about %d a minute)", first.Namespace, mins, total, median),
+			Detail: fmt.Sprintf("From %s to %s UTC", first.Minute.Format("15:04"), last.Minute.Add(time.Minute).Format("15:04"))})
+		for _, m := range run {
+			if len(run) >= 5 && m.Count >= 3*median && m.Count >= 10 {
+				out = append(out, TimelineItem{Time: m.Minute, From: m.Minute, To: m.Minute.Add(time.Minute), Cluster: m.Cluster, Namespace: m.Namespace,
+					Kind: "error-spike", Severity: "critical", LogQuery: q,
+					Title: fmt.Sprintf("Error spike in %s: %d lines in one minute (usual %d)", m.Namespace, m.Count, median)})
+			}
+		}
+	}
+	var run []store.ErrorMinute
+	for _, m := range mins {
+		if len(run) > 0 {
+			p := run[len(run)-1]
+			// A gap of up to two quiet minutes keeps the run going.
+			if p.Cluster != m.Cluster || p.Namespace != m.Namespace || m.Minute.Sub(p.Minute) > 3*time.Minute {
+				flush(run)
+				run = nil
+			}
+		}
+		run = append(run, m)
+	}
+	flush(run)
+	return out
+}

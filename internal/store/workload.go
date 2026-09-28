@@ -24,7 +24,7 @@ func firstController(obj map[string]any) (kind, name string) {
 }
 
 var (
-	rsHashRe   = regexp.MustCompile(`^(.+)-[a-z0-9]{6,10}$`)           // ReplicaSet name: <deployment>-<hash>
+	rsHashRe   = regexp.MustCompile(`^(.+)-[a-z0-9]{6,10}$`)             // ReplicaSet name: <deployment>-<hash>
 	deployPod  = regexp.MustCompile(`^(.+)-[a-z0-9]{6,10}-[a-z0-9]{5}$`) // <deployment>-<rs hash>-<pod hash>
 	statefulRe = regexp.MustCompile(`^(.+)-[0-9]+$`)
 	dsPodRe    = regexp.MustCompile(`^(.+)-[a-z0-9]{5}$`)

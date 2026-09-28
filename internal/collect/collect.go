@@ -358,6 +358,9 @@ func (c *Collector) CollectCluster(ctx context.Context, cluster string, cl Clien
 			pods, collectedPods = p, true
 		}
 	}
+	if err := c.collectScopedNamespaces(ctx, cluster, cl, selected); err != nil {
+		return err
+	}
 	if plan.Selected(policy.CatEvents) {
 		if err := c.collectEvents(ctx, cluster, cl); err != nil {
 			return err
@@ -758,6 +761,85 @@ func (c *Collector) listPodsForLogs(ctx context.Context, cluster string, cl Clie
 		}
 	}
 	return pods
+}
+
+// collectScopedNamespaces captures the Namespace objects of the namespaces in
+// scope, and only those. Namespaces are cluster-scoped, so the objects
+// category skips them without --cluster-scoped, but their labels decide ambient
+// enrolment and waypoint use, and they are the containers of the selection
+// rather than other cluster data. An explicit exclusion still wins.
+func (c *Collector) collectScopedNamespaces(ctx context.Context, cluster string, cl Clients, selected []bundle.APIResource) error {
+	if !c.Policy.Plan().Selected(policy.CatObjects) || resourceMatchAny(c.Policy.ExcludeResources, "namespaces") {
+		return nil
+	}
+	for _, r := range selected {
+		if r.Group == "" && r.Resource == "namespaces" {
+			return nil // already collected as a selected type (--cluster-scoped)
+		}
+	}
+	r := bundle.APIResource{Version: "v1", Resource: "namespaces", Kind: "Namespace", SingularName: "namespace", ShortNames: []string{"ns"}}
+	cov := bundle.Coverage{ID: cluster + ".resource.core.v1.namespaces", Cluster: cluster, Type: bundle.CoverageResource, Version: "v1", Resource: "namespaces", Kind: "Namespace", State: bundle.StateComplete,
+		Reason: "namespaces in scope only"}
+	loc := fmt.Sprintf("clusters/%s/resources/namespaces", cluster)
+	k := &chunker{c: c, path: func(p int) string { return bundle.ResourcePath(cluster, "", "v1", "namespaces", p) },
+		list: map[string]any{"apiVersion": "v1", "kind": "List", "x-flightbay": map[string]any{"group": "", "version": "v1", "resource": "namespaces", "kind": "Namespace", "namespaced": false}}}
+	gvr := schema.GroupVersionResource{Version: "v1", Resource: "namespaces"}
+	add := func(obj map[string]any) error { return k.add(c.transform(loc, r, obj)) }
+	if names := c.Policy.ExplicitNamespaces(); len(names) > 0 && !hasGlob(names) {
+		for _, n := range names {
+			if !c.Policy.NamespaceAllowed(n) {
+				continue
+			}
+			u, err := cl.Dynamic.Resource(gvr).Get(ctx, n, metav1.GetOptions{})
+			if err != nil {
+				if !apierrors.IsNotFound(err) {
+					cov.State, cov.Reason = bundle.StateFailed, reason(err)
+					c.record(LogEntry{Cluster: cluster, Operation: "get", Target: "namespaces/" + n, Result: "failed", Error: err.Error()})
+				}
+				continue
+			}
+			if err := add(u.Object); err != nil {
+				return err
+			}
+		}
+	} else {
+		l, err := cl.Dynamic.Resource(gvr).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			cov.State, cov.Reason = bundle.StateFailed, reason(err)
+			c.record(LogEntry{Cluster: cluster, Operation: "list", Target: "namespaces", Result: "failed", Error: err.Error()})
+		} else {
+			for i := range l.Items {
+				if c.Policy.NamespaceAllowed(l.Items[i].GetName()) {
+					if err := add(l.Items[i].Object); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+	if err := k.flush(); err != nil {
+		return err
+	}
+	cov.Chunks, cov.Items = k.chunks, k.count
+	return c.Writer.Coverage(cov)
+}
+
+func hasGlob(ns []string) bool {
+	for _, n := range ns {
+		if strings.ContainsAny(n, "*?[") {
+			return true
+		}
+	}
+	return false
+}
+
+func resourceMatchAny(specs []string, resource string) bool {
+	for _, s := range specs {
+		if strings.EqualFold(strings.TrimSpace(s), resource) || strings.EqualFold(strings.TrimSpace(s), "ns") {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Collector) collectEvents(ctx context.Context, cluster string, cl Clients) error {

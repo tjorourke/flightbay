@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"github.com/tjorourke/flightbay/internal/diff"
 	"github.com/tjorourke/flightbay/internal/mcp"
+	"github.com/tjorourke/flightbay/internal/posture"
 	"io"
 	"io/fs"
 	"net/http"
@@ -108,7 +109,7 @@ func (s *Server) Prepare() error {
 	if err := os.WriteFile(s.RCFile(), []byte(shellRC), 0o600); err != nil {
 		return err
 	}
-	helpers := map[string]string{"fbq": "query", "fbfind": "findings", "fbpc": "proxy-config", "fbsearch": "search", "fbsql": "sql"}
+	helpers := map[string]string{"fbq": "query", "fbfind": "findings", "fbpc": "proxy-config", "fbsearch": "search", "fbsql": "sql", "fbscore": "posture"}
 	for name, sub := range helpers {
 		script := fmt.Sprintf("#!/bin/sh\n# Flightbay helper: runs `flightbay-desk %s` against this workspace.\nexec %q %s \"$@\"\n", sub, s.DeskBinary, sub)
 		if err := os.WriteFile(filepath.Join(s.WorkDir, "bin", name), []byte(script), 0o700); err != nil {
@@ -229,6 +230,7 @@ func (s *Server) Handler() http.Handler {
 	api("/api/search", s.search)
 	api("/api/objects/search", s.objectSearch)
 	api("/api/logs/fields", s.logFields)
+	api("/api/posture", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, posture.Evaluate(s.WS)) })
 	api("/api/sql", s.sqlQuery)
 	api("/api/coverage", s.coverage)
 	api("/api/terminal", s.terminal)

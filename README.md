@@ -109,6 +109,14 @@ level:error ns:payments "timed out"    pod:checkout*    trace_id:a4e98f02    sta
 
 ![Findings](docs/images/findings.png)
 
+**Best practices** scores the snapshot against Solo's defence-in-depth guidance, in two areas. Agentic covers agentgateway, kagent and MCP: MCP endpoints with no JWT or external auth, tool allowlists, rate limits on LLM routes, prompt guards, credentials held literally in env or routes, agent identity and audit logging. Istio ambient covers namespace enrolment, workloads that opt out, STRICT mTLS, default-deny, ALLOW policies that admit anything, L7 policy without a waypoint, missing waypoints, egress and telemetry. Each check lists the objects it looked at, says why it matters and gives the YAML to fix it, with a link to the matching guide on mastertheagent.com. Checks are weighted by severity. A check whose data wasn't collected, or that has nothing to apply to, is marked not applicable and doesn't count against the score.
+
+![Best practices](docs/images/posture.png)
+
+**Timeline** puts Kubernetes events, container exits, rollouts and bursts of error logs on one UTC axis, so you can see what changed just before things broke. Filter by kind, severity and namespace, drag across the density strip to zoom into a window, and jump from any entry to the object or to the logs around that moment. A steady run of errors shows as one entry covering its time range, and a minute well above that run's usual rate is called out on its own.
+
+![Timeline](docs/images/timeline.png)
+
 ### From the terminal
 
 `kubectl` (or `k`), `k9s` and `stern` work against the snapshot. Each cluster appears as `<context>@snapshot`, and changes are refused.
@@ -124,6 +132,7 @@ fbq 'level:error ns:payments'                 # log search
 fbsql "SELECT namespace, pod, count(*) FROM logs WHERE level = 'error' GROUP BY ALL"   # read-only DuckDB SQL; fbsql alone for a prompt
 fbpc                                          # captured proxies; fbpc <pod> for one, --file config_dump.json for raw
 fbfind                                        # findings
+fbscore                                       # best-practice scores, failing checks and their fixes
 ```
 
 ### Compare two captures
@@ -137,7 +146,7 @@ An object only counts as removed if both captures covered its type and namespace
 
 ### AI agents
 
-`flightbay-desk mcp` makes the open workspace available to AI agents over MCP. The tools are read-only: search objects and logs, read-only SQL, findings, objects and proxy configs, plus a `triage` prompt for a guided investigation.
+`flightbay-desk mcp` makes the open workspace available to AI agents over MCP. The tools are read-only: search objects and logs, read-only SQL, findings, best-practice scores, objects and proxy configs, plus a `triage` prompt for a guided investigation.
 
 ```bash
 claude mcp add flightbay -- flightbay-desk mcp
@@ -156,7 +165,7 @@ The MCP server only talks to your local workspace. Snapshot data reaches a model
 | `flightbay rbac` | Least-privilege RBAC for your options |
 | `flightbay docs collects` | What is and isn't collected |
 | `flightbay-desk open` | What `flightbay ui` runs; `--keep` keeps the workspace, `-i key` opens encrypted bundles |
-| `flightbay-desk search / query / findings / proxy-config / sql` | The terminal helpers (`fbsearch`, `fbq`, `fbfind`, `fbpc`, `fbsql`), usable anywhere a workspace is open |
+| `flightbay-desk search / query / findings / proxy-config / sql / posture` | The terminal helpers (`fbsearch`, `fbq`, `fbfind`, `fbpc`, `fbsql`, `fbscore`), usable anywhere a workspace is open |
 | `flightbay-desk diff A B` | Compare two captures |
 | `flightbay-desk mcp` | MCP server for agents |
 | `flightbay-desk keygen` | Create a key pair for `--encrypt-to` |

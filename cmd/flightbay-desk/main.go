@@ -39,7 +39,7 @@ var version = "0.1.0-dev"
 
 func main() {
 	root := &cobra.Command{Use: "flightbay-desk", Short: "Flightbay by Solo: investigate a snapshot bundle offline", SilenceUsage: true}
-	root.AddCommand(openCmd(), shellCmd(), queryCmd(), findingsCmd(), proxyConfigCmd(), searchCmd(), sqlCmd(), diffCmd(), mcpCmd(), keygenCmd(), &cobra.Command{
+	root.AddCommand(openCmd(), shellCmd(), queryCmd(), findingsCmd(), proxyConfigCmd(), searchCmd(), sqlCmd(), postureCmd(), diffCmd(), mcpCmd(), keygenCmd(), &cobra.Command{
 		Use: "version", Short: "Print the version", Run: func(*cobra.Command, []string) { fmt.Println("flightbay-desk", version) },
 	})
 	if err := root.Execute(); err != nil {
@@ -601,6 +601,26 @@ func sqlCmd() *cobra.Command {
 		},
 	}
 	c.Flags().IntVar(&limit, "limit", 200, "maximum rows")
+	return c
+}
+
+func postureCmd() *cobra.Command {
+	var area string
+	var all bool
+	c := &cobra.Command{
+		Use: "posture", Aliases: []string{"best-practices", "score"},
+		Short:   "Best-practice scores for the agentic stack and Istio ambient, with fixes (the fbscore helper)",
+		Example: "  fbscore                 # failing and warning checks, with the YAML to fix them\n  fbscore --area agentic\n  fbscore --all           # every check, including passing and not applicable",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			u, t, err := deskEnv()
+			if err != nil {
+				return err
+			}
+			return cli.Posture(cmd.OutOrStdout(), u, t, area, all)
+		},
+	}
+	c.Flags().StringVar(&area, "area", "", "agentic or ambient")
+	c.Flags().BoolVar(&all, "all", false, "show passing and not applicable checks too")
 	return c
 }
 

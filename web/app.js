@@ -15,6 +15,7 @@ const S = {
   logs: {q: '', namespace: '', workload: '', pod: '', container: '', level: '', stream: '', from: '', to: '', limit: 200, expanded: null, follow: false, total: 0, rev: 0, result: null},
   compare: null, findingSev: '', term: null,
   search: {q: '', limit: 200},
+  pst: {area: '', status: 'attention', q: '', open: null},
   nv: {resource: 'pods', group: '', ns: '', q: '', sel: 0, cmd: false},
 };
 
@@ -69,7 +70,7 @@ function openLogs(filters) {
 async function render() {
   const seq = ++S.renderSeq;
   document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('active', a.dataset.view === S.view));
-  const views = {navigator, search, overview, resources, logs, timeline, findings, compare, proxies, coverage};
+  const views = {navigator, search, overview, posture, resources, logs, timeline, findings, compare, proxies, coverage};
   const fn = views[S.view] || overview;
   $('#crumb').textContent = S.ws ? `Workspace / ${S.ws.case ? 'Case ' + S.ws.case : 'Snapshot'} / ${S.view}` : 'Workspace';
   try {
@@ -316,6 +317,55 @@ document.addEventListener('keydown', e => {
   else if (/^[0-9]$/.test(k)) { const cs = S.ws?.clusters || []; if (k === '0') setCluster(''); else if (cs[+k - 1]) setCluster(cs[+k - 1].name); }
   else if (k === 'Escape') { if (N.q) { N.q = ''; render(); } }
 });
+
+// ---------- best practices ----------
+const pstColour = n => n >= 90 ? 'var(--teal)' : n >= 75 ? '#7fc97f' : n >= 60 ? 'var(--amber)' : 'var(--red)';
+const pstBadge = st => `<span class="pst-badge pst-${st}">${{fail: 'FAIL', warn: 'WARN', pass: 'PASS', na: 'N/A'}[st]}</span>`;
+
+async function posture() {
+  const P = S.pst;
+  const r = await api('api/posture');
+  S.pstData = r;
+  const card = a => {
+    if (!a.present) return `<section class="panel pst-card"><div class="panel-body"><h2>${esc(a.title)}</h2><p class="muted mt">Not scored: ${esc(a.reason)}</p></div></section>`;
+    const cats = Object.entries(a.categories || {}).sort((x, y) => x[1] - y[1]);
+    const c = a.counts || {};
+    return `<section class="panel pst-card"><div class="panel-body"><div class="row" style="gap:22px;align-items:center">
+      <div class="pst-ring" style="--pct:${a.score};--col:${pstColour(a.score)}"><div><strong>${a.score}</strong><span>${esc(a.grade || '')}</span></div></div>
+      <div style="flex:1;min-width:0"><h2>${esc(a.title)}</h2>
+        <p class="muted" style="margin:4px 0 10px">${c.fail || 0} failing · ${c.warn || 0} warnings · ${c.pass || 0} passing · ${c.na || 0} not applicable</p>
+        ${cats.map(([k, v]) => `<div class="pst-cat"><span>${esc(k)}</span><div class="pst-bar"><i style="width:${v}%;background:${pstColour(v)}"></i></div><small>${v}</small></div>`).join('')}</div></div></div></section>`;
+  };
+  const q = P.q.toLowerCase();
+  const checks = r.checks.filter(c => (!P.area || c.area === P.area) &&
+    (P.status === 'all' || (P.status === 'attention' ? (c.status === 'fail' || c.status === 'warn') : c.status === P.status)) &&
+    (!q || (c.title + ' ' + c.id + ' ' + c.category + ' ' + c.items.map(i => i.name + ' ' + i.detail).join(' ')).toLowerCase().includes(q)));
+  const chip = (field, v, label) => `<button class="chip ${P[field] === v ? 'on' : ''}" data-pst="${attr({field, v})}">${label}</button>`;
+  const row = c => {
+    const open = P.open === c.id;
+    const items = c.items.filter(i => i.status !== 'na');
+    return `<div class="pst-check ${open ? 'open' : ''}"><button class="pst-head" data-pstopen="${esc(c.id)}">${pstBadge(c.status)}<span class="tag">${esc(c.severity)}</span><strong>${esc(c.title)}</strong><span class="muted">${esc(c.area === 'agentic' ? 'Agentic' : 'Ambient')} · ${esc(c.category)}</span><span style="flex:1"></span>${c.status === 'na' ? `<small class="muted">${esc(c.reason)}</small>` : `<small>${c.passed}/${c.total} pass</small>`}<span class="muted">${open ? '▾' : '▸'}</span></button>
+      ${open ? `<div class="pst-body"><p>${esc(c.why)}</p>
+        ${items.length ? `<div class="table-scroll mt" style="max-height:40vh"><table><thead><tr><th></th><th>Object</th><th>What we found</th></tr></thead><tbody>${items.map((i, n) => `<tr><td>${pstBadge(i.status)}</td><td class="mono">${i.name ? `<button class="link" data-pstobj="${attr({c: c.id, n})}">${esc(i.kind)} ${esc(i.namespace ? i.namespace + '/' : '')}${esc(i.name)}</button>` : '<span class="muted">cluster</span>'}</td><td style="white-space:normal">${esc(i.detail)}</td></tr>`).join('')}</tbody></table></div>` : ''}
+        ${c.status === 'fail' || c.status === 'warn' || c.status === 'na' ? `<div class="row between mt"><h3>How to fix</h3><div class="row"><button data-pstcopy="${esc(c.id)}">Copy YAML</button><a href="${esc(c.source)}" target="_blank" rel="noopener">Read the guide ↗</a></div></div><pre class="code mt">${esc(c.fix)}</pre>` : `<p class="mt"><a href="${esc(c.source)}" target="_blank" rel="noopener">Read the guide ↗</a></p>`}
+      </div>` : ''}</div>`;
+  };
+  return head('Best practices', "How this snapshot scores against Solo's defence-in-depth guidance for agentic workloads and Istio ambient. Each check shows the evidence and the change to make.", '<button id="pst-term">&gt;_ fbscore in terminal</button>') + `
+    <div class="grid2">${r.areas.map(card).join('')}</div>
+    <div class="toolbar mt"><div class="row wrap">${chip('area', '', 'Both')}${chip('area', 'agentic', 'Agentic')}${chip('area', 'ambient', 'Ambient')}<span class="muted">·</span>${chip('status', 'attention', 'Needs attention')}${chip('status', 'fail', 'Failing')}${chip('status', 'pass', 'Passing')}${chip('status', 'na', 'Not applicable')}${chip('status', 'all', 'All')}</div>
+      <input id="pst-q" placeholder="Filter checks, objects or findings" value="${esc(P.q)}" style="min-width:260px"></div>
+    <section class="panel">${checks.map(row).join('') || '<div class="empty"><strong>No checks match</strong>Change the filters above.</div>'}</section>
+    <p class="muted mt" style="font-size:12px">Scores weight checks by severity (critical 10, high 6, medium 3, low 1) and give partial credit per object. Checks whose data was not captured, or that have nothing to apply to, are not applicable and do not lower the score.</p>`;
+}
+after.posture = () => {
+  const P = S.pst;
+  document.querySelectorAll('[data-pst]').forEach(b => b.onclick = () => { const f = JSON.parse(b.dataset.pst); P[f.field] = f.v; render(); });
+  document.querySelectorAll('[data-pstopen]').forEach(b => b.onclick = () => { P.open = P.open === b.dataset.pstopen ? null : b.dataset.pstopen; render(); });
+  document.querySelectorAll('[data-pstobj]').forEach(b => b.onclick = () => { const x = JSON.parse(b.dataset.pstobj); const it = S.pstData.checks.find(c => c.id === x.c).items.filter(i => i.status !== 'na')[x.n]; openObject({cluster: it.cluster, group: it.group, resource: it.resource, namespace: it.namespace, name: it.name}); });
+  document.querySelectorAll('[data-pstcopy]').forEach(b => b.onclick = () => { const c = S.pstData.checks.find(x => x.id === b.dataset.pstcopy); navigator.clipboard.writeText(c.fix).then(() => toast('Fix copied'), () => toast('Clipboard unavailable')); });
+  let t; $('#pst-q').oninput = e => { clearTimeout(t); t = setTimeout(() => { P.q = e.target.value; render().then(() => { const i = $('#pst-q'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }); }, 250); };
+  $('#pst-term').onclick = () => termRun('fbscore');
+};
 
 // ---------- search ----------
 function hl(text, q) {
@@ -652,18 +702,84 @@ async function showLogDetail(id) {
 }
 
 // ---------- timeline ----------
-async function timeline() {
-  const items = await api('api/timeline', {cluster: S.cluster});
-  return head('Timeline', 'Events, container exits, rollouts and error spikes on one UTC time axis.') + (items.length ? `<section class="panel">${items.map((i, n) => `
-    <div class="timeline-item"><time>${fmtDateTime(i.time).slice(0, 16)}:${new Date(i.time).toISOString().slice(17, 19)}</time><span class="node ${esc(i.severity)}"></span>
-    <div><h3>${esc(i.title)}</h3><p>${esc(i.detail || '')}</p><div class="row" style="margin-top:4px"><span class="tag">${esc(i.cluster)}</span><small>${esc(i.kind)}</small></div></div>
-    <div class="row">${i.object ? `<button data-tobj="${n}">Inspect →</button>` : ''}${i.logQuery ? `<button data-tlog="${n}">Logs →</button>` : ''}</div></div>`).join('')}</section>` :
-    `<div class="panel empty"><strong>Nothing on the timeline yet</strong>${S.state?.phase === 'loading' ? 'Events and logs are still loading.' : 'No events, exits or rollouts were captured.'}</div>`);
+// The timeline answers "what happened, in what order": a rollout, then exits,
+// then an error spike is the usual shape of an incident. Filters narrow it,
+// the density strip shows where things cluster, and dragging on it zooms in.
+const tlKinds = [['event', 'Events'], ['termination', 'Container exits'], ['rollout', 'Rollouts'], ['error-spike', 'Error spikes']];
+const tlSevColour = {critical: 'var(--red)', warning: 'var(--amber)', info: 'var(--blue, #6aa0ff)'};
+function tlFilter(items, T, withTime = true) {
+  const q = T.q.toLowerCase();
+  return items.filter(i => !T.hideKinds.includes(i.kind) && (!T.sev || i.severity === T.sev) && (!T.ns || i.namespace === T.ns) &&
+    (!q || (i.title + ' ' + (i.detail || '') + ' ' + (i.namespace || '')).toLowerCase().includes(q)) &&
+    (!withTime || ((!T.from || i.time >= T.from) && (!T.to || i.time <= T.to))));
 }
-after.timeline = async () => {
+async function timeline() {
+  S.tl = S.tl || {q: '', sev: '', ns: '', hideKinds: [], from: '', to: '', limit: 300, newest: true};
+  const T = S.tl;
   const items = await api('api/timeline', {cluster: S.cluster});
+  S.tlItems = items;
+  if (!items.length) return head('Timeline', 'Events, container exits, rollouts and error spikes on one UTC time axis.') +
+    `<div class="panel empty"><strong>Nothing on the timeline yet</strong>${S.state?.phase === 'loading' ? 'Events and logs are still loading.' : 'No events, exits or rollouts were captured.'}</div>`;
+  const base = tlFilter(items, T, false);
+  const shown = tlFilter(items, T);
+  // Density strip over the selected window (or everything that passes the other filters).
+  const lo = new Date(T.from || (base[0] || items[0]).time).getTime(), hi = new Date(T.to || (base[base.length - 1] || items[items.length - 1]).time).getTime();
+  const N = 90, span = Math.max(hi - lo, 60000), w = span / N;
+  const buckets = Array.from({length: N}, () => ({critical: 0, warning: 0, info: 0}));
+  for (const i of shown) { const b = Math.min(N - 1, Math.max(0, Math.floor((new Date(i.time).getTime() - lo) / w))); buckets[b][i.severity] = (buckets[b][i.severity] || 0) + 1; }
+  const max = Math.max(1, ...buckets.map(b => b.critical + b.warning + b.info));
+  const bar = (b, n) => { const tot = b.critical + b.warning + b.info; return `<div class="tl-col" title="${new Date(lo + n * w).toISOString().slice(0, 19).replace('T', ' ')} · ${tot}">${['info', 'warning', 'critical'].map(k => b[k] ? `<i style="height:${b[k] / max * 100}%;background:${tlSevColour[k]}"></i>` : '').join('')}</div>`; };
+  const namespaces = [...new Set(items.map(i => i.namespace).filter(Boolean))].sort();
+  const count = k => base.filter(i => i.kind === k).length;
+  const fmt = t => `${fmtDateTime(t).slice(0, 16)}:${new Date(t).toISOString().slice(17, 19)}`;
+  let lastDay = '';
+  const ordered = T.newest ? [...shown].reverse() : shown;
+  S.tlShown = ordered;
+  const rows = ordered.slice(0, T.limit).map((i, n) => {
+    const day = i.time.slice(0, 10), sep = day !== lastDay ? `<div class="tl-day">${day}</div>` : ''; lastDay = day;
+    return sep + `<div class="timeline-item"><time>${fmt(i.time).slice(11)}</time><span class="node ${esc(i.severity)}"></span>
+    <div><h3>${esc(i.title)}</h3><p>${esc(i.detail || '')}</p><div class="row" style="margin-top:4px">${(S.ws?.clusters || []).length > 1 ? `<span class="tag">${esc(i.cluster)}</span>` : ''}${i.namespace ? `<button class="tag link" data-tns="${esc(i.namespace)}">${esc(i.namespace)}</button>` : ''}<small>${esc(tlKinds.find(k => k[0] === i.kind)?.[1] || i.kind)}</small></div></div>
+    <div class="row">${i.object ? `<button data-tobj="${n}">Inspect →</button>` : ''}<button data-tlog="${n}" title="${i.logQuery ? esc(i.logQuery) : 'Logs two minutes either side'}">${i.logQuery ? 'Logs →' : 'Logs around →'}</button></div></div>`;
+  }).join('');
+  return head('Timeline', 'What happened, in order: Kubernetes events, container exits, rollouts and error-log spikes on one UTC axis. Use it to see what changed just before things broke.') + `
+    <div class="toolbar"><div class="row wrap">${tlKinds.map(([k, t]) => `<button class="chip ${T.hideKinds.includes(k) ? '' : 'on'}" data-tkind="${k}">${t} <small>${count(k)}</small></button>`).join('')}</div>
+      <div class="row"><select id="tl-sev"><option value="">All severities</option>${['critical', 'warning', 'info'].map(v => `<option ${T.sev === v ? 'selected' : ''}>${v}</option>`).join('')}</select>
+      <select id="tl-ns"><option value="">All namespaces</option>${namespaces.map(v => `<option ${T.ns === v ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select>
+      <input id="tl-q" placeholder="Filter titles and messages" value="${esc(T.q)}" style="min-width:220px"></div></div>
+    <section class="panel"><div class="panel-head"><h2>${shown.length} of ${items.length} entries</h2><div class="row"><small class="muted">${fmt(new Date(lo).toISOString())} → ${fmt(new Date(hi).toISOString())} UTC · drag to zoom</small><button id="tl-order">${T.newest ? 'Newest first' : 'Oldest first'} ⇅</button>${T.from || T.to ? '<button id="tl-reset">Reset zoom</button>' : ''}</div></div>
+      <div class="panel-body"><div class="tl-strip" id="tl-strip" data-lo="${lo}" data-w="${w}">${buckets.map(bar).join('')}<div class="tl-sel" id="tl-sel"></div></div></div></section>
+    <section class="panel mt">${rows || '<div class="empty"><strong>No entries match</strong>Change the filters or reset the zoom.</div>'}
+      ${shown.length > T.limit ? `<div class="empty"><button id="tl-more">Show ${Math.min(300, shown.length - T.limit)} more (${shown.length - T.limit} hidden)</button></div>` : ''}</section>`;
+}
+after.timeline = () => {
+  const T = S.tl, items = S.tlShown || [];
+  if (!S.tlItems?.length) return;
   document.querySelectorAll('[data-tobj]').forEach(b => b.onclick = () => openObject(items[+b.dataset.tobj].object));
-  document.querySelectorAll('[data-tlog]').forEach(b => b.onclick = () => { const i = items[+b.dataset.tlog]; openLogs({q: i.logQuery, from: i.from && !i.from.startsWith('0001') ? i.from : '', to: i.to && !i.to.startsWith('0001') ? i.to : ''}); });
+  document.querySelectorAll('[data-tlog]').forEach(b => b.onclick = () => {
+    const i = items[+b.dataset.tlog], ok = t => t && !t.startsWith('0001');
+    if (i.logQuery) return openLogs({q: i.logQuery, from: ok(i.from) ? i.from : '', to: ok(i.to) ? i.to : ''});
+    const t = new Date(i.time).getTime();
+    openLogs({q: i.namespace ? `ns:${i.namespace}` : '', from: new Date(t - 120000).toISOString(), to: new Date(t + 120000).toISOString()});
+  });
+  document.querySelectorAll('[data-tkind]').forEach(b => b.onclick = () => { const k = b.dataset.tkind; T.hideKinds = T.hideKinds.includes(k) ? T.hideKinds.filter(x => x !== k) : [...T.hideKinds, k]; render(); });
+  document.querySelectorAll('[data-tns]').forEach(b => b.onclick = () => { T.ns = b.dataset.tns; render(); });
+  $('#tl-sev').onchange = e => { T.sev = e.target.value; render(); };
+  $('#tl-ns').onchange = e => { T.ns = e.target.value; render(); };
+  const more = $('#tl-more'); if (more) more.onclick = () => { T.limit += 300; render(); };
+  $('#tl-order').onclick = () => { T.newest = !T.newest; render(); };
+  const reset = $('#tl-reset'); if (reset) reset.onclick = () => { T.from = T.to = ''; render(); };
+  let tm; $('#tl-q').oninput = e => { clearTimeout(tm); tm = setTimeout(() => { T.q = e.target.value; T.limit = 300; render().then(() => { const i = $('#tl-q'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }); }, 250); };
+  // Drag (or click a column) on the strip to zoom into that window.
+  const strip = $('#tl-strip'), sel = $('#tl-sel'), lo = +strip.dataset.lo, w = +strip.dataset.w;
+  const frac = e => { const r = strip.getBoundingClientRect(); return Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)); };
+  let a = null;
+  strip.onmousedown = e => { a = frac(e); sel.style.display = 'block'; sel.style.left = a * 100 + '%'; sel.style.width = '0'; e.preventDefault(); };
+  window.onmousemove = e => { if (a === null) return; const b = frac(e); sel.style.left = Math.min(a, b) * 100 + '%'; sel.style.width = Math.abs(b - a) * 100 + '%'; };
+  window.onmouseup = e => {
+    if (a === null) return; let b = frac(e), x = Math.min(a, b), y = Math.max(a, b); a = null;
+    const N = 90; if (y - x < 1 / N) { x = Math.floor(x * N) / N; y = x + 1 / N; }
+    T.from = new Date(lo + x * N * w).toISOString(); T.to = new Date(lo + y * N * w).toISOString(); T.limit = 300; render();
+  };
 };
 
 // ---------- findings ----------
@@ -883,7 +999,7 @@ function closeModal() { $('#modal-root').innerHTML = ''; }
 
 function openSearch() {
   modal('Jump to an object or view', `<input id="gs" style="width:100%" placeholder="Any object: name, label, image, hostname, kind:pod…" autocomplete="off"><div id="gs-res" class="search-results"></div>`);
-  const views = ['navigator', 'search', 'overview', 'resources', 'logs', 'timeline', 'findings', 'compare', 'proxies', 'coverage'];
+  const views = ['navigator', 'search', 'overview', 'posture', 'resources', 'logs', 'timeline', 'findings', 'compare', 'proxies', 'coverage'];
   let hits = [], sel = 0;
   const draw = () => {
     $('#gs-res').innerHTML = hits.map((h, i) => `<button class="${i === sel ? 'sel' : ''}" data-i="${i}">${h.all ? `<span class="green">⌕</span> Search everything for “${esc(h.all)}”<small>Search page</small>` : h.view ? `<span class="green">↗</span> ${esc(h.view)}<small>view</small>` : `<span class="badge">${esc(h.kind)}</span>${esc(h.namespace ? h.namespace + '/' : '')}${esc(h.name)}${h.snippet ? ` <span class="muted mono" style="font-size:10px">…${esc(h.snippet.slice(0, 70))}…</span>` : ''}<small>${esc(h.cluster)}</small>`}</button>`).join('');

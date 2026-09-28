@@ -275,10 +275,10 @@ func scanLines(rows *sql.Rows) ([]*logs.Record, error) {
 	var out []*logs.Record
 	for rows.Next() {
 		var (
-			id, ts                                                                   int64
-			seq                                                                      int32
+			id, ts                                                                           int64
+			seq                                                                              int32
 			cluster, ns, pod, container, stream, node, level, scope, msg, raw, chunk, wl, wk sql.NullString
-			fields                                                                   any
+			fields                                                                           any
 		)
 		if err := rows.Scan(&id, &seq, &ts, &cluster, &ns, &pod, &container, &stream, &node, &level, &scope, &msg, &fields, &raw, &chunk, &wl, &wk); err != nil {
 			return nil, err

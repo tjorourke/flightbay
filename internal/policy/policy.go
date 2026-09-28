@@ -407,6 +407,9 @@ func (p *Policy) RBAC(discovered []APIResource) string {
 		pfRules.add("", "pods/portforward")
 	}
 	namespaces := p.ExplicitNamespaces()
+	// The Namespace objects in scope are always read (their labels decide
+	// ambient enrolment); a namespace-limited run only needs those names.
+	nsRead := pl.Selected(CatObjects) && !p.ClusterScoped
 	subject := "  - apiGroup: rbac.authorization.k8s.io\n    kind: Group\n    name: flightbay:readers\n"
 	crdRole := func() {
 		if len(crdNames) == 0 {
@@ -436,6 +439,14 @@ func (p *Policy) RBAC(discovered []APIResource) string {
 			renderRules(&b, clusterRules, "get, list")
 			fmt.Fprintf(&b, "---\napiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRoleBinding\nmetadata:\n  name: flightbay-cluster-reader\nroleRef:\n  apiGroup: rbac.authorization.k8s.io\n  kind: ClusterRole\n  name: flightbay-cluster-reader\nsubjects:\n%s", subject)
 		}
+		if nsRead {
+			b.WriteString("---\n# Namespace objects of the namespaces in scope (labels such as istio.io/dataplane-mode).\napiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRole\nmetadata:\n  name: flightbay-namespace-reader\nrules:\n  - apiGroups: [\"\"]\n    resources: [namespaces]\n    resourceNames:\n")
+			for _, ns := range namespaces {
+				fmt.Fprintf(&b, "    - %s\n", ns)
+			}
+			b.WriteString("    verbs: [get]\n")
+			fmt.Fprintf(&b, "---\napiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRoleBinding\nmetadata:\n  name: flightbay-namespace-reader\nroleRef:\n  apiGroup: rbac.authorization.k8s.io\n  kind: ClusterRole\n  name: flightbay-namespace-reader\nsubjects:\n%s", subject)
+		}
 		crdRole()
 		return b.String()
 	}
@@ -443,6 +454,9 @@ func (p *Policy) RBAC(discovered []APIResource) string {
 		for r := range rs {
 			nsRules.add(g, r)
 		}
+	}
+	if nsRead {
+		nsRules.add("", "namespaces")
 	}
 	b.WriteString("---\napiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRole\nmetadata:\n  name: flightbay-reader\nrules:\n")
 	renderRules(&b, nsRules, "get, list")

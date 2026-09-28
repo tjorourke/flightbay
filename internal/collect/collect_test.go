@@ -290,7 +290,11 @@ func TestStandardCollectionScopedAndRedacted(t *testing.T) {
 	if len(items(t, files, "clusters/mesh1/resources/gateway.networking.k8s.io/v1/httproutes/")) != 1 {
 		t.Fatal("httproute missing")
 	}
-	for _, missing := range []string{"clusters/mesh1/resources/core/v1/nodes/", "clusters/mesh1/resources/core/v1/namespaces/", "clusters/mesh1/resources/core/v1/bindings/", "clusters/mesh1/resources/core/v1/events/"} {
+	// Only the Namespace objects in scope are captured.
+	if nss := items(t, files, "clusters/mesh1/resources/core/v1/namespaces/"); len(nss) != 1 || nss[0]["metadata"].(map[string]any)["name"] != "payments" {
+		t.Fatalf("expected only the payments Namespace, got %v", nss)
+	}
+	for _, missing := range []string{"clusters/mesh1/resources/core/v1/nodes/", "clusters/mesh1/resources/core/v1/bindings/", "clusters/mesh1/resources/core/v1/events/"} {
 		if len(items(t, files, missing)) != 0 {
 			t.Fatalf("unexpected collection under %s", missing)
 		}

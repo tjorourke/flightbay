@@ -746,3 +746,62 @@ Examples:
   SELECT pod, count(*) FROM logs WHERE level = 'error' GROUP BY ALL ORDER BY 2 DESC LIMIT 10;
   SELECT reason, object_name, message FROM events WHERE type = 'Warning';
   SELECT fields['trace_id'] AS trace, count(*) FROM logs WHERE fields['trace_id'] IS NOT NULL GROUP BY ALL;`
+
+// Posture prints best-practice scores and what to fix.
+func Posture(w io.Writer, base, token, area string, all bool) error {
+	var r struct {
+		Areas []struct {
+			Title, Area, Grade, Reason string
+			Present                    bool
+			Score                      int
+			Categories                 map[string]int
+		} `json:"areas"`
+		Checks []struct {
+			ID, Area, Category, Severity, Title, Status, Reason, Fix, Source string
+			Passed, Total                                                    int
+			Items                                                            []struct{ Kind, Namespace, Name, Status, Detail string }
+		} `json:"checks"`
+	}
+	if err := deskGet(base, token, "/api/posture", url.Values{}, &r); err != nil {
+		return err
+	}
+	for _, a := range r.Areas {
+		if area != "" && a.Area != area {
+			continue
+		}
+		if !a.Present {
+			fmt.Fprintf(w, "%s: not scored (%s)\n", a.Title, a.Reason)
+			continue
+		}
+		var cats []string
+		for k, v := range a.Categories {
+			cats = append(cats, fmt.Sprintf("%s %d", k, v))
+		}
+		sort.Strings(cats)
+		fmt.Fprintf(w, "%s: %d/100 (%s)   %s\n", a.Title, a.Score, a.Grade, strings.Join(cats, " · "))
+	}
+	mark := map[string]string{"fail": "FAIL", "warn": "WARN", "pass": "PASS", "na": "N/A "}
+	for _, c := range r.Checks {
+		if (area != "" && c.Area != area) || (!all && c.Status != "fail" && c.Status != "warn") {
+			continue
+		}
+		fmt.Fprintf(w, "\n[%s] %-8s %s  (%d/%d)  %s\n", mark[c.Status], c.Severity, c.Title, c.Passed, c.Total, c.ID)
+		if c.Reason != "" {
+			fmt.Fprintf(w, "       %s\n", c.Reason)
+		}
+		for i, it := range c.Items {
+			if it.Status == "pass" || i >= 8 {
+				continue
+			}
+			obj := strings.Trim(it.Kind+" "+strings.Trim(it.Namespace+"/"+it.Name, "/"), " ")
+			fmt.Fprintf(w, "       - %s: %s\n", obj, it.Detail)
+		}
+		if c.Status == "fail" || c.Status == "warn" {
+			fmt.Fprintf(w, "       Fix (see %s):\n", c.Source)
+			for _, line := range strings.Split(c.Fix, "\n") {
+				fmt.Fprintf(w, "         %s\n", line)
+			}
+		}
+	}
+	return nil
+}

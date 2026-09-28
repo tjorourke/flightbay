@@ -152,6 +152,29 @@ func tools() []tool {
 				}
 				return s.get("/api/sql", url.Values{"q": {arg(a, "query")}, "limit": {limit}})
 			}},
+		{Name: "best_practices", Title: "Best-practice scores",
+			Description: "Scores the snapshot against Solo's defence-in-depth best practices for the agentic stack (MCP and LLM authentication, tool allowlists, rate limits, prompt guards, credentials, agent identity, audit) and for Istio ambient (enrolment, STRICT mTLS, default-deny, allow-all policies, waypoints, egress, telemetry). Returns a score and grade per area, and every check with its status, affected objects, why it matters and the fix YAML.",
+			InputSchema: obj(map[string]any{"area": str("agentic or ambient; omit for both"), "status": str("fail, warn, pass or na; omit for all")}),
+			call: func(s *Server, a map[string]any) (string, error) {
+				body, err := s.get("/api/posture", nil)
+				if err != nil || (arg(a, "area") == "" && arg(a, "status") == "") {
+					return body, err
+				}
+				var r map[string]any
+				if json.Unmarshal([]byte(body), &r) != nil {
+					return body, nil
+				}
+				var keep []any
+				for _, c := range r["checks"].([]any) {
+					cm := c.(map[string]any)
+					if (arg(a, "area") == "" || cm["area"] == arg(a, "area")) && (arg(a, "status") == "" || cm["status"] == arg(a, "status")) {
+						keep = append(keep, c)
+					}
+				}
+				r["checks"] = keep
+				b, _ := json.MarshalIndent(r, "", " ")
+				return string(b), nil
+			}},
 		{Name: "list_resource_types", Title: "Resource types",
 			Description: "Captured resource types with counts and collection state (complete, excluded by customer, failed, truncated, loading). A type that is excluded or failed says nothing about whether objects exist.",
 			InputSchema: obj(map[string]any{"cluster": str("cluster")}),
@@ -196,7 +219,7 @@ func tools() []tool {
 const triagePrompt = `You are triaging a Solo.io support case from a Flightbay snapshot: an offline, redacted capture of one or more Kubernetes clusters running Istio ambient, agentgateway, kgateway or kagent. You cannot change the clusters. Work only from the snapshot.
 
 1. Call workspace_summary. Note what the customer excluded, anything still loading, and whether the bundle verified. Never treat excluded or uncollected data as evidence of absence.
-2. Call list_findings. Start from critical, then warning findings. Findings are signals, not conclusions.
+2. Call list_findings and best_practices (open MCP endpoints, missing mTLS or default-deny are often the story). Start from critical, then warning findings. Findings are signals, not conclusions.
 3. For each promising finding, gather evidence (search_objects finds any object by name, label or content; run_sql answers counting and grouping questions): search_logs with its logQuery, then log_context around the key lines; get_object for the objects involved and their related objects and events; proxy_config for the proxies, ztunnel or istiod involved (listeners, routes, certificates, xDS sync).
 4. Follow identifiers across pods (trace_id, request id, connection id) with search_logs.
 5. If compare_baseline has data, check whether the problem started with a change.

@@ -223,6 +223,16 @@ contains "$(env FLIGHTBAY_URL=$URL FLIGHTBAY_TOKEN=$TOKEN "$WORK/ws/bin/fbsql" "
 absent "$(api "/api/sql?q=SELECT%20string_agg(object,'')%20FROM%20objects")" "$CANARY" "no canary reachable through SQL"
 [ -f "$WORK/ws/workspace.duckdb" ] || fail "no DuckDB workspace file"
 pass "resource search (CLI, API), read-only SQL over logs and objects, DuckDB workspace"
+
+step "Desk: best-practice scores"
+pst=$(api /api/posture)
+contains "$pst" 'Istio ambient' "posture reports the ambient area"
+contains "$pst" '"checks"' "posture returns its checks"
+score=$(env FLIGHTBAY_URL=$URL FLIGHTBAY_TOKEN=$TOKEN "$WORK/ws/bin/fbscore" --all)
+contains "$score" "Istio ambient: " "fbscore prints the ambient area (scored, or why not)"
+contains "$score" "Agentic (agentgateway, kagent, MCP): " "fbscore prints the agentic area (scored, or why not)"
+absent "$pst" "$CANARY" "no canary in posture output"
+pass "posture API and fbscore score the snapshot and give fixes"
 kill "$DESK_PID"; wait "$DESK_PID" 2>/dev/null || true; DESK_PID=""
 
 step "Desk: open with no argument, workspace cleaned up on exit"
