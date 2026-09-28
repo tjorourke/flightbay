@@ -1422,7 +1422,7 @@ function whyMatched(h, q) {
 async function search() {
   const Q = S.search;
   const examples = ['kind:pod', 'CrashLoopBackOff', 'kind:httproute', 'label:app', 'kind:deployment ns:istio-system', '"image"'];
-  const bar = `<form class="query" id="obj-form"><span class="green">⌕</span><input id="obj-q" value="${esc(Q.q)}" placeholder='Search every object. Try kind: ns: label: name: or free text, e.g. kind:pod label:app=checkout' autocomplete="off" spellcheck="false" aria-label="Object search"><button class="primary">Search ↵</button></form>
+  const bar = `<form class="query" id="obj-form"><span class="green">⌕</span><input id="obj-q" value="${esc(Q.q)}" placeholder='Search every object. Try kind: ns: label: name: or free text, e.g. kind:pod label:app=checkout' autocomplete="off" spellcheck="false" aria-label="Object search">${Q.q ? '<button type="button" class="ghost" id="obj-clear" title="Clear the search (Esc)">Clear ✕</button>' : ''}<button class="primary">Search ↵</button></form>
     <div class="help-row"><span>Try</span>${examples.map(x => `<button data-otry="${esc(x)}">${esc(x)}</button>`).join('')}</div>`;
   const header = head('Search', 'Every captured object of every kind: names, namespaces, labels, and anything in spec and status (images, hostnames, status reasons).');
   if (!Q.q.trim()) {
@@ -1437,7 +1437,7 @@ async function search() {
   S.lastObj = r;
   const kinds = Object.entries(r.byKind || {}).sort((a, b) => b[1] - a[1]);
   return header + bar + (r.error ? `<div class="notice bad">${esc(r.error)}</div>` : '') + `
-    <div class="chips">${kinds.map(([k, n]) => `<button class="chip" data-okind="${esc(k)}">${esc(k)} <small>${n}</small></button>`).join('')}</div>
+    <div class="chips">${kinds.map(([k, n]) => { const on = new RegExp(`(^|\\s)kind:${k.toLowerCase()}(\\s|$)`, 'i').test(Q.q); return `<button class="chip ${on ? 'on' : ''}" data-okind="${esc(k)}" title="${on ? 'Remove this kind from the search' : 'Show only this kind'}">${esc(k)} <small>${n}</small>${on ? ' ×' : ''}</button>`; }).join('')}</div>
     <section class="panel"><div class="panel-head"><span><strong>${num(r.total)}</strong> <span class="muted">objects${r.loading ? ' · <span class="blue">bundle still loading</span>' : ''}</span></span>
       <button class="link" id="obj-logs">Search the logs for this instead →</button></div>
     <div class="table-scroll" style="max-height:66vh">${r.results.length ? `<table><thead><tr><th>Kind</th><th>Namespace</th><th>Name</th>${!S.cluster ? '<th>Cluster</th>' : ''}<th>Why it matched</th></tr></thead><tbody>
@@ -1452,7 +1452,13 @@ after.search = () => {
   typeahead($('#obj-q'), {scope: 'objects', alias: objAlias, bareField: 'name', onAccept: i => go(i.value.trim(), {value: i.value, caret: i.selectionStart})});
   $('#obj-form').onsubmit = e => { e.preventDefault(); go($('#obj-q').value.trim()); };
   document.querySelectorAll('[data-otry]').forEach(b => b.onclick = () => go(b.dataset.otry));
-  document.querySelectorAll('[data-okind]').forEach(b => b.onclick = () => go(`kind:${b.dataset.okind.toLowerCase()} ${Q.q.replace(/-?kind:\S+/g, '')}`.trim()));
+  document.querySelectorAll('[data-okind]').forEach(b => b.onclick = () => {
+    const rest = Q.q.replace(/-?kind:\S+/g, '').replace(/\s+/g, ' ').trim();
+    go(b.classList.contains('on') ? rest : `kind:${b.dataset.okind.toLowerCase()} ${rest}`.trim());
+  });
+  const clr = $('#obj-clear'); if (clr) clr.onclick = () => go('');
+  // Esc closes the suggestions first; with none open it clears the search.
+  $('#obj-q').addEventListener('keydown', e => { if (e.key === 'Escape' && Q.q && !TA.menu?.isConnected) go(''); }, {capture: true});
   const gc = $('#go-cov'); if (gc) gc.onclick = () => nav('coverage');
   const more = $('#obj-more'); if (more) more.onclick = () => { Q.limit += 500; render(); };
   const lg = $('#obj-logs'); if (lg) lg.onclick = () => openLogs({q: Q.q.split(/\s+/).filter(w => !/^-?(kind|label|name|ns|namespace|cluster):/.test(w)).join(' ')});
