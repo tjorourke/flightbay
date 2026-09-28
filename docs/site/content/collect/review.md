@@ -91,7 +91,7 @@ The **Sign the export** panel chooses the key the export is signed with. A signa
 
 - **Choose a key** from the list: Flightbay finds signing keys in `~/.flightbay/keys`, in the directory you started from, and next to a key you used before.
 - **Use a key file** anywhere else by typing its path.
-- **Create a signing key**: type who signs (for example "ACME platform team") and choose **Create key**. The private key is saved in `~/.flightbay/keys`, readable only by you, and the page shows the public key with **Copy public key**. Send the public key (the `.pub` file) to Solo once; never send the `.key`.
+- **Create a signing key…** opens a dialog. Type who signs (for example "ACME platform team") and choose **Create and use this key**. The private key is saved in `~/.flightbay/keys`, readable only by you, exports are signed with it straight away, and the next dialog shows the public key with **Copy public key**. **Show the public key** brings it back later. Send the public key (the `.pub` file) to Solo once; never send the `.key`.
 - **Don't sign** turns signing off for this export.
 
 `flightbay ui BUNDLE --sign KEY` (or `--live --sign KEY`) starts with that key chosen. The page can change it at any time.

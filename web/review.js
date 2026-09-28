@@ -165,11 +165,7 @@ function rvSignPanel() {
     <p class="muted" style="font-size:12px;margin:0 0 10px">A signature lets Solo check the bundle came from you and was not changed. Solo needs your public key (.pub) once; the private key (.key) stays with you.</p>
     <div class="row wrap"><select id="rv-key" style="min-width:320px"><option value="">Don't sign</option>${opts}${sig && !(k.keys || []).some(x => x.path === sig.path) ? `<option selected value="${esc(sig.path || '')}">${esc(sig.name)} · ${esc(sig.keyId)}</option>` : ''}</select></div>
     <div class="row wrap mt"><input id="rv-keypath" placeholder="or a key file: ~/keys/acme.key" style="min-width:260px"><button id="rv-usekey">Use this key</button></div>
-    <details class="mt" ${created ? 'open' : ''}><summary>Create a signing key</summary>
-      <div class="row wrap mt"><input id="rv-keyname" placeholder="Who signs, e.g. ACME platform team" style="min-width:260px"><button id="rv-newkey" class="primary">Create key</button></div>
-      <p class="muted" style="font-size:12px">Saved in <span class="mono">${esc(k.keysDir)}</span>, readable only by you.</p>
-      ${created ? `<div class="notice info"><div><strong>Key created.</strong> Send this public key to Solo (it is also in <span class="mono">${esc(created.publicPath)}</span>):<pre class="code mt">${esc(created.publicKey)}</pre><button id="rv-copypub">Copy public key</button></div></div>` : ''}
-    </details></div>`;
+    <div class="row wrap mt"><button id="rv-newkey-open" class="primary">Create a signing key…</button>${created ? `<button id="rv-showpub">Show the public key</button>` : ''}</div></div>`;
 }
 async function rvLoadKeys() {
   try { S.rv.keys = await api('api/review/keys'); } catch (e) { S.rv.keys = {keys: [], keysDir: '~/.flightbay/keys'}; }
@@ -185,11 +181,46 @@ async function rvSetKey(body) {
   const el = $('#rv-sign'); if (el) { el.innerHTML = rvSignPanel(); rvWireSign(); }
   rvSummaryOnly();
 }
+// Creating a key happens in a modal, so nothing on the page (or a live
+// refresh) can close it half way.
+function rvKeyModal() {
+  const dir = S.rv.keys?.keysDir || '~/.flightbay/keys';
+  modal('Create a signing key', `<p class="muted" style="margin:0 0 12px">A signing key has two halves. The private key (.key) stays on this machine and signs what you export. The public key (.pub) goes to Solo once, so they can check your bundles came from you unmodified.</p>
+    <label style="display:block">Who signs with it<input id="rvm-name" placeholder="ACME platform team" style="width:100%;margin-top:6px" autocomplete="off"></label>
+    <p class="muted" style="font-size:12px">Shown to Solo whenever one of your bundles verifies. Saved in <span class="mono">${esc(dir)}</span>, readable only by you.</p>
+    <div id="rvm-err" class="red" style="font-size:13px"></div>
+    <div class="row mt" style="justify-content:flex-end"><button id="rvm-cancel">Cancel</button><button class="primary" id="rvm-create">Create and use this key</button></div>`);
+  const name = $('#rvm-name'); name.focus();
+  $('#rvm-cancel').onclick = closeModal;
+  const go = async () => {
+    const v = name.value.trim();
+    if (!v) { $('#rvm-err').textContent = 'Give the key a name: who signs with it.'; name.focus(); return; }
+    $('#rvm-create').disabled = true; $('#rvm-create').textContent = 'Creating…';
+    try {
+      const r = await apiPost('api/review/keys', {create: {name: v}});
+      S.rv.keys = {...S.rv.keys, keys: r.keys}; S.rv.data.signer = r.signer || null; S.rv.created = r.created;
+      const el = $('#rv-sign'); if (el) { el.innerHTML = rvSignPanel(); rvWireSign(); }
+      rvSummaryOnly();
+      rvPubModal(r.created, true);
+    } catch (e) { $('#rvm-err').textContent = e.message; $('#rvm-create').disabled = false; $('#rvm-create').textContent = 'Create and use this key'; }
+  };
+  $('#rvm-create').onclick = go;
+  name.onkeydown = e => { if (e.key === 'Enter') go(); };
+}
+function rvPubModal(c, fresh) {
+  modal(fresh ? 'Key created' : 'Your public key', `<p style="margin:0 0 8px">${fresh ? 'Exports from this page are now signed with it. ' : ''}Send this public key to Solo. It is safe to share; the private key never leaves this machine.</p>
+    <pre class="code" style="white-space:pre-wrap;word-break:break-all">${esc(c.publicKey)}</pre>
+    <dl class="metadata mt" style="font-size:12px"><dt>Public key</dt><dd class="mono">${esc(c.publicPath)}</dd><dt>Private key</dt><dd class="mono">${esc(c.path)} <span class="muted">(keep it, never send it)</span></dd></dl>
+    <div class="row mt" style="justify-content:flex-end"><button id="rvm-copy">Copy public key</button><button class="primary" id="rvm-done">Done</button></div>`);
+  $('#rvm-copy').onclick = () => navigator.clipboard.writeText(c.publicKey).then(() => toast('Public key copied'), () => toast('Clipboard unavailable'));
+  $('#rvm-done').onclick = closeModal;
+}
+
 function rvWireSign() {
   const sel = $('#rv-key'); if (sel) sel.onchange = () => rvSetKey(sel.value ? {path: sel.value} : {none: true});
   const use = $('#rv-usekey'); if (use) use.onclick = () => { const v = $('#rv-keypath').value.trim(); if (v) rvSetKey({path: v}); };
-  const nk = $('#rv-newkey'); if (nk) nk.onclick = () => { const v = $('#rv-keyname').value.trim(); if (!v) { toast('Give the key a name'); return; } rvSetKey({create: {name: v}}); };
-  const cp = $('#rv-copypub'); if (cp) cp.onclick = () => navigator.clipboard.writeText(S.rv.created.publicKey).then(() => toast('Public key copied'));
+  const nk = $('#rv-newkey-open'); if (nk) nk.onclick = rvKeyModal;
+  const sp = $('#rv-showpub'); if (sp) sp.onclick = () => rvPubModal(S.rv.created, false);
 }
 
 function rvTabs() {

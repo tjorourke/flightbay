@@ -2513,6 +2513,9 @@ async function liveRefresh() {
   LIVE.pending = false; LIVE.lastRender = Date.now();
   if (S.view === 'logs') { checkNewLines(); return; } // the log explorer has Follow incoming data
   if (S.view === 'compare') return;
+  // Review and send works on a frozen copy of the mirror: redrawing it would
+  // only lose what you are in the middle of choosing.
+  if (S.view === 'review') return;
   const main = $('#main'), top = main?.scrollTop || 0;
   const scrolls = [...document.querySelectorAll('#main .table-scroll')].map(e => e.scrollTop);
   try { await loadWorkspace(); await render(); } catch (_) { /* the next change retries */ }
