@@ -29,10 +29,12 @@ type Feature struct {
 // can list them.
 const (
 	Priorities = "priorities" // best practices: fix-first ranking, points if fixed, severity colours
+	Reach      = "reach"      // agent reach: per-agent blast radius, network paths, fixes
 )
 
 var catalogue = map[string]string{
 	Priorities: "Best practices: fix-first ranking, points recovered per fix, severity colours",
+	Reach:      "Agent reach: every agent's blast radius, the network paths it has and what to lock down",
 }
 
 var (

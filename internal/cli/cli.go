@@ -839,3 +839,111 @@ func Posture(w io.Writer, base, token, area string, all bool, top int) error {
 	}
 	return nil
 }
+
+// Reach prints agent reach (the fbreach helper): every agent's blast radius,
+// or one agent's paths, findings and fixes.
+func Reach(w io.Writer, base, token, agent string, showFix bool) error {
+	type finding struct{ Severity, Title, Detail, Fix string }
+	type agentT struct {
+		Namespace, Name, Type, Summary, Radius, Internet, Metadata string
+		Counts                                                     struct{ Services, Direct, Closure, Write, Observed, NeverUsed, Critical, High int }
+		Identity                                                   struct {
+			ServiceAccount           string
+			InMesh, TokenMounted     bool
+			Dangerous, Secrets, RBAC []string
+			CloudRole, Sandbox       string
+		}
+		Paths []struct {
+			Hops      []string
+			Kind, Why string
+		}
+		Findings []finding
+		Direct   []struct {
+			To, Verdict, Risk, Why string
+			Methods, ObsMethods    []string
+			Observed               int
+			Declared, Write        bool
+		}
+	}
+	if agent == "" {
+		var r struct {
+			Agents []agentT
+			Notes  []string
+			Flat   bool
+		}
+		if err := deskGet(base, token, "/api/reach", url.Values{}, &r); err != nil {
+			return err
+		}
+		if len(r.Agents) == 0 {
+			fmt.Fprintln(w, "No agents, MCP servers or agent gateways found in this capture.")
+			return nil
+		}
+		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(tw, "AGENT\tTYPE\tRADIUS\tINTERNET\tDIRECT\tTOTAL\tWRITE\tCRIT\tHIGH")
+		for _, a := range r.Agents {
+			fmt.Fprintf(tw, "%s/%s\t%s\t%s\t%s\t%d/%d\t%d\t%d\t%d\t%d\n", a.Namespace, a.Name, a.Type, a.Radius, a.Internet, a.Counts.Direct, a.Counts.Services, a.Counts.Closure, a.Counts.Write, a.Counts.Critical, a.Counts.High)
+		}
+		tw.Flush()
+		for _, n := range r.Notes {
+			fmt.Fprintf(w, "\nNote: %s\n", n)
+		}
+		fmt.Fprintln(w, "\nfbreach <namespace/name> for one agent's paths and fixes.")
+		return nil
+	}
+	var a agentT
+	if err := deskGet(base, token, "/api/reach", url.Values{"agent": {agent}}, &a); err != nil {
+		return err
+	}
+	fmt.Fprintf(w, "%s/%s (%s): radius %s\n%s\n\n", a.Namespace, a.Name, a.Type, a.Radius, a.Summary)
+	fmt.Fprintf(w, "Reach: %d of %d Services directly, %d in any number of hops; internet %s; can write to %d; called %d; %d allowed but never used\n",
+		a.Counts.Direct, a.Counts.Services, a.Counts.Closure, a.Internet, a.Counts.Write, a.Counts.Observed, a.Counts.NeverUsed)
+	id := a.Identity
+	fmt.Fprintf(w, "Identity: %s, in mesh %v, API token mounted %v", id.ServiceAccount, id.InMesh, id.TokenMounted)
+	if id.CloudRole != "" {
+		fmt.Fprintf(w, ", cloud role %s", id.CloudRole)
+	}
+	if len(id.Secrets) > 0 {
+		fmt.Fprintf(w, ", Secrets %s", strings.Join(id.Secrets, ","))
+	}
+	fmt.Fprintln(w)
+	if len(a.Paths) > 0 {
+		fmt.Fprintln(w, "\nPaths:")
+		for _, p := range a.Paths {
+			fmt.Fprintf(w, "  %-8s %s\n", p.Kind, strings.Join(p.Hops, " -> "))
+		}
+	}
+	fmt.Fprintln(w, "\nFindings:")
+	for _, f := range a.Findings {
+		fmt.Fprintf(w, "  [%s] %s\n      %s\n", strings.ToUpper(f.Severity), f.Title, f.Detail)
+		if showFix && f.Fix != "" {
+			for _, line := range strings.Split(f.Fix, "\n") {
+				fmt.Fprintf(w, "        %s\n", line)
+			}
+		}
+	}
+	shown := 0
+	fmt.Fprintln(w, "\nDestinations (risky, used or configured first):")
+	for _, e := range a.Direct {
+		if shown >= 20 {
+			fmt.Fprintf(w, "  ... %d more; see the Agent reach page\n", len(a.Direct)-shown)
+			break
+		}
+		methods := "any method"
+		if e.Methods != nil {
+			methods = strings.Join(e.Methods, ",")
+		}
+		used := ""
+		if e.Observed > 0 {
+			used = fmt.Sprintf(" called %dx %s", e.Observed, strings.Join(e.ObsMethods, ","))
+		}
+		if e.Declared {
+			used += " configured"
+		}
+		fmt.Fprintf(w, "  %-5s %-60s %s%s  %s\n", e.Risk, strings.TrimPrefix(e.To, "svc:"), methods, used, e.Why)
+		shown++
+	}
+	if !showFix {
+		fmt.Fprintln(w, "\nAdd --fix for the YAML to lock each finding down.")
+	}
+	return nil
+}

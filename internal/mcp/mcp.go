@@ -175,6 +175,16 @@ func tools() []tool {
 				b, _ := json.MarshalIndent(r, "", " ")
 				return string(b), nil
 			}},
+		{Name: "agent_reach", Title: "Agent reach (blast radius)",
+			Description: "For every agent, MCP server and agent gateway in the snapshot: what it can reach on the network, what those destinations can reach on its behalf (a package registry or proxy that can fetch from the internet lends that reach, as in the OpenAI and Hugging Face incident), whether it can write to data stores or registries, what credentials it carries (service account token, RBAC, cloud role, Secrets), what it actually called in the access logs, and the YAML to lock each path down. Omit agent for the list; pass namespace/name for one agent in full. Needs Flightbay Enterprise.",
+			InputSchema: obj(map[string]any{"agent": str("namespace/name of one agent; omit for all")}),
+			call: func(s *Server, a map[string]any) (string, error) {
+				q := url.Values{}
+				if v := arg(a, "agent"); v != "" {
+					q.Set("agent", v)
+				}
+				return s.get("/api/reach", q)
+			}},
 		{Name: "list_resource_types", Title: "Resource types",
 			Description: "Captured resource types with counts and collection state (complete, excluded by customer, failed, truncated, loading). A type that is excluded or failed says nothing about whether objects exist.",
 			InputSchema: obj(map[string]any{"cluster": str("cluster")}),

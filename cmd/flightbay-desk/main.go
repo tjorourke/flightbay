@@ -40,7 +40,7 @@ var version = "0.1.0-dev"
 
 func main() {
 	root := &cobra.Command{Use: "flightbay-desk", Short: "Flightbay by Solo: investigate a snapshot bundle offline", SilenceUsage: true}
-	root.AddCommand(openCmd(), shellCmd(), queryCmd(), findingsCmd(), proxyConfigCmd(), searchCmd(), sqlCmd(), postureCmd(), featuresCmd(), diffCmd(), mcpCmd(), keygenCmd(), &cobra.Command{
+	root.AddCommand(openCmd(), shellCmd(), queryCmd(), findingsCmd(), proxyConfigCmd(), searchCmd(), sqlCmd(), postureCmd(), reachCmd(), featuresCmd(), diffCmd(), mcpCmd(), keygenCmd(), &cobra.Command{
 		Use: "version", Short: "Print the version", Run: func(*cobra.Command, []string) { fmt.Println("flightbay-desk", version) },
 	})
 	if err := root.Execute(); err != nil {
@@ -614,6 +614,29 @@ func sqlCmd() *cobra.Command {
 		},
 	}
 	c.Flags().IntVar(&limit, "limit", 200, "maximum rows")
+	return c
+}
+
+func reachCmd() *cobra.Command {
+	var fix bool
+	c := &cobra.Command{
+		Use:     "reach [agent]",
+		Short:   "Every agent's blast radius, or one agent's network paths and fixes (the fbreach helper; Flightbay Enterprise)",
+		Example: "  fbreach                       # every agent, MCP server and agent gateway\n  fbreach kagent/demo-agent     # its paths, identity, findings and destinations\n  fbreach kagent/demo-agent --fix",
+		Args:    cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			u, t, err := deskEnv()
+			if err != nil {
+				return err
+			}
+			agent := ""
+			if len(args) == 1 {
+				agent = args[0]
+			}
+			return cli.Reach(cmd.OutOrStdout(), u, t, agent, fix)
+		},
+	}
+	c.Flags().BoolVar(&fix, "fix", false, "print the YAML that locks each finding down")
 	return c
 }
 

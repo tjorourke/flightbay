@@ -63,12 +63,13 @@ type Server struct {
 	// Identities decrypt bundle headers when listing baseline candidates.
 	Identities []age.Identity
 
-	once sync.Once
-	api  http.Handler
-	term *termSession
-	mu   sync.Mutex
-	base baselineState
-	sugg suggestCache
+	once   sync.Once
+	api    http.Handler
+	term   *termSession
+	mu     sync.Mutex
+	base   baselineState
+	reachC reachCache
+	sugg   suggestCache
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -124,7 +125,7 @@ func (s *Server) Prepare() error {
 	if err := os.WriteFile(s.RCFile(), []byte(shellRC), 0o600); err != nil {
 		return err
 	}
-	helpers := map[string]string{"fbq": "query", "fbfind": "findings", "fbpc": "proxy-config", "fbsearch": "search", "fbsql": "sql", "fbscore": "posture"}
+	helpers := map[string]string{"fbq": "query", "fbfind": "findings", "fbpc": "proxy-config", "fbsearch": "search", "fbsql": "sql", "fbscore": "posture", "fbreach": "reach"}
 	for name, sub := range helpers {
 		script := fmt.Sprintf("#!/bin/sh\n# Flightbay helper: runs `flightbay-desk %s` against this workspace.\nexec %q %s \"$@\"\n", sub, s.DeskBinary, sub)
 		if err := os.WriteFile(filepath.Join(s.WorkDir, "bin", name), []byte(script), 0o700); err != nil {
@@ -246,6 +247,7 @@ func (s *Server) Handler() http.Handler {
 	api("/api/objects/search", s.objectSearch)
 	api("/api/logs/fields", s.logFields)
 	api("/api/posture", s.posture)
+	api("/api/reach", s.reach)
 	api("/api/features", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"features": features.List(), "enabled": features.Map()})
 	})
