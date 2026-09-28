@@ -328,6 +328,10 @@ body.rg-noscroll{overflow:hidden}
 .rg-frame rect{fill:color-mix(in srgb,var(--raised) 60%,transparent);stroke:var(--line);stroke-dasharray:5 4}
 .rg-frame .rg-fl{font:600 11px var(--mono);fill:var(--muted)}
 .rg-trunk{stroke-width:3}
+.rg-eye{stroke:var(--blue)}.rg-leg-eye{stroke:var(--blue);vertical-align:-2px}
+.rg-node.rg-dim{opacity:.22}.rg-node.rg-sel rect{stroke-width:3;filter:drop-shadow(0 0 4px color-mix(in srgb,var(--blue) 60%,transparent))}
+.rc-gfound{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;padding:8px 18px;border-bottom:1px solid var(--line)}.rc-gfound .rc-foundrow{margin:0}
+.rc-gsel{border-top:1px solid var(--line);background:var(--raised);padding:12px 18px 4px}.rc-gsel .rc-ev-body{padding:10px 0}
 .rg-head .rg-hbg{fill:var(--raised);stroke:var(--line)}
 .rg-head .rg-hdot{fill:var(--panel);stroke:var(--line)}
 .rg-head .rg-hl{font:600 12px var(--sans);fill:var(--text)}.rg-head .rg-hn{font:10.5px var(--sans);fill:var(--muted)}

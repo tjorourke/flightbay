@@ -823,8 +823,10 @@ function rcDetail(a) {
       ${vbtn('risky', 'Risky', 'Red destinations and anything leading out of the cluster; the rest folded by namespace')}${vbtn('byns', 'By namespace', 'One box per namespace; click one to open it up')}${vbtn('all', 'Everything', 'Every destination as its own box')}
       ${Object.keys(R.gexpand).length ? '<button class="ghost" id="rg-collapse">Fold namespaces</button>' : ''}<small class="muted">${G.folded ? `${G.shown} of ${G.total} shown one by one, ${G.folded} folded into ${G.groups} namespace${G.groups === 1 ? '' : 's'}` : `all ${G.total} destinations`}</small></div>
       <div class="row rc-zoom"><button id="rg-out" title="Zoom out (-)">−</button><span id="rg-pct" class="mono muted">100%</span><button id="rg-in" title="Zoom in (+)">+</button><button id="rg-fit" title="Fit (0)">Fit</button><button id="rg-full" title="${R.gfull ? 'Exit full screen (Esc)' : 'Full screen (f)'}">${R.gfull ? '⤡ Exit' : '⤢ Full screen'}</button></div></div>
+    <div class="rc-gfound">${rcFoundChipRow([...(a.direct || []).map(e => ({found: rcFound(e, false)})), ...(a.external || []).filter(x => x.reachedVia !== 'node').map(x => ({found: rcFound(x, true)}))], R.gfound || 'any', 'data-rggf')}<small class="muted">Boxes that don't match are faded. Click a box for its evidence.</small></div>
     <div class="rg-vp" id="rg-vp" tabindex="0">${rcGraph(a, G)}</div>
-    <div class="rc-legend"><span><i class="rc-sw red"></i>open, write access or internet</span><span><i class="rc-sw amber"></i>allowed with no request-level rule, or unknown</span><span><i class="rc-sw green"></i>read-only or blocked</span><span><i class="rc-sw grey"></i>blocked or not applicable</span><span><i class="rc-sw dash"></i>denied or unknown verdict</span><span class="muted">Hover a box to trace its lines · drag to move · pinch or Ctrl+scroll to zoom · click a box to open it</span></div></section>`;
+    ${rcGraphSel(a, G)}
+    <div class="rc-legend"><span><i class="rc-sw red"></i>open, write access or internet</span><span><i class="rc-sw amber"></i>allowed with no request-level rule, or unknown</span><span><i class="rc-sw green"></i>read-only or blocked</span><span><i class="rc-sw grey"></i>blocked or not applicable</span><span><i class="rc-sw dash"></i>denied or unknown verdict</span><span>${rgIcon('eye', 0, 0, 14, 'rg-leg-eye')} seen in traffic</span><span class="muted">Hover a box to trace its lines · click it for how it was found · drag to move · pinch or Ctrl+scroll to zoom</span></div></section>`;
   const kindCls = {internet: 'red', fetcher: 'red', registry: 'red', exfil: 'red', metadata: 'red', credentials: 'red', store: 'amber', service: 'amber'};
   const paths = (a.paths || []).map(p => `<div class="rc-path"><span class="rc-kind ${kindCls[p.kind] || ''}">${esc(p.kind)}</span>
     <div class="rc-chain">${p.hops.map(h => `<span class="rc-hop ${h === 'internet' || h === '169.254.169.254' ? 'net' : ''}">${esc(h)}</span>`).join('<span class="rc-arrow">→</span>')}</div>
@@ -969,7 +971,7 @@ function rcGraphModel(a) {
   for (const [ns, list] of Object.entries(groups)) {
     const worst = list.reduce((w, n) => rank[n.risk] < rank[w] ? n.risk : w, 'grey');
     const id = 'fold:' + ns;
-    nodes.push({id, type: 'group', label: ns, namespace: ns, depth: 1, risk: worst, count: list.length, detail: list.map(n => n.label.split('/').pop()).join(', ')});
+    nodes.push({id, type: 'group', label: ns, namespace: ns, depth: 1, risk: worst, count: list.length, members: list.map(n => n.id), detail: list.map(n => n.label.split('/').pop()).join(', ')});
     edges.push({from: agentId, to: id, verdict: 'allowed', risk: worst, why: `${list.length} destinations in ${ns}; click to open the namespace up`});
   }
   return {nodes, edges, view, total, direct, shown: total - folded.size, folded: folded.size, groups: Object.keys(groups).length};
@@ -995,6 +997,7 @@ const rgIconPaths = {
   alert: '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>',
   swap: '<path d="M16 3l4 4-4 4M20 7H4M8 21l-4-4 4-4M4 17h16"/>',
   service: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/>',
+  eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
 };
 const rgIcon = (name, x, y, size, cls = '') => `<svg class="rg-ic ${cls}" x="${x}" y="${y}" width="${size}" height="${size}" viewBox="0 0 24 24">${rgIconPaths[name] || rgIconPaths.service}</svg>`;
 // rgNodeIcon picks the icon for a box from its type, then its first telling class.
@@ -1004,6 +1007,37 @@ function rgNodeIcon(n) {
   if (byType) return byType;
   const c = (n.classes || []).find(k => rgClassIcon[k]);
   return c ? rgClassIcon[c] : n.type === 'external' ? 'cloud' : 'service';
+}
+
+// rgSubject is the destination behind a graph box: its direct edge, its
+// external host, or failing both the line that leads to it.
+function rgSubject(a, G, n) {
+  if (n.type === 'external') { const x = (a.external || []).find(x => 'ext:' + x.host === n.id); return x ? {x, external: true} : null; }
+  if (n.type !== 'service') return null;
+  const e = (a.direct || []).find(e => e.to === n.id) || G.edges.find(e => e.to === n.id);
+  return e ? {x: e, external: false} : null;
+}
+function rgFoundOf(a, G, n) {
+  if (n.type === 'group') return [...new Set((n.members || []).flatMap(id => { const e = (a.direct || []).find(e => e.to === id); return e ? rcFound(e, false) : []; }))];
+  const s = rgSubject(a, G, n);
+  return s ? rcFound(s.x, s.external) : [];
+}
+// rgGroupOk: a folded namespace matches when any Service in it does.
+function rgMatch(a, G, n, k) {
+  if (!k || k === 'any' || n.type === 'agent') return true;
+  if (n.type === 'group') return (n.members || []).some(id => { const e = (a.direct || []).find(e => e.to === id); return e && rcFoundOk(rcFound(e, false), k); });
+  if (n.type === 'internet' || n.type === 'metadata') return false;
+  return rcFoundOk(rgFoundOf(a, G, n), k);
+}
+// rcGraphSel is the evidence for the box clicked in the graph.
+function rcGraphSel(a, G) {
+  const R = S.reach, n = R.gsel && G.nodes.find(x => x.id === R.gsel);
+  if (!n) return '';
+  const s = rgSubject(a, G, n);
+  if (!s) return '';
+  const sv = rcSvc(n.id);
+  return `<div class="rc-gsel"><div class="row between wrap"><div class="row wrap"><strong class="mono">${esc(n.label)}</strong>${rcFoundChips(rcFound(s.x, s.external))}</div>
+    <div class="row">${sv ? `<button data-rgopen="${esc(n.id)}">Open Service</button>` : ''}<button class="ghost" id="rg-selx" title="Close">✕</button></div></div>${rcEvidence(s.x, s.external, a)}</div>`;
 }
 
 // rcGraph draws the model as columns: the agent, its direct destinations,
@@ -1080,7 +1114,7 @@ function rcGraph(a, G) {
   const nodeX = id => colX(col[id]) + (grid && col[id] === 1 ? cell[id].sc * (bw + sg) : 0);
   const X = c => colX(c), Y = id => top + row[id] * (bh + vg);
   const W = 32 + ncol * bw + (ncol - 1) * gap + extra, H = top + tall * (bh + vg) + 14;
-  const fit = (s, px) => { const n = Math.max(4, Math.floor((bw - 44) / px)); s = String(s || ''); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
+  const fit = (s, px) => { const n = Math.max(4, Math.floor((bw - 62) / px)); s = String(s || ''); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
   const byId = new Map(nodes.map(n => [n.id, n]));
   const labelOf = id => byId.get(id)?.label || id;
   const dash = e => e.verdict === 'denied' || e.verdict === 'unknown';
@@ -1139,8 +1173,10 @@ function rcGraph(a, G) {
   const nodeSvg = nodes.map(n => {
     const click = n.type === 'group' || n.ref || rcSvc(n.id);
     const tip = [n.label, n.namespace && n.type !== 'group' ? 'namespace ' + n.namespace : '', (n.classes || []).join(', '), n.detail, viaOf(n).length ? `Reached through ${viaOf(n).join(', ')}` : '', n.alsoDirect ? `Also reachable directly (${n.alsoDirect})` : '', foundOf(n) ? `Found by ${foundOf(n)} (evidence on the ${n.type === 'external' ? 'External' : 'Destinations'} tab)` : '', click ? (n.type === 'group' ? 'Click to open the namespace up' : 'Click to open') : ''].filter(Boolean).join('\n');
-    return `<g class="rg-node rg-${risk(n.risk)} rg-t-${esc(n.type)} ${click ? 'rg-click' : ''}" data-rgid="${esc(n.id)}"${grid && col[n.id] === 1 ? ' data-grid="1"' : ''} transform="translate(${nodeX(n.id)},${Y(n.id)})"><title>${esc(tip)}</title>
-      <rect width="${bw}" height="${bh}" rx="7"/>${rgIcon(rgNodeIcon(n), bw - 27, (bh - 16) / 2, 16, 'rg-nic')}<text x="11" y="18" class="rg-l">${esc(fit(title(n), 7.1))}</text><text x="11" y="34" class="rg-s">${esc(fit(sub(n), 6.2))}</text></g>`;
+    const fk = rgFoundOf(a, G, n), seen = fk.some(k => !rcFoundLabel[k] && k !== 'policy');
+    const dim = !rgMatch(a, G, n, S.reach.gfound), sel = S.reach.gsel === n.id;
+    return `<g class="rg-node rg-${risk(n.risk)} rg-t-${esc(n.type)} ${click ? 'rg-click' : ''} ${dim ? 'rg-dim' : ''} ${sel ? 'rg-sel' : ''}" data-rgid="${esc(n.id)}"${grid && col[n.id] === 1 ? ' data-grid="1"' : ''} transform="translate(${nodeX(n.id)},${Y(n.id)})"><title>${esc(tip)}</title>
+      <rect width="${bw}" height="${bh}" rx="7"/>${rgIcon(rgNodeIcon(n), bw - 27, (bh - 16) / 2, 16, 'rg-nic')}${seen ? `<g><title>${esc('seen in traffic by ' + fk.filter(k => !rcFoundLabel[k]).join(', '))}</title>${rgIcon('eye', bw - 48, (bh - 14) / 2, 14, 'rg-eye')}</g>` : ''}<text x="11" y="18" class="rg-l">${esc(fit(title(n), 7.1))}</text><text x="11" y="34" class="rg-s">${esc(fit(sub(n), 6.2))}</text></g>`;
   }).join('');
   const heads = cols.map((list, c) => {
     if (!list.length) return '';
@@ -1245,6 +1281,9 @@ after.reach = () => {
   const keepY = fn => { const y = scrollY; fn(); render().then(() => scrollTo(0, y)); };
   document.querySelectorAll('[data-rgview]').forEach(b => b.onclick = () => keepY(() => { R.gview = b.dataset.rgview; R.gexpand = {}; }));
   const col = $('#rg-collapse'); if (col) col.onclick = () => keepY(() => { R.gexpand = {}; });
+  document.querySelectorAll('[data-rggf]').forEach(b => b.onclick = () => keepY(() => { R.gfound = b.dataset.rggf; }));
+  const selx = $('#rg-selx'); if (selx) selx.onclick = () => keepY(() => { R.gsel = ''; });
+  document.querySelectorAll('[data-rgopen]').forEach(b => b.onclick = () => { const sv = rcSvc(b.dataset.rgopen); if (sv) openSvc(sv.namespace, sv.name); });
   const full = on => keepY(() => { R.gfull = on; document.body.classList.toggle('rg-noscroll', on); });
   const fb = $('#rg-full'); if (fb) fb.onclick = () => full(!R.gfull);
   if (R.gfull && fb) { document.onkeydown = e => { if (e.key === 'Escape' && R.gfull) { document.onkeydown = null; full(false); } }; $('#rg-vp').focus(); }
@@ -1253,6 +1292,7 @@ after.reach = () => {
     if (vp?.dataset.dragged) return;
     const n = G.nodes.find(x => x.id === g.dataset.rgid); if (!n) return;
     if (n.type === 'group') { keepY(() => { R.gexpand[n.namespace] = true; }); return; }
+    if (n.type === 'service' || n.type === 'external') { keepY(() => { R.gsel = R.gsel === n.id ? '' : n.id; }); return; }
     if (n.ref) { openObject({cluster: n.ref.cluster, group: n.ref.group, resource: n.ref.resource, namespace: n.ref.namespace, name: n.ref.name}); return; }
     const sv = rcSvc(n.id); if (sv) openSvc(sv.namespace, sv.name);
   });
