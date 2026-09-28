@@ -208,7 +208,7 @@ Examples:
 
 ## flightbay-desk open
 
-Open a bundle and start investigating while it loads (default: the newest bundle here)
+Open a bundle and start investigating while it loads (no bundle: the start page)
 
 ```text
 flightbay-desk open [BUNDLE | DIR | -] [flags]
@@ -217,8 +217,9 @@ flightbay-desk open [BUNDLE | DIR | -] [flags]
 Examples:
 
 ```bash
-  flightbay-desk open                                  # the newest flightbay-*.tar.zst in this directory
+  flightbay-desk open                                  # the start page: live, a file or a repo
   flightbay-desk open flightbay-01234567-20260927T1012Z.tar.zst
+  flightbay-desk open .                                # the newest flightbay-*.tar.zst in this directory
   flightbay collect -o - | flightbay-desk open -
   flightbay-desk open bundle.tar.zst.age -i ~/.flightbay/support.key
   flightbay-desk open bundle.tar.zst --defer logs      # load logs later from the UI
@@ -381,6 +382,40 @@ Examples:
 | Flag | Description |
 |---|---|
 | `--limit int` | maximum rows (default 200) |
+
+## flightbay-desk start
+
+The start page is what flightbay ui and flightbay-desk open show when they are given nothing to open.
+It has three cards: Live stream a cluster (pick a kubeconfig context, preview what will be read and the
+RBAC it needs, then start live mode), Open a file (recent bundles here and in ~/Downloads, drag and drop
+or a path; open it, or review it before you send it), and Open a repo (a directory or a Git URL, scanned
+in process with the scan options).
+
+When you choose, the start page replaces itself with the desk for it, on the same address and with the
+same session token, so the browser tab carries on without a new sign-in.
+
+```text
+flightbay-desk start [flags]
+```
+
+Examples:
+
+```bash
+  flightbay ui                                  # the same
+  flightbay-desk start --listen 127.0.0.1:0 --no-browser
+  flightbay-desk start -i ~/.flightbay/support.key   # open encrypted bundles without asking for the key
+```
+
+| Flag | Description |
+|---|---|
+| `--allow-remote` | allow a non-loopback --listen (for containers); the token is still required |
+| `-i, --identity strings` | age identity file for encrypted bundles |
+| `--keep` | keep the workspace directory after the desk closes |
+| `--listen string` | loopback address for the start page and the desk it opens (default "127.0.0.1:8484") |
+| `--no-browser` | do not open a browser |
+| `--no-terminal` | disable the in-browser terminal in the desk |
+| `--shell string` | shell for the desk's terminal (default /bin/bash) |
+| `--workdir string` | workspace directory for uploads, clones, scans and the desk (default ~/.flightbay/workspaces/ws-*) |
 
 ## flightbay-desk version
 

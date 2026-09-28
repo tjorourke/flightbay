@@ -126,6 +126,8 @@ verified bundle at any moment.`,
 				if !keep {
 					defer os.RemoveAll(workdir)
 				}
+			} else if tempWorkdir() && !keep {
+				defer os.RemoveAll(workdir) // created by the start page
 			}
 			if err := os.MkdirAll(workdir, 0o700); err != nil {
 				return err
@@ -177,7 +179,7 @@ verified bundle at any moment.`,
 			if err != nil {
 				return err
 			}
-			srv := &server.Server{WS: ws, Token: randomToken(), WorkDir: workdir, BaseURL: base, Terminal: !noTerminal, Shell: shell, DeskBinary: exe,
+			srv := &server.Server{WS: ws, Token: deskToken(), WorkDir: workdir, BaseURL: base, Terminal: !noTerminal, Shell: shell, DeskBinary: exe,
 				KubeURL: "https://" + kln.Addr().String(), KubeCA: caPEM}
 			if live.DiagnosticsEnabled() {
 				srv.RefreshDiagnostics = live.RefreshDiagnostics

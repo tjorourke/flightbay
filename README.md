@@ -8,8 +8,12 @@ It is two commands:
 
 ```bash
 flightbay collect --context my-cluster      # capture: writes flightbay-<time>.tar.zst
-flightbay ui                                # open the newest capture in your browser
+flightbay ui .                              # open the newest capture here in your browser
 ```
+
+Run `flightbay ui` with no arguments and it opens a start page instead, with three cards: **Live stream a cluster** (pick a kubeconfig context, preview what will be read and the RBAC it needs, then mirror it read-only), **Open a file** (captures in this directory and `~/Downloads` are listed; open one, or review it before you send it; drag and drop works too) and **Open a repo** (a directory or a Git URL, scanned for manifests, Helm charts and Kustomize overlays). The footer shows the command line for whatever you pick, so you can skip the page next time.
+
+![The start page](docs/images/start.png)
 
 ## Install
 
@@ -206,7 +210,7 @@ The MCP server only talks to your local workspace. Snapshot data reaches a model
 |---|---|
 | `flightbay collect` | Capture a cluster (alias `capture`) |
 | `flightbay scan [PATH...]` | Build a bundle from a code repository and score it; `--fail-on` makes it a CI gate |
-| `flightbay ui [bundle \| dir]` | Open the UI on a capture (default: the newest in this directory) |
+| `flightbay ui [bundle \| dir]` | Open the UI on a capture, or the newest in a directory; no arguments opens the start page (live, a file or a repo) |
 | `flightbay inspect BUNDLE` | Verify a bundle and show what's in it; `--verify-key` checks the signature |
 | `flightbay review BUNDLE --plan FILE` | Remove objects, logs and namespaces from a bundle without the UI and export a signed copy (in the UI it is the Review and send page) |
 | `flightbay keygen` | Create an Ed25519 signing key pair |
@@ -215,6 +219,7 @@ The MCP server only talks to your local workspace. Snapshot data reaches a model
 | `flightbay rbac` | Least-privilege RBAC for your options |
 | `flightbay docs collects` | What is and isn't collected |
 | `flightbay-desk open` | What `flightbay ui` runs; `--keep` keeps the workspace, `-i key` opens encrypted bundles |
+| `flightbay-desk start` | The start page that `flightbay ui` with no arguments opens |
 | `flightbay-desk search / query / findings / proxy-config / sql / posture` | The terminal helpers (`fbsearch`, `fbq`, `fbfind`, `fbpc`, `fbsql`, `fbscore`), usable anywhere a workspace is open |
 | `flightbay-desk diff A B` | Compare two captures |
 | `flightbay-desk drift REPO CLUSTER` | Compare a repo scan with a capture |

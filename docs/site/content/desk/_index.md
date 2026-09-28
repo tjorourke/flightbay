@@ -18,7 +18,8 @@ flightbay ui flightbay-01234567-20260927T1012Z.tar.zst
 
 | Command | Opens |
 |---|---|
-| `flightbay ui` | The newest `flightbay-*.tar.zst` or `.tar.zst.age` in the current directory |
+| `flightbay ui` | The start page: live stream a cluster, open a file or scan a repo (see below) |
+| `flightbay ui .` | The newest `flightbay-*.tar.zst` or `.tar.zst.age` in the current directory |
 | `flightbay ui ~/Downloads` | The newest bundle in that directory |
 | `flightbay ui BUNDLE` | That bundle |
 | `flightbay collect -o - \| flightbay-desk open -` | A capture streamed straight in |
@@ -34,6 +35,24 @@ Flightbay desk is ready while the bundle loads.
 ```
 
 If the browser does not open, use the `UI:` address, token included. Press Ctrl+C to close. The workspace is deleted when you do, unless you asked to keep it.
+
+## The start page
+
+With nothing to open, `flightbay ui` (and `flightbay-desk open` with no bundle, which is the same thing as `flightbay-desk start`) shows a start page with three cards.
+
+![The start page](/images/start.png)
+
+| Card | What it does | The same from the command line |
+|---|---|---|
+| **Live stream a cluster** | Lists your kubeconfig contexts, current one first. Choose namespaces, excluded namespaces, cluster-scoped objects and Solo diagnostics. **Preview** runs the live dry run (discovery only) and shows the resource types, logs and the RBAC it needs; **Start live** opens the live mirror. | `flightbay ui --live --context CTX --namespaces NS` |
+| **Open a file** | Recent bundles in the current directory and `~/Downloads`, with case, clusters, capture time and size. **Open** investigates one; **Review before sending** opens it in review mode. Drop a file on the page, or paste a path. Encrypted bundles need the identity file. | `flightbay ui BUNDLE`, `flightbay review BUNDLE` |
+| **Open a repo** | A directory or a Git URL (cloned with `git clone --depth 1` into the workspace, with your git credentials). Values files, `--set` pairs, overlay, environment, namespace and release. **Scan and open** scans in process and opens the result; clone errors, an empty scan and charts that fail to render are shown on the page. | `flightbay scan DIR && flightbay ui .` |
+
+The footer shows the command line for the choice you are making.
+
+The start page uses the same token and cookie as the desk. When you choose, it closes its listener and replaces itself with the desk command for the choice (`flightbay-desk open`, `open --review` or `live`), on the same address and with the same token, which it passes in the environment rather than on the command line. The page waits for the desk to answer and then loads it. The desk does not open a second browser tab.
+
+Uploaded bundles, cloned repositories and scanned bundles go in the workspace directory, which the desk then uses. It is deleted when the desk closes unless you pass `--keep`. A reviewed bundle made from an uploaded file is written to the directory you ran `flightbay ui` in, not into the workspace. Uploads are limited to 8 GiB; open anything larger by path.
 
 ## Options
 

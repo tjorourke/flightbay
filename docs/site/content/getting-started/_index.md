@@ -50,6 +50,28 @@ docker run --rm -it -p 8484:8484 -v "$PWD:/data" flightbay-desk \
 
 Inside a container the desk has to listen beyond loopback, so it needs `--allow-remote`. The token is still required: open the `UI:` address it prints and change the host to `localhost`.
 
+## The start page
+
+Run `flightbay ui` with no arguments and your browser opens on a start page that asks what you want to open:
+
+```bash
+flightbay ui
+```
+
+![The start page](/images/start.png)
+
+It has three cards. Click one and it opens its form in place.
+
+- **Live stream a cluster.** Pick a context from your kubeconfig (`$KUBECONFIG` or `~/.kube/config`, or type the path of another file). The current context is preselected. Narrow it to some namespaces (comma separated, globs allowed), exclude some, include cluster-scoped objects, or add Solo diagnostics. **Preview** reads API discovery only and shows what will be listed and watched and the RBAC it needs. **Start live** opens the desk on a read-only mirror of the cluster. See [Live mode](/desk/live/).
+- **Open a file.** Lists the `flightbay-*.tar.zst` and `.tar.zst.age` files in the current directory and in `~/Downloads`, newest first, with the case, clusters, capture time and size. Each has **Open**, to investigate it, and **Review before sending**, which opens it in review mode as `flightbay review` does. You can also drop a bundle on the page (it is copied into the session's workspace), or paste a path. An encrypted bundle needs the identity file that opens it. See [Reviewing before you send](/collect/review/).
+- **Open a repo.** A local directory, or a Git URL, which is cloned with `git clone --depth 1` into the workspace using your own git credentials. The scan options are the ones `flightbay scan` takes: values files, `--set` pairs, an overlay, an environment, a namespace and a release name. **Scan and open** shows the scan's progress, then opens the declared-state workspace. A URL that cannot be cloned, a directory with no manifests, or a chart that does not render is reported on the page. See [Scanning a repository](/scan/).
+
+The footer shows the command line for what you have chosen, for example `flightbay ui --live --context kind-mesh1 --namespaces kagent`, so you can skip the start page next time.
+
+When you pick something, the start page hands over to the desk on the same address and with the same session, so the tab carries on without a new sign-in. Flags given to `flightbay ui`, such as `--listen`, `--no-browser`, `--workdir`, `--keep` and `-i`, carry over to the desk it opens.
+
+`flightbay ui` with a bundle, `flightbay ui .` for the newest bundle in this directory, and `flightbay ui --live ...` skip the start page, as before.
+
 ## Try the sample bundle
 
 `examples/sample-bundle.tar.zst` is a capture of a small kind cluster running Istio ambient, a waypoint and a shop app with faults planted in it: a crash loop, an image that will not pull, a pod that cannot be scheduled, a route to a missing Service and a Service pointing at a waypoint that does not exist.

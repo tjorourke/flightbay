@@ -17,8 +17,15 @@ import (
 func uiCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "ui [BUNDLE | DIR] | ui --live [--context CTX] [scope flags]",
-		Short: "Open the UI on a bundle (default: the newest flightbay-*.tar.zst in this directory), or on a live cluster with --live",
-		Example: `  flightbay ui                                   # newest bundle here
+		Short: "Open the UI: the start page with no arguments, a bundle, the newest bundle in a folder, or a live cluster with --live",
+		Long: `With no arguments flightbay ui opens the start page, with three cards: live stream a cluster, open a
+file (recent bundles here and in ~/Downloads are listed), or scan a repo. Flags such as --listen,
+--no-browser, --workdir, --keep and -i carry over to whatever you open from it.
+
+With a bundle it opens that bundle, with a directory the newest flightbay-*.tar.zst in it, and with
+--live it mirrors a cluster read-only. Everything after ui is passed to flightbay-desk.`,
+		Example: `  flightbay ui                                   # the start page
+  flightbay ui .                                 # the newest bundle here
   flightbay ui flightbay-DEMO-20260927T1842Z.tar.zst
   flightbay ui ~/Downloads                         # newest bundle in a folder
   flightbay ui BUNDLE --sign flightbay-signing.key # remove objects, logs or namespaces on Review and send, export a signed copy
@@ -35,7 +42,10 @@ func uiCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			sub := "open"
+			sub := "open" // with no bundle argument, open shows the start page
+			if len(args) == 0 {
+				sub = "start"
+			}
 			var rest []string
 			for _, a := range args {
 				if a == "--live" || a == "--live=true" {

@@ -313,7 +313,12 @@ Examples:
 
 ## flightbay ui
 
-Open the UI on a bundle (default: the newest flightbay-*.tar.zst in this directory), or on a live cluster with --live
+With no arguments flightbay ui opens the start page, with three cards: live stream a cluster, open a
+file (recent bundles here and in ~/Downloads are listed), or scan a repo. Flags such as --listen,
+--no-browser, --workdir, --keep and -i carry over to whatever you open from it.
+
+With a bundle it opens that bundle, with a directory the newest flightbay-*.tar.zst in it, and with
+--live it mirrors a cluster read-only. Everything after ui is passed to flightbay-desk.
 
 ```text
 flightbay ui [BUNDLE | DIR] | ui --live [--context CTX] [scope flags]
@@ -322,7 +327,8 @@ flightbay ui [BUNDLE | DIR] | ui --live [--context CTX] [scope flags]
 Examples:
 
 ```bash
-  flightbay ui                                   # newest bundle here
+  flightbay ui                                   # the start page
+  flightbay ui .                                 # the newest bundle here
   flightbay ui flightbay-DEMO-20260927T1842Z.tar.zst
   flightbay ui ~/Downloads                         # newest bundle in a folder
   flightbay ui BUNDLE --sign flightbay-signing.key # remove objects, logs or namespaces on Review and send, export a signed copy

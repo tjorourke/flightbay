@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"filippo.io/age"
+
 	"github.com/tjorourke/flightbay/internal/bundle"
 	"github.com/tjorourke/flightbay/internal/diff"
 	"github.com/tjorourke/flightbay/internal/store"
@@ -103,6 +105,9 @@ type candidate struct {
 	Captured    time.Time `json:"captured,omitempty"`
 	Encrypted   bool      `json:"encrypted,omitempty"`
 	Unreadable  string    `json:"unreadable,omitempty"`
+	Dir         string    `json:"dir,omitempty"`      // the directory it was found in
+	Reviewed    bool      `json:"reviewed,omitempty"` // trimmed with flightbay review
+	Source      string    `json:"source,omitempty"`   // "repo" for a scan, "live" for a saved mirror
 	SameCluster bool      `json:"sameCluster"`
 	Current     bool      `json:"current,omitempty"` // loaded as the baseline now
 }
@@ -150,12 +155,18 @@ func (s *Server) candidateDirs() []string {
 
 // readHeader reads bundle.json, the first member, without the rest.
 func (s *Server) readHeader(path string) (*bundle.Header, bool, error) {
+	return readBundleHeader(path, s.Identities)
+}
+
+// readBundleHeader reads bundle.json from a bundle file without reading the
+// rest. The bool reports whether the file is age-encrypted.
+func readBundleHeader(path string, ids []age.Identity) (*bundle.Header, bool, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, false, err
 	}
 	defer f.Close()
-	r, err := bundle.NewReader(io.LimitReader(f, 64<<20), bundle.ReaderOptions{Identities: s.Identities, MaxMemberBytes: 8 << 20})
+	r, err := bundle.NewReader(io.LimitReader(f, 64<<20), bundle.ReaderOptions{Identities: ids, MaxMemberBytes: 8 << 20})
 	if err != nil {
 		return nil, strings.Contains(err.Error(), "encrypted"), err
 	}
@@ -186,45 +197,13 @@ func (s *Server) baselineCandidates(w http.ResponseWriter, _ *http.Request) {
 	for _, c := range s.WS.Clusters() {
 		mine[c] = true
 	}
-	seen := map[string]bool{}
-	out := []candidate{}
-	for _, dir := range s.candidateDirs() {
-		for _, pat := range []string{"*.tar.zst", "*.tar.zst.age"} {
-			ms, _ := filepath.Glob(filepath.Join(dir, pat))
-			for _, m := range ms {
-				abs, err := filepath.Abs(m)
-				if err != nil || seen[abs] || len(out) >= 200 {
-					continue
-				}
-				seen[abs] = true
-				fi, err := os.Stat(abs)
-				if err != nil || !fi.Mode().IsRegular() || sameFile(abs, open) {
-					continue
-				}
-				c := candidate{Path: abs, Name: filepath.Base(abs), Size: fi.Size(), Modified: fi.ModTime().UTC(), Current: sameFile(abs, curPath)}
-				h, enc, err := s.readHeader(abs)
-				c.Encrypted = enc
-				if err != nil {
-					c.Unreadable = err.Error()
-				} else {
-					c.Case, c.BundleID, c.Captured = h.Case, h.BundleID, h.CaptureStart
-					for _, ctx := range h.Contexts {
-						id := bundle.SafeID(ctx)
-						c.Clusters = append(c.Clusters, id)
-						c.SameCluster = c.SameCluster || mine[id]
-					}
-				}
-				out = append(out, c)
-			}
+	out := listBundles(s.candidateDirs(), []string{"*.tar.zst", "*.tar.zst.age"}, s.Identities, func(abs string) bool { return sameFile(abs, open) })
+	for i := range out {
+		out[i].Current = sameFile(out[i].Path, curPath)
+		for _, id := range out[i].Clusters {
+			out[i].SameCluster = out[i].SameCluster || mine[id]
 		}
 	}
-	when := func(c candidate) time.Time {
-		if !c.Captured.IsZero() {
-			return c.Captured
-		}
-		return c.Modified
-	}
-	sort.SliceStable(out, func(i, j int) bool { return when(out[i]).After(when(out[j])) })
 	writeJSON(w, 200, map[string]any{"candidates": out, "open": open, "dirs": s.candidateDirs(), "canLoad": s.LoadBaseline != nil})
 }
 
@@ -290,4 +269,49 @@ func (s *Server) baselineLoad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"loading": true, "path": p})
+}
+
+// listBundles finds bundle files matching patterns in dirs, reads each
+// header (cheaply: bundle.json is the first member) and returns them newest
+// capture first. skip drops files, such as the bundle already open.
+func listBundles(dirs, patterns []string, ids []age.Identity, skip func(abs string) bool) []candidate {
+	seen := map[string]bool{}
+	out := []candidate{}
+	for _, dir := range dirs {
+		for _, pat := range patterns {
+			ms, _ := filepath.Glob(filepath.Join(dir, pat))
+			for _, m := range ms {
+				abs, err := filepath.Abs(m)
+				if err != nil || seen[abs] || len(out) >= 200 {
+					continue
+				}
+				seen[abs] = true
+				fi, err := os.Stat(abs)
+				if err != nil || !fi.Mode().IsRegular() || (skip != nil && skip(abs)) {
+					continue
+				}
+				c := candidate{Path: abs, Name: filepath.Base(abs), Dir: dir, Size: fi.Size(), Modified: fi.ModTime().UTC()}
+				h, enc, err := readBundleHeader(abs, ids)
+				c.Encrypted = enc
+				if err != nil {
+					c.Unreadable = err.Error()
+				} else {
+					c.Case, c.BundleID, c.Captured = h.Case, h.BundleID, h.CaptureStart
+					c.Reviewed, c.Source = h.Review != nil, h.Source
+					for _, ctx := range h.Contexts {
+						c.Clusters = append(c.Clusters, bundle.SafeID(ctx))
+					}
+				}
+				out = append(out, c)
+			}
+		}
+	}
+	when := func(c candidate) time.Time {
+		if !c.Captured.IsZero() {
+			return c.Captured
+		}
+		return c.Modified
+	}
+	sort.SliceStable(out, func(i, j int) bool { return when(out[i]).After(when(out[j])) })
+	return out
 }

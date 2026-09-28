@@ -14,11 +14,9 @@ import (
 	"github.com/tjorourke/flightbay/internal/posture"
 	"io"
 	"io/fs"
-	"mime"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -109,18 +107,7 @@ func jerr(w http.ResponseWriter, code int, msg string) {
 	writeJSON(w, code, map[string]string{"error": msg})
 }
 
-func (s *Server) authed(r *http.Request) bool {
-	check := func(v string) bool { return v != "" && subtle.ConstantTimeCompare([]byte(v), []byte(s.Token)) == 1 }
-	if check(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")) {
-		return true
-	}
-	for _, c := range r.Cookies() {
-		if (c.Name == cookieName(r) || c.Name == CookieName) && check(c.Value) {
-			return true
-		}
-	}
-	return false
-}
+func (s *Server) authed(r *http.Request) bool { return authedWith(r, s.Token) }
 
 // Close stops the terminal session.
 func (s *Server) Close() {
@@ -231,19 +218,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/k8s/", s.api)
 	// Icons carry no data, and browsers fetch /favicon.ico without the cookie.
-	for _, f := range []string{"favicon.ico", "favicon.svg", "favicon-32.png", "apple-touch-icon.png"} {
-		name := f
-		mux.HandleFunc("/"+name, func(w http.ResponseWriter, r *http.Request) {
-			b, err := web.FS.ReadFile(name)
-			if err != nil {
-				http.NotFound(w, r)
-				return
-			}
-			w.Header().Set("Content-Type", mime.TypeByExtension(path.Ext(name)))
-			w.Header().Set("Cache-Control", "max-age=86400")
-			_, _ = w.Write(b)
-		})
-	}
+	serveIcons(mux)
 	mux.HandleFunc("/docs", s.docs)
 	mux.HandleFunc("/docs/", s.docs)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Flightbay · Start</title>
+<script>(function(){var t=localStorage.getItem('flightbay-theme')||(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');document.documentElement.dataset.theme=t;})();</script>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="stylesheet" href="static/app.css">
+</head>
+<body class="start-page">
+<header class="start-top">
+  <a href="/" class="brand" aria-label="Flightbay start page"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span class="brand-text">flightbay<span class="green">.</span></span></a>
+  <span class="spacer"></span>
+  <a href="/docs/getting-started/" target="_blank" rel="noopener" class="start-docs">Docs ↗</a>
+  <button class="ghost" id="theme-toggle" title="Light or dark" aria-label="Switch between light and dark">◐</button>
+</header>
+<main class="start-main" id="main">
+  <div class="start-head">
+    <h1>What would you like to open?</h1>
+    <p class="muted" id="start-sub">Nothing was given to <code>flightbay ui</code>, so pick one of these. Everything stays on this machine.</p>
+  </div>
+  <div class="start-cards" id="cards">
+    <button class="start-card" data-card="live" aria-expanded="false" aria-controls="form-live">
+      <span class="start-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.2"/><path d="M8.2 15.8a5.4 5.4 0 0 1 0-7.6M15.8 8.2a5.4 5.4 0 0 1 0 7.6M5.3 18.7a9.5 9.5 0 0 1 0-13.4M18.7 5.3a9.5 9.5 0 0 1 0 13.4"/></svg></span>
+      <strong>Live stream a cluster</strong>
+      <span class="muted">Mirror a cluster you can reach with kubectl, read-only.</span>
+    </button>
+    <button class="start-card" data-card="file" aria-expanded="false" aria-controls="form-file">
+      <span class="start-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 2.8h8l4 4v14.4H6z"/><path d="M14 2.8v4h4M9 12h6M9 15.5h6"/></svg></span>
+      <strong>Open a file</strong>
+      <span class="muted">Investigate a bundle a customer sent, or review one before you send it.</span>
+    </button>
+    <button class="start-card" data-card="repo" aria-expanded="false" aria-controls="form-repo">
+      <span class="start-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="6.5" cy="5.5" r="2"/><circle cx="6.5" cy="18.5" r="2"/><circle cx="17.5" cy="8.5" r="2"/><path d="M6.5 7.5v9M17.5 10.5c0 4-11 2.5-11 6"/></svg></span>
+      <strong>Open a repo</strong>
+      <span class="muted">Check manifests, Helm charts and Kustomize overlays before they are deployed.</span>
+    </button>
+
+    <section class="start-form hidden" id="form-live" data-for="live" aria-label="Live stream a cluster">
+      <div class="start-grid">
+        <label><span class="lbl">Kubeconfig</span>
+          <span class="row"><input id="lv-kubeconfig" placeholder="$KUBECONFIG or ~/.kube/config" spellcheck="false"><button id="lv-reload" title="Read the kubeconfig again">Reload</button></span>
+          <small id="lv-files" class="muted"></small>
+        </label>
+        <label><span class="lbl">Context</span>
+          <select id="lv-context"></select>
+          <small id="lv-server" class="muted"></small>
+        </label>
+        <label><span class="lbl">Namespaces</span>
+          <input id="lv-ns" placeholder="all namespaces; e.g. kagent,istio-*" spellcheck="false">
+          <small class="muted">Comma separated, globs allowed. Empty reads every namespace.</small>
+        </label>
+        <label><span class="lbl">Exclude namespaces</span>
+          <input id="lv-exns" placeholder="e.g. kube-system" spellcheck="false">
+        </label>
+      </div>
+      <div class="start-checks">
+        <label><input type="checkbox" id="lv-cluster"> Include cluster-scoped objects <small class="muted">(nodes, namespaces, CRDs, ClusterRoles)</small></label>
+        <label><input type="checkbox" id="lv-solo"> Solo diagnostics <small class="muted">(proxy dumps, control-plane debug and metrics; needs port-forward)</small></label>
+      </div>
+      <div class="row wrap start-actions">
+        <button id="lv-preview">Preview</button>
+        <button class="primary" id="lv-start">Start live</button>
+        <span class="muted" id="lv-status"></span>
+      </div>
+      <div id="lv-plan"></div>
+    </section>
+
+    <section class="start-form hidden" id="form-file" data-for="file" aria-label="Open a file">
+      <div class="start-recent">
+        <div class="row between"><h3>Recent bundles</h3><button class="ghost" id="fl-refresh" title="Look again">↻</button></div>
+        <div id="fl-list"><p class="muted">Looking…</p></div>
+      </div>
+      <div class="start-drop" id="fl-drop" tabindex="0" role="button" aria-label="Drop a bundle here, or choose a file">
+        <strong>Drop a bundle here</strong>
+        <span class="muted">or <button class="link" id="fl-choose">choose a file</button>. It is copied into this session's workspace. Only <code>.tar.zst</code> and <code>.tar.zst.age</code> files.</span>
+        <input type="file" id="fl-input" accept=".zst,.age" class="hidden">
+        <div class="progress-bar hidden" id="fl-progress"><i></i></div>
+      </div>
+      <div class="start-grid">
+        <label><span class="lbl">Or paste a path</span>
+          <input id="fl-path" placeholder="~/Downloads/flightbay-01234567-20260927T1012Z.tar.zst" spellcheck="false">
+        </label>
+        <label><span class="lbl">Identity file for encrypted bundles (<code>-i</code>)</span>
+          <input id="fl-identity" placeholder="~/.flightbay/support.key" spellcheck="false">
+        </label>
+      </div>
+      <div class="row wrap start-actions">
+        <button class="primary" id="fl-open">Open</button>
+        <button id="fl-review">Review before sending</button>
+        <span class="muted" id="fl-status"></span>
+      </div>
+    </section>
+
+    <section class="start-form hidden" id="form-repo" data-for="repo" aria-label="Open a repo">
+      <div class="start-grid">
+        <label class="span2"><span class="lbl">Directory or Git URL</span>
+          <input id="rp-source" placeholder="~/code/platform-deploy or https://github.com/org/deploy.git" spellcheck="false">
+          <small class="muted">A URL is cloned with <code>git clone --depth 1</code> into the workspace, using your own git credentials. Nothing is pushed.</small>
+        </label>
+        <label><span class="lbl">Values files <small class="muted">(every chart; or CHARTDIR=FILE)</small></span>
+          <input id="rp-values" placeholder="values-prod.yaml" spellcheck="false">
+        </label>
+        <label><span class="lbl">--set pairs</span>
+          <input id="rp-set" placeholder="replicas=3,image.tag=1.4.2" spellcheck="false">
+        </label>
+        <label><span class="lbl">Overlay path</span>
+          <input id="rp-overlay" placeholder="k8s/overlays/prod" spellcheck="false">
+        </label>
+        <label><span class="lbl">Environment</span>
+          <input id="rp-env" placeholder="prod" spellcheck="false">
+        </label>
+        <label><span class="lbl">Namespace</span>
+          <input id="rp-namespace" placeholder="default" spellcheck="false">
+        </label>
+        <label><span class="lbl">Release</span>
+          <input id="rp-release" placeholder="the chart name" spellcheck="false">
+        </label>
+      </div>
+      <div class="row wrap start-actions">
+        <button class="primary" id="rp-scan">Scan and open</button>
+        <span class="muted" id="rp-status"></span>
+      </div>
+      <div id="rp-result"></div>
+    </section>
+  </div>
+</main>
+<footer class="start-foot">
+  <a href="/docs/getting-started/" target="_blank" rel="noopener">Getting started</a>
+  <span class="muted">·</span>
+  <span class="muted">Command line:</span>
+  <code id="cli" class="start-cli">flightbay ui</code>
+  <button class="ghost" id="cli-copy" title="Copy the command">Copy</button>
+</footer>
+<div class="start-opening hidden" id="opening" role="status" aria-live="polite">
+  <div class="start-opening-box">
+    <div class="progress"><i></i></div>
+    <h2 id="opening-title">Opening…</h2>
+    <p class="muted" id="opening-detail"></p>
+  </div>
+</div>
+<div id="toast" class="toast hidden" role="status"></div>
+<script src="static/start.js"></script>
+</body>
+</html>

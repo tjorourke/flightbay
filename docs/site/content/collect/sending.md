@@ -130,7 +130,7 @@ flightbay-<case>-<UTC time>.tar.zst.age    with --encrypt-to
 flightbay-<case>-<UTC time>-reviewed.tar.zst   exported from Review and send
 ```
 
-Without `--case` the case part is `nocase`. `flightbay ui` and `flightbay-desk open` with no argument open the newest `flightbay-*.tar.zst` or `flightbay-*.tar.zst.age` in the current directory; given a directory, the newest in that directory.
+Without `--case` the case part is `nocase`. Given a directory, `flightbay ui` and `flightbay-desk open` open the newest `flightbay-*.tar.zst` or `flightbay-*.tar.zst.age` in it (`flightbay ui .` for the current directory). With no argument they open the start page, which lists the bundles here and in `~/Downloads`.
 
 ## What is inside
 

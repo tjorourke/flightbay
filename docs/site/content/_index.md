@@ -23,8 +23,10 @@ It is built for support cases. The customer runs one command against their clust
 
 ```bash
 flightbay collect --context my-cluster      # capture: writes flightbay-<case>-<time>.tar.zst
-flightbay ui                                # open the newest capture in your browser
+flightbay ui .                              # open the newest capture here in your browser
 ```
+
+`flightbay ui` on its own opens a start page, from which you can live stream a cluster, open a bundle or scan a repo. See [Getting started](/getting-started/#the-start-page).
 
 ## How the data moves
 

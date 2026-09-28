@@ -45,7 +45,7 @@ var version = "0.1.0-dev"
 // newRoot builds the command tree (also used to generate the CLI reference).
 func newRoot() *cobra.Command {
 	root := &cobra.Command{Use: "flightbay-desk", Short: "Flightbay by Solo: investigate a snapshot bundle offline", SilenceUsage: true}
-	root.AddCommand(openCmd(), liveCmd(), shellCmd(), queryCmd(), findingsCmd(), proxyConfigCmd(), searchCmd(), sqlCmd(), flowsCmd(), postureCmd(), reachCmd(), featuresCmd(), diffCmd(), driftCmd(), mcpCmd(), keygenCmd(), &cobra.Command{
+	root.AddCommand(openCmd(), startCmd(), liveCmd(), shellCmd(), queryCmd(), findingsCmd(), proxyConfigCmd(), searchCmd(), sqlCmd(), flowsCmd(), postureCmd(), reachCmd(), featuresCmd(), diffCmd(), driftCmd(), mcpCmd(), keygenCmd(), &cobra.Command{
 		Use: "version", Short: "Print the version", Run: func(*cobra.Command, []string) { fmt.Println("flightbay-desk", version) },
 	})
 	return root
@@ -133,9 +133,10 @@ func openCmd() *cobra.Command {
 	var encryptTo, verifyKeys []string
 	c := &cobra.Command{
 		Use:   "open [BUNDLE | DIR | -]",
-		Short: "Open a bundle and start investigating while it loads (default: the newest bundle here)",
-		Example: `  flightbay-desk open                                  # the newest flightbay-*.tar.zst in this directory
+		Short: "Open a bundle and start investigating while it loads (no bundle: the start page)",
+		Example: `  flightbay-desk open                                  # the start page: live, a file or a repo
   flightbay-desk open flightbay-01234567-20260927T1012Z.tar.zst
+  flightbay-desk open .                                # the newest flightbay-*.tar.zst in this directory
   flightbay collect -o - | flightbay-desk open -
   flightbay-desk open bundle.tar.zst.age -i ~/.flightbay/support.key
   flightbay-desk open bundle.tar.zst --defer logs      # load logs later from the UI
@@ -165,10 +166,13 @@ func openCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			path := "."
-			if len(args) == 1 {
-				path = args[0]
+			if len(args) == 0 {
+				// Nothing to open: the start page, which hands over to open,
+				// review or live on the same address.
+				return runStart(cmd, startOptions{listen: listen, workdir: workdir, shell: shell, identities: identities,
+					noBrowser: noBrowser, noTerminal: noTerminal, allowRemote: allowRemote, keep: keep})
 			}
+			path := args[0]
 			if path != "-" {
 				if path, err = resolveBundle(path); err != nil {
 					return err
@@ -193,6 +197,8 @@ func openCmd() *cobra.Command {
 					// Runs after ws.Close (deferred later, so it runs first).
 					defer os.RemoveAll(workdir)
 				}
+			} else if tempWorkdir() && !keep {
+				defer os.RemoveAll(workdir) // created by the start page
 			}
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
@@ -235,7 +241,7 @@ func openCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			srv := &server.Server{WS: ws, Token: randomToken(), WorkDir: workdir, BaseURL: base, Terminal: !noTerminal, Shell: shell, DeskBinary: exe,
+			srv := &server.Server{WS: ws, Token: deskToken(), WorkDir: workdir, BaseURL: base, Terminal: !noTerminal, Shell: shell, DeskBinary: exe,
 				KubeURL: "https://" + kln.Addr().String(), KubeCA: caPEM}
 			ks := &http.Server{Handler: srv.KubeHandler(), TLSConfig: tlsCfg, ReadHeaderTimeout: 10 * time.Second}
 			go func() { _ = ks.ServeTLS(kln, "", "") }()
