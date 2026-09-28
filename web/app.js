@@ -2009,6 +2009,12 @@ after.compare = () => {
 // ---------- proxies ----------
 const compLabel = {ztunnel: 'ztunnel', envoy: 'Envoy', agentgateway: 'agentgateway', istiod: 'istiod', controller: 'Controller'};
 const pxKey = c => [c.cluster, c.kind, c.namespace, c.pod].join('/');
+// pxName splits a pod name into what it runs and its generated suffix
+// (ReplicaSet hash and pod id, or the DaemonSet pod id).
+const pxName = pod => { const m = /^(.+?)-([a-z0-9]{6,10}-[a-z0-9]{5}|[a-z0-9]{5})$/.exec(pod || ''); return m ? [m[1], m[2]] : [pod, '']; };
+// pxTitle is how a proxy is told apart: ztunnel runs one per node, so the
+// node names it; everything else by what it runs.
+const pxTitle = c => c.component === 'ztunnel' && c.node ? c.node : pxName(c.pod)[0];
 
 function certCell(c) {
   if (!c.notAfter || c.notAfter.startsWith('0001')) return `<span class="amber">${esc(c.state || 'no certificate')}</span>`;
@@ -2021,7 +2027,7 @@ function pxTable(t, q) {
   const rows = q ? t.rows.filter(r => r.join(' ').toLowerCase().includes(q)) : t.rows;
   return `<section class="panel mt"><div class="panel-head"><h2>${esc(t.title)}</h2><span class="badge">${rows.length}${rows.length !== t.rows.length ? ' of ' + t.rows.length : ''}</span></div>
     <div class="table-scroll" style="max-height:48vh">${rows.length ? `<table><thead><tr>${t.columns.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>
-    ${rows.slice(0, 500).map(r => `<tr>${r.map((c, i) => `<td class="${i === 0 ? 'mono' : ''}" style="white-space:normal;max-width:520px">${/^STALE/.test(c) ? `<span class="red">${esc(c)}</span>` : esc(c)}</td>`).join('')}</tr>`).join('')}</tbody></table>` : '<div class="empty">Nothing captured here' + (q ? ' matches the filter' : '') + '.</div>'}</div>
+    ${rows.slice(0, 500).map(r => `<tr>${r.map((c, i) => `<td class="${i === 0 ? 'mono' : ''} ${String(c).length > 48 ? 'px-long' : 'px-short'}">${/^STALE/.test(c) ? `<span class="red">${esc(c)}</span>` : esc(c)}</td>`).join('')}</tr>`).join('')}</tbody></table>` : '<div class="empty">Nothing captured here' + (q ? ' matches the filter' : '') + '.</div>'}</div>
     ${rows.length > 500 ? `<div class="table-foot"><span>Showing 500 of ${rows.length}; narrow with the filter</span></div>` : ''}</section>`;
 }
 
@@ -2030,17 +2036,24 @@ async function proxies() {
   S.px = S.px || {sel: '', tab: 'summary', file: '', q: ''};
   const comps = d.components;
   if (!comps.length) {
-    return head('Proxies', 'Envoy, ztunnel and agentgateway config dumps, istiod debug output and metrics.') + `<div class="panel empty"><strong>${d.selected ? 'No Solo components captured' : 'Proxy dumps, control-plane debug and metrics were not selected'}</strong>${
+    return head('Proxy configs', 'Envoy, ztunnel and agentgateway config dumps, istiod debug output and metrics.') + `<div class="panel empty"><strong>${d.selected ? 'No Solo components captured' : 'Proxy dumps, control-plane debug and metrics were not selected'}</strong>${
       d.loading ? 'Diagnostics are written last in a bundle, so they may still be arriving.' : d.selected ? 'The selected namespaces held no ztunnel, Envoy, agentgateway, istiod or controller pods.' : 'The customer did not allow port-forward diagnostics for this bundle (flightbay collect --solo-diagnostics). Their absence says nothing about the proxies.'}</div>`;
   }
   if (!comps.find(c => pxKey(c) === S.px.sel)) { S.px.sel = pxKey(comps[0]); S.px.file = ''; }
   const cur = comps.find(c => pxKey(c) === S.px.sel);
   const groups = {};
   comps.forEach(c => (groups[c.component || 'unknown'] ||= []).push(c));
-  const nav = Object.entries(groups).map(([g, cs]) => `<h3 style="margin:10px 8px 4px;font-size:11px" class="muted">${esc(compLabel[g] || g)}</h3>` + cs.map(c => {
-    const bad = c.files.some(f => f.state !== 'complete');
-    return `<button class="${pxKey(c) === S.px.sel ? 'active' : ''}" data-px="${attr(pxKey(c))}" title="${esc(c.namespace)}/${esc(c.pod)}"><span style="overflow:hidden;text-overflow:ellipsis">${esc(c.pod)}</span><span>${c.expired ? '<small class="red">expired</small>' : c.expiring ? '<small class="amber">cert</small>' : ''} <span class="st state-${bad ? 'truncated' : 'complete'}">●</span></span></button>`;
-  }).join('')).join('');
+  const multi = new Set(comps.map(c => c.cluster)).size > 1;
+  const nav = Object.entries(groups).map(([g, cs]) => {
+    const vers = [...new Set(cs.map(c => c.version).filter(Boolean))];
+    return `<div class="px-group"><span>${esc(compLabel[g] || g)}</span><small title="${esc(vers.join(', '))}">${esc(vers.length === 1 ? vers[0] : vers.length ? vers.length + ' versions' : '')}${vers.length ? ' · ' : ''}${cs.length}</small></div>` + cs.map(c => {
+      const bad = c.files.some(f => f.state !== 'complete');
+      const sub = g === 'ztunnel' ? c.pod : [c.namespace, c.node].filter(Boolean).join(' · ');
+      return `<button class="px-item ${pxKey(c) === S.px.sel ? 'active' : ''}" data-px="${attr(pxKey(c))}" title="${esc(c.namespace)}/${esc(c.pod)}${c.node ? ' on ' + esc(c.node) : ''}">
+        <span class="px-iname">${esc(pxTitle(c))}${c.expired ? ' <small class="red">expired</small>' : c.expiring ? ' <small class="amber">cert</small>' : ''}</span><span class="st state-${bad ? 'truncated' : 'complete'}" title="${bad ? 'some files incomplete' : 'captured'}">●</span>
+        <small class="px-isub">${multi ? esc(c.cluster) + ' · ' : ''}${esc(sub)}</small></button>`;
+    }).join('');
+  }).join('');
   let body = '';
   const tabs = ['summary', 'files'];
   if (S.px.tab === 'summary') {
@@ -2073,11 +2086,11 @@ async function proxies() {
       ${files.map(f => `<tr ${f.bytes ? `data-pxfile="${esc(f.name)}" style="cursor:pointer"` : ''} class="${f.name === S.px.file ? 'sel' : ''}"><td class="mono ${f.bytes ? 'blue' : 'muted'}">${esc(f.name)}</td><td>${f.bytes ? bytes(f.bytes) : '—'}</td><td>${stateBadge(f.state, f.reason)}</td><td class="muted" style="white-space:normal">${esc(f.reason || '')}</td></tr>`).join('')}
       </tbody></table></div></section>${viewer}`;
   }
-  const sums = Object.entries(d.summaries || {});
-  return head('Proxies', 'Envoy, ztunnel and agentgateway config dumps, istiod debug output and metrics, as captured.', `<button id="px-term">&gt;_ fbpc ${esc(cur.pod)}</button>`) +
-    (sums.length ? `<div class="row wrap" style="margin-bottom:10px">${sums.flatMap(([cl, raw]) => (raw.components || []).map(c => `<span class="tag" title="${esc(c.image)}">${esc(cl)} · ${esc(compLabel[c.component] || c.component)} ${esc(c.version || '')} ×${c.pods.length}</span>`)).join(' ')}</div>` : '') + `
-  <div class="resource-layout"><nav class="types" aria-label="Components">${nav}</nav>
-  <div><div class="toolbar"><div class="row wrap"><span class="badge">${esc(compLabel[cur.component] || cur.component)}</span><span class="tag">${esc(cur.cluster)}</span><span class="mono">${esc(cur.namespace)}/${esc(cur.pod)}</span><small class="muted" title="${esc(cur.image)}">${esc(cur.version || '')}${cur.node ? ' · ' + esc(cur.node) : ''}</small></div></div>
+  const meta = [['Node', cur.node], ['Pod', `${cur.namespace}/${cur.pod}`], ['Version', cur.version], ['Cluster', multi ? cur.cluster : ''], ['Image', cur.image]].filter(([, v]) => v);
+  return head('Proxy configs', 'Envoy, ztunnel and agentgateway config dumps, istiod debug output and metrics, as captured.', `<button id="px-term">&gt;_ fbpc ${esc(cur.pod)}</button>`) + `
+  <div class="resource-layout px-layout"><nav class="types px-nav" aria-label="Components">${nav}</nav>
+  <div><div class="px-head"><div class="row"><span class="badge">${esc(compLabel[cur.component] || cur.component)}</span><h2 class="mono">${esc(pxTitle(cur))}</h2></div>
+    <dl class="px-meta">${meta.map(([k, v]) => `<div><dt>${k}</dt><dd class="mono">${esc(v)}</dd></div>`).join('')}</dl></div>
     <div class="toolbar"><div class="tabs" style="border:0;margin:0">${tabs.map(t => `<button class="${t === S.px.tab ? 'active' : ''}" data-pxtab="${t}">${t === 'summary' ? 'Summary' : 'Files'}</button>`).join('')}</div>
     <input id="px-q" placeholder="Filter rows or lines" value="${esc(S.px.q)}" aria-label="Filter"></div>
     ${body}</div></div>`;
