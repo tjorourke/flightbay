@@ -71,19 +71,20 @@ func (w *workload) principal() string { return "ns/" + w.ns + "/sa/" + w.sa }
 
 // service is a Kubernetes Service and the workloads behind it.
 type service struct {
-	obj       *store.Object
-	id        string
-	ns, name  string
-	selector  map[string]string
-	ports     []svcPort
-	backends  []*workload
-	waypoint  string // istio.io/use-waypoint (service, else namespace)
-	external  string // ExternalName
-	exposed   bool   // LoadBalancer or NodePort
-	classes   []string
-	agwClass  string // set when this Service fronts an agentgateway Gateway
-	gatewayNS string
-	gatewayNm string
+	obj        *store.Object
+	id         string
+	ns, name   string
+	selector   map[string]string
+	ports      []svcPort
+	backends   []*workload
+	waypoint   string // istio.io/use-waypoint (service, else namespace)
+	waypointNS string // istio.io/use-waypoint-namespace, else the service's namespace
+	external   string // ExternalName
+	exposed    bool   // LoadBalancer or NodePort
+	classes    []string
+	agwClass   string // set when this Service fronts an agentgateway Gateway
+	gatewayNS  string
+	gatewayNm  string
 }
 
 type svcPort struct {
@@ -336,6 +337,13 @@ func (c *cluster) buildServices() {
 		if sv.waypoint == "none" {
 			sv.waypoint = ""
 		}
+		sv.waypointNS = lb["istio.io/use-waypoint-namespace"]
+		if sv.waypointNS == "" && lb["istio.io/use-waypoint"] == "" {
+			sv.waypointNS = c.nsLabels[o.Namespace]["istio.io/use-waypoint-namespace"]
+		}
+		if sv.waypointNS == "" {
+			sv.waypointNS = o.Namespace
+		}
 		if gn := lb["gateway.networking.k8s.io/gateway-name"]; gn != "" {
 			if cls := gwClass[key(o.Namespace, gn)]; strings.Contains(cls, "agentgateway") && !strings.Contains(cls, "waypoint") {
 				sv.agwClass, sv.gatewayNS, sv.gatewayNm = cls, o.Namespace, gn
@@ -363,6 +371,12 @@ func (c *cluster) buildServices() {
 		if sv.agwClass != "" {
 			sv.classes = union(sv.classes, []string{"gateway"})
 		}
+		// A waypoint's own Service is not a destination: the waypoint only
+		// forwards to the services bound to it, and those hops are evaluated
+		// as agent -> service (L7 rules included) already.
+		if strings.Contains(lb["gateway.networking.k8s.io/gateway-class-name"], "waypoint") || lb["gateway.istio.io/managed"] == "istio.io-mesh-controller" {
+			sv.classes = union(sv.classes, []string{"waypoint"})
+		}
 		if o.Namespace == "default" && o.Name == "kubernetes" {
 			sv.classes = union(sv.classes, []string{"apiserver"})
 		}
@@ -370,6 +384,19 @@ func (c *cluster) buildServices() {
 		c.svcByKey[key(o.Namespace, o.Name)] = sv
 	}
 	sort.Slice(c.services, func(i, j int) bool { return c.services[i].id < c.services[j].id })
+}
+
+// waypointFor returns the captured waypoint proxy a service uses, or nil.
+func (c *cluster) waypointFor(sv *service) *workload {
+	if sv.waypoint == "" {
+		return nil
+	}
+	for _, w := range c.works {
+		if w.ns == sv.waypointNS && w.labels["gateway.networking.k8s.io/gateway-name"] == sv.waypoint {
+			return w
+		}
+	}
+	return nil
 }
 
 func labelsMatch(have, want map[string]string) bool {

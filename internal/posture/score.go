@@ -36,6 +36,9 @@ func Evaluate(ws *store.Workspace) Report {
 			}
 		}
 	}
+	if present["agentic"] {
+		checks = merge(checks, reachChecks(ws))
+	}
 	for i := range checks {
 		finish(&checks[i])
 	}

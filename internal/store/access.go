@@ -27,8 +27,13 @@ func (w *Workspace) AccessEdges(cluster string) []AccessEdge {
 	         coalesce(fields['dst.namespace'], ''), coalesce(fields['dst.workload'], ''),
 	         list_sort(list_distinct(list(fields['method']) FILTER (WHERE fields['method'] IS NOT NULL))),
 	         list_slice(list_distinct(list(fields['path']) FILTER (WHERE fields['path'] IS NOT NULL)), 1, 5),
-	         count(*),
-	         count(*) FILTER (WHERE fields['response_code'] IN ('401', '403') OR coalesce(fields['error'], '') ILIKE '%policy%')
+	         -- Both ends of an in-mesh connection log it, and behind a waypoint the
+	         -- destination's line names the waypoint rather than the caller. Count
+	         -- each side on its own and take the larger, so a connection counts
+	         -- once whether one end, both ends or only the caller's end was captured.
+	         greatest(count(*) FILTER (WHERE fields['direction'] = 'outbound'), count(*) FILTER (WHERE coalesce(fields['direction'], '') <> 'outbound')),
+	         greatest(count(*) FILTER (WHERE fields['direction'] = 'outbound' AND (fields['response_code'] IN ('401', '403') OR coalesce(fields['error'], '') ILIKE '%policy%')),
+	                  count(*) FILTER (WHERE coalesce(fields['direction'], '') <> 'outbound' AND (fields['response_code'] IN ('401', '403') OR coalesce(fields['error'], '') ILIKE '%policy%')))
 	  FROM log_lines
 	  WHERE scope IN ('access', 'http_access') AND fields['src.workload'] IS NOT NULL AND (? = '' OR cluster = ?)
 	  GROUP BY ALL`, cluster, cluster)
@@ -39,10 +44,15 @@ func (w *Workspace) AccessEdges(cluster string) []AccessEdge {
 	var out []AccessEdge
 	for rows.Next() {
 		var e AccessEdge
-		var methods, paths []any
-		if rows.Scan(&e.Cluster, &e.SrcNamespace, &e.SrcPod, &e.SrcIdentity, &e.DstService, &e.DstNamespace, &e.DstWorkload, &methods, &paths, &e.Requests, &e.Denied) != nil {
+		// The lists are NULL on connection-level lines (upstream ztunnel
+		// "access" lines carry no method or path), and NULL does not scan
+		// into a []any: scan into any, or every L4 edge is dropped.
+		var methodsV, pathsV any
+		if rows.Scan(&e.Cluster, &e.SrcNamespace, &e.SrcPod, &e.SrcIdentity, &e.DstService, &e.DstNamespace, &e.DstWorkload, &methodsV, &pathsV, &e.Requests, &e.Denied) != nil {
 			continue
 		}
+		methods, _ := methodsV.([]any)
+		paths, _ := pathsV.([]any)
 		for _, x := range methods {
 			if v, ok := x.(string); ok {
 				e.Methods = append(e.Methods, v)

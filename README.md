@@ -122,6 +122,8 @@ The page opens on the score per area, then tabs: Summary (the most serious probl
 
 ![Scorecard](docs/images/posture.png)
 
+**Agent reach (Flightbay Enterprise)** lists every kagent agent, MCP server, agentgateway and workload that looks like an agent, worst first, with its blast radius (open, wide, narrow or contained), whether it can reach the internet, how many Services it reaches directly and in any number of hops, and how many it can write to. Pick one to see a left-to-right graph of what it reaches and what those destinations reach for it, the paths that lead out to the internet or cloud metadata, findings with the YAML to fix each one, the identity it carries (service account, token, RBAC, Secrets, host access) and a table of every destination with its verdict, methods, and whether the capture shows it being called. It is built for the OpenAI and Hugging Face incident, where agents got to the internet through a package registry they were allowed to call, which accepted writes and fetched URLs for them. Turn it on with `FLIGHTBAY_ENTERPRISE=1 flightbay ui` (or `FLIGHTBAY_FEATURES=reach`); `fbreach` in the terminal and the MCP `agent_reach` tool give the same answer, and the Scorecard gains five agentic checks built on it. `test/e2e/reach.sh` recreates the incident on kind, proves the agent can PUT to the registry and reach the internet, applies the fixes Flightbay generated, and proves both are blocked afterwards.
+
 **Timeline** puts Kubernetes events, container exits, rollouts and bursts of error logs on one UTC axis, so you can see what changed just before things broke. Filter by kind, severity and namespace, drag across the density strip to zoom into a window, and jump from any entry to the object or to the logs around that moment. A steady run of errors shows as one entry covering its time range, and a minute well above that run's usual rate is called out on its own.
 
 ![Timeline](docs/images/timeline.png)
@@ -197,6 +199,7 @@ make build                                    # ./bin/flightbay and ./bin/flight
 make test                                     # unit tests
 test/e2e/e2e.sh                               # kind cluster with planted faults: collector, UI, kubectl, k9s, search, SQL
 MESH_CONTEXT=kind-mesh1 test/e2e/mesh.sh      # Solo diagnostics against an existing ambient cluster (read-only)
+test/e2e/reach.sh                             # agent reach on kind + Istio ambient: applies the generated fixes, proves traffic blocked (make e2e-reach)
 FLIGHTBAY_SCALE=10000000 go test ./internal/store -run TestScale -v -timeout 60m
 docker build -t flightbay-desk .              # UI image with kubectl, k9s, istioctl, stern, jq and yq
 ```

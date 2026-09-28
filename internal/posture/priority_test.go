@@ -65,3 +65,13 @@ func TestImpactIgnoresAreaSize(t *testing.T) {
 		t.Fatal("test premise: the critical recovers fewer area points")
 	}
 }
+
+func TestReachChecksAreEnterprise(t *testing.T) {
+	ws := fixture(t)
+	for _, c := range Evaluate(ws).Checks {
+		switch c.ID {
+		case "agentic.agent-internet-reach", "agentic.agent-transitive-fetcher", "agentic.agent-write-sensitive", "agentic.agent-no-shared-channel", "agentic.agent-least-reach":
+			t.Fatalf("%s shown without the reach feature", c.ID)
+		}
+	}
+}

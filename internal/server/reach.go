@@ -53,6 +53,9 @@ func (s *Server) reach(w http.ResponseWriter, r *http.Request) {
 		slim.Agents = make([]reach.Agent, len(rep.Agents))
 		for i, a := range rep.Agents {
 			a.Direct, a.Nodes, a.Edges = nil, nil, nil
+			// Copy before blanking: the slice is shared with the cached report,
+			// and ?agent= must still serve the fix YAML afterwards.
+			a.Findings = append([]reach.Finding(nil), a.Findings...)
 			for j := range a.Findings {
 				a.Findings[j].Fix = ""
 			}

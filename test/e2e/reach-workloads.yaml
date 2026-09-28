@@ -1,0 +1,137 @@
+# The shape of the OpenAI and Hugging Face incident, for test/e2e/reach.sh:
+# two evaluation agents sharing a volume, a package registry that accepts any
+# method and can reach the internet, and a database. Nothing is locked down.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agents
+  labels: {istio.io/dataplane-mode: ambient}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tools
+  labels: {istio.io/dataplane-mode: ambient}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: eval-agent, namespace: agents}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: eval-agent-2, namespace: agents}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: scratch, namespace: agents}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: 64Mi}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: eval-agent, namespace: agents, labels: {app: eval-agent}}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: eval-agent}}
+  template:
+    metadata: {labels: {app: eval-agent}}
+    spec:
+      serviceAccountName: eval-agent
+      terminationGracePeriodSeconds: 1
+      containers:
+      - name: curl
+        image: curlimages/curl:8.11.1
+        command: [sleep, infinity]
+        env:
+        # The agent is configured to install packages through the registry,
+        # so Flightbay knows this is a dependency it needs, not stray reach.
+        - {name: PIP_INDEX_URL, value: "http://artifactory.tools:8081/api/pypi/pypi/simple"}
+        volumeMounts: [{name: scratch, mountPath: /scratch}]
+      volumes:
+      - {name: scratch, persistentVolumeClaim: {claimName: scratch}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: eval-agent-2, namespace: agents, labels: {app: eval-agent-2}}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: eval-agent-2}}
+  template:
+    metadata: {labels: {app: eval-agent-2}}
+    spec:
+      serviceAccountName: eval-agent-2
+      terminationGracePeriodSeconds: 1
+      containers:
+      - name: curl
+        image: curlimages/curl:8.11.1
+        command: [sleep, infinity]
+        volumeMounts: [{name: scratch, mountPath: /scratch}]
+      volumes:
+      - {name: scratch, persistentVolumeClaim: {claimName: scratch}}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: artifactory, namespace: tools}
+---
+# traefik/whoami answers every method, PUT and WebDAV MKCOL included, which
+# is all the incident needed from the registry.
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: artifactory, namespace: tools, labels: {app: artifactory}}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: artifactory}}
+  template:
+    metadata: {labels: {app: artifactory}}
+    spec:
+      serviceAccountName: artifactory
+      containers:
+      - name: artifactory
+        image: traefik/whoami:v1.10
+        args: [--port, "8081"]
+        ports: [{containerPort: 8081}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: artifactory, namespace: tools}
+spec:
+  selector: {app: artifactory}
+  ports: [{name: http, port: 8081, targetPort: 8081}]
+---
+apiVersion: v1
+kind: Secret
+metadata: {name: postgres, namespace: tools}
+stringData: {POSTGRES_PASSWORD: reach-e2e-not-a-secret}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: postgres, namespace: tools}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: postgres, namespace: tools, labels: {app: postgres}}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: postgres}}
+  template:
+    metadata: {labels: {app: postgres}}
+    spec:
+      serviceAccountName: postgres
+      containers:
+      - name: postgres
+        image: postgres:16-alpine
+        env:
+        - name: POSTGRES_PASSWORD
+          valueFrom: {secretKeyRef: {name: postgres, key: POSTGRES_PASSWORD}}
+        ports: [{containerPort: 5432}]
+        readinessProbe:
+          exec: {command: [pg_isready, -U, postgres]}
+          periodSeconds: 3
+---
+apiVersion: v1
+kind: Service
+metadata: {name: postgres, namespace: tools}
+spec:
+  selector: {app: postgres}
+  ports: [{name: tcp-postgres, port: 5432, targetPort: 5432}]

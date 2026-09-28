@@ -1,7 +1,8 @@
 # make            build both binaries into ./bin
 # make install    install flightbay and flightbay-desk into $(go env GOPATH)/bin
 # make test       unit tests;  make e2e  kind end-to-end
-.PHONY: build install test e2e
+# make e2e-reach  agent reach on kind + Istio ambient: fixes applied, traffic proven blocked
+.PHONY: build install test e2e e2e-reach
 build:
 	CGO_ENABLED=0 go build -o bin/ ./cmd/flightbay
 	CGO_ENABLED=1 go build -o bin/ ./cmd/flightbay-desk
@@ -13,3 +14,5 @@ test:
 	go test ./...
 e2e: build
 	test/e2e/e2e.sh
+e2e-reach: build
+	test/e2e/reach.sh

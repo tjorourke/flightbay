@@ -632,8 +632,8 @@ func (e *engine) agent(w *workload, all []*workload, obs map[string]*observed, o
 	agentNode := "agent:" + w.id
 	var reach []pair
 	for _, sv := range c.services {
-		if has(sv.classes, "apiserver") {
-			continue // reported through the token and RBAC instead
+		if has(sv.classes, "apiserver") || has(sv.classes, "waypoint") {
+			continue // the API server: through the token and RBAC; a waypoint: through the services it serves
 		}
 		self := false
 		for _, b := range sv.backends {
@@ -718,7 +718,7 @@ func (e *engine) agent(w *workload, all []*workload, obs map[string]*observed, o
 			continue
 		}
 		for _, sv2 := range c.services {
-			if visitedSvc[sv2] || has(sv2.classes, "apiserver") {
+			if visitedSvc[sv2] || has(sv2.classes, "apiserver") || has(sv2.classes, "waypoint") {
 				continue
 			}
 			if e.hop(it.w, sv2).verdict != Allowed {

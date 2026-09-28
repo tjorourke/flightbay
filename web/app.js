@@ -17,6 +17,7 @@ const S = {
   search: {q: '', limit: 200},
   pst: {tab: 'summary', area: '', status: 'attention', q: '', open: null},
   nv: {resource: 'pods', group: '', ns: '', q: '', sel: 0, cmd: false},
+  reach: {sel: '', q: '', type: '', dq: '', dchip: 'all', fixOpen: {}, list: null, listRev: null, detail: null, detailKey: '', scroll: false},
 };
 
 async function api(path, params) {
@@ -56,6 +57,7 @@ function parseHash() {
   if (view === 'posture' || view === 'bestpractices') { location.replace('#scorecard' + (query ? '?' + query : '')); }
   if ((view === 'scorecard' || view === 'posture') && p.has('tab')) S.pst.tab = p.get('tab');
   if (view === 'resources' && p.has('resource')) { S.res.resource = p.get('resource'); S.res.group = p.get('group') || ''; }
+  if (view === 'reach') S.reach.sel = p.get('agent') || '';
   S.view = view === 'posture' || view === 'bestpractices' ? 'scorecard' : view;
 }
 
@@ -72,7 +74,7 @@ function openLogs(filters) {
 async function render() {
   const seq = ++S.renderSeq;
   document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('active', a.dataset.view === S.view));
-  const views = {navigator, search, overview, scorecard: posture, resources, logs, timeline, findings, compare, proxies, coverage};
+  const views = {navigator, search, overview, scorecard: posture, reach, resources, logs, timeline, findings, compare, proxies, coverage};
   const fn = views[S.view] || overview;
   $('#crumb').textContent = S.ws ? `Workspace / ${S.ws.case ? 'Case ' + S.ws.case : 'Snapshot'} / ${S.view}` : 'Workspace';
   try {
@@ -325,6 +327,7 @@ async function loadWorkspace() {
   const nf = $('#nav-findings');
   const n = (w.findings?.critical || 0) + (w.findings?.warning || 0);
   nf.textContent = n; nf.classList.toggle('hidden', !n);
+  document.querySelector('.nav a[data-view="reach"]')?.classList.toggle('hidden', !feature('reach'));
   if (w.terminal) $('#terminal').classList.remove('hidden');
   if (!S.state) { S.state = w.state; renderImportStatus(); }
 }
@@ -609,6 +612,7 @@ async function posture() {
       summary = `<section class="panel"><div class="panel-head"><h2>Most serious problems</h2><small class="muted">Critical and high severity checks that fail or warn</small></div>
         <div>${worst.map((p, i) => firstRow(p, i + 1)).join('') || '<div class="empty"><strong>No critical or high problems</strong>Open an area tab to see the rest.</div>'}</div></section>`;
     }
+    if (feature('reach')) summary += `<p class="pst-reach-link"><a href="#reach">See each agent's network reach →</a></p>`;
   }
   let lastArea = '';
   const rows = checks.map(c => { const h = !P.area && c.area !== lastArea ? `<div class="tl-day">${esc((r.areas.find(a => a.area === c.area) || {}).title || c.area)}</div>` : ''; lastArea = c.area; return h + row(c); }).join('');
@@ -646,6 +650,286 @@ after.scorecard = () => {
   }});
   }
   $('#pst-term').onclick = () => termRun('fbscore');
+};
+
+// ---------- agent reach (Flightbay Enterprise) ----------
+// By agent: what each agent, MCP server and agent gateway can reach on the
+// network, what those destinations can reach for it, and how to close it down.
+const rcIntro = 'What each agent can reach on the network, and what those destinations can reach for it. An agent is only as contained as the weakest thing it can call.';
+const rcTypes = {'kagent-agent': 'kagent agent', 'mcp-server': 'MCP server', agentgateway: 'agentgateway', 'possible-agent': 'possible agent'};
+const rcRadiusCls = {open: 'red', wide: 'amber', narrow: 'blue', contained: 'green'};
+const rcRadiusWhy = {open: 'reaches the internet, or has a critical finding', wide: 'half the cluster or more', narrow: 'more than three Services', contained: 'three Services or fewer'};
+const rcNetCls = {allowed: 'red', denied: 'green', unknown: 'amber'};
+const rcRiskRank = {red: 0, amber: 1, green: 2, grey: 3};
+const rcName = a => a.namespace + '/' + a.name;
+const rcCap = s => s ? s[0].toUpperCase() + s.slice(1) : '';
+const rcBadge = (v, cls, label) => `<span class="rc-badge ${cls || ''}">${esc(label ?? v ?? '—')}</span>`;
+const rcTypePill = t => `<span class="rc-type rc-type-${esc(t)}">${esc(rcTypes[t] || t)}</span>`;
+const rcRisk = r => `<span class="rc-risk rc-${esc(r)}"><i></i>${esc(r)}</span>`;
+// svc:<cluster>/<ns>/svc/<name> -> {namespace, name}
+const rcSvc = id => { if (!id || !id.startsWith('svc:')) return null; const p = id.slice(4).split('/'); return p.length >= 3 ? {namespace: p[p.length - 3], name: p[p.length - 1]} : null; };
+const rcFields = {type: a => [a.type], ns: a => [a.namespace], namespace: a => [a.namespace], radius: a => [a.radius], internet: a => [a.internet]};
+const rcKeys = [
+  {value: 'type', hint: 'kagent-agent, mcp-server, agentgateway or possible-agent', example: 'type:mcp-server'},
+  {value: 'ns', hint: 'namespace of the agent', example: 'ns:kagent'},
+  {value: 'radius', hint: 'open, wide, narrow or contained', example: 'radius:open'},
+  {value: 'internet', hint: 'allowed, denied or unknown', example: 'internet:allowed'},
+];
+function rcMatch(a, terms) {
+  return terms.every(t => {
+    let ok;
+    if (t.key && rcFields[t.key]) { const w = t.val.toLowerCase(); ok = rcFields[t.key](a).some(v => String(v || '').toLowerCase().startsWith(w)); }
+    else ok = (rcName(a) + ' ' + a.type + ' ' + (rcTypes[a.type] || '') + ' ' + a.summary).toLowerCase().includes((t.text ?? `${t.key}:${t.val}`).toLowerCase());
+    return t.neg ? !ok : ok;
+  });
+}
+
+async function reach() {
+  const R = S.reach;
+  if (!feature('reach')) {
+    return head('Agent reach', esc(rcIntro)) + `<section class="panel"><div class="empty"><strong>Agent reach is a Flightbay Enterprise feature</strong>
+      It shows, agent by agent, what each agent, MCP server and agent gateway can reach on the network and how wide the blast radius is.<br>
+      Turn it on by starting the desk with <code>FLIGHTBAY_ENTERPRISE=1 flightbay ui</code>.</div></section>`;
+  }
+  const rev = S.state?.revision;
+  if (!R.list || R.listRev !== rev) { R.list = await api('api/reach'); R.listRev = rev; }
+  const rep = R.list, all = rep.agents || [];
+  const terms = qTerms(R.q);
+  const shown = all.filter(a => (!R.type || a.type === R.type) && rcMatch(a, terms));
+  let detail = '';
+  if (R.sel) {
+    const key = R.sel + '\u0000' + rev;
+    if (R.detailKey !== key) {
+      R.detail = await api('api/reach', {agent: R.sel}).catch(e => ({error: e.message}));
+      R.detailKey = key; R.fixOpen = {};
+    }
+    detail = R.detail.error ? `<div class="notice bad mt">${esc(R.detail.error)}</div>` : rcDetail(R.detail);
+  }
+  const typeCount = t => all.filter(a => a.type === t).length;
+  const chip = (t, label, n) => `<button class="chip ${R.type === t ? 'on' : ''}" data-rctype="${esc(t)}">${esc(label)}${n !== undefined ? ` <small>${n}</small>` : ''}</button>`;
+  const chips = chip('', 'All', all.length) + Object.keys(rcTypes).filter(typeCount).map(t => chip(t, rcTypes[t], typeCount(t))).join('');
+  const isSel = a => R.sel && (rcName(a) === R.sel || a.id === R.sel);
+  const sev = (n, s) => n ? `<span class="pst-sev pst-sev-${s}">${n} ${s === 'critical' ? 'crit' : s}</span>` : '';
+  const multi = (rep.clusters || []).length > 1;
+  const rows = shown.map(a => { const c = a.counts || {}; return `<tr class="${isSel(a) ? 'sel' : ''}" data-rcagent="${esc(rcName(a))}" title="Show the blast radius of ${esc(rcName(a))}">
+    <td><div class="mono rc-agent-name">${esc(rcName(a))}</div><div class="row" style="gap:6px;margin-top:4px">${rcTypePill(a.type)}${multi ? `<span class="tag">${esc(a.cluster)}</span>` : ''}</div></td>
+    <td>${rcBadge(a.radius, rcRadiusCls[a.radius])}</td><td>${rcBadge(a.internet, rcNetCls[a.internet])}</td>
+    <td class="mono">${c.direct}<small class="muted"> / ${c.services}</small></td><td class="mono">${c.closure}</td><td class="mono ${c.write ? 'red' : ''}">${c.write}</td>
+    <td><div class="row" style="gap:5px">${sev(c.critical, 'critical')}${sev(c.high, 'high')}${!c.critical && !c.high ? '<span class="muted">none</span>' : ''}</div></td>
+    <td class="rc-sum">${esc(a.summary)}</td></tr>`; }).join('');
+  const notes = (rep.notes || []).map(n => `<div class="notice" style="margin-bottom:12px"><span>△</span><div>${esc(rcCap(n))}.</div></div>`).join('');
+  const list = all.length ? `<section class="panel"><div class="panel-head"><h2>${shown.length === all.length ? all.length : `${shown.length} of ${all.length}`} agent${all.length === 1 ? '' : 's'}</h2><small class="muted">Worst first. Click one to see its blast radius.</small></div>
+    <div class="table-scroll" style="max-height:${R.sel ? '38vh' : '66vh'}">${shown.length ? `<table class="rc-list"><thead><tr><th>Agent</th><th>Radius</th><th>Internet</th><th title="Services reachable in one hop, of the Services in the capture">Direct</th><th title="Services reachable in any number of hops">Total</th><th title="Direct destinations it can change data on">Write</th><th>Findings</th><th>Summary</th></tr></thead><tbody>${rows}</tbody></table>`
+      : '<div class="empty"><strong>No agents match</strong>Change the filter or the type.</div>'}</div></section>`
+    : `<section class="panel"><div class="empty"><strong>No agents found</strong>No kagent agents, MCP servers, agent gateways or workloads that look like agents were captured.</div></section>`;
+  return head('Agent reach', `${esc(rcIntro)} <span class="ent-pill">Enterprise</span>`, `<button id="rc-term-all">&gt;_ fbreach in terminal</button>`) + notes + `
+    <div class="toolbar"><div class="row wrap">${chips}</div>
+      <input id="rc-q" placeholder="Filter. Try type: ns: radius: internet: or text" value="${esc(R.q)}" style="min-width:320px" autocomplete="off" spellcheck="false"></div>
+    ${list}${detail}`;
+}
+
+function rcDetail(a) {
+  const R = S.reach, c = a.counts || {}, id = a.identity || {};
+  const tile = (value, cls, caption, eyebrow) => `<div class="rc-tile"><div class="eyebrow">${esc(eyebrow)}</div><div class="rc-tile-v ${cls || ''}">${value}</div><small>${caption}</small></div>`;
+  const tiles = [
+    tile(esc(a.radius), rcRadiusCls[a.radius], esc(rcRadiusWhy[a.radius] || ''), 'Radius'),
+    tile(esc(a.internet), rcNetCls[a.internet], a.metadata ? `cloud metadata ${esc(a.metadata)}` : 'direct egress', 'Internet'),
+    tile(`${c.direct}<small> / ${c.services}</small>`, '', `Reaches ${c.direct} of ${c.services} Services`, 'Direct'),
+    tile(String(c.closure), '', `${c.closure} in any number of hops`, 'Total'),
+    tile(String(c.write), c.write ? 'red' : 'green', `Can write to ${c.write}`, 'Write'),
+    a.observed ? tile(String(c.observed), '', `Called ${c.observed} in the capture`, 'Used') : tile('—', 'muted', 'no access logs for this agent', 'Used'),
+    a.observed ? tile(String(c.neverUsed), c.neverUsed ? 'amber' : 'green', `${c.neverUsed} allowed but never used`, 'Never used') : tile('—', 'muted', 'needs access logs to tell', 'Never used'),
+  ].join('');
+  const header = `<section class="panel mt" id="rc-detail"><div class="panel-body">
+    <div class="row between wrap" style="align-items:flex-start"><div class="row wrap"><h2 class="mono" style="font-size:17px">${esc(rcName(a))}</h2>${rcTypePill(a.type)}<span class="tag">${esc(a.kind)}</span>${(R.list?.clusters || []).length > 1 ? `<span class="tag">${esc(a.cluster)}</span>` : ''}</div>
+      <div class="row wrap">${a.ref ? `<button id="rc-obj">Open ${esc(a.kind)}</button>` : ''}<button id="rc-logs">Logs from this agent</button><button id="rc-term">&gt;_ fbreach in terminal</button><button class="ghost" id="rc-close" title="Back to the list" aria-label="Close">✕</button></div></div>
+    <p class="rc-summary">${esc(a.summary)}</p><p class="muted" style="font-size:12px;margin-top:4px">Why it is listed: ${esc(a.why)}</p>
+    <div class="rc-tiles">${tiles}</div></div></section>`;
+  const graph = `<section class="panel mt"><div class="panel-head"><h2>Blast radius</h2><small class="muted">Left to right: the agent, what it reaches directly, what those reach for it, and the way out. Click a box to open it; hover a line for why it is allowed.</small></div>
+    <div class="rc-graph">${rcGraph(a)}</div>
+    <div class="rc-legend"><span><i class="rc-sw red"></i>open, write access or internet</span><span><i class="rc-sw amber"></i>allowed with no request-level rule, or unknown</span><span><i class="rc-sw green"></i>read-only or blocked</span><span><i class="rc-sw grey"></i>blocked or not applicable</span><span><i class="rc-sw dash"></i>denied or unknown verdict</span></div></section>`;
+  const kindCls = {internet: 'red', fetcher: 'red', metadata: 'red', credentials: 'red', store: 'amber', service: 'amber'};
+  const paths = (a.paths || []).map(p => `<div class="rc-path"><span class="rc-kind ${kindCls[p.kind] || ''}">${esc(p.kind)}</span>
+    <div class="rc-chain">${p.hops.map(h => `<span class="rc-hop ${h === 'internet' || h === '169.254.169.254' ? 'net' : ''}">${esc(h)}</span>`).join('<span class="rc-arrow">→</span>')}</div>
+    <small class="muted rc-why">${esc(p.why)}</small></div>`).join('');
+  const pathsPanel = `<section class="panel mt"><div class="panel-head"><h2>Paths that matter</h2><small class="muted">Chains from the agent to the internet, cloud metadata, fetchers and stores</small></div>
+    ${paths || '<div class="empty"><strong>No path to the internet or cloud metadata</strong>Nothing this agent can reach leads out of the cluster.</div>'}</section>`;
+  const findings = (a.findings || []).map((f, i) => `<div class="rc-finding"><div class="row" style="align-items:flex-start"><span class="pst-sev pst-sev-${esc(f.severity)}">${esc(f.severity)}</span><div style="min-width:0;flex:1"><strong>${esc(f.title)}</strong><p class="muted" style="margin-top:4px;font-size:12px">${esc(f.detail)}</p>
+    <details class="rc-fix" data-rcfix="${i}" ${R.fixOpen[i] ? 'open' : ''}><summary>How to fix</summary>
+      ${f.fix ? `<div class="row between mt" style="margin-top:10px"><small class="muted">Apply, then take a new capture to confirm</small><div class="row"><button data-rccopy="${i}">Copy YAML</button>${f.source ? `<a href="${esc(f.source)}" target="_blank" rel="noopener">Read the guide ↗</a>` : ''}</div></div><pre class="code" style="margin-top:8px">${esc(f.fix)}</pre>`
+        : `<p class="muted" style="margin:8px 0 0;font-size:12px">No fix YAML came back for this finding.${f.source ? ` <a href="${esc(f.source)}" target="_blank" rel="noopener">Read the guide ↗</a>` : ''}</p>`}
+    </details></div></div></div>`).join('');
+  const findingsPanel = `<section class="panel"><div class="panel-head"><h2>Findings</h2><small class="muted">${c.critical || 0} critical · ${c.high || 0} high · ${(a.findings || []).length} in all</small></div>
+    ${findings || '<div class="empty"><strong>Nothing to lock down</strong>No findings for this agent.</div>'}</section>`;
+  const yes = (b, good) => b ? `<span class="${good ? 'green' : 'amber'}">yes</span>` : `<span class="${good ? 'amber' : 'green'}">no</span>`;
+  const lst = (xs, cls, none) => (xs || []).length ? xs.map(x => `<div class="${cls || ''}">${esc(x)}</div>`).join('') : `<span class="muted">${none || 'none'}</span>`;
+  const identity = `<section class="panel"><div class="panel-head"><h2>Identity</h2><small class="muted">What it carries without anyone deciding to give it</small></div><div class="panel-body">
+    <dl class="metadata rc-id"><dt>Service account</dt><dd class="mono">${esc(id.serviceAccount || '—')}${id.principal ? `<br><small class="muted">${esc(id.principal)}</small>` : ''}</dd>
+      <dt>In mesh</dt><dd>${yes(id.inMesh, true)}</dd>
+      <dt>Token mounted</dt><dd>${yes(id.tokenMounted, false)}</dd>
+      <dt>RBAC rules</dt><dd class="mono rc-small">${lst(id.rbac)}${id.rbacComplete === false ? '<div class="amber">RBAC was not fully captured</div>' : ''}</dd>
+      <dt>Dangerous rules</dt><dd class="rc-small">${lst(id.dangerous, 'red')}</dd>
+      <dt>Cloud role</dt><dd class="mono rc-small">${id.cloudRole ? esc(id.cloudRole) : '<span class="muted">none</span>'}</dd>
+      <dt>Secrets</dt><dd>${(id.secrets || []).length ? id.secrets.map(x => `<span class="tag">${esc(x)}</span>`).join(' ') : '<span class="muted">none</span>'}</dd>
+      <dt>Host access</dt><dd class="rc-small">${lst(id.hostAccess, 'red')}</dd>
+      <dt>Sandbox</dt><dd>${id.sandbox ? `<span class="green">${esc(id.sandbox)}</span>` : '<span class="muted">none</span>'}</dd>
+      <dt>Shared volumes</dt><dd class="rc-small">${lst(id.sharedVolumes, 'amber')}</dd></dl></div></section>`;
+  // Destinations: every direct edge.
+  const never = new Set(a.neverUsed || []);
+  const dest = e => { const s = rcSvc(e.to); return s ? s.namespace + '/' + s.name : e.to.replace(/^(ext|svc):/, ''); };
+  const direct = [...(a.direct || [])].sort((x, y) => (rcRiskRank[x.risk] ?? 9) - (rcRiskRank[y.risk] ?? 9));
+  const dterms = qTerms(R.dq);
+  const chipOk = (e, k) => k === 'risky' ? (e.risk === 'red' || e.risk === 'amber') : k === 'used' ? e.observed > 0 : k === 'never' ? never.has(dest(e)) : true;
+  const dChipOk = e => chipOk(e, R.dchip);
+  const dMatch = e => dterms.every(t => { const ok = (dest(e) + ' ' + e.verdict + ' ' + e.risk + ' ' + e.why + ' ' + (e.reasons || []).join(' ') + ' ' + (e.methods || ['any']).join(' ')).toLowerCase().includes((t.text ?? `${t.key}:${t.val}`).toLowerCase()); return t.neg ? !ok : ok; });
+  const drows = direct.filter(e => dChipOk(e) && dMatch(e));
+  const counts = Object.fromEntries(['all', 'risky', 'used', 'never'].map(k => [k, direct.filter(e => chipOk(e, k)).length]));
+  const dchip = (k, label) => `<button class="chip ${R.dchip === k ? 'on' : ''}" data-rcd="${k}">${label} <small>${counts[k]}</small></button>`;
+  const cl = a.cluster;
+  const destTable = `<section class="panel mt"><div class="panel-head"><h2>Destinations</h2><small class="muted">Every Service it can reach in one hop, riskiest first</small></div><div class="panel-body" style="padding-bottom:0">
+    <div class="toolbar"><div class="row wrap">${dchip('all', 'All')}${dchip('risky', 'Risky')}${dchip('used', 'Used')}${dchip('never', 'Never used')}</div>
+      <input id="rc-dq" placeholder="Filter destinations" value="${esc(R.dq)}" autocomplete="off" spellcheck="false" style="min-width:240px"></div></div>
+    <div class="table-scroll" style="max-height:60vh">${drows.length ? `<table class="rc-dest"><thead><tr><th>Risk</th><th>Destination</th><th>Verdict</th><th>Methods</th><th>Called</th><th>Configured</th><th>Why</th></tr></thead><tbody>
+      ${drows.map(e => { const s = rcSvc(e.to); return `<tr><td>${rcRisk(e.risk)}</td>
+        <td class="mono rc-dst">${s ? `<button class="link" data-rcsvc="${attr({cluster: cl, group: '', resource: 'services', namespace: s.namespace, name: s.name})}">${esc(dest(e))}</button>` : esc(dest(e))}${never.has(dest(e)) ? '<br><small class="muted">never used</small>' : ''}</td>
+        <td class="${e.verdict === 'allowed' ? '' : e.verdict === 'denied' ? 'green' : 'amber'}">${esc(e.verdict)}${e.layer ? ` <small class="muted">${esc(e.layer)}</small>` : ''}</td>
+        <td class="mono rc-small">${e.methods == null ? '<span class="muted">any method</span>' : esc(e.methods.join(', ') || 'none')}${e.write ? ' <span class="red">· write</span>' : ''}</td>
+        <td class="rc-small">${e.observed ? `${num(e.observed)}${(e.observedMethods || []).length ? ` <span class="muted mono">${esc(e.observedMethods.join(', '))}</span>` : ''}` : '<span class="muted">not seen</span>'}</td>
+        <td>${e.declared ? '<span class="green">yes</span>' : '<span class="muted">no</span>'}</td>
+        <td class="rc-wrap">${esc(e.why)}${(e.reasons || []).length ? `<br><small class="muted">${esc(e.reasons.join('; '))}</small>` : ''}${e.via ? `<br><small class="muted">via ${esc(e.via)}</small>` : ''}</td></tr>`; }).join('')}
+    </tbody></table>` : `<div class="empty"><strong>${direct.length ? 'No destinations match' : 'No destinations'}</strong>${direct.length ? 'Change the filter above.' : 'Nothing in the cluster is reachable from this agent.'}</div>`}</div></section>`;
+  return header + graph + pathsPanel + `<div class="grid2 rc-grid mt">${findingsPanel}${identity}</div>` + destTable;
+}
+
+// rcGraph draws the blast radius as columns: the agent, its direct
+// destinations, what they reach, then the way out (internet, metadata and
+// external hosts). Lines between adjacent columns stay in the gap between
+// them; a line that skips a column is routed along a lane above every box, so
+// no line crosses a box.
+function rcGraph(a) {
+  const nodes = a.nodes || [], edges = (a.edges || []).filter(e => e.from !== e.to);
+  if (!nodes.length) return '<div class="empty"><strong>No graph for this agent</strong></div>';
+  const ids = new Set(nodes.map(n => n.id));
+  const es = edges.filter(e => ids.has(e.from) && ids.has(e.to));
+  const inbound = {};
+  es.forEach(e => (inbound[e.to] ||= []).push(e.from));
+  const out = new Set(['internet', 'metadata', 'external']);
+  const col = {};
+  let maxSvc = 0;
+  for (const n of nodes) if (n.type !== 'agent' && !out.has(n.type)) { col[n.id] = Math.max(1, n.depth || 1); maxSvc = Math.max(maxSvc, col[n.id]); }
+  const E = maxSvc + 1;
+  for (const n of nodes) {
+    if (n.type === 'agent') col[n.id] = 0;
+    else if (n.type === 'internet' || n.type === 'metadata') col[n.id] = E;
+    else if (n.type === 'external') col[n.id] = (inbound[n.id] || []).includes('internet') ? E + 1 : E;
+  }
+  const ncol = Math.max(...Object.values(col)) + 1;
+  const cols = Array.from({length: ncol}, () => []);
+  nodes.forEach(n => cols[col[n.id]].push(n));
+  // Order each column by where its predecessors sit, internet and metadata first.
+  const row = {};
+  cols.forEach((list, c) => {
+    if (c >= 1) {
+      const bc = new Map(list.map((n, i) => {
+        if (n.type === 'internet') return [n, -2e9];
+        if (n.type === 'metadata') return [n, -1e9];
+        const ps = (inbound[n.id] || []).filter(p => row[p] !== undefined);
+        return [n, ps.length ? ps.reduce((s, p) => s + row[p], 0) / ps.length * 1000 + i : 1e8 + i];
+      }));
+      list.sort((x, y) => bc.get(x) - bc.get(y));
+    }
+    list.forEach((n, i) => { row[n.id] = i; });
+  });
+  const avail = Math.max(880, ($('#main')?.clientWidth || 1160) - 60);
+  const gap = 66, bh = 42, vg = 12, lane = 7;
+  const bw = Math.max(168, Math.min(250, Math.floor((avail - 24 - gap * (ncol - 1)) / ncol)));
+  const long = es.filter(e => col[e.to] !== col[e.from] + 1);
+  const top = 18 + long.length * lane;
+  const X = c => 12 + c * (bw + gap), Y = id => top + row[id] * (bh + vg);
+  const W = 24 + ncol * bw + (ncol - 1) * gap, H = top + Math.max(...cols.map(l => l.length)) * (bh + vg) + 8;
+  const fit = (s, px) => { const n = Math.max(4, Math.floor((bw - 20) / px)); s = String(s || ''); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
+  const byId = new Map(nodes.map(n => [n.id, n]));
+  const labelOf = id => byId.get(id)?.label || id;
+  const dash = e => e.verdict === 'denied' || e.verdict === 'unknown';
+  const risk = r => ['red', 'amber', 'green', 'grey'].includes(r) ? r : 'grey';
+  let li = 0;
+  const edgeSvg = es.map(e => {
+    const cs = col[e.from], ct = col[e.to];
+    const sx = X(cs) + bw, sy = Y(e.from) + bh / 2, tx = X(ct) - 2, ty = Y(e.to) + bh / 2;
+    let d;
+    if (ct === cs + 1) {
+      const mx = (sx + tx) / 2;
+      d = `M${sx},${sy} C${mx},${sy} ${mx},${ty} ${tx},${ty}`;
+    } else {
+      const i = li++, off = ((i % 5) - 2) * 4, ly = 8 + i * lane;
+      const g1 = sx + gap / 2 + off, g2 = Math.max(4, X(ct) - gap / 2 + off);
+      d = `M${sx},${sy} H${g1} V${ly} H${g2} V${ty} H${tx}`;
+    }
+    const tip = [`${labelOf(e.from)} → ${labelOf(e.to)}`, `${e.verdict}${e.layer ? ' (' + e.layer + ')' : ''}: ${e.why || ''}`, ...(e.reasons || []), e.via ? 'via ' + e.via : '', e.methods ? 'methods: ' + e.methods.join(', ') : '', e.observed ? `called ${e.observed} times` : ''].filter(Boolean).join('\n');
+    return `<g class="rg-edge rg-${risk(e.risk)} ${dash(e) ? 'rg-dash' : ''}"><title>${esc(tip)}</title><path class="rg-hit" d="${d}"/><path class="rg-line" d="${d}" marker-end="url(#rga-${risk(e.risk)})"/></g>`;
+  }).join('');
+  // Services read ns/name: put the name on top and the namespace underneath so less is cut off.
+  const split = n => n.type === 'service' && n.label.includes('/') ? [n.label.slice(n.label.indexOf('/') + 1), n.label.slice(0, n.label.indexOf('/'))] : [n.label, ''];
+  const title = n => split(n)[0];
+  const sub = n => n.type === 'agent' ? (rcTypes[a.type] || a.type) : n.type === 'group' ? `${n.count} Services · click to list` : n.type === 'internet' ? 'outside the cluster' : n.type === 'metadata' ? 'cloud instance metadata'
+    : [...(n.classes || []), split(n)[1]].filter(Boolean).join(' · ') || (n.type === 'external' ? 'external host' : 'service');
+  const nodeSvg = nodes.map((n, i) => {
+    const click = n.type === 'group' || n.ref || rcSvc(n.id);
+    const tip = [n.label, n.namespace && n.type !== 'group' ? 'namespace ' + n.namespace : '', (n.classes || []).join(', '), n.detail, click ? (n.type === 'group' ? 'Click to list them' : 'Click to open') : ''].filter(Boolean).join('\n');
+    return `<g class="rg-node rg-${risk(n.risk)} rg-t-${esc(n.type)} ${click ? 'rg-click' : ''}" data-rgnode="${i}" transform="translate(${X(col[n.id])},${Y(n.id)})"><title>${esc(tip)}</title>
+      <rect width="${bw}" height="${bh}" rx="7"/><text x="10" y="17" class="rg-l">${esc(fit(title(n), 6.9))}</text><text x="10" y="32" class="rg-s">${esc(fit(sub(n), 6.1))}</text></g>`;
+  }).join('');
+  const marker = r => `<marker id="rga-${r}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="rg-arrow-${r}"/></marker>`;
+  return `<svg class="rg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Blast radius of ${esc(rcName(a))}"><defs>${['red', 'amber', 'green', 'grey'].map(marker).join('')}</defs>${edgeSvg}${nodeSvg}</svg>`;
+}
+
+after.reach = () => {
+  const R = S.reach;
+  $('#rc-term-all')?.addEventListener('click', () => termRun('fbreach'));
+  if (!feature('reach')) return;
+  document.querySelectorAll('[data-rcagent]').forEach(tr => tr.onclick = () => {
+    const n = tr.dataset.rcagent;
+    R.scroll = true;
+    if (R.sel === n) { render(); return; }
+    location.hash = 'reach?agent=' + encodeURIComponent(n).replace(/%2F/gi, '/');
+  });
+  document.querySelectorAll('[data-rctype]').forEach(b => b.onclick = () => { R.type = R.type === b.dataset.rctype ? '' : b.dataset.rctype; render(); });
+  const q = $('#rc-q');
+  if (q) {
+    let t; q.oninput = e => { clearTimeout(t); t = setTimeout(() => { const c = e.target.selectionStart, v = e.target.value; R.q = v; render().then(() => refocus('#rc-q', c, v)); }, 250); };
+    typeahead(q, {keys: rcKeys, alias: {namespace: 'ns'}, values: (f, p, rest) => {
+      const terms = qTerms(rest), get = rcFields[f];
+      if (!get) return [];
+      const agents = (R.list?.agents || []).filter(a => (!R.type || a.type === R.type) && rcMatch(a, terms));
+      return countValues(agents.flatMap(get), p, f === 'type' ? v => rcTypes[v] : f === 'radius' ? v => rcRadiusWhy[v] : null);
+    }});
+  }
+  const a = R.detail;
+  if (!R.sel || !a || a.error) return;
+  if (R.scroll) { R.scroll = false; $('#rc-detail')?.scrollIntoView({block: 'start', behavior: 'smooth'}); }
+  $('#rc-close').onclick = () => { location.hash = 'reach'; };
+  $('#rc-term').onclick = () => termRun('fbreach ' + rcName(a));
+  $('#rc-logs').onclick = () => openLogs(a.kind === 'Pod' ? {pod: a.name, namespace: a.namespace} : {workload: `${a.kind}/${a.name}`, namespace: a.namespace});
+  const ob = $('#rc-obj'); if (ob) ob.onclick = () => openObject({cluster: a.ref.cluster, group: a.ref.group, resource: a.ref.resource, namespace: a.ref.namespace, name: a.ref.name});
+  const openSvc = (ns, name) => openObject({cluster: a.cluster, group: '', resource: 'services', namespace: ns, name});
+  document.querySelectorAll('[data-rgnode]').forEach(g => g.onclick = () => {
+    const n = a.nodes[+g.dataset.rgnode]; if (!n) return;
+    if (n.type === 'group') {
+      const names = (n.detail || '').split(',').map(s => s.trim()).filter(Boolean);
+      modal(n.label, `<p class="muted" style="margin-bottom:10px;font-size:12px">Allowed, never called and not configured. Each is one more thing a compromised ${esc(a.name)} can talk to.</p>
+        <div class="search-results">${names.map(x => `<button data-rcsvc="${attr({cluster: a.cluster, group: '', resource: 'services', namespace: n.namespace, name: x})}"><span class="badge">Service</span><span class="mono">${esc(n.namespace)}/${esc(x)}</span></button>`).join('')}</div>`);
+      document.querySelectorAll('#modal-root [data-rcsvc]').forEach(b => b.onclick = () => { closeModal(); openObject(JSON.parse(b.dataset.rcsvc)); });
+      return;
+    }
+    if (n.ref) { openObject({cluster: n.ref.cluster, group: n.ref.group, resource: n.ref.resource, namespace: n.ref.namespace, name: n.ref.name}); return; }
+    const s = rcSvc(n.id); if (s) openSvc(s.namespace, s.name);
+  });
+  document.querySelectorAll('#main [data-rcsvc]').forEach(b => b.onclick = () => openObject(JSON.parse(b.dataset.rcsvc)));
+  document.querySelectorAll('[data-rcfix]').forEach(d => d.ontoggle = () => { R.fixOpen[+d.dataset.rcfix] = d.open; });
+  document.querySelectorAll('[data-rccopy]').forEach(b => b.onclick = () => { const f = a.findings[+b.dataset.rccopy]; navigator.clipboard.writeText(f.fix).then(() => toast('Fix copied'), () => toast('Clipboard unavailable')); });
+  document.querySelectorAll('[data-rcd]').forEach(b => b.onclick = () => { R.dchip = b.dataset.rcd; const y = scrollY; render().then(() => scrollTo(0, y)); });
+  const dq = $('#rc-dq');
+  if (dq) { let t; dq.oninput = e => { clearTimeout(t); t = setTimeout(() => { const c = e.target.selectionStart, v = e.target.value, y = scrollY; R.dq = v; render().then(() => { scrollTo(0, y); refocus('#rc-dq', c, v); }); }, 250); }; }
 };
 
 // ---------- search ----------
@@ -1379,7 +1663,7 @@ function closeModal() { $('#modal-root').innerHTML = ''; }
 
 function openSearch() {
   modal('Jump to an object or view', `<input id="gs" style="width:100%" placeholder="Any object: name, label, image, hostname. Try kind: ns: label:" autocomplete="off"><div id="gs-res" class="search-results"></div>`);
-  const views = ['navigator', 'search', 'overview', 'scorecard', 'resources', 'logs', 'timeline', 'findings', 'compare', 'proxies', 'coverage'];
+  const views = ['navigator', 'search', 'overview', 'scorecard', ...(feature('reach') ? ['reach'] : []), 'resources', 'logs', 'timeline', 'findings', 'compare', 'proxies', 'coverage'];
   let hits = [], sel = 0;
   const draw = () => {
     $('#gs-res').innerHTML = hits.map((h, i) => `<button class="${i === sel ? 'sel' : ''}" data-i="${i}">${h.all ? `<span class="green">⌕</span> Search everything for “${esc(h.all)}”<small>Search page</small>` : h.view ? `<span class="green">↗</span> ${esc(h.view)}<small>view</small>` : `<span class="badge">${esc(h.kind)}</span>${esc(h.namespace ? h.namespace + '/' : '')}${esc(h.name)}${h.snippet ? ` <span class="muted mono" style="font-size:10px">…${esc(h.snippet.slice(0, 70))}…</span>` : ''}<small>${esc(h.cluster)}</small>`}</button>`).join('');
@@ -1471,7 +1755,7 @@ function boot() {
     if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); openSearch(); }
     else if (e.ctrlKey && e.key === '`') { e.preventDefault(); toggleTerminal(); }
     else if (e.key === 'Escape') { closeModal(); closeDrawer(); }
-    else if (!typing && e.key === '/' && S.view !== 'navigator') { e.preventDefault(); ($('#log-q') || $('#res-q') || $('#obj-q'))?.focus(); }
+    else if (!typing && e.key === '/' && S.view !== 'navigator') { e.preventDefault(); ($('#log-q') || $('#res-q') || $('#obj-q') || $('#rc-q'))?.focus(); }
   });
   addEventListener('hashchange', () => { parseHash(); closeDrawer(); render(); });
   parseHash();

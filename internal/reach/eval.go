@@ -184,6 +184,8 @@ func (c *cluster) npIngress(src *workload, dst *workload, ports []string) (strin
 	return Denied, "ingress denied by NetworkPolicy " + names(pols) + " on " + dst.name
 }
 
+func pairOf(v, why string) [2]string { return [2]string{v, why} }
+
 func names(os []*store.Object) string {
 	var n []string
 	for _, o := range os {
@@ -473,11 +475,40 @@ func (c *cluster) evalHop(src *workload, sv *service) hop {
 		bh := hop{layer: "L4"}
 		// In ambient, traffic between two mesh pods is HBONE on 15008.
 		npPorts := ports
+		var wp *workload
 		if src.inMesh && dst.inMesh && !src.sidecar && !dst.sidecar {
 			npPorts = []string{"15008"}
+			// With a waypoint, the agent's ztunnel opens HBONE to the waypoint
+			// pod, not to the destination: NetworkPolicy sees agent -> waypoint
+			// and waypoint -> destination, both on 15008.
+			wp = c.waypointFor(sv)
 		}
-		eg, egWhy := c.npEgress(src, dst.ns, dst.labels, npPorts, nil)
-		in, inWhy := c.npIngress(src, dst, npPorts)
+		var eg, egWhy, in, inWhy string
+		if wp != nil {
+			eg, egWhy = c.npEgress(src, wp.ns, wp.labels, npPorts, nil)
+			if eg == Denied {
+				egWhy += " (to waypoint " + wp.ns + "/" + wp.name + ", which carries traffic for " + sv.name + ")"
+			}
+			// The rest of the path: into the waypoint, out of it, into dst.
+			in = Allowed
+			var why []string
+			for _, step := range [][2]string{
+				pairOf(c.npIngress(src, wp, npPorts)),
+				pairOf(c.npEgress(wp, dst.ns, dst.labels, npPorts, nil)),
+				pairOf(c.npIngress(wp, dst, npPorts)),
+			} {
+				if step[0] == Denied || (step[0] == Unknown && in == Allowed) {
+					in = step[0]
+				}
+				if step[1] != "" && !strings.HasPrefix(step[1], "no egress NetworkPolicy") {
+					why = append(why, step[1])
+				}
+			}
+			inWhy = strings.Join(why, "; ")
+		} else {
+			eg, egWhy = c.npEgress(src, dst.ns, dst.labels, npPorts, nil)
+			in, inWhy = c.npIngress(src, dst, npPorts)
+		}
 		for _, v := range []struct{ v, why string }{{eg, egWhy}, {in, inWhy}} {
 			if v.why != "" {
 				bh.add(v.why)

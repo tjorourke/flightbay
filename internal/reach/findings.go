@@ -144,7 +144,7 @@ func (e *engine) findings(w *workload, a Agent, reach []pair, all []*workload, d
 
 	total := 0
 	for _, sv := range c.services {
-		if !has(sv.classes, "dns") && !has(sv.classes, "apiserver") {
+		if !has(sv.classes, "dns") && !has(sv.classes, "apiserver") && !has(sv.classes, "waypoint") {
 			total++
 		}
 	}
@@ -225,6 +225,12 @@ func sortedKeys[T any](mp map[string]T) []string {
 	return out
 }
 
+// needsWaypoint: an HTTP service whose read-only fix (readOnlyPolicy) needs a
+// waypoint to enforce methods.
+func needsWaypoint(sv *service) bool {
+	return isHTTP(sv) && (has(sv.classes, "fetcher") || has(sv.classes, "store") || has(sv.classes, "credentials"))
+}
+
 func isHTTP(sv *service) bool {
 	for _, p := range sv.ports {
 		n := strings.ToLower(p.name + " " + p.appProtocol)
@@ -284,11 +290,32 @@ func (e *engine) egressPolicy(w *workload, needed []*service, hosts map[string]b
 		for _, p := range sv.ports {
 			ports = append(ports, "{port: "+portYAML(p.target)+"}")
 		}
-		if w.inMesh && len(sv.backends) > 0 && sv.backends[0].inMesh {
-			ports = append(ports, "{port: 15008}   # ambient HBONE")
+		hbone := w.inMesh && !w.sidecar && len(sv.backends) > 0 && sv.backends[0].inMesh && !sv.backends[0].sidecar
+		if hbone {
+			ports = append(ports, "{port: 15008}")
 		}
 		if len(ports) > 0 {
-			fmt.Fprintf(&b, "    ports: [%s]\n", strings.Join(ports, ", "))
+			// A comment inside a flow sequence would swallow the closing ].
+			fmt.Fprintf(&b, "    ports: [%s]", strings.Join(ports, ", "))
+			if hbone {
+				b.WriteString("   # 15008 is ambient HBONE")
+			}
+			b.WriteString("\n")
+		}
+		// With a waypoint, HBONE goes to the waypoint pod rather than to the
+		// service's pods. Allow it for a service that has one, and for one the
+		// read-only fix tells you to give one, or that fix cuts the agent off.
+		if wpName, wpNS := sv.waypoint, sv.waypointNS; hbone && (wpName != "" || needsWaypoint(sv)) {
+			if wpName == "" {
+				wpName, wpNS = "waypoint", sv.ns
+			}
+			if wpNS == "" {
+				wpNS = sv.ns
+			}
+			if k := wpNS + "/" + wpName; !seen["waypoint:"+k] {
+				seen["waypoint:"+k] = true
+				fmt.Fprintf(&b, "  - to:   # waypoint %s, which carries HBONE for %s\n    - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: %s}}\n      podSelector: {matchLabels: {gateway.networking.k8s.io/gateway-name: %s}}\n    ports: [{port: 15008}]\n", k, svcLabel(sv), wpNS, yamlStr(wpName))
+			}
 		}
 	}
 	if len(needed) == 0 {
