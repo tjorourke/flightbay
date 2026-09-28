@@ -688,11 +688,43 @@ function rcFound(x, external) {
 const rcFoundChips = ks => ks.map(k => `<span class="rc-src rc-src-${esc(k)}">${esc(rcFoundLabel[k] || k)}</span>`).join('');
 // rcFoundOk filters on how a destination was found.
 const rcFoundOk = (ks, k) => k === 'any' ? true : k === 'traffic' ? ks.some(x => !rcFoundLabel[x]) : k === 'only-policy' ? ks.length === 1 && ks[0] === 'policy' : ks.includes(k);
-function rcFoundChipRow(items, cur, attrName) {
+// Every flow source Flightbay reads, with what it is and how to get it when
+// the capture has none.
+const rcSources = [
+  ['ztunnel', 'ztunnel access logs', 'no ztunnel access logs in the capture (Istio ambient only)'],
+  ['agentgateway', 'agentgateway request logs', 'no agentgateway request logs in the capture'],
+  ['envoy', 'Envoy access logs: sidecars, waypoints, gateways', 'turn on Istio access logging (meshConfig.accessLogFile)'],
+  ['coredns', 'CoreDNS query logs', 'the CoreDNS log plugin is off by default: add log to the Corefile'],
+  ['hubble', 'Cilium Hubble flows', 'flightbay collect --hubble-flows, or attach hubble observe output'],
+  ['calico', 'Calico flow logs', 'attach with flightbay collect --attach-flows'],
+  ['aws-vpc', 'AWS VPC flow logs', 'attach with flightbay collect --attach-flows'],
+  ['gcp-vpc', 'GCP VPC flow logs', 'attach with flightbay collect --attach-flows'],
+  ['azure-vnet', 'Azure NSG / VNet flow logs', 'attach with flightbay collect --attach-flows'],
+  ['generic', 'any other flow export (CSV or JSON Lines)', 'attach with flightbay collect --attach-flows'],
+];
+// rcSrcState says what a source means for this agent: in the capture and
+// covering it, in the capture but blind to it, or not in the capture at all.
+function rcSrcState(src, agent) {
+  const inCap = (S.reach.flowSrc || {})[src] > 0 || (src === 'coredns' && (agent.external || []).some(x => (x.sources || []).includes('coredns')));
+  const covers = (agent.observedBy || []).includes(src);
+  const why = src === 'ztunnel' && !(agent.identity || {}).inMesh ? `${agent.name} is not in the ambient mesh, so ztunnel does not carry its traffic` : '';
+  return covers ? {cls: 'green', text: 'in the capture, covers this agent'} : inCap ? {cls: 'amber', text: 'in the capture, but not for this agent', why} : {cls: 'muted', text: 'not in the capture'};
+}
+// rcFoundMenu is a compact "Found by" dropdown: what says a destination is
+// reachable, then every flow source with how many destinations it saw, and
+// for the ones that saw nothing, why.
+function rcFoundMenu(items, cur, attrName, agent) {
   const all = items.map(x => x.found);
-  const srcs = [...new Set(all.flat())].filter(k => !rcFoundLabel[k]).sort();
-  const keys = [['any', 'Any'], ...(all.some(ks => ks.includes('policy')) ? [['only-policy', 'Policy only']] : []), ...(all.some(ks => ks.includes('config')) ? [['config', 'Configured']] : []), ...(all.some(ks => ks.includes('route')) ? [['route', 'Gateway route']] : []), ...(srcs.length ? [['traffic', 'Seen in traffic']] : []), ...srcs.map(s => [s, s])];
-  return `<div class="row wrap rc-foundrow"><small class="muted">Found by</small>${keys.map(([k, label]) => `<button class="chip ${cur === k ? 'on' : ''}" ${attrName}="${k}">${esc(label)} <small>${all.filter(ks => rcFoundOk(ks, k)).length}</small></button>`).join('')}</div>`;
+  const n = k => all.filter(ks => rcFoundOk(ks, k)).length;
+  const kinds = [['any', 'Any', 'every destination'], ['only-policy', 'Policy only', 'allowed, but not configured and never seen'], ['config', 'Configured', "in the agent's own configuration"], ['route', 'Gateway route', 'reached through an agentgateway route'], ['image', 'Image pull', 'the node pulls its image from there'], ['traffic', 'Seen in traffic', 'any flow source below saw it']];
+  const label = (kinds.find(k => k[0] === cur) || [cur, cur])[1];
+  const row = (k, name, sub, count, state) => `<button class="rc-fitem ${cur === k ? 'on' : ''}" ${attrName}="${k}" ${count || k === 'any' ? '' : 'disabled'}>
+      <span class="rc-fname">${esc(name)}</span><span class="rc-fn">${count}</span><span class="rc-fsub ${state ? state.cls : 'muted'}">${esc(state ? state.text : sub)}</span>${state && !count && (state.cls !== 'amber' || state.why) ? `<span class="rc-fsub muted">${esc(state.cls === 'muted' ? sub : state.cls === 'green' ? 'covers it, and saw none of its destinations' : state.why)}</span>` : ''}</button>`;
+  const known = new Set(rcSources.map(x => x[0]));
+  const extra = [...new Set(all.flat())].filter(k => !rcFoundLabel[k] && !known.has(k) && k !== 'policy');
+  return `<div class="rc-fmenu"><button class="chip ${cur && cur !== 'any' ? 'on' : ''}" data-fmenu>Found by: ${esc(label)} ▾</button>
+    <div class="rc-fpop" hidden><div class="rc-fhead">What says it is reachable</div>${kinds.filter(([k]) => k === 'any' || n(k)).map(([k, name, sub]) => row(k, name, sub, n(k))).join('')}
+      <div class="rc-fhead">Flow sources <small class="muted">what saw it</small></div>${[...rcSources, ...extra.map(k => [k, k, ''])].map(([k, name, how]) => row(k, k, how, n(k), Object.assign(rcSrcState(k, agent), {text: `${name} · ${rcSrcState(k, agent).text}`}))).join('')}</div></div>`;
 }
 const rcOrigin = f => f.origin === 'bundle' ? `flow file ${f.file || ''}, in the bundle` : f.origin === 'reviewer' ? `flow file ${f.file || ''}, added when opened (not signed)` : 'captured logs';
 // rcLogQuery is a Logs search that finds the lines behind a flow record, for
@@ -730,7 +762,7 @@ function rcEvidence(x, external, agent) {
   return `<div class="rc-ev-body"><div class="rc-ev-grid">
     <div><h4>${external ? 'How it is reached' : 'Policy verdict'}</h4>${policy}</div>
     <div><h4>Configured in</h4>${decl}</div>
-    <div><h4>Seen by</h4>${(external ? x.sources : x.observedBy || []).length ? rcFoundChips(external ? x.sources : x.observedBy) : '<span class="muted">nothing</span>'}${x.ip && external ? `<div class="rc-small muted">address ${esc(x.ip)}${(x.sources || []).includes('coredns') ? ', named by its DNS lookup' : ''}</div>` : ''}</div></div>
+    <div><h4>Flow sources</h4>${rcSources.map(([k]) => { const saw = ((external ? x.sources : x.observedBy) || []).includes(k), st = rcSrcState(k, agent); return `<div class="rc-srow">${saw ? `<span class="rc-src rc-src-${k}">${k}</span> <span class="green">saw it</span>` : `<span class="rc-src rc-src-off">${k}</span> <span class="${st.cls === 'green' ? 'amber' : 'muted'}">${st.cls === 'green' ? 'covers this agent, did not see it' : st.text}</span>`}</div>`; }).join('')}${x.ip && external ? `<div class="rc-small muted">address ${esc(x.ip)}${(x.sources || []).includes('coredns') ? ', named by its DNS lookup' : ''}</div>` : ''}</div></div>
     ${ev.length ? `<h4 class="mt">Flow records <small class="muted">${ev.length}${ev.length >= 20 ? ', the largest 20' : ''} · counts are per source and never added across sources</small></h4>
       <div class="table-scroll"><table class="rc-evt"><thead><tr><th>Source</th><th>From</th><th>Count</th><th>Request</th><th>Caller as logged</th><th>Destination as logged</th><th>Route</th><th>Verdict</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`
       : `<p class="muted mt">${seen ? 'Seen, but the records were merged away.' : none}</p>`}</div>`;
@@ -763,7 +795,7 @@ async function reach() {
       Turn it on by starting the desk with <code>FLIGHTBAY_ENTERPRISE=1 flightbay ui</code>.</div></section>`;
   }
   const rev = S.state?.revision;
-  if (!R.list || R.listRev !== rev) { R.list = await api('api/reach'); R.listRev = rev; }
+  if (!R.list || R.listRev !== rev) { R.list = await api('api/reach'); R.listRev = rev; R.flowSrc = (await api('api/flows', {limit: 1}).catch(() => ({}))).bySource || {}; }
   const rep = R.list, all = rep.agents || [];
   const terms = qTerms(R.q);
   const shown = all.filter(a => (!R.type || a.type === R.type) && rcMatch(a, terms));
@@ -821,9 +853,9 @@ function rcDetail(a) {
   const vbtn = (v, label, hint) => `<button class="chip ${G.view === v ? 'on' : ''}" data-rgview="${v}" title="${esc(hint)}">${label}</button>`;
   const graph = `<section class="panel mt rc-gpanel ${R.gfull ? 'full' : ''}" id="rc-gpanel"><div class="panel-head rc-ghead"><div class="row wrap"><h2>Blast radius</h2>
       ${vbtn('risky', 'Risky', 'Red destinations and anything leading out of the cluster; the rest folded by namespace')}${vbtn('byns', 'By namespace', 'One box per namespace; click one to open it up')}${vbtn('all', 'Everything', 'Every destination as its own box')}
+      ${rcFoundMenu([...(a.direct || []).map(e => ({found: rcFound(e, false)})), ...(a.external || []).filter(x => x.reachedVia !== 'node').map(x => ({found: rcFound(x, true)}))], R.gfound || 'any', 'data-rggf', a)}
       ${Object.keys(R.gexpand).length ? '<button class="ghost" id="rg-collapse">Fold namespaces</button>' : ''}<small class="muted">${G.folded ? `${G.shown} of ${G.total} shown one by one, ${G.folded} folded into ${G.groups} namespace${G.groups === 1 ? '' : 's'}` : `all ${G.total} destinations`}</small></div>
       <div class="row rc-zoom"><button id="rg-out" title="Zoom out (-)">−</button><span id="rg-pct" class="mono muted">100%</span><button id="rg-in" title="Zoom in (+)">+</button><button id="rg-fit" title="Fit (0)">Fit</button><button id="rg-full" title="${R.gfull ? 'Exit full screen (Esc)' : 'Full screen (f)'}">${R.gfull ? '⤡ Exit' : '⤢ Full screen'}</button></div></div>
-    <div class="rc-gfound">${rcFoundChipRow([...(a.direct || []).map(e => ({found: rcFound(e, false)})), ...(a.external || []).filter(x => x.reachedVia !== 'node').map(x => ({found: rcFound(x, true)}))], R.gfound || 'any', 'data-rggf')}<small class="muted">Boxes that don't match are faded. Click a box for its evidence.</small></div>
     <div class="rg-vp" id="rg-vp" tabindex="0">${rcGraph(a, G)}</div>
     ${rcGraphSel(a, G)}
     <div class="rc-legend"><span><i class="rc-sw red"></i>open, write access or internet</span><span><i class="rc-sw amber"></i>allowed with no request-level rule, or unknown</span><span><i class="rc-sw green"></i>read-only or blocked</span><span><i class="rc-sw grey"></i>blocked or not applicable</span><span><i class="rc-sw dash"></i>denied or unknown verdict</span><span>${rgIcon('eye', 0, 0, 14, 'rg-leg-eye')} seen in traffic</span><span class="muted">Hover a box to trace its lines · click it for how it was found · drag to move · pinch or Ctrl+scroll to zoom</span></div></section>`;
@@ -881,9 +913,9 @@ function rcDetail(a) {
   const dchip = (k, label) => `<button class="chip ${R.dchip === k ? 'on' : ''}" data-rcd="${k}">${label} <small>${counts[k]}</small></button>`;
   const cl = a.cluster;
   const destTable = `<section class="panel mt"><div class="panel-head"><h2>Destinations</h2><small class="muted">Every Service it can reach in one hop, riskiest first${a.observed ? ` · calls seen by ${esc(rcSrcList(a.observedBy))}` : ''}. Hosts outside the cluster are on the External tab</small></div><div class="panel-body" style="padding-bottom:0">
-    <div class="toolbar"><div class="row wrap">${dchip('all', 'All')}${dchip('risky', 'Risky')}${dchip('used', 'Used')}${dchip('never', 'Never used')}</div>
+    <div class="toolbar"><div class="row wrap">${dchip('all', 'All')}${dchip('risky', 'Risky')}${dchip('used', 'Used')}${dchip('never', 'Never used')}${rcFoundMenu(direct, R.dfound || 'any', 'data-rcdf', a)}</div>
       <input id="rc-dq" placeholder="Filter destinations" value="${esc(R.dq)}" autocomplete="off" spellcheck="false" style="min-width:240px"></div>
-    ${rcFoundChipRow(direct, R.dfound || 'any', 'data-rcdf')}</div>
+</div>
     <div class="table-scroll" style="max-height:60vh">${drows.length ? `<table class="rc-dest"><thead><tr><th>Risk</th><th>Destination</th><th>Verdict</th><th>Methods</th><th>Called</th><th>Found by</th><th>Why</th></tr></thead><tbody>
       ${drows.map(e => { const s = rcSvc(e.to); const open = !!(R.evOpen || {})[e.to]; return `<tr class="rc-evrow ${open ? 'open' : ''}"><td>${rcRisk(e.risk)}</td>
         <td class="mono rc-dst">${s ? `<button class="link" data-rcsvc="${attr({cluster: cl, group: '', resource: 'services', namespace: s.namespace, name: s.name})}">${esc(dest(e))}</button>` : esc(dest(e))}${never.has(dest(e)) ? '<br><small class="muted">never used</small>' : ''}</td>
@@ -913,8 +945,8 @@ function rcDetail(a) {
     ? `${x.observed ? num(x.observed) : ''}${(x.methods || []).length ? ` <span class="mono ${x.writeSeen ? 'red' : 'muted'}">${esc(x.methods.join(', '))}</span>` : ''}${x.lookups ? `<div class="rc-small muted">${num(x.lookups)} DNS lookup${x.lookups === 1 ? '' : 's'}</div>` : ''}${(x.tools || []).length ? `<div class="rc-tools">tools ${x.tools.map(t => `<span class="mono">${esc(t)}</span>`).join(', ')}</div>` : ''}<div class="rc-srcs">${rcSrcs(x.sources)}</div>`
     : '<span class="muted">not seen</span>';
   const extTable = `<section class="panel mt"><div class="panel-head"><h2>External</h2><small class="muted">Every host outside the cluster it is configured for, was seen calling, or can reach through a gateway. A registry out there lends its reach just like one inside.</small></div><div class="panel-body" style="padding-bottom:0">
-    <div class="toolbar"><div class="row wrap">${echips.map(([k, label]) => `<button class="chip ${R.echip === k ? 'on' : ''}" data-rce="${k}">${label} <small>${ext.filter(x => eChipOk(x, k)).length}</small></button>`).join('')}</div></div>
-    ${rcFoundChipRow(ext, R.efound || 'any', 'data-rcef')}</div>
+    <div class="toolbar"><div class="row wrap">${echips.map(([k, label]) => `<button class="chip ${R.echip === k ? 'on' : ''}" data-rce="${k}">${label} <small>${ext.filter(x => eChipOk(x, k)).length}</small></button>`).join('')}${rcFoundMenu(ext, R.efound || 'any', 'data-rcef', a)}</div></div>
+</div>
     <div class="table-scroll" style="max-height:62vh">${erows.length ? `<table class="rc-ext"><thead><tr><th>Host</th><th>What it is</th><th>How it's reached</th><th>Credential</th><th>Observed</th><th>Configured in</th><th>Found by</th><th>Risk</th></tr></thead><tbody>
       ${erows.map(x => { const open = !!(R.evOpen || {})['ext:' + x.host]; return `<tr class="rc-evrow ${open ? 'open' : ''} ${x.reachedVia === 'node' ? 'rc-dim' : ''}"><td class="mono rc-host">${esc(x.host)}${x.ip && x.ip !== x.host ? `<br><small class="muted">${esc(x.ip)}</small>` : ''}</td>
         <td class="rc-what"><span class="rc-cls rc-cls-${esc(x.class)}">${esc(rcClsTag[x.class] || x.class)}</span><div class="rc-small">${esc(x.product || '')}</div></td>
@@ -1281,6 +1313,14 @@ after.reach = () => {
   const keepY = fn => { const y = scrollY; fn(); render().then(() => scrollTo(0, y)); };
   document.querySelectorAll('[data-rgview]').forEach(b => b.onclick = () => keepY(() => { R.gview = b.dataset.rgview; R.gexpand = {}; }));
   const col = $('#rg-collapse'); if (col) col.onclick = () => keepY(() => { R.gexpand = {}; });
+  document.querySelectorAll('[data-fmenu]').forEach(b => b.onclick = ev => {
+    ev.stopPropagation();
+    const pop = b.nextElementSibling, open = pop.hidden;
+    document.querySelectorAll('.rc-fpop').forEach(p => { p.hidden = true; });
+    pop.hidden = !open;
+  });
+  document.querySelectorAll('.rc-fpop').forEach(p => p.onclick = ev => ev.stopPropagation());
+  if (!window.rcFmenuClose) { window.rcFmenuClose = true; document.addEventListener('click', () => document.querySelectorAll('.rc-fpop').forEach(p => { p.hidden = true; })); }
   document.querySelectorAll('[data-rggf]').forEach(b => b.onclick = () => keepY(() => { R.gfound = b.dataset.rggf; }));
   const selx = $('#rg-selx'); if (selx) selx.onclick = () => keepY(() => { R.gsel = ''; });
   document.querySelectorAll('[data-rgopen]').forEach(b => b.onclick = () => { const sv = rcSvc(b.dataset.rgopen); if (sv) openSvc(sv.namespace, sv.name); });
