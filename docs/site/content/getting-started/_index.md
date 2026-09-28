@@ -112,3 +112,8 @@ flightbay collect --context my-cluster --case 01234567 --encrypt-to age1...
 ```
 
 Flightbay does not upload anything. Send the file the way you normally share files with Solo support. [Sending a bundle](/collect/sending/) covers encryption, verification and the file format.
+
+## Where next
+
+- [Collect examples](/collect/examples/): capture commands for one namespace, the agentic stack, Istio ambient, several clusters, sharing less and encrypting.
+- [Scan examples](/scan/examples/): check a repository, a Helm chart or a Kustomize overlay before it is deployed.

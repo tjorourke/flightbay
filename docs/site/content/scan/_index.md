@@ -6,6 +6,8 @@ description: Build a bundle from the manifests, Helm charts and Kustomize overla
 
 # Scanning a repository
 
+For worked examples with Helm charts, Kustomize overlays, environments and Argo CD, see [Scan examples](/scan/examples/).
+
 `flightbay scan` builds a bundle from a code repository instead of a live cluster. It renders what the repository declares (plain manifests, Helm charts, Kustomize overlays, and the Argo CD and Flux objects that point at them) and writes the same kind of bundle `flightbay collect` writes. The desk, the [Scorecard](/desk/scorecard/), [Agent reach](/desk/agent-reach/), [Search](/desk/search/), [SQL](/desk/sql/) and [Compare](/desk/compare/) all work on it without changes.
 
 Use it to check a change before it reaches a cluster, to gate pull requests in CI, and to compare what Git says with what is running.

@@ -3,8 +3,10 @@ package main
 import (
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -46,6 +48,11 @@ Nothing is fetched from the network unless --helm-fetch is given.`,
   flightbay scan . --fail-on critical --new-only --base-ref origin/main --format github
   flightbay scan . --fix-pack flightbay-fixes`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// The Helm SDK writes warnings (for example "skipped value ...: Not a
+			// table") through the standard logger. Show each once, indented under
+			// the scan's own progress lines.
+			log.SetFlags(0)
+			log.SetOutput(&helmLog{w: cmd.ErrOrStderr(), seen: map[string]bool{}, quiet: quiet})
 			if failOn != "" && !scan.ValidSeverity(failOn) {
 				return exitError{2, "--fail-on must be critical, high, medium or low"}
 			}
@@ -184,4 +191,19 @@ Nothing is fetched from the network unless --helm-fetch is given.`,
 	f.StringVar(&fixPack, "fix-pack", "", "write one YAML file per failing check, proposals and a README.md into this directory")
 	f.BoolVarP(&quiet, "quiet", "q", false, "less progress output")
 	return c
+}
+
+type helmLog struct {
+	w     io.Writer
+	seen  map[string]bool
+	quiet bool
+}
+
+func (h *helmLog) Write(p []byte) (int, error) {
+	line := strings.TrimSpace(string(p))
+	if line != "" && !h.seen[line] && !h.quiet {
+		h.seen[line] = true
+		fmt.Fprintf(h.w, "  helm: %s\n", strings.TrimPrefix(line, "warning: "))
+	}
+	return len(p), nil
 }

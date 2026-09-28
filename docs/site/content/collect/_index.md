@@ -6,6 +6,8 @@ description: How flightbay collect works, and why you should always start with a
 
 # Collecting a snapshot
 
+For copy-and-paste commands for common cases, see [Collect examples](/collect/examples/).
+
 `flightbay collect` (alias `capture`) reads one or more clusters and writes a single bundle file. It only reads what the collection policy selects, it redacts in memory before anything is written, and it never collects Secret values.
 
 Use it when someone needs to see your cluster and you would rather send a file than open access. The same bundle can be opened in the desk, inspected with `flightbay inspect`, or unpacked with standard tools.
