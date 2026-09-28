@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -241,7 +242,7 @@ func TestStartHandsOverOnTheSameAddress(t *testing.T) {
 	defer cancel()
 	cmd := &cobra.Command{}
 	cmd.SetContext(ctx)
-	cmd.SetErr(&strings.Builder{})
+	cmd.SetErr(&lockedWriter{}) // the page and its hand-off both write progress
 	done := make(chan error, 1)
 	go func() {
 		done <- runStart(cmd, startOptions{listen: "127.0.0.1:0", workdir: wd, noBrowser: true})
@@ -293,4 +294,17 @@ func TestStartHandsOverOnTheSameAddress(t *testing.T) {
 	if _, err := os.Stat(wd); err != nil {
 		t.Error("a workdir the user named was removed")
 	}
+}
+
+// lockedWriter is a strings.Builder safe for the start page and its hand-off
+// goroutine to write at once (stderr is, in real use).
+type lockedWriter struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (w *lockedWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.b.Write(p)
 }
