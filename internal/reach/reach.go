@@ -106,7 +106,8 @@ type Finding struct {
 	Items    []FindingItem `json:"items,omitempty"`
 	Fix      string        `json:"fix,omitempty"`
 	Advice   []string      `json:"advice,omitempty"` // steps that are not YAML
-	Source   string        `json:"source"`
+	Source   string        `json:"source"`           // the Solo field guide
+	Docs     string        `json:"docs,omitempty"`   // the product documentation page (docs.solo.io)
 }
 
 // FindingItem is one affected destination or object, for a table rather than prose.

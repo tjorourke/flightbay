@@ -100,7 +100,10 @@ func WriteFixPack(dir string, g Gate, ws *store.Workspace) (*FixPackResult, erro
 		c := checks[id]
 		fs := byCheck[id]
 		var body strings.Builder
-		fmt.Fprintf(&body, "# %s (%s, %s)\n# %s\n# Guide: %s\n", c.Title, id, c.Severity, oneLine(c.Why), c.Source)
+		fmt.Fprintf(&body, "# %s (%s, %s)\n# %s\n", c.Title, id, c.Severity, oneLine(c.Why))
+		for _, l := range links(c.Source, c.Docs) {
+			fmt.Fprintf(&body, "# %s\n", l)
+		}
 		seen := map[string]bool{}
 		for _, f := range fs {
 			fix := reachFix[id+"|"+f.Item.Namespace+"/"+f.Item.Name]
@@ -122,7 +125,7 @@ func WriteFixPack(dir string, g Gate, ws *store.Workspace) (*FixPackResult, erro
 				if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 					return nil, err
 				}
-				head := fmt.Sprintf("# Proposed by Flightbay for %s: %s\n# Guide: %s\n", f.Object(), c.Title, c.Source)
+				head := fmt.Sprintf("# Proposed by Flightbay for %s: %s\n# %s\n", f.Object(), c.Title, strings.Join(links(c.Source, c.Docs), "\n# "))
 				if err := os.WriteFile(p, []byte(head+asYAMLDoc(fix)+"\n"), 0o644); err != nil {
 					return nil, err
 				}
@@ -135,7 +138,7 @@ func WriteFixPack(dir string, g Gate, ws *store.Workspace) (*FixPackResult, erro
 			return nil, err
 		}
 		res.Files = append(res.Files, fn)
-		fmt.Fprintf(&readme, "## %s\n\n`%s`, %s. File: [%s](%s). Guide: %s\n\n| Object | Source | Detail |\n| --- | --- | --- |\n", c.Title, id, c.Severity, fn, fn, c.Source)
+		fmt.Fprintf(&readme, "## %s\n\n`%s`, %s. File: [%s](%s). %s\n\n| Object | Source | Detail |\n| --- | --- | --- |\n", c.Title, id, c.Severity, fn, fn, strings.Join(links(c.Source, c.Docs), ". "))
 		for _, f := range fs {
 			fmt.Fprintf(&readme, "| %s | %s | %s |\n", mdCell(f.Object()), mdCell(location(f)), mdCell(f.Detail))
 		}

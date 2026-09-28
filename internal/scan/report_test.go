@@ -55,6 +55,19 @@ func TestSARIF(t *testing.T) {
 		if !strings.HasPrefix(asStr(rm["helpUri"]), "http") {
 			t.Errorf("rule %v helpUri = %v", rm["id"], rm["helpUri"])
 		}
+		// helpUri prefers the product docs; the guide is in the help text.
+		for _, c := range g.Checks {
+			if c.ID != asStr(rm["id"]) {
+				continue
+			}
+			help := asStr(asMap(rm["help"])["text"])
+			if c.Docs != "" && asStr(rm["helpUri"]) != c.Docs {
+				t.Errorf("rule %v helpUri = %v, want the docs link %s", c.ID, rm["helpUri"], c.Docs)
+			}
+			if !strings.Contains(help, "Guide: "+c.Source) {
+				t.Errorf("rule %v help does not link the guide: %q", c.ID, help)
+			}
+		}
 		rules[asStr(rm["id"])] = rm
 	}
 	results := asList(run["results"])

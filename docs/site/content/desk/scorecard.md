@@ -117,7 +117,8 @@ Click a check to open it. You get:
 - why it matters, in a sentence or two;
 - every object it looked at, with its status and what was found (click an object to open it);
 - **How to fix**: the YAML to apply, with **Copy YAML**;
-- **Read the guide**: the matching lab or article on mastertheagent.com or masterthemesh.com.
+- **Read the guide**: the matching lab or article on mastertheagent.com or masterthemesh.com;
+- **Solo docs**: the page of the official Solo product documentation on docs.solo.io for the feature the check is about. A few checks on plain Kubernetes link to kubernetes.io instead (**Kubernetes docs**).
 
 ## From the terminal
 

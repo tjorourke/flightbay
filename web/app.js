@@ -536,6 +536,12 @@ document.addEventListener('keydown', e => {
 const pstColour = n => n >= 90 ? 'var(--teal)' : n >= 75 ? '#7fc97f' : n >= 60 ? 'var(--amber)' : 'var(--red)';
 const feature = name => !!(S.ws && S.ws.features && S.ws.features[name]);
 // Severity tag: coloured by weight with the Enterprise priority view, plain otherwise.
+// The field guide and the product docs page, side by side. Either may be
+// missing; a docs link that repeats the guide is shown once.
+const docsLabel = u => /^https:\/\/docs\.solo\.io\//.test(u) ? 'Solo docs' : /^https:\/\/kubernetes\.io\//.test(u) ? 'Kubernetes docs' : /^https:\/\/istio\.io\//.test(u) ? 'Istio docs' : 'Docs';
+const guideLinks = (source, docs) => [
+  source ? `<a href="${esc(source)}" target="_blank" rel="noopener" title="${esc(source)}">Read the guide ↗</a>` : '',
+  docs && docs !== source ? `<a href="${esc(docs)}" target="_blank" rel="noopener" title="${esc(docs)}">${docsLabel(docs)} ↗</a>` : ''].filter(Boolean).join('');
 const pstSev = sev => feature('priorities') ? `<span class="pst-sev pst-sev-${esc(sev)}">${esc(sev)}</span>` : `<span class="tag">${esc(sev)}</span>`;
 const pstPts = p => p >= 1 ? '+' + Math.round(p) : p > 0 ? '+<1' : '';
 const pstBadge = st => `<span class="pst-badge pst-${st}">${{fail: 'FAIL', warn: 'WARN', pass: 'PASS', na: 'N/A'}[st]}</span>`;
@@ -600,12 +606,12 @@ async function posture() {
     return `<div class="pst-check ${open ? 'open' : ''}"><button class="pst-head" data-pstopen="${esc(c.id)}">${pstBadge(c.status)}${pstSev(c.severity)}<strong>${esc(c.title)}</strong><span class="muted">${esc(shortName[c.area] || c.area)} · ${esc(c.category)}</span><span style="flex:1"></span>${c.points ? `<span class="pst-pts" title="Area score points recovered if every object passed">${pstPts(c.points)} pts</span>` : ''}${c.status === 'na' ? `<small class="muted">${esc(c.reason)}</small>` : `<small>${c.passed}/${c.total} pass</small>`}<span class="muted">${open ? '▾' : '▸'}</span></button>
       ${open ? `<div class="pst-body"><p>${esc(c.why)}</p>
         ${items.length ? `<div class="table-scroll mt" style="max-height:40vh"><table><thead><tr><th></th><th>Object</th><th>What we found</th></tr></thead><tbody>${items.map((i, n) => `<tr><td>${pstBadge(i.status)}</td><td class="mono">${i.name ? `<button class="link" data-pstobj="${attr({c: c.id, n})}">${esc(i.kind)} ${esc(i.namespace ? i.namespace + '/' : '')}${esc(i.name)}</button>` : '<span class="muted">cluster</span>'}</td><td style="white-space:normal">${esc(i.detail)}</td></tr>`).join('')}</tbody></table></div>` : ''}
-        ${c.status === 'fail' || c.status === 'warn' || c.status === 'na' ? `<div class="row between mt"><h3>How to fix</h3><div class="row"><button data-pstcopy="${esc(c.id)}">Copy YAML</button><a href="${esc(c.source)}" target="_blank" rel="noopener">Read the guide ↗</a></div></div><pre class="code mt">${esc(c.fix)}</pre>` : `<p class="mt"><a href="${esc(c.source)}" target="_blank" rel="noopener">Read the guide ↗</a></p>`}
+        ${c.status === 'fail' || c.status === 'warn' || c.status === 'na' ? `<div class="row between mt"><h3>How to fix</h3><div class="row"><button data-pstcopy="${esc(c.id)}">Copy YAML</button>${guideLinks(c.source, c.docs)}</div></div><pre class="code mt">${esc(c.fix)}</pre>` : `<p class="mt row">${guideLinks(c.source, c.docs)}</p>`}
       </div>` : ''}</div>`;
   };
   const objList = its => its.filter(i => i.status === 'fail' || i.status === 'warn').slice(0, 4).map(i => (i.kind + ' ' + (i.namespace ? i.namespace + '/' : '') + i.name).trim());
-  const firstRow = (p, rank) => `<button class="pst-first-row" data-pstgo="${esc(p.id)}"><span class="pst-rank">${rank}</span>${p.points !== undefined ? `<span class="pst-pts big">${pstPts(p.points)}</span>` : ''}${pstBadge(p.status)}${pstSev(p.severity)}
-      <span class="pst-first-main"><strong>${esc(p.title)}</strong><small class="muted">${esc(shortName[p.area] || p.area)} · ${p.failing ? p.failing + ' failing' : ''}${p.failing && p.warning ? ', ' : ''}${p.warning ? p.warning + ' warning' : ''} of ${p.total}: <span class="mono">${esc(p.objects.join(', '))}</span></small></span><span class="muted">▸</span></button>`;
+  const firstRow = (p, rank) => `<div class="pst-first-item"><button class="pst-first-row" data-pstgo="${esc(p.id)}"><span class="pst-rank">${rank}</span>${p.points !== undefined ? `<span class="pst-pts big">${pstPts(p.points)}</span>` : ''}${pstBadge(p.status)}${pstSev(p.severity)}
+      <span class="pst-first-main"><strong>${esc(p.title)}</strong><small class="muted">${esc(shortName[p.area] || p.area)} · ${p.failing ? p.failing + ' failing' : ''}${p.failing && p.warning ? ', ' : ''}${p.warning ? p.warning + ' warning' : ''} of ${p.total}: <span class="mono">${esc(p.objects.join(', '))}</span></small></span><span class="muted">▸</span></button>${p.source || p.docs ? `<span class="pst-first-links">${guideLinks(p.source, p.docs)}</span>` : ''}</div>`;
   let summary = '';
   if (P.tab === 'summary') {
     if (feature('priorities') && (r.priorities || []).length) {
@@ -615,7 +621,7 @@ async function posture() {
       const sevRank = {critical: 0, high: 1, medium: 2, low: 3};
       const worst = attention('').filter(c => c.severity === 'critical' || c.severity === 'high')
         .sort((a, b) => (a.status === b.status ? 0 : a.status === 'fail' ? -1 : 1) || sevRank[a.severity] - sevRank[b.severity]).slice(0, 10)
-        .map(c => ({id: c.id, area: c.area, title: c.title, status: c.status, severity: c.severity, total: c.total,
+        .map(c => ({id: c.id, area: c.area, title: c.title, status: c.status, severity: c.severity, total: c.total, source: c.source, docs: c.docs,
           failing: c.items.filter(i => i.status === 'fail').length, warning: c.items.filter(i => i.status === 'warn').length, objects: objList(c.items)}));
       summary = `<section class="panel"><div class="panel-head"><h2>Most serious problems</h2><small class="muted">Critical and high severity checks that fail or warn</small></div>
         <div>${worst.map((p, i) => firstRow(p, i + 1)).join('') || '<div class="empty"><strong>No critical or high problems</strong>Open an area tab to see the rest.</div>'}</div></section>`;
@@ -919,8 +925,8 @@ function rcDetail(a) {
       <span class="pst-sev pst-sev-${esc(f.severity)}">${esc(f.severity)}</span><strong>${esc(f.title)}</strong>
       ${n ? `<span class="tag">${n} affected</span>` : ''}<span style="flex:1"></span>${f.fix ? '<small class="muted">fix included</small>' : ''}<span class="muted">${open ? '▾' : '▸'}</span></button>
       ${open ? `<div class="rc-fbody"><p>${esc(f.detail)}</p>${itemTable(f)}${(f.advice || []).length ? `<h3 class="mt">Other steps</h3><ul class="rc-advice">${f.advice.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
-        ${f.fix ? `<div class="row between mt"><h3>How to fix</h3><div class="row"><button data-rccopy="${i}">Copy YAML</button>${f.source ? `<a href="${esc(f.source)}" target="_blank" rel="noopener">Read the guide ↗</a>` : ''}</div></div><pre class="code mt">${esc(f.fix)}</pre>`
-          : f.source ? `<p class="mt"><a href="${esc(f.source)}" target="_blank" rel="noopener">Read the guide ↗</a></p>` : ''}</div>` : ''}</div>`;
+        ${f.fix ? `<div class="row between mt"><h3>How to fix</h3><div class="row"><button data-rccopy="${i}">Copy YAML</button>${guideLinks(f.source, f.docs)}</div></div><pre class="code mt">${esc(f.fix)}</pre>`
+          : f.source || f.docs ? `<p class="mt row">${guideLinks(f.source, f.docs)}</p>` : ''}</div>` : ''}</div>`;
   }).join('');
   const findingsPanel = `<section class="panel"><div class="panel-head"><h2>Findings</h2><small class="muted">${c.critical || 0} critical · ${c.high || 0} high · ${(a.findings || []).length} in all · open one for what it affects and the fix</small></div>
     ${findings || '<div class="empty"><strong>No findings</strong></div>'}</section>`;
@@ -1879,6 +1885,7 @@ function openFinding(f) {
   modal(f.title, `<div class="row wrap"><span class="badge ${f.severity === 'critical' ? 'red' : f.severity === 'warning' ? 'amber' : 'blue'}">${esc(f.severity)}</span><span class="tag">${esc(f.rule)}</span><span class="tag">${esc(f.cluster)}</span>${f.provisional ? '<span class="badge blue">provisional</span>' : ''}</div>
     <p class="mt">${esc(f.detail || '')}</p>${(f.evidence || []).length ? `<h3 class="mt">Evidence</h3><pre class="code mt">${esc(f.evidence.join('\n'))}</pre>` : ''}
     ${f.nextStep ? `<h3 class="mt">Next step</h3><p class="mt muted">${esc(f.nextStep)}</p>` : ''}
+    ${f.source || f.docs ? `<p class="mt row">${guideLinks(f.source, f.docs)}</p>` : ''}
     <div class="row wrap mt">${f.object ? '<button class="primary" id="f-obj">Inspect object →</button>' : ''}${f.logQuery ? '<button id="f-logs">Open the logs →</button>' : ''}</div>`);
   const o = $('#f-obj'); if (o) o.onclick = () => { closeModal(); openObject(f.object); };
   const l = $('#f-logs'); if (l) l.onclick = () => openLogs({q: f.logQuery});

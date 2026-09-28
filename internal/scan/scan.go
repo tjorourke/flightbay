@@ -463,6 +463,24 @@ func (s *scanner) buildChart(j helmJob) {
 		notes = append(notes, err.Error())
 	}
 	if res != nil {
+		// helm install stamps these on every object it manages; the Scorecard
+		// uses them to recognise Solo charts (controllers that legitimately
+		// read Secrets cluster-wide, for example).
+		for _, o := range res.objects {
+			md, _ := o.obj["metadata"].(map[string]any)
+			if md == nil {
+				continue
+			}
+			ann, _ := md["annotations"].(map[string]any)
+			if ann == nil {
+				ann = map[string]any{}
+				md["annotations"] = ann
+			}
+			if _, ok := ann["meta.helm.sh/release-name"]; !ok {
+				ann["meta.helm.sh/release-name"] = res.name
+				ann["meta.helm.sh/release-namespace"] = res.ns
+			}
+		}
 		cov.Items = s.add(res.objects)
 	}
 	cov.Reason = strings.Join(notes, "; ")

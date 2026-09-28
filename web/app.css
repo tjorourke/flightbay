@@ -231,6 +231,10 @@ details.cmp-other>summary h2::before{content:'▸ ';color:var(--muted)}details.c
 .pst-first-row{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:none;border:0;border-bottom:1px solid var(--line);border-radius:0;padding:10px 16px}
 .pst-first-row:last-child{border-bottom:0}
 .pst-first-row:hover{background:var(--raised)}
+.pst-first-item{display:flex;align-items:center;border-bottom:1px solid var(--line)}
+.pst-first-item:last-child{border-bottom:0}
+.pst-first-item .pst-first-row{flex:1;min-width:0;border-bottom:0}
+.pst-first-links{display:flex;gap:12px;padding:0 16px 0 4px;font-size:12px;white-space:nowrap}
 .pst-rank{font:600 12px var(--mono);color:var(--muted);min-width:18px}
 .pst-first-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
 .pst-first-main small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

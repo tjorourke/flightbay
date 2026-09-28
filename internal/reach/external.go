@@ -1548,7 +1548,7 @@ func (e *engine) externalFindings(w *workload, a Agent) []Finding {
 		if len(first.Credentials) > 0 {
 			detail += " It holds " + strings.Join(first.Credentials, ", ") + "."
 		}
-		out = append(out, Finding{Severity: sev, Title: title, Detail: detail, Items: items, Source: guide,
+		out = append(out, Finding{Severity: sev, Title: title, Detail: detail, Items: items, Source: guide, Docs: docsEgressViaGateway,
 			Fix: e.gatewayReadOnlyFix(w, first),
 			Advice: []string{
 				"Give the agent a read-only token for " + first.Host + ", scoped to the repositories it installs from.",
@@ -1564,7 +1564,7 @@ func (e *engine) externalFindings(w *workload, a Agent) []Finding {
 		}
 		out = append(out, Finding{Severity: "critical", Title: "Can reach paste, webhook or tunnel services",
 			Detail: fmt.Sprintf("%s is configured for, or was seen calling, %s. Services like these take data from anyone and show it to anyone, which makes them an exfiltration channel and a way to talk to other agents.", w.name, joinHosts(exfil)),
-			Items:  items, Source: guide, Fix: e.denyEgressFix(w, a)})
+			Items:  items, Source: guide, Docs: docsEgressViaGateway, Fix: e.denyEgressFix(w, a)})
 	}
 	if len(direct) > 0 {
 		var items []FindingItem
@@ -1573,12 +1573,12 @@ func (e *engine) externalFindings(w *workload, a Agent) []Finding {
 		}
 		out = append(out, Finding{Severity: "high", Title: "Calls external services directly, not through the gateway",
 			Detail: fmt.Sprintf("This cluster runs agentgateway, but %s reaches %s on its own egress, where nothing authenticates, limits or records the calls. Send them through the gateway and allow only the gateway on the way out.", w.name, joinHosts(direct)),
-			Items:  items, Source: guide, Fix: e.gatewayReadOnlyFix(w, direct[0])})
+			Items:  items, Source: guide, Docs: docsEgressViaGateway, Fix: e.gatewayReadOnlyFix(w, direct[0])})
 	}
 	for _, x := range creds {
 		out = append(out, Finding{Severity: "high", Title: "Holds a credential for " + x.Host + " that probably allows writes",
 			Detail: fmt.Sprintf("%s holds %s for %s (%s), and nothing in the name says it is read-only. A prompt injection can use it to publish packages, push code or write objects that other people then trust.", w.name, strings.Join(x.Credentials, ", "), x.Host, x.Product),
-			Items:  []FindingItem{item(x)}, Source: guide,
+			Items:  []FindingItem{item(x)}, Source: guide, Docs: docsBackendAuthn,
 			Fix:    "# Replace it with a read-only, narrowly scoped token and name it so (for example " + credHint(x) + "),\n# or have agentgateway inject the credential so the agent never holds it:\n" + e.gatewayReadOnlyFix(w, x),
 			Advice: []string{"Issue a read-only token (pull or read scope) for the agent.", "Prefer short-lived tokens from agentgateway token exchange to static keys in the pod."}})
 	}
@@ -1597,7 +1597,7 @@ func (e *engine) externalFindings(w *workload, a Agent) []Finding {
 		}
 		out = append(out, Finding{Severity: "high", Title: "Can use the gateway's credential for " + x.Host + " without authenticating",
 			Detail: fmt.Sprintf("%s reaches %s through %s on route %s, which asks for no authentication, and the gateway adds %s on the way. Anything that can reach the gateway borrows that credential, with whatever it allows.", w.name, x.Host, x.Gateway, x.Route, strings.Join(x.GatewayCreds, ", ")),
-			Items:  []FindingItem{item(x)}, Source: guide,
+			Items:  []FindingItem{item(x)}, Source: guide, Docs: docsJWT,
 			Fix: fmt.Sprintf("apiVersion: %s/v1alpha1\nkind: %s\nmetadata: {name: %s-authn, namespace: %s}\nspec:\n  targetRefs:\n  - {group: gateway.networking.k8s.io, kind: HTTPRoute, name: %s}\n  traffic:\n    jwtAuthentication:\n      mode: Strict\n      providers:\n      - issuer: <your issuer>\n        audiences: [%s]\n        jwks: {remote: {jwksPath: /.well-known/jwks.json, backendRef: {kind: Service, name: <idp>, namespace: <idp namespace>, port: 443}}}",
 				group, pkind, resourceName(rname), rns, rname, resourceName(rname))})
 	}
@@ -1610,7 +1610,7 @@ func (e *engine) externalFindings(w *workload, a Agent) []Finding {
 		}
 		out = append(out, Finding{Severity: "medium", Title: "Reaches external hosts it is not configured for",
 			Detail: fmt.Sprintf("%s called %s, which nothing in its configuration names. Either it needs them and they should be in its allowlist, or something made it call them.", w.name, joinHosts(unexpected)),
-			Items:  items, Source: guide, Fix: e.denyEgressFix(w, a)})
+			Items:  items, Source: guide, Docs: docsEgressViaGateway, Fix: e.denyEgressFix(w, a)})
 	}
 	return out
 }

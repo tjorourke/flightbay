@@ -56,7 +56,7 @@ The default `standard` profile collects objects, events, the last 24 hours of lo
 | Option | What it does |
 |---|---|
 | `--namespaces`, `--exclude-namespaces` | Limit the capture (globs work: `team-*`) |
-| `--since 2h`, `--max-log-bytes 10MiB`, `--no-logs` | Control log volume |
+| `--since 2h`, `--max-log-bytes 10485760`, `--no-logs` | Control log volume |
 | `--exclude-resources configmaps,secrets` | Never read these types |
 | `--solo-diagnostics` | Also read the admin endpoints of ztunnel, Envoy, agentgateway, istiod and gateway controllers through port-forward |
 | `--cluster-scoped` | Also capture nodes, CRDs and other cluster-wide objects |
@@ -109,7 +109,7 @@ level:error ns:payments "timed out"    pod:checkout*    trace_id:a4e98f02    sta
 
 ![Findings](docs/images/findings.png)
 
-**Scorecard** scores the snapshot against Solo's best practices: 131 checks drawn from the Solo field guides, the agentgateway, kagent, Istio and kgateway source, and Kubernetes hardening guidance, in four areas:
+**Scorecard** scores the snapshot against Solo's best practices: 130 checks (135 with Agent reach) drawn from the Solo field guides, the agentgateway, kagent, Istio and kgateway source, and Kubernetes hardening guidance, in four areas:
 
 - **Agentic**: MCP and A2A endpoints without authentication, optional API-key modes, client tokens passed through to MCP servers, missing tool allowlists, code mode without limits, guardrails that fail open, LLM spend without a budget, credentials held inline or pointing at Secrets that don't exist, policies that weren't accepted, and agents that bypass the gateway.
 - **Istio**: namespace enrolment, pods ztunnel isn't capturing, STRICT mTLS, default-deny, principals in the wrong trust domain, L7 policy that nothing enforces, ingress that skips the waypoint, istiod HA, plugged-in CA, multicluster peering and remote secrets, and exposed control-plane ports.

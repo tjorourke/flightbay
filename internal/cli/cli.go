@@ -23,6 +23,7 @@ import (
 	"github.com/tjorourke/flightbay/internal/bundle"
 	"github.com/tjorourke/flightbay/internal/policy"
 	"github.com/tjorourke/flightbay/internal/redact"
+	"github.com/tjorourke/flightbay/internal/solodocs"
 )
 
 // PolicyFlags are the collection flags shared by collect, rbac and dry runs.
@@ -791,17 +792,17 @@ func Posture(w io.Writer, base, token, area string, all bool, top int) error {
 			Categories                 map[string]int
 		} `json:"areas"`
 		Checks []struct {
-			ID, Area, Category, Severity, Title, Status, Reason, Fix, Source string
-			Passed, Total                                                    int
-			Points                                                           float64
-			Items                                                            []struct{ Kind, Namespace, Name, Status, Detail string }
+			ID, Area, Category, Severity, Title, Status, Reason, Fix, Source, Docs string
+			Passed, Total                                                          int
+			Points                                                                 float64
+			Items                                                                  []struct{ Kind, Namespace, Name, Status, Detail string }
 		} `json:"checks"`
 		Priorities []struct {
-			Rank                                           int
-			ID, Area, Title, Severity, Status, Fix, Source string
-			Points                                         float64
-			Failing, Warning, Total                        int
-			Objects                                        []string
+			Rank                                                 int
+			ID, Area, Title, Severity, Status, Fix, Source, Docs string
+			Points                                               float64
+			Failing, Warning, Total                              int
+			Objects                                              []string
 		} `json:"priorities"`
 	}
 	q := url.Values{}
@@ -837,7 +838,10 @@ func Posture(w io.Writer, base, token, area string, all bool, top int) error {
 			n++
 			fmt.Fprintf(w, "\n%2d. +%-5.1f [%s] %-8s %s  (%s)\n", p.Rank, p.Points, mark[p.Status], p.Severity, p.Title, p.ID)
 			fmt.Fprintf(w, "     %d failing, %d warning of %d: %s\n", p.Failing, p.Warning, p.Total, strings.Join(p.Objects, ", "))
-			fmt.Fprintf(w, "     Fix: %s\n", p.Source)
+			fmt.Fprintf(w, "     Guide: %s\n", p.Source)
+			if p.Docs != "" && p.Docs != p.Source {
+				fmt.Fprintf(w, "     %s %s\n", docsLabel(p.Docs), p.Docs)
+			}
 		}
 		if n == 0 {
 			fmt.Fprintln(w, "  nothing to fix")
@@ -864,7 +868,11 @@ func Posture(w io.Writer, base, token, area string, all bool, top int) error {
 			fmt.Fprintf(w, "       - %s: %s\n", obj, it.Detail)
 		}
 		if c.Status == "fail" || c.Status == "warn" {
-			fmt.Fprintf(w, "       Fix (see %s):\n", c.Source)
+			fmt.Fprintf(w, "       Guide: %s\n", c.Source)
+			if c.Docs != "" && c.Docs != c.Source {
+				fmt.Fprintf(w, "       %s %s\n", docsLabel(c.Docs), c.Docs)
+			}
+			fmt.Fprintf(w, "       Fix:\n")
 			for _, line := range strings.Split(c.Fix, "\n") {
 				fmt.Fprintf(w, "         %s\n", line)
 			}
@@ -873,10 +881,19 @@ func Posture(w io.Writer, base, token, area string, all bool, top int) error {
 	return nil
 }
 
+// docsLabel names a docs link: the Solo product docs, or the upstream site
+// for the few Kubernetes-only checks the Solo docs do not cover.
+func docsLabel(u string) string {
+	if solodocs.IsSolo(u) {
+		return "Solo docs:"
+	}
+	return "Docs:"
+}
+
 // Reach prints agent reach (the fbreach helper): every agent's blast radius,
 // or one agent's paths, findings and fixes.
 func Reach(w io.Writer, base, token, agent string, showFix bool) error {
-	type finding struct{ Severity, Title, Detail, Fix string }
+	type finding struct{ Severity, Title, Detail, Fix, Source, Docs string }
 	type agentT struct {
 		Namespace, Name, Type, Summary, Radius, Internet, Metadata string
 		Counts                                                     struct{ Services, Direct, Closure, Write, Observed, NeverUsed, External, Critical, High int }
@@ -962,6 +979,12 @@ func Reach(w io.Writer, base, token, agent string, showFix bool) error {
 	fmt.Fprintln(w, "\nFindings:")
 	for _, f := range a.Findings {
 		fmt.Fprintf(w, "  [%s] %s\n      %s\n", strings.ToUpper(f.Severity), f.Title, f.Detail)
+		if f.Source != "" {
+			fmt.Fprintf(w, "      Guide: %s\n", f.Source)
+		}
+		if f.Docs != "" && f.Docs != f.Source {
+			fmt.Fprintf(w, "      %s %s\n", docsLabel(f.Docs), f.Docs)
+		}
 		if showFix && f.Fix != "" {
 			for _, line := range strings.Split(f.Fix, "\n") {
 				fmt.Fprintf(w, "        %s\n", line)

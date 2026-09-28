@@ -31,6 +31,7 @@ When a fix is a command rather than YAML (label a namespace, restart a rollout),
 # Application namespaces deny ingress by default (k8s.netpol-default-deny, medium)
 # Without a default-deny NetworkPolicy every pod accepts connections from every other pod in the cluster.
 # Guide: https://masterthemesh.com/solo/zero-trust-agents-kubernetes/
+# Docs: https://kubernetes.io/docs/concepts/services-networking/network-policies/
 ---
 # Namespace demo (declared in manifests/app.yaml:1)
 apiVersion: networking.k8s.io/v1

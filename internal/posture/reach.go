@@ -6,6 +6,7 @@ import (
 
 	"github.com/tjorourke/flightbay/internal/features"
 	"github.com/tjorourke/flightbay/internal/reach"
+	"github.com/tjorourke/flightbay/internal/solodocs"
 	"github.com/tjorourke/flightbay/internal/store"
 )
 
@@ -42,14 +43,15 @@ func reachChecks(ws *store.Workspace) []Check {
 	}
 	const see = "\n# The Agent reach page (#reach) has this agent's generated fix, with its names filled in."
 	var out []Check
-	mk := func(id, cat, sev, title, why, fix string, eval func(c *Check)) {
-		c := Check{ID: id, Area: "agentic", Category: cat, Severity: sev, Title: title, Why: why, Fix: fix + see, Source: kbBase + "zero-trust-agents-kubernetes/"}
+	mk := func(id, cat, sev, title, why, fix, docs string, eval func(c *Check)) {
+		c := Check{ID: id, Area: "agentic", Category: cat, Severity: sev, Title: title, Why: why, Fix: fix + see, Source: kbBase + "zero-trust-agents-kubernetes/", Docs: docs}
 		eval(&c)
 		out = append(out, c)
 	}
 	mk("agentic.agent-internet-reach", "Isolation", "critical", "Agents cannot reach the internet directly",
 		"An agent with open egress can send anything a prompt injection or a compromised tool gives it to any address.",
 		"apiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata: {name: <agent>-egress, namespace: <ns>}\nspec:\n  podSelector: {matchLabels: {app: <agent>}}\n  policyTypes: [Egress]\n  egress:\n  - to: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}, podSelector: {matchLabels: {k8s-app: kube-dns}}}]\n    ports: [{port: 53, protocol: UDP}]\n  # plus one rule per Service it needs; external calls go through agentgateway",
+		solodocs.AgentgatewayRoot+"integrations/agentic-mesh/egress/",
 		func(c *Check) {
 			for _, a := range agents {
 				switch a.Internet {
@@ -63,6 +65,7 @@ func reachChecks(ws *store.Workspace) []Check {
 	mk("agentic.agent-transitive-fetcher", "Isolation", "critical", "Agents cannot borrow internet access through a registry or proxy",
 		"A service the agent may call that fetches URLs (a package registry, proxy or scraper) gives it internet access through any SSRF or proxy feature. The OpenAI agents reached Hugging Face this way.",
 		"# at the registry's waypoint: allow the agent GET and HEAD only\nspec:\n  targetRefs: [{kind: Service, group: \"\", name: <registry>}]\n  action: ALLOW\n  rules:\n  - from: [{source: {principals: [\"<td>/ns/<ns>/sa/<agent>\"]}}]\n    to: [{operation: {methods: [GET, HEAD]}}]\n# and give the registry its own egress allowlist",
+		solodocs.Istio+"security/authorization/waypoint-authz/",
 		func(c *Check) {
 			for _, a := range agents {
 				if f, ok := hasFinding(a, "Inherits internet access"); ok {
@@ -77,6 +80,7 @@ func reachChecks(ws *store.Workspace) []Check {
 	mk("agentic.agent-write-sensitive", "Authorization", "high", "Agents cannot write to data stores, registries or credential services they only need to read",
 		"Write access nobody audited turned a package registry into a message board between agents. Allow the methods and callers each destination needs.",
 		"# per destination: an AuthorizationPolicy at its waypoint with methods: [GET, HEAD] for the agent's principal",
+		solodocs.Istio+"security/authorization/waypoint-authz/",
 		func(c *Check) {
 			for _, a := range agents {
 				if f, ok := hasFinding(a, "Can write to"); ok {
@@ -89,6 +93,7 @@ func reachChecks(ws *store.Workspace) []Check {
 	mk("agentic.agent-no-shared-channel", "Isolation", "high", "Agents do not share an identity, a volume or a writable store",
 		"Anything one agent can write and another read is a channel between them; a shared service account makes every allow rule apply to all of them.",
 		"# one ServiceAccount, PersistentVolumeClaim and store (or prefix) per agent",
+		solodocs.Istio+"security/workload-identity/",
 		func(c *Check) {
 			for _, a := range agents {
 				var hits []string
@@ -107,6 +112,7 @@ func reachChecks(ws *store.Workspace) []Check {
 	mk("agentic.agent-least-reach", "Isolation", "medium", "Agents reach only what they use",
 		"An agent can reach whatever its destinations can reach. Allow only what it is configured for and actually calls.",
 		"# default-deny egress for the agent namespace, then one rule per destination it uses",
+		solodocs.Istio+"security/authorization/ztunnel-authz/",
 		func(c *Check) {
 			for _, a := range agents {
 				d := fmt.Sprintf("reaches %d of %d Services directly, %d in total", a.Counts.Direct, a.Counts.Services, a.Counts.Closure)

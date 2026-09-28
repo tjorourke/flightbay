@@ -42,6 +42,7 @@ type Finding struct {
 	Evidence    []string `json:"evidence,omitempty"`
 	LogQuery    string   `json:"logQuery,omitempty"`
 	NextStep    string   `json:"nextStep,omitempty"`
+	Docs        string   `json:"docs,omitempty"` // the Solo docs page for the next step
 	Count       int      `json:"count,omitempty"`
 	Provisional bool     `json:"provisional"`
 }
@@ -117,6 +118,9 @@ func Run(ws *store.Workspace) []Finding {
 	for i := range out {
 		out[i].ID = fmt.Sprintf("f%d", i+1)
 		out[i].Provisional = provisional
+		if out[i].Docs == "" {
+			out[i].Docs = DocsFor(out[i])
+		}
 	}
 	return out
 }

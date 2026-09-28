@@ -4,15 +4,20 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/tjorourke/flightbay/internal/solodocs"
 	"github.com/tjorourke/flightbay/internal/store"
 )
 
+// spec is a check's definition. source is the Solo field guide (a lab on
+// mastertheagent.com or masterthemesh.com); docs is the product documentation
+// page for the feature the check is about, on docs.solo.io where one exists
+// (see docs.go). scripts/scorecard-checks reads these literals.
 type spec struct {
-	id, category, severity, title, why, fix, source string
+	id, category, severity, title, why, fix, source, docs string
 }
 
 func (sp spec) check(area string) Check {
-	return Check{ID: sp.id, Area: area, Category: sp.category, Severity: sp.severity, Title: sp.title, Why: sp.why, Fix: sp.fix, Source: sp.source}
+	return Check{ID: sp.id, Area: area, Category: sp.category, Severity: sp.severity, Title: sp.title, Why: sp.why, Fix: sp.fix, Source: sp.source, Docs: sp.docs}
 }
 
 // Guide links: agentic pages live on mastertheagent.com, mesh pages on
@@ -93,16 +98,16 @@ func agenticChecks(e env) []Check {
 	add(spec{"agentic.mcp-auth-required", "Authentication", "critical", "MCP endpoints require authentication",
 		"A stock MCP server's only control is the token it holds upstream. Without JWT validation at the gateway, anyone who reaches the listener gets every tool under one shared identity.",
 		"apiVersion: agentgateway.dev/v1alpha1   # or enterpriseagentgateway.solo.io/v1alpha1 EnterpriseAgentgatewayPolicy\nkind: AgentgatewayPolicy\nmetadata: {name: mcp-jwt, namespace: <route namespace>}\nspec:\n  targetRefs:\n  - {group: gateway.networking.k8s.io, kind: HTTPRoute, name: <mcp route>}\n  traffic:\n    jwtAuthentication:\n      mode: Strict\n      providers:\n      - issuer: https://idp.example.com/realms/solo\n        audiences: [mcp]\n        jwks: {remote: {jwksPath: /protocol/openid-connect/certs, backendRef: {name: keycloak, namespace: auth, kind: Service, port: 8080}}}",
-		kbBase + "agentgateway-mcp-controls/"}, func(c *Check) { authCheck(c, exposedMCP, "MCP") })
+		kbBase + "agentgateway-mcp-controls/", solodocs.Agentgateway + "mcp/auth/setup/"}, func(c *Check) { authCheck(c, exposedMCP, "MCP") })
 
 	add(spec{"agentic.llm-auth-required", "Authentication", "critical", "LLM routes require caller authentication",
 		"The gateway holds the provider key, so an open LLM route lets anyone spend it and skip every per-user policy.",
 		"spec:\n  targetRefs:\n  - {group: gateway.networking.k8s.io, kind: HTTPRoute, name: <llm route>}\n  traffic:\n    jwtAuthentication:\n      mode: Strict\n      providers:\n      - {issuer: <issuer>, audiences: [<audience>], jwks: {remote: {...}}}",
-		kbBase + "agentgateway-mcp-controls/"}, func(c *Check) { authCheck(c, exposedAI, "LLM") })
+		kbBase + "agentgateway-mcp-controls/", solodocs.Agentgateway + "security/jwt/setup/"}, func(c *Check) { authCheck(c, exposedAI, "LLM") })
 
 	add(spec{"agentic.jwt-strict-mode", "Authentication", "high", "JWT validation runs in Strict mode",
 		"Anything but Strict lets requests with no token through, and Strict fails closed when the JWKS cannot be fetched.",
-		"traffic:\n  jwtAuthentication:\n    mode: Strict", kbBase + "securing-mcp-agentic-systems/"}, func(c *Check) {
+		"traffic:\n  jwtAuthentication:\n    mode: Strict", kbBase + "securing-mcp-agentic-systems/", solodocs.Agentgateway + "security/jwt/about/"}, func(c *Check) {
 		if !policiesKnown {
 			na(c, polWhy)
 			return
@@ -125,7 +130,7 @@ func agenticChecks(e env) []Check {
 
 	add(spec{"agentic.jwt-issuer-audience-pinned", "Authentication", "high", "JWT providers pin the issuer and audience",
 		"Without an audience, a token minted for another service by the same issuer can be replayed here (confused deputy). Inline JWKS never rotate with the IdP.",
-		"providers:\n- issuer: https://idp.example.com/realms/solo\n  audiences: [github-mcp]\n  jwks: {remote: {jwksPath: /protocol/openid-connect/certs, backendRef: {...}}}", kbBase + "securing-mcp-agentic-systems/"}, func(c *Check) {
+		"providers:\n- issuer: https://idp.example.com/realms/solo\n  audiences: [github-mcp]\n  jwks: {remote: {jwksPath: /protocol/openid-connect/certs, backendRef: {...}}}", kbBase + "securing-mcp-agentic-systems/", solodocs.Agentgateway + "security/jwt/setup/"}, func(c *Check) {
 		if !policiesKnown {
 			na(c, polWhy)
 			return
@@ -151,7 +156,7 @@ func agenticChecks(e env) []Check {
 	add(spec{"agentic.mcp-tool-authorization", "Authorization", "high", "MCP backends have a tool allowlist (rug-pull defence)",
 		"Being allowed to reach an MCP server should not mean every tool on it. An allowlist hides unlisted tools from tools/list and rejects them on tools/call, so a compromised upstream cannot add tools callers will use.",
 		"spec:\n  targetRefs:\n  - {group: agentgateway.dev, kind: AgentgatewayBackend, name: <mcp backend>}\n  backend:\n    mcp:\n      authorization:\n        action: Allow\n        policy:\n          matchExpressions:\n          - 'jwt.groups.exists(g, g == \"developers\") && mcp.tool.name in [\"get_pull_request\", \"search_repositories\"]'",
-		kbBase + "agentgw-agentic-mcp/"}, func(c *Check) {
+		kbBase + "agentgw-agentic-mcp/", solodocs.Agentgateway + "mcp/tool-access/"}, func(c *Check) {
 		if !policiesKnown {
 			na(c, polWhy)
 			return
@@ -183,7 +188,7 @@ func agenticChecks(e env) []Check {
 
 	add(spec{"agentic.authz-no-broad-rule", "Authorization", "high", "No authorization rule allows everything",
 		"agentgateway ORs matchExpressions, so one permissive rule silently grants past every narrow rule beside it.",
-		"# write each rule to stand alone: subject AND explicit tools\n- 'jwt.sub == \"alice\" && mcp.tool.name == \"echo\"'", kbBase + "zero-trust-agents-kubernetes/"}, func(c *Check) {
+		"# write each rule to stand alone: subject AND explicit tools\n- 'jwt.sub == \"alice\" && mcp.tool.name == \"echo\"'", kbBase + "zero-trust-agents-kubernetes/", solodocs.Agentgateway + "mcp/tool-access/"}, func(c *Check) {
 		if !policiesKnown {
 			na(c, polWhy)
 			return
@@ -216,7 +221,7 @@ func agenticChecks(e env) []Check {
 	add(spec{"agentic.rate-limit", "Resilience", "high", "LLM and MCP routes are rate limited per caller",
 		"Rate and concurrency ceilings contain a runaway agent loop or swarm, and give you the volume signal to alert on.",
 		"traffic:\n  entRateLimit:\n    global:\n      rateLimitConfigRefs: [{name: per-user, namespace: agentgateway-system}]\n      backendRef: {name: rate-limiter-enterprise-agentgateway, namespace: agentgateway-system, port: 8081}",
-		kbBase + "agentgateway-mcp-controls/"}, func(c *Check) {
+		kbBase + "agentgateway-mcp-controls/", solodocs.Agentgateway + "llm/rate-limit/"}, func(c *Check) {
 		if !policiesKnown || !routesOK {
 			na(c, strings.TrimSpace(polWhy+" "+routesWhy))
 			return
@@ -271,14 +276,14 @@ func agenticChecks(e env) []Check {
 	add(spec{"agentic.prompt-guard-request", "Guardrails", "high", "LLM requests pass through a prompt guard",
 		"Prompt-injection and data-leak defences belong in the data plane, not the system prompt.",
 		"backend:\n  ai:\n    promptGuard:\n      request:\n      - regex: {action: Reject, builtins: [Ssn, CreditCard, Email]}\n        response: {statusCode: 403}",
-		kbBase + "agentgateway-mcp-controls/"}, func(c *Check) { guard(c, "request") })
+		kbBase + "agentgateway-mcp-controls/", solodocs.Agentgateway + "llm/guardrails/overview/"}, func(c *Check) { guard(c, "request") })
 	add(spec{"agentic.prompt-guard-response", "Guardrails", "medium", "LLM responses are guarded (output gating)",
 		"Model output flows back into the agent's context; mask PII and strip injection strings on the way back.",
-		"backend:\n  ai:\n    promptGuard:\n      response:\n      - regex: {action: Mask, builtins: [Ssn, CreditCard]}", kbBase + "agentgateway-mcp-controls/"}, func(c *Check) { guard(c, "response") })
+		"backend:\n  ai:\n    promptGuard:\n      response:\n      - regex: {action: Mask, builtins: [Ssn, CreditCard]}", kbBase + "agentgateway-mcp-controls/", solodocs.Agentgateway + "llm/guardrails/regex/"}, func(c *Check) { guard(c, "response") })
 
 	add(spec{"agentic.backend-tls-upstream", "Encryption", "high", "External MCP upstreams use TLS",
 		"The gateway-to-upstream hop carries the upstream credential; HTTPS on 443 needs TLS and SNI.",
-		"targets:\n- name: github\n  static:\n    host: api.githubcopilot.com\n    port: 443\n    policies:\n      tls: {sni: api.githubcopilot.com}", kbBase + "agentgateway-mcp-controls/"}, func(c *Check) {
+		"targets:\n- name: github\n  static:\n    host: api.githubcopilot.com\n    port: 443\n    policies:\n      tls: {sni: api.githubcopilot.com}", kbBase + "agentgateway-mcp-controls/", solodocs.Agentgateway + "security/backendtls/"}, func(c *Check) {
 		n := 0
 		for _, b := range mcp {
 			for _, t := range mcpTargets(b) {
@@ -302,7 +307,7 @@ func agenticChecks(e env) []Check {
 
 	add(spec{"agentic.provider-secret-ref", "Identity", "high", "Upstream credentials come from existing Secrets",
 		"The gateway, not the client, should hold provider keys, as Secrets that rotate without touching manifests. A dangling reference fails at request time.",
-		"spec:\n  policies:\n    auth:\n      secretRef: {name: openai-secret}", kbBase + "securing-mcp-agentic-systems/"}, func(c *Check) {
+		"spec:\n  policies:\n    auth:\n      secretRef: {name: openai-secret}", kbBase + "securing-mcp-agentic-systems/", solodocs.Agentgateway + "llm/api-keys/"}, func(c *Check) {
 		secOK, secWhy := e.evaluable("", "secrets", "Secret", true)
 		check := func(b *backend, ref map[string]any, what string) {
 			name := s(m(ref["secretRef"])["name"])
@@ -347,7 +352,7 @@ func agenticChecks(e env) []Check {
 
 	add(spec{"agentic.no-literal-credentials", "Identity", "critical", "No literal credentials in routes or agent env",
 		"A literal token in an HTTPRoute or an env value is readable by anyone who can read the object and never rotates.",
-		"env:\n- name: MODEL_API_KEY\n  valueFrom: {secretKeyRef: {name: model-key, key: api-key}}", kbBase + "zero-trust-agents-kubernetes/"}, func(c *Check) {
+		"env:\n- name: MODEL_API_KEY\n  valueFrom: {secretKeyRef: {name: model-key, key: api-key}}", kbBase + "zero-trust-agents-kubernetes/", solodocs.Agentgateway + "security/backend-authn/key/"}, func(c *Check) {
 		for _, r := range md.routes {
 			for _, rule := range l(path(r.Obj, "spec", "rules")) {
 				for _, f := range l(m(rule)["filters"]) {
@@ -412,7 +417,7 @@ func agenticChecks(e env) []Check {
 	add(spec{"agentic.kagent-dedicated-serviceaccount", "Identity", "high", "Each agent runs under its own service account",
 		"Mesh identity comes from the service account. A shared or default one means agents cannot be told apart in authorization policy: the shared-identity failure mode behind recent agent incidents.",
 		"# kagent's default is a service account named after the agent; policy can then say:\ntraffic:\n  authorization:\n    action: Allow\n    policy:\n      matchExpressions: ['source.identity.serviceAccount == \"sre-agent\"']",
-		kbBase + "zero-trust-agents-kubernetes/"}, func(c *Check) {
+		kbBase + "zero-trust-agents-kubernetes/", solodocs.Kagent + "security/access-policies/l4/"}, func(c *Check) {
 		if len(agents) == 0 {
 			na(c, "no kagent agents")
 			return
@@ -456,7 +461,7 @@ func agenticChecks(e env) []Check {
 	add(spec{"agentic.kagent-tool-scope", "Guardrails", "medium", "Agents name their tools and gate high-impact ones",
 		"An empty tool list hands the agent every tool the server advertises; irreversible tools need a human approval step.",
 		"tools:\n- type: McpServer\n  mcpServer:\n    name: k8s-tool-server\n    kind: RemoteMCPServer\n    toolNames: [k8s_get_resources, k8s_delete_resource]\n    requireApproval: [k8s_delete_resource]",
-		kbBase + "securing-mcp-agentic-systems/"}, func(c *Check) {
+		kbBase + "securing-mcp-agentic-systems/", solodocs.Kagent + "agents/human-in-the-loop/"}, func(c *Check) {
 		if len(agents) == 0 {
 			na(c, "no kagent agents")
 			return
@@ -497,7 +502,7 @@ func agenticChecks(e env) []Check {
 	nsl, nsKnown := e.nsLabels()
 	add(spec{"agentic.agents-in-ambient", "Encryption", "high", "Agents, MCP servers and gateways are in the ambient mesh",
 		"Ambient gives every pod a SPIFFE identity and mTLS: the base for identity-based policy between agent, gateway and MCP server.",
-		"apiVersion: v1\nkind: Namespace\nmetadata:\n  name: <namespace>\n  labels: {istio.io/dataplane-mode: ambient}", kbBase + "agentgw-agentic-mcp/"}, func(c *Check) {
+		"apiVersion: v1\nkind: Namespace\nmetadata:\n  name: <namespace>\n  labels: {istio.io/dataplane-mode: ambient}", kbBase + "agentgw-agentic-mcp/", solodocs.Istio + "agentic-mesh/about/"}, func(c *Check) {
 		if !nsKnown {
 			na(c, e.noNSWhy())
 			return
@@ -534,7 +539,7 @@ func agenticChecks(e env) []Check {
 	add(spec{"agentic.mcp-server-not-directly-reachable", "Isolation", "high", "MCP servers are only reachable through the gateway",
 		"Tool policy only holds if the gateway is the only path; a direct path skips authorization, audit and rate limits.",
 		"apiVersion: security.istio.io/v1\nkind: AuthorizationPolicy\nmetadata: {name: mcp-only-from-gateway, namespace: <mcp namespace>}\nspec:\n  selector: {matchLabels: {app: <mcp server>}}\n  action: ALLOW\n  rules:\n  - from:\n    - source: {principals: [\"cluster.local/ns/agentgateway-system/sa/<gateway sa>\"]}",
-		kbBase + "securing-mcp-agentic-systems/"}, func(c *Check) {
+		kbBase + "securing-mcp-agentic-systems/", solodocs.Istio + "agentic-mesh/policies/"}, func(c *Check) {
 		apOK, _ := e.evaluable("security.istio.io", "authorizationpolicies", "AuthorizationPolicy", true)
 		n := 0
 		for _, b := range mcp {
@@ -578,7 +583,7 @@ func agenticChecks(e env) []Check {
 	gws := md.agentgatewayGateways()
 	add(spec{"agentic.audit-access-log", "Observability", "medium", "Gateways write an access log with caller identity",
 		"An audit trail of who called which tool or model, from which JWT, is the governance evidence you need after an incident.",
-		"frontend:\n  accessLog:\n    attributes:\n      add:\n      - {name: jwt.sub, expression: 'has(jwt.sub) ? jwt.sub : \"anonymous\"'}", kbBase + "agentgateway-mcp-controls/"}, func(c *Check) {
+		"frontend:\n  accessLog:\n    attributes:\n      add:\n      - {name: jwt.sub, expression: 'has(jwt.sub) ? jwt.sub : \"anonymous\"'}", kbBase + "agentgateway-mcp-controls/", solodocs.Agentgateway + "observability/access-logs/"}, func(c *Check) {
 		if len(gws) == 0 {
 			na(c, "no agentgateway Gateways")
 			return
@@ -601,7 +606,7 @@ func agenticChecks(e env) []Check {
 	})
 	add(spec{"agentic.tracing", "Observability", "low", "Gateways export traces",
 		"Trace IDs across every agent step and tool call are how an incident gets reconstructed.",
-		"frontend:\n  tracing:\n    backendRef: {name: otel-collector, namespace: telemetry, port: 4317}\n    protocol: GRPC", kbBase + "agentgw-agentic-mcp/"}, func(c *Check) {
+		"frontend:\n  tracing:\n    backendRef: {name: otel-collector, namespace: telemetry, port: 4317}\n    protocol: GRPC", kbBase + "agentgw-agentic-mcp/", solodocs.Agentgateway + "observability/traces/setup/"}, func(c *Check) {
 		if len(gws) == 0 {
 			na(c, "no agentgateway Gateways")
 			return
@@ -620,7 +625,7 @@ func agenticChecks(e env) []Check {
 	add(spec{"agentic.metadata-endpoint-blocked", "Isolation", "high", "Agent namespaces cannot reach the cloud metadata endpoint",
 		"The instance metadata service at 169.254.169.254 is the highest-value credential target on a node, and agents go looking for it.",
 		"apiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata: {name: deny-metadata, namespace: <agent namespace>}\nspec:\n  podSelector: {}\n  policyTypes: [Egress]\n  egress:\n  - to:\n    - ipBlock: {cidr: 0.0.0.0/0, except: [169.254.169.254/32]}",
-		kbBase + "zero-trust-agents-kubernetes/"}, func(c *Check) {
+		kbBase + "zero-trust-agents-kubernetes/", solodocs.Kubernetes + "concepts/services-networking/network-policies/"}, func(c *Check) {
 		ok, why := e.evaluable("networking.k8s.io", "networkpolicies", "NetworkPolicy", true)
 		if !ok {
 			na(c, why)

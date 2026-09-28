@@ -50,7 +50,8 @@ type Check struct {
 	Title    string  `json:"title"`
 	Why      string  `json:"why"`
 	Fix      string  `json:"fix"`
-	Source   string  `json:"source"`
+	Source   string  `json:"source"`         // the Solo field guide
+	Docs     string  `json:"docs,omitempty"` // the product documentation page (docs.solo.io)
 	Status   Status  `json:"status"`
 	Reason   string  `json:"reason,omitempty"`
 	Items    []Item  `json:"items"`

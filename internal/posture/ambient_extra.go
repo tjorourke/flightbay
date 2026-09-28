@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/tjorourke/flightbay/internal/solodocs"
 	"github.com/tjorourke/flightbay/internal/store"
 )
 
@@ -620,7 +621,7 @@ func ambientExtra(e env) []Check {
 	add(spec{"ambient.policy-enforced", "Authorization", "high", "Mesh policies are bound to something that enforces them",
 		"In ambient a policy that targets a Service or ServiceEntry is only enforced by that Service's waypoint. Without one, or when istiod reports the policy as not bound, the rules you wrote do nothing.",
 		"# give the target a waypoint\nkubectl label service <svc> istio.io/use-waypoint=waypoint\n# then check the policy status\nkubectl get authorizationpolicy <name> -o jsonpath='{.status.conditions}'",
-		meshBase + "whose-waypoint-l7-multicluster/"}, func(c *Check) {
+		meshBase + "whose-waypoint-l7-multicluster/", solodocs.Istio + "security/authorization/"}, func(c *Check) {
 		if !detailOK {
 			na(c, detailWhy)
 			return
@@ -714,7 +715,7 @@ func ambientExtra(e env) []Check {
 	add(spec{"ambient.ingress-use-waypoint", "Authorization", "high", "Ingress traffic goes through the waypoint that holds the policy",
 		"An ingress gateway sends straight to the pods of a backend Service unless the Service opts in with istio.io/ingress-use-waypoint. Any L7 policy on its waypoint is then skipped for traffic from outside.",
 		"kubectl label service <svc> istio.io/ingress-use-waypoint=true\n# or for the whole namespace\nkubectl label namespace <ns> istio.io/ingress-use-waypoint=true",
-		meshBase + "istio-ambient-migration-kind/"}, func(c *Check) {
+		meshBase + "istio-ambient-migration-kind/", solodocs.Istio + "waypoints/configuration/"}, func(c *Check) {
 		ingress := map[string]bool{}
 		for _, gw := range x.gws {
 			if x.role(gw) == "ingress" {
@@ -769,7 +770,7 @@ func ambientExtra(e env) []Check {
 	add(spec{"ambient.waypoint-no-bypass", "Authorization", "medium", "Workloads behind a waypoint only accept traffic from it",
 		"A waypoint enforces L7 policy only on traffic that goes through it. A caller that dials the pod IP directly skips it, unless the workload itself only allows the waypoint's identity.",
 		"apiVersion: security.istio.io/v1\nkind: AuthorizationPolicy\nmetadata: {name: allow-waypoint, namespace: <ns>}\nspec:\n  selector: {matchLabels: {app: <app>}}\n  action: ALLOW\n  rules:\n  - from:\n    - source:\n        principals: [\"cluster.local/ns/<ns>/sa/<waypoint>\"]",
-		meshBase + "whose-waypoint-l7-multicluster/"}, func(c *Check) {
+		meshBase + "whose-waypoint-l7-multicluster/", solodocs.Istio + "security/authorization/waypoint-authz/"}, func(c *Check) {
 		if !apOK {
 			na(c, apWhy)
 			return
@@ -813,7 +814,7 @@ func ambientExtra(e env) []Check {
 	add(spec{"ambient.principal-trust-domain", "Authorization", "high", "Principals use the mesh trust domain",
 		"A principal is matched on its full SPIFFE ID. One written with another trust domain never matches: an ALLOW rule then admits no-one, and a DENY rule blocks nothing.",
 		"rules:\n- from:\n  - source:\n      principals: [\"<trust-domain>/ns/<ns>/sa/<sa>\"]   # cluster.local also means the local trust domain",
-		meshBase + "istio-ambient-cert-identity-kind/"}, func(c *Check) {
+		meshBase + "istio-ambient-cert-identity-kind/", solodocs.Istio + "security/workload-identity/"}, func(c *Check) {
 		if !apOK {
 			na(c, apWhy)
 			return
@@ -860,7 +861,7 @@ func ambientExtra(e env) []Check {
 
 	add(spec{"ambient.authz-references-resolve", "Authorization", "medium", "Authorization policies refer to things that exist",
 		"A selector that matches no pod, a namespace that does not exist or a service account nobody runs as all make a rule silently match nothing. For a DENY rule that means nothing is denied.",
-		"kubectl get pods -n <ns> -l <selector>\nkubectl get serviceaccount -n <ns> <sa>", meshBase + "istio-ambient-crds/"}, func(c *Check) {
+		"kubectl get pods -n <ns> -l <selector>\nkubectl get serviceaccount -n <ns> <sa>", meshBase + "istio-ambient-crds/", solodocs.Istio + "security/authorization/"}, func(c *Check) {
 		if !apOK {
 			na(c, apWhy)
 			return
@@ -936,7 +937,7 @@ func ambientExtra(e env) []Check {
 	add(spec{"ambient.dedicated-service-accounts", "Identity", "medium", "Workloads that policies name have their own service account",
 		"The mesh identity is the service account. Allowing sa/default, or an account several workloads share, admits every workload that runs as it.",
 		"apiVersion: v1\nkind: ServiceAccount\nmetadata: {name: <app>, namespace: <ns>}\n---\n# in the Deployment\nspec:\n  template:\n    spec:\n      serviceAccountName: <app>",
-		meshBase + "istio-ambient-cert-identity-kind/"}, func(c *Check) {
+		meshBase + "istio-ambient-cert-identity-kind/", solodocs.Istio + "security/workload-identity/"}, func(c *Check) {
 		if !x.nsKnown {
 			na(c, noNS)
 			return
@@ -1015,7 +1016,7 @@ func ambientExtra(e env) []Check {
 	add(spec{"ambient.workloads-captured", "Encryption", "critical", "Pods in ambient namespaces are captured by ztunnel",
 		"A pod in an ambient namespace is only in the mesh once istio-cni has redirected its traffic. Pods on the host network, or ones the CNI missed, send and accept plaintext with no identity.",
 		"# restart pods that started before the CNI was ready\nkubectl rollout restart deployment -n <ns>\n# check\nkubectl get pods -n <ns> -o jsonpath='{range .items[*]}{.metadata.name} {.metadata.annotations.ambient\\.istio\\.io/redirection}{\"\\n\"}{end}'",
-		meshBase + "istio-ambient-poc-eks/"}, func(c *Check) {
+		meshBase + "istio-ambient-poc-eks/", solodocs.Istio + "troubleshooting/service-mesh/ambient/"}, func(c *Check) {
 		if e.runtimeNA(c, "ztunnel redirection (a pod annotation set by istio-cni)") {
 			return
 		}
@@ -1061,7 +1062,7 @@ func ambientExtra(e env) []Check {
 	add(spec{"ambient.serviceentry-waypoint", "Isolation", "high", "External ServiceEntries are bound to a waypoint",
 		"ztunnel cannot apply L7 policy, TLS origination or host-based rules to external hosts. A ServiceEntry for an external API should go through an egress waypoint, and a wildcard one needs one to work at all.",
 		"kubectl label serviceentry <name> istio.io/use-waypoint=egress-waypoint istio.io/use-waypoint-namespace=istio-egress",
-		meshBase + "ztunnel-native-egress/"}, func(c *Check) {
+		meshBase + "ztunnel-native-egress/", solodocs.Istio + "traffic-management/egress/egress/"}, func(c *Check) {
 		for _, se := range sortedObjs(append([]*store.Object{}, x.ses...)) {
 			var bad []string
 			if st, _, msg, ok := condition(se, "istio.io/WaypointMissing"); ok && st == "True" {
@@ -1097,7 +1098,7 @@ func ambientExtra(e env) []Check {
 	add(spec{"ambient.egress-default-deny", "Isolation", "high", "The ztunnel egress gateway starts from default-deny",
 		"An egress gateway only controls outbound traffic if it denies by default. Without an empty ALLOW policy on it, every destination is reachable.",
 		"apiVersion: security.istio.io/v1\nkind: AuthorizationPolicy\nmetadata: {name: egress-default-deny, namespace: <ns>}\nspec:\n  targetRefs:\n  - {kind: Gateway, group: gateway.networking.k8s.io, name: <egress-gateway>}\n  action: ALLOW",
-		meshBase + "ztunnel-native-egress/"}, func(c *Check) {
+		meshBase + "ztunnel-native-egress/", solodocs.Istio + "traffic-management/egress/ztunnel-egress/"}, func(c *Check) {
 		var egress []*store.Object
 		for _, gw := range x.gws {
 			if gatewayClass(gw) == "solo-ztunnel-egress" {
@@ -1134,7 +1135,7 @@ func ambientExtra(e env) []Check {
 
 	add(spec{"ambient.waypoint-earns-keep", "Cost", "low", "Every waypoint is used",
 		"A waypoint is a proxy Deployment you pay for and patch. One that nothing points at, or that carries no L7 policy or routing, is only overhead.",
-		"kubectl delete gateway -n <ns> <waypoint>\n# or use it\nkubectl label service <svc> istio.io/use-waypoint=<waypoint>", meshBase + "whose-waypoint-l7-multicluster/"}, func(c *Check) {
+		"kubectl delete gateway -n <ns> <waypoint>\n# or use it\nkubectl label service <svc> istio.io/use-waypoint=<waypoint>", meshBase + "whose-waypoint-l7-multicluster/", solodocs.Istio + "waypoints/overview/"}, func(c *Check) {
 		var wps []*store.Object
 		for _, gw := range x.gws {
 			if x.role(gw) == "waypoint" {
@@ -1229,7 +1230,7 @@ func ambientExtra(e env) []Check {
 
 	add(spec{"ambient.vs-source-match", "Routing", "medium", "VirtualServices on waypoint hosts do not match on the source",
 		"A waypoint serves the destination, so it cannot see which workload sent the request. sourceLabels and sourceNamespace matches are ignored and the route applies to everyone.",
-		"# match on something the waypoint can see instead\nhttp:\n- match:\n  - headers:\n      x-caller: {exact: frontend}", meshBase + "whose-waypoint-l7-multicluster/"}, func(c *Check) {
+		"# match on something the waypoint can see instead\nhttp:\n- match:\n  - headers:\n      x-caller: {exact: frontend}", meshBase + "whose-waypoint-l7-multicluster/", solodocs.Istio + "waypoints/configuration/"}, func(c *Check) {
 		for _, vs := range sortedObjs(e.list("networking.istio.io", "virtualservices")) {
 			bound := ""
 			for _, h := range mxStrings(path(vs.Obj, "spec", "hosts")) {
@@ -1263,7 +1264,7 @@ func ambientExtra(e env) []Check {
 	add(spec{"ambient.ztunnel-hardening", "Resilience", "medium", "ztunnel and istio-cni run as node-critical with requests",
 		"If ztunnel or the CNI agent is evicted or not scheduled on a node, every ambient pod on that node loses its traffic. They need system-node-critical priority and resource requests.",
 		"spec:\n  template:\n    spec:\n      priorityClassName: system-node-critical\n      containers:\n      - name: istio-proxy\n        resources:\n          requests: {cpu: 200m, memory: 512Mi}",
-		meshBase + "istio-ambient-gke-autopilot/"}, func(c *Check) {
+		meshBase + "istio-ambient-gke-autopilot/", solodocs.Istio + "setup/requirements/"}, func(c *Check) {
 		if !detailOK {
 			na(c, detailWhy)
 			return
@@ -1316,7 +1317,7 @@ func ambientExtra(e env) []Check {
 	add(spec{"mesh.istiod-ha", "Resilience", "high", "istiod runs with at least two replicas",
 		"Workloads keep their config while istiod is down, but new pods get no certificates or config. With one replica, and a PodDisruptionBudget that forbids evicting it, node drains hang.",
 		"# ServiceMeshController\nspec:\n  scalingProfile: Default   # not Demo\n# or Helm\npilot:\n  autoscaleMin: 2\n  replicaCount: 2",
-		meshBase + "gloo-operator-clusters/"}, func(c *Check) {
+		meshBase + "gloo-operator-clusters/", solodocs.Istio + "setup/production-readiness/"}, func(c *Check) {
 		if !detailOK {
 			na(c, detailWhy)
 			return
@@ -1357,7 +1358,7 @@ func ambientExtra(e env) []Check {
 
 	add(spec{"mesh.revision-resolves", "Config hygiene", "high", "istio.io/rev labels name a revision that exists",
 		"A namespace labelled with a revision or tag that no istiod serves gets no injection or config from the control plane you think it has.",
-		"istioctl tag list\nkubectl label namespace <ns> istio.io/rev=<existing revision or tag> --overwrite", meshBase + "istio-ambient-migration-kind/"}, func(c *Check) {
+		"istioctl tag list\nkubectl label namespace <ns> istio.io/rev=<existing revision or tag> --overwrite", meshBase + "istio-ambient-migration-kind/", solodocs.Istio + "operations/upgrade/gwapi-canary/"}, func(c *Check) {
 		if !x.nsKnown {
 			na(c, noNS)
 			return
@@ -1409,7 +1410,7 @@ func ambientExtra(e env) []Check {
 
 	add(spec{"mesh.solo-distribution", "Supply chain", "high", "Mesh components run Solo's Istio build",
 		"Multicluster peering, service scope and the Solo features depend on the Solo distribution of istiod, ztunnel and the CNI, and on images that are patched and signed.",
-		"# Helm\nglobal:\n  hub: us-docker.pkg.dev/soloio-img/istio\n  tag: 1.30.4-solo", meshBase + "istio-ambient-poc-eks/"}, func(c *Check) {
+		"# Helm\nglobal:\n  hub: us-docker.pkg.dev/soloio-img/istio\n  tag: 1.30.4-solo", meshBase + "istio-ambient-poc-eks/", solodocs.Istio + "about/images/"}, func(c *Check) {
 		if !detailOK {
 			na(c, detailWhy)
 			return
@@ -1457,7 +1458,7 @@ func ambientExtra(e env) []Check {
 	add(spec{"mesh.plugged-in-ca", "Identity", "high", "The mesh uses a plugged-in CA",
 		"Without cacerts istiod makes a self-signed root that lives only in this cluster. It cannot be rotated from a real PKI, and clusters that must trust each other will not.",
 		"kubectl create secret generic cacerts -n istio-system \\\n  --from-file=ca-cert.pem --from-file=ca-key.pem \\\n  --from-file=root-cert.pem --from-file=cert-chain.pem",
-		meshBase + "istio-ambient-poc-eks/"}, func(c *Check) {
+		meshBase + "istio-ambient-poc-eks/", solodocs.Istio + "multicluster/install/default/manual/"}, func(c *Check) {
 		if ok, why := e.absenceOK("", "secrets", "Secret", true); !ok {
 			na(c, why)
 			return
@@ -1497,7 +1498,7 @@ func ambientExtra(e env) []Check {
 
 	add(spec{"mesh.shared-root", "Identity", "critical", "Peered clusters share a root and have their own intermediates",
 		"Cross-cluster mTLS only works when every cluster chains to the same root. Each cluster should still have its own intermediate so one can be revoked without the others.",
-		"# one root, one intermediate per cluster\nkubectl create secret generic cacerts -n istio-system --from-file=<cluster>/ca-cert.pem ...", meshBase + "hbone-east-west/"}, func(c *Check) {
+		"# one root, one intermediate per cluster\nkubectl create secret generic cacerts -n istio-system --from-file=<cluster>/ca-cert.pem ...", meshBase + "hbone-east-west/", solodocs.Istio + "multicluster/install/default/manual/"}, func(c *Check) {
 		clusters := e.ws.Clusters()
 		if len(clusters) < 2 {
 			na(c, "single-cluster capture")
@@ -1573,7 +1574,7 @@ func ambientExtra(e env) []Check {
 	add(spec{"mesh.peer-gateway-config", "Multicluster", "high", "Peer gateways are fully described",
 		"An istio-remote Gateway tells istiod how to reach and verify a peer. Without an address and service account the peer is unreachable or unverifiable, and without cluster, network and trust domain the endpoints are mislabelled.",
 		"metadata:\n  annotations:\n    gateway.istio.io/service-account: istio-eastwest\n    gateway.istio.io/trust-domain: <peer trust domain>\n  labels:\n    topology.istio.io/cluster: <peer>\n    topology.istio.io/network: <peer network>\nspec:\n  gatewayClassName: istio-remote\n  addresses: [{type: IPAddress, value: <peer east-west address>}]",
-		meshBase + "manual-vs-solo-mgmt-plane/"}, func(c *Check) {
+		meshBase + "manual-vs-solo-mgmt-plane/", solodocs.Istio + "multicluster/best-practices/peering-recs/"}, func(c *Check) {
 		remotes := mxGatewaysByRole(e, "remote")
 		for _, gw := range sortedObjs(remotes) {
 			ann := m(path(gw.Obj, "metadata", "annotations"))
@@ -1616,7 +1617,7 @@ func ambientExtra(e env) []Check {
 
 	add(spec{"mesh.no-remote-secrets", "Multicluster", "high", "Peering does not also use remote secrets",
 		"With east-west peering istiod does not need kubeconfigs for other clusters. A remote secret gives this cluster's istiod credentials to another API server, which is a wider blast radius than peering needs.",
-		"kubectl delete secret -n istio-system -l istio/multiCluster=true\n# istiod\nenv:\n- {name: DISABLE_LEGACY_MULTICLUSTER, value: \"true\"}", meshBase + "manual-vs-solo-mgmt-plane/"}, func(c *Check) {
+		"kubectl delete secret -n istio-system -l istio/multiCluster=true\n# istiod\nenv:\n- {name: DISABLE_LEGACY_MULTICLUSTER, value: \"true\"}", meshBase + "manual-vs-solo-mgmt-plane/", solodocs.Istio + "multicluster/best-practices/peering-recs/"}, func(c *Check) {
 		if len(mxGatewaysByRole(e, "eastwest", "remote")) == 0 {
 			na(c, "no east-west or remote Gateways")
 			return
@@ -1645,7 +1646,7 @@ func ambientExtra(e env) []Check {
 	add(spec{"mesh.mesh-ports-not-public", "Network exposure", "high", "Control-plane and admin ports are not exposed",
 		"istiod's plaintext xDS (15010), monitoring (15014) and debug (8080) ports, and the Envoy admin port (15000), give away config or control. None should be on a LoadBalancer or NodePort.",
 		"# keep istiod ClusterIP, and expose only 15012/15017 through the east-west gateway\nspec:\n  type: ClusterIP\n# east-west gateway\nspec:\n  loadBalancerSourceRanges: [<peer CIDRs>]",
-		meshBase + "hbone-east-west/"}, func(c *Check) {
+		meshBase + "hbone-east-west/", solodocs.Istio + "setup/production-readiness/"}, func(c *Check) {
 		pods := e.pods()
 		svcKeys := make([]string, 0, len(x.svcs))
 		for k := range x.svcs {
@@ -1714,7 +1715,7 @@ func ambientExtra(e env) []Check {
 	add(spec{"mesh.global-service-authz", "Authorization", "high", "Global services restrict who may call them",
 		"solo.io/service-scope=global publishes a Service to every peered cluster. Without an ALLOW policy that names callers, any workload in any peer can reach it.",
 		"apiVersion: security.istio.io/v1\nkind: AuthorizationPolicy\nmetadata: {name: <svc>-callers, namespace: <ns>}\nspec:\n  targetRefs: [{kind: Service, group: \"\", name: <svc>}]\n  action: ALLOW\n  rules:\n  - from:\n    - source: {principals: [\"cluster.local/ns/<caller-ns>/sa/<caller>\"]}",
-		meshBase + "istio-ambient-segments/"}, func(c *Check) {
+		meshBase + "istio-ambient-segments/", solodocs.Istio + "multicluster/multi-apps/policy-attachment/"}, func(c *Check) {
 		peered := len(mxGatewaysByRole(e, "eastwest", "remote")) > 0
 		keys := make([]string, 0, len(x.svcs))
 		for k := range x.svcs {
@@ -1760,7 +1761,7 @@ func ambientExtra(e env) []Check {
 
 	add(spec{"mesh.jwks-fetch-restricted", "Authentication", "medium", "istiod cannot be pointed at internal JWKS URLs",
 		"istiod fetches the jwksUri of every RequestAuthentication. Anyone who can create one can make istiod request internal addresses, such as cloud metadata, unless those ranges are blocked.",
-		"# istiod\nenv:\n- name: BLOCKED_CIDRS_IN_JWKS_URIS\n  value: \"169.254.169.254/32,10.0.0.0/8\"", meshBase + "istio-ambient-crds/"}, func(c *Check) {
+		"# istiod\nenv:\n- name: BLOCKED_CIDRS_IN_JWKS_URIS\n  value: \"169.254.169.254/32,10.0.0.0/8\"", meshBase + "istio-ambient-crds/", solodocs.Istio + "reference/istiod-env-vars/"}, func(c *Check) {
 		if len(x.ras) == 0 {
 			na(c, "no RequestAuthentication")
 			return
@@ -1779,7 +1780,7 @@ func ambientExtra(e env) []Check {
 
 	add(spec{"mesh.serviceentry-scope", "Isolation", "medium", "ServiceEntries are scoped tightly",
 		"A TCP ServiceEntry with no address captures every connection on that port. Wildcard or passthrough external entries open far more than the one API you meant.",
-		"spec:\n  hosts: [api.example.com]\n  location: MESH_EXTERNAL\n  resolution: DNS\n  exportTo: [\".\"]\n  ports: [{number: 443, name: tls, protocol: TLS}]", meshBase + "ztunnel-native-egress/"}, func(c *Check) {
+		"spec:\n  hosts: [api.example.com]\n  location: MESH_EXTERNAL\n  resolution: DNS\n  exportTo: [\".\"]\n  ports: [{number: 443, name: tls, protocol: TLS}]", meshBase + "ztunnel-native-egress/", solodocs.Istio + "traffic-management/serviceentry-visibility/"}, func(c *Check) {
 		for _, se := range sortedObjs(append([]*store.Object{}, x.ses...)) {
 			sp := m(se.Obj["spec"])
 			var fails, warns, notes []string
@@ -1821,7 +1822,7 @@ func ambientExtra(e env) []Check {
 	add(spec{"mesh.control-plane-metrics-clean", "Health", "medium", "istiod reports no config conflicts",
 		"istiod counts listener conflicts, clusters with no endpoints and endpoints with no pod. Non-zero values mean some config is being dropped or traffic has nowhere to go.",
 		"istioctl analyze -A\nkubectl exec -n istio-system deploy/istiod -- curl -s localhost:15014/metrics | grep -E 'pilot_conflict|no_instances|endpoint_no_pod'",
-		meshBase + "istio-ambient-crds/"}, func(c *Check) {
+		meshBase + "istio-ambient-crds/", solodocs.Istio + "troubleshooting/service-mesh/istio/"}, func(c *Check) {
 		for _, d := range e.ws.Diagnostics(e.cluster) {
 			if d.Component != "istiod" || len(d.Files["metrics.prom"]) == 0 {
 				continue

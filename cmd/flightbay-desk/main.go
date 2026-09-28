@@ -614,8 +614,9 @@ func mcpCmd() *cobra.Command {
 		Use:   "mcp",
 		Short: "Serve the open workspace to AI agents over MCP (stdio), read-only",
 		Long: `Serves the open workspace as a Model Context Protocol server on stdin/stdout.
-Tools: workspace_summary, list_findings, search_logs, log_context, search_objects, run_sql,
-list_resource_types, list_objects, get_object, proxy_config, compare_baseline. Prompt: triage.
+Tools: workspace_summary, list_findings, best_practices, agent_reach, search_logs, log_context,
+search_objects, run_sql, list_resource_types, list_objects, get_object, proxy_config,
+compare_baseline. Prompt: triage. best_practices priorities and agent_reach need Flightbay Enterprise.
 
 The server only talks to the local desk. Snapshot data reaches a model only if the
 agent you connect is configured to use one.`,

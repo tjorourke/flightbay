@@ -10,11 +10,11 @@ import (
 func (e *engine) findings(w *workload, a Agent, reach []pair, all []*workload, declSvcs, declHosts map[string]bool) []Finding {
 	c := e.c
 	var out []Finding
-	add := func(sev, title, detail, fix string) {
-		out = append(out, Finding{Severity: sev, Title: title, Detail: detail, Fix: fix, Source: guide})
+	add := func(docs, sev, title, detail, fix string) {
+		out = append(out, Finding{Severity: sev, Title: title, Detail: detail, Fix: fix, Source: guide, Docs: docs})
 	}
-	addItems := func(sev, title, detail, fix string, items []FindingItem) {
-		out = append(out, Finding{Severity: sev, Title: title, Detail: detail, Items: items, Fix: fix, Source: guide})
+	addItems := func(docs, sev, title, detail, fix string, items []FindingItem) {
+		out = append(out, Finding{Severity: sev, Title: title, Detail: detail, Items: items, Fix: fix, Source: guide, Docs: docs})
 	}
 	// What the agent needs: what it is configured to call, plus what it did call.
 	var needed []*service
@@ -33,21 +33,21 @@ func (e *engine) findings(w *workload, a Agent, reach []pair, all []*workload, d
 	egressFix := e.egressPolicy(w, needed, hosts)
 
 	if len(a.Identity.HostAccess) > 0 {
-		add("critical", "Runs with host access",
+		add(docsPodSecurity, "critical", "Runs with host access",
 			fmt.Sprintf("%s has %s. A process that can reach the host needs no network path to escalate.", w.name, strings.Join(a.Identity.HostAccess, ", ")),
 			"spec:\n  hostNetwork: false\n  containers:\n  - securityContext: {privileged: false, allowPrivilegeEscalation: false}")
 	}
 
 	if a.Internet == Allowed && w.agentType == "agentgateway" {
-		add("high", "Egress is not limited to the gateway's backends",
+		add(docsEgressViaGateway, "high", "Egress is not limited to the gateway's backends",
 			fmt.Sprintf("%s needs the internet for its LLM providers and MCP upstreams, but nothing stops it reaching any other address. Allow only the backends it is configured for.", w.name),
 			egressFix)
 	} else if a.Internet == Allowed {
-		add("critical", "Reaches the internet directly",
+		add(docsEgressViaGateway, "critical", "Reaches the internet directly",
 			fmt.Sprintf("Nothing limits where %s can connect outside the cluster. A prompt injection or a compromised tool can send data anywhere. Route model and tool calls through agentgateway and deny everything else.", w.name),
 			egressFix)
 	} else if a.Internet == Unknown {
-		add("medium", "Internet access could not be determined",
+		add(docsEgressOverview, "medium", "Internet access could not be determined",
 			"NetworkPolicies were not captured, so whether this agent can reach the internet is unknown. Re-capture without excluding networkpolicies.", "")
 	}
 
@@ -62,7 +62,7 @@ func (e *engine) findings(w *workload, a Agent, reach []pair, all []*workload, d
 	for _, name := range sortedKeys(fetchers) {
 		p := fetchers[name]
 		sv := c.svcByKey[name]
-		add("critical", "Inherits internet access through "+name,
+		add(docsWaypointAuthz, "critical", "Inherits internet access through "+name,
 			fmt.Sprintf("%s can call %s, which fetches or proxies URLs and can itself reach the internet: %s. An SSRF or proxy feature there gives the agent the internet, as the package registry did in the OpenAI and Hugging Face incident.", w.name, name, strings.Join(p.Hops, " → ")),
 			e.readOnlyPolicy(w, sv)+"\n---\n# and give "+name+" an egress allowlist of the upstreams it really needs\n"+e.egressPolicyFor(sv))
 	}
@@ -127,7 +127,7 @@ func (e *engine) findings(w *workload, a Agent, reach []pair, all []*workload, d
 		if len(writes) > 1 {
 			title = fmt.Sprintf("Can write to %d sensitive services", len(writes))
 		}
-		addItems("high", title,
+		addItems(docsWaypointAuthz, "high", title,
 			"Nothing on the network stops it changing data here; only each application's own login does. Unaudited write access is how the incident's agents turned a registry into a message board.",
 			"# Shown for "+svcLabel(first.sv)+"; repeat for each destination listed.\n"+fix, items)
 	}
@@ -138,12 +138,12 @@ func (e *engine) findings(w *workload, a Agent, reach []pair, all []*workload, d
 		}
 	}
 	if len(sharedItems) > 0 {
-		addItems("high", fmt.Sprintf("Shares %d writable store%s with other agents", len(sharedItems), plural(len(sharedItems))),
+		addItems(docsWaypointAuthz, "high", fmt.Sprintf("Shares %d writable store%s with other agents", len(sharedItems), plural(len(sharedItems))),
 			"Anything one agent can write and another can read is a channel between them, whether intended or not.",
 			"# give each agent its own store, database or prefix, or make the shared one read-only for agents\n"+e.readOnlyPolicy(w, writes[0].sv), sharedItems)
 	}
 	if len(a.Identity.SharedVolumes) > 0 {
-		add("high", "Mounts a volume other agents also mount", strings.Join(a.Identity.SharedVolumes, "; "), "# one PersistentVolumeClaim per agent, or mount shared data read-only\nvolumeMounts:\n- {name: shared, mountPath: /data, readOnly: true}")
+		add(docsVolumes, "high", "Mounts a volume other agents also mount", strings.Join(a.Identity.SharedVolumes, "; "), "# one PersistentVolumeClaim per agent, or mount shared data read-only\nvolumeMounts:\n- {name: shared, mountPath: /data, readOnly: true}")
 	}
 
 	total := 0
@@ -153,7 +153,7 @@ func (e *engine) findings(w *workload, a Agent, reach []pair, all []*workload, d
 		}
 	}
 	if a.Counts.Direct > len(needed)+2 && a.Counts.Direct*2 >= total && total > 4 {
-		add("high", fmt.Sprintf("Can reach %d of %d Services", a.Counts.Direct, total),
+		add(docsNetpolAmbient, "high", fmt.Sprintf("Can reach %d of %d Services", a.Counts.Direct, total),
 			fmt.Sprintf("%s is configured to call %d of them and called %d in the capture. It does not need the rest, and through them it reaches %d Services in total.", w.name, len(declSvcs), a.Counts.Observed, a.Counts.Closure),
 			egressFix)
 	}
@@ -167,22 +167,22 @@ func (e *engine) findings(w *workload, a Agent, reach []pair, all []*workload, d
 			items = append(items, FindingItem{Target: n, Note: "not configured, not called"})
 		}
 		_ = list
-		addItems("medium", fmt.Sprintf("%d allowed destinations were never used", a.Counts.NeverUsed),
+		addItems(docsNetpolAmbient, "medium", fmt.Sprintf("%d allowed destinations were never used", a.Counts.NeverUsed),
 			"Allowed, not configured, and not called while the access logs were recorded. These are the cheapest paths to close.", egressFix, items)
 	}
 
 	switch {
 	case a.Metadata == Allowed && (c.platform == "eks" || c.platform == "gke" || c.platform == "aks"):
-		add("high", "Can reach the cloud metadata endpoint",
+		add(docsNetworkPolicy, "high", "Can reach the cloud metadata endpoint",
 			"169.254.169.254 hands out the node's cloud credentials. Block it twice, with a NetworkPolicy and at the cloud layer (IMDSv2 with hop limit 1, or Workload Identity).",
 			metadataPolicy(w))
 	case a.Metadata == Allowed && c.platform != "kind":
-		add("medium", "Would reach a cloud metadata endpoint",
+		add(docsNetworkPolicy, "medium", "Would reach a cloud metadata endpoint",
 			"No NetworkPolicy blocks 169.254.169.254 for this agent. On a cloud node that hands out node credentials.", metadataPolicy(w))
 	}
 
 	if !w.inMesh && !w.gateway {
-		add("high", "Not in the mesh",
+		add(docsEnroll, "high", "Not in the mesh",
 			fmt.Sprintf("%s has no mesh identity: its traffic is not encrypted by ztunnel and no AuthorizationPolicy can allow or deny it by name.", w.name),
 			fmt.Sprintf("kubectl label namespace %s istio.io/dataplane-mode=ambient", w.ns))
 	}
@@ -193,29 +193,29 @@ func (e *engine) findings(w *workload, a Agent, reach []pair, all []*workload, d
 		}
 	}
 	if len(sameSA) > 0 {
-		add("high", "Shares its identity with other agents",
+		add(docsWorkloadIdentity, "high", "Shares its identity with other agents",
 			fmt.Sprintf("%s runs as %s, like %s. Every policy that allows one of them allows all of them, and anything one writes the others can read as the same identity. Give each agent its own service account.", w.name, a.Identity.ServiceAccount, strings.Join(sameSA, ", ")),
 			fmt.Sprintf("apiVersion: v1\nkind: ServiceAccount\nmetadata: {name: %s, namespace: %s}\nautomountServiceAccountToken: false\n---\n# and in the %s pod template:\nspec:\n  serviceAccountName: %s", w.name, w.ns, w.name, w.name))
 	}
 	for _, dg := range a.Identity.Dangerous {
-		add("high", "Service account can "+strings.SplitN(dg, ": ", 2)[1],
+		add(docsRBAC, "high", "Service account can "+strings.SplitN(dg, ": ", 2)[1],
 			fmt.Sprintf("%s runs as %s, which can %s. A file-read bug in the agent becomes that permission.", w.name, a.Identity.ServiceAccount, dg), "# remove the rule, or split it into a separate service account the agent does not run as")
 	}
 	if a.Identity.TokenMounted && len(a.Identity.RBAC) == 0 && a.Identity.RBACComplete {
-		add("medium", "Mounts an API token it has no use for",
+		add(docsSAToken, "medium", "Mounts an API token it has no use for",
 			fmt.Sprintf("%s gets a Kubernetes API token automatically but its service account is granted nothing. Stop mounting it.", w.name),
 			fmt.Sprintf("apiVersion: v1\nkind: ServiceAccount\nmetadata: {name: %s, namespace: %s}\nautomountServiceAccountToken: false", w.sa, w.ns))
 	}
 	if a.Identity.CloudRole != "" {
-		add("medium", "Holds a cloud identity",
+		add(docsServiceAccounts, "medium", "Holds a cloud identity",
 			fmt.Sprintf("%s: a stolen service account token is also a cloud credential. Scope the role to what the agent needs.", a.Identity.CloudRole), "")
 	}
 	if len(a.Identity.Secrets) > 0 && (w.agentType == "kagent-agent" || w.agentType == "possible-agent") {
-		add("low", fmt.Sprintf("Can read %d Secret(s)", len(a.Identity.Secrets)),
+		add(docsTokenExchange, "low", fmt.Sprintf("Can read %d Secret(s)", len(a.Identity.Secrets)),
 			"Mounted or in its environment: "+strings.Join(a.Identity.Secrets, ", ")+". Keep only what the agent uses; prefer short-lived tokens from agentgateway (token exchange) to static keys.", "")
 	}
 	if a.Identity.Sandbox == "" && (w.agentType == "kagent-agent" || w.agentType == "possible-agent") {
-		add("low", "Shares the node kernel",
+		add(docsRuntimeClass, "low", "Shares the node kernel",
 			"The agent runs in an ordinary container. A kernel exploit is one step to root on the node, as in the incident. Run agents that execute code under a sandbox runtime.",
 			"spec:\n  runtimeClassName: gvisor")
 	}

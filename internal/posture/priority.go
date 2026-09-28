@@ -22,6 +22,7 @@ type Priority struct {
 	Objects  []string `json:"objects"` // the first few objects to change
 	Fix      string   `json:"fix"`
 	Source   string   `json:"source"`
+	Docs     string   `json:"docs,omitempty"`
 }
 
 // PointsIfFixed is the number of area score points a check would recover if
@@ -64,7 +65,7 @@ func Priorities(r Report, n int) []Priority {
 			continue
 		}
 		p := Priority{ID: c.ID, Area: c.Area, Title: c.Title, Severity: c.Severity, Status: c.Status,
-			Points: PointsIfFixed(r, c), Impact: math.Round(Impact(c)*100) / 100, Total: c.Total, Fix: c.Fix, Source: c.Source, Objects: []string{}}
+			Points: PointsIfFixed(r, c), Impact: math.Round(Impact(c)*100) / 100, Total: c.Total, Fix: c.Fix, Source: c.Source, Docs: c.Docs, Objects: []string{}}
 		for _, it := range c.Items {
 			switch it.Status {
 			case Fail:

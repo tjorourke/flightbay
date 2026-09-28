@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/tjorourke/flightbay/internal/solodocs"
 	"github.com/tjorourke/flightbay/internal/store"
 )
 
@@ -321,7 +322,7 @@ func gatewayChecks(e env) []Check {
 	add(spec{"gateway.listener-tls", "Encryption", "high", "Exposed gateways serve HTTPS",
 		"An internet-facing listener without TLS sends credentials and tokens in the clear. Plain HTTP should only redirect to HTTPS.",
 		"listeners:\n- name: https\n  port: 443\n  protocol: HTTPS\n  tls:\n    mode: Terminate\n    certificateRefs: [{kind: Secret, name: <cert>}]\n---\n# redirect route on the http listener\nfilters:\n- type: RequestRedirect\n  requestRedirect: {scheme: https, statusCode: 301}",
-		meshBase + "kgateway-tls-sni-kind/"}, func(c *Check) {
+		meshBase + "gateway-api-ambient/", solodocs.Kgateway + "setup/listeners/https/"}, func(c *Check) {
 		if !detailOK {
 			na(c, detailWhy)
 			return
@@ -387,7 +388,7 @@ func gatewayChecks(e env) []Check {
 	add(spec{"gateway.tls-secret-valid", "Encryption", "critical", "Listener certificates point at usable Secrets",
 		"A listener whose certificate Secret is missing, of the wrong type, lacks tls.crt or tls.key, or sits in another namespace without a ReferenceGrant, is not programmed, and HTTPS on it fails.",
 		"kubectl create secret tls <cert> -n <gateway-ns> --cert=tls.crt --key=tls.key\n# cross-namespace: a ReferenceGrant in the Secret's namespace\nspec:\n  from: [{group: gateway.networking.k8s.io, kind: Gateway, namespace: <gateway-ns>}]\n  to: [{group: \"\", kind: Secret, name: <cert>}]",
-		meshBase + "kgateway-tls-sni-kind/"}, func(c *Check) {
+		meshBase + "gateway-api-ambient/", solodocs.Kgateway + "setup/listeners/https/"}, func(c *Check) {
 		if ok, why := e.absenceOK("", "secrets", "Secret", true); !ok {
 			na(c, why)
 			return
@@ -475,7 +476,7 @@ func gatewayChecks(e env) []Check {
 	add(spec{"gateway.referencegrants", "Isolation", "high", "Cross-namespace references have a ReferenceGrant",
 		"A route may only send to a Service in another namespace when that namespace grants it. Without the grant the backend is refused, and a broad grant hands out more than one Secret.",
 		"apiVersion: gateway.networking.k8s.io/v1beta1\nkind: ReferenceGrant\nmetadata: {name: allow-<route-ns>, namespace: <backend-ns>}\nspec:\n  from: [{group: gateway.networking.k8s.io, kind: HTTPRoute, namespace: <route-ns>}]\n  to: [{group: \"\", kind: Service, name: <svc>}]",
-		meshBase + "gateway-api-ambient/"}, func(c *Check) {
+		meshBase + "gateway-api-ambient/", solodocs.Kgateway + "about/custom-resources/"}, func(c *Check) {
 		ok, why := e.absenceOK("gateway.networking.k8s.io", "referencegrants", "ReferenceGrant", true)
 		if !ok {
 			na(c, why)
@@ -530,7 +531,7 @@ func gatewayChecks(e env) []Check {
 	add(spec{"gateway.shared-gateway-isolation", "Isolation", "medium", "Shared gateways limit who can attach routes",
 		"allowedRoutes from All lets any namespace attach a route and take traffic. When routes from several namespaces share a listener with no hostnames, they compete for the same requests.",
 		"listeners:\n- name: https\n  hostname: \"*.example.com\"\n  allowedRoutes:\n    namespaces:\n      from: Selector\n      selector: {matchLabels: {shared-gateway-access: \"true\"}}",
-		meshBase + "gateway-api-ambient/"}, func(c *Check) {
+		meshBase + "gateway-api-ambient/", solodocs.Kgateway + "setup/listeners/http/"}, func(c *Check) {
 		for _, gw := range ingress {
 			var warns []string
 			for _, ln := range l(path(gw.Obj, "spec", "listeners")) {
@@ -568,7 +569,7 @@ func gatewayChecks(e env) []Check {
 	add(spec{"gateway.client-ip-policy", "Authorization", "high", "IP-based policy at the gateway sees the real client address",
 		"ipBlocks matches the connection's source address. Behind a LoadBalancer with externalTrafficPolicy Cluster that is a node IP, so the rule matches the wrong thing. remoteIpBlocks needs numTrustedProxies to read X-Forwarded-For correctly.",
 		"# gateway Service\nspec:\n  externalTrafficPolicy: Local\n# or via the Gateway\nspec:\n  infrastructure:\n    annotations:\n      proxy.istio.io/config: '{\"gatewayTopology\": {\"numTrustedProxies\": 1}}'",
-		meshBase + "ambient-client-ip-authz-at-waypoint/"}, func(c *Check) {
+		meshBase + "ambient-client-ip-authz-at-waypoint/", solodocs.Kgateway + "security/acl/"}, func(c *Check) {
 		trusted := false
 		for _, d := range e.ws.Diagnostics(e.cluster) {
 			if d.Component == "istiod" && strings.Contains(string(d.Files["mesh.json"]), "numTrustedProxies") {
@@ -620,7 +621,7 @@ func gatewayChecks(e env) []Check {
 	add(spec{"gateway.gateway-ha", "Resilience", "medium", "Gateway and waypoint proxies run more than one replica",
 		"Ingress, waypoint and east-west proxies are on the request path. A single replica, or no PodDisruptionBudget, turns a node drain or a crash into an outage.",
 		"# on the Gateway (Istio) or the GatewayParameters (kgateway)\nspec:\n  infrastructure:\n    parametersRef: {group: \"\", kind: ConfigMap, name: <gw>-options}\n# HPA and PDB\nkind: HorizontalPodAutoscaler\nspec: {minReplicas: 2}\n---\nkind: PodDisruptionBudget\nspec: {minAvailable: 1}",
-		meshBase + "hbone-east-west/"}, func(c *Check) {
+		meshBase + "hbone-east-west/", solodocs.Kgateway + "setup/customize/configs/"}, func(c *Check) {
 		if !detailOK {
 			na(c, detailWhy)
 			return
@@ -676,7 +677,7 @@ func gatewayChecks(e env) []Check {
 	add(spec{"gateway.upstream-tls-verified", "Encryption", "high", "TLS to backends verifies the server",
 		"TLS without verification encrypts the connection but accepts any certificate, so anyone on the path can impersonate the backend.",
 		"apiVersion: gateway.networking.k8s.io/v1\nkind: BackendTLSPolicy\nspec:\n  targetRefs: [{group: \"\", kind: Service, name: <svc>}]\n  validation:\n    hostname: <svc>.example.com\n    wellKnownCACertificates: System",
-		meshBase + "kgateway-tls-sni-kind/"}, func(c *Check) {
+		meshBase + "gateway-api-ambient/", solodocs.Kgateway + "security/backend-tls/"}, func(c *Check) {
 		for _, p := range sortedObjs(e.list("gateway.kgateway.dev", "backendconfigpolicies")) {
 			t := m(path(p.Obj, "spec", "tls"))
 			if t == nil {
@@ -708,7 +709,7 @@ func gatewayChecks(e env) []Check {
 
 	add(spec{"gateway.cors-safe", "Security", "medium", "CORS does not allow any origin with credentials",
 		"Allowing every origin together with credentials lets any website make logged-in requests to your API from a victim's browser and read the answers.",
-		"filters:\n- type: CORS\n  cors:\n    allowOrigins: [\"https://app.example.com\"]\n    allowCredentials: true", meshBase + "kgateway-tls-sni-kind/"}, func(c *Check) {
+		"filters:\n- type: CORS\n  cors:\n    allowOrigins: [\"https://app.example.com\"]\n    allowCredentials: true", meshBase + "gateway-api-ambient/", solodocs.Kgateway + "security/cors/"}, func(c *Check) {
 		judge := func(o *store.Object, cors map[string]any, origins []string) {
 			cred, _ := cors["allowCredentials"].(bool)
 			wild := false
@@ -779,7 +780,7 @@ func gatewayChecks(e env) []Check {
 	add(spec{"gateway.timeouts-retries", "Resilience", "low", "Ingress routes set timeouts and bounded retries",
 		"Without a request timeout a slow backend holds gateway connections open until clients give up. Unbounded retries multiply load on a backend that is already failing.",
 		"rules:\n- timeouts: {request: 30s}\n  retry: {attempts: 2}\n# kgateway\nkind: TrafficPolicy\nspec:\n  timeouts: {request: 30s}\n  retry: {attempts: 2, perTryTimeout: 10s}",
-		meshBase + "kgateway-tls-sni-kind/"}, func(c *Check) {
+		meshBase + "gateway-api-ambient/", solodocs.Kgateway + "resiliency/timeouts/"}, func(c *Check) {
 		for _, r := range httpRoutes {
 			gws := parentsOf(r)
 			if len(gws) == 0 {
@@ -858,7 +859,7 @@ func gatewayChecks(e env) []Check {
 	add(spec{"gateway.kgw-auth-fails-closed", "Authentication", "high", "kgateway authentication fails closed",
 		"An external auth provider that fails open, or JWT validation that lets missing or invalid tokens through, means the gateway admits requests whenever the check cannot decide.",
 		"apiVersion: gateway.kgateway.dev/v1alpha1\nkind: GatewayExtension\nspec:\n  extAuth:\n    failOpen: false\n---\nspec:\n  jwt:\n    validationMode: Strict\n    providers:\n    - name: idp\n      issuer: https://idp.example.com\n      audiences: [api]",
-		meshBase + "kgateway-tls-sni-kind/"}, func(c *Check) {
+		meshBase + "solo-ext-auth/", solodocs.Kgateway + "security/extauth/about/"}, func(c *Check) {
 		for _, ge := range sortedObjs(e.list("gateway.kgateway.dev", "gatewayextensions")) {
 			sp := m(ge.Obj["spec"])
 			var fails, warns []string
@@ -936,7 +937,7 @@ func gatewayChecks(e env) []Check {
 	add(spec{"gateway.kgw-public-route-protected", "Authentication", "medium", "Public kgateway routes are authenticated and rate limited",
 		"A route on an internet-facing gateway with no authentication is open to everyone, and with no rate limit one client can exhaust the backend.",
 		"apiVersion: gateway.kgateway.dev/v1alpha1\nkind: TrafficPolicy\nmetadata: {name: protect, namespace: <ns>}\nspec:\n  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: <route>}]\n  jwtAuth: {extensionRef: {name: jwt-provider}}\n  rateLimit:\n    local: {tokenBucket: {maxTokens: 100, fillInterval: 1s}}",
-		meshBase + "kgateway-tls-sni-kind/"}, func(c *Check) {
+		meshBase + "jwt-claims-to-headers/", solodocs.Kgateway + "security/jwt/overview/"}, func(c *Check) {
 		exposed := map[string]*store.Object{}
 		for _, gw := range ingress {
 			if gwIsKgateway(gw, x.gwClass) && exposedService(e.gatewayService(gw)) {

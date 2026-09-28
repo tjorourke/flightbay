@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tjorourke/flightbay/internal/solodocs"
 	"github.com/tjorourke/flightbay/internal/store"
 )
 
@@ -449,7 +450,7 @@ func kubernetesChecks(e env) []Check {
 	add(spec{"k8s.no-privileged", "Workload security", "critical", "No privileged containers",
 		"A privileged container has every capability and the host's devices: it is root on the node.",
 		"securityContext:\n  privileged: false\n  procMount: Default\n  appArmorProfile: {type: RuntimeDefault}",
-		"https://kubernetes.io/docs/concepts/security/pod-security-standards/"}, true, func(c *Check) {
+		"https://kubernetes.io/docs/concepts/security/pod-security-standards/", solodocs.Kubernetes + "concepts/security/pod-security-standards/"}, true, func(c *Check) {
 		perContainer(c, "not privileged", func(o *store.Object, ps map[string]any, k ktr, sys string, v *verdict) {
 			if p, _ := boolp(k.sc()["privileged"]); p {
 				if sys == "istio-cni" {
@@ -496,7 +497,7 @@ func kubernetesChecks(e env) []Check {
 	add(spec{"k8s.host-access", "Isolation", "high", "No host namespaces, host ports or sensitive host paths",
 		"hostNetwork, hostPID, hostIPC and host paths such as the container runtime socket or /var/lib/kubelet let a pod step out onto the node.",
 		"spec:\n  hostNetwork: false\n  hostPID: false\n  hostIPC: false\n  volumes:\n  - name: data\n    emptyDir: {}   # instead of hostPath",
-		meshBase + "ztunnel-native-egress/"}, true, func(c *Check) {
+		meshBase + "ztunnel-native-egress/", solodocs.Kubernetes + "concepts/security/pod-security-standards/"}, true, func(c *Check) {
 		if len(sec) == 0 {
 			na(c, noWorkloads)
 			return
@@ -588,7 +589,7 @@ func kubernetesChecks(e env) []Check {
 
 	add(spec{"k8s.privilege-escalation", "Workload security", "high", "allowPrivilegeEscalation is false",
 		"Without it a setuid binary in the image can gain more privileges than the process started with.",
-		"securityContext:\n  allowPrivilegeEscalation: false", "https://kubernetes.io/docs/concepts/security/pod-security-standards/"}, true, func(c *Check) {
+		"securityContext:\n  allowPrivilegeEscalation: false", "https://kubernetes.io/docs/concepts/security/pod-security-standards/", solodocs.Kubernetes + "concepts/security/pod-security-standards/"}, true, func(c *Check) {
 		perContainer(c, "allowPrivilegeEscalation: false everywhere", func(o *store.Object, ps map[string]any, k ktr, sys string, v *verdict) {
 			val, set := boolp(k.sc()["allowPrivilegeEscalation"])
 			switch {
@@ -605,7 +606,7 @@ func kubernetesChecks(e env) []Check {
 
 	add(spec{"k8s.run-as-non-root", "Workload security", "medium", "Containers run as a non-root user",
 		"A process running as uid 0 is root on the node the moment it escapes the container.",
-		"securityContext:\n  runAsNonRoot: true\n  runAsUser: 10001", kbBase + "sovereign-ai-uk-eks/"}, true, func(c *Check) {
+		"securityContext:\n  runAsNonRoot: true\n  runAsUser: 10001", kbBase + "sovereign-ai-uk-eks/", solodocs.Kubernetes + "tasks/configure-pod-container/security-context/"}, true, func(c *Check) {
 		perContainer(c, "non-root", func(o *store.Object, ps map[string]any, k ktr, sys string, v *verdict) {
 			uid, uidSet := num(effective(ps, k, "runAsUser"))
 			nonRoot, nrSet := boolp(effective(ps, k, "runAsNonRoot"))
@@ -629,7 +630,7 @@ func kubernetesChecks(e env) []Check {
 	add(spec{"k8s.capabilities", "Workload security", "high", "Capabilities are dropped, not added",
 		"Capabilities such as SYS_ADMIN or NET_ADMIN are most of root. Drop ALL and add back only what the process needs.",
 		"securityContext:\n  capabilities:\n    drop: [ALL]\n    add: [NET_BIND_SERVICE]   # only if it binds a port below 1024",
-		meshBase + "istio-ambient-gke-autopilot/"}, true, func(c *Check) {
+		meshBase + "istio-ambient-gke-autopilot/", solodocs.Kubernetes + "concepts/security/pod-security-standards/"}, true, func(c *Check) {
 		perContainer(c, "drops ALL, adds nothing risky", func(o *store.Object, ps map[string]any, k ktr, sys string, v *verdict) {
 			caps := m(k.sc()["capabilities"])
 			var dangerous, other, expected []string
@@ -669,7 +670,7 @@ func kubernetesChecks(e env) []Check {
 
 	add(spec{"k8s.seccomp", "Workload security", "medium", "A seccomp profile is set",
 		"Without seccomp every syscall is open to the container, including the rarely used ones most kernel exploits go through.",
-		"spec:\n  securityContext:\n    seccompProfile: {type: RuntimeDefault}", "https://kubernetes.io/docs/tutorials/security/seccomp/"}, true, func(c *Check) {
+		"spec:\n  securityContext:\n    seccompProfile: {type: RuntimeDefault}", "https://kubernetes.io/docs/tutorials/security/seccomp/", solodocs.Kubernetes + "tutorials/security/seccomp/"}, true, func(c *Check) {
 		perContainer(c, "seccomp confined", func(o *store.Object, ps map[string]any, k ktr, sys string, v *verdict) {
 			t := s(m(effective(ps, k, "seccompProfile"))["type"])
 			switch {
@@ -687,7 +688,7 @@ func kubernetesChecks(e env) []Check {
 	add(spec{"k8s.readonly-rootfs", "Workload security", "low", "Root filesystems are read-only",
 		"A read-only root filesystem stops an attacker writing tools or changing binaries inside a running container.",
 		"securityContext:\n  readOnlyRootFilesystem: true\nvolumeMounts:\n- {name: tmp, mountPath: /tmp}   # emptyDir for scratch space",
-		"https://kubernetes.io/docs/tasks/configure-pod-container/security-context/"}, true, func(c *Check) {
+		"https://kubernetes.io/docs/tasks/configure-pod-container/security-context/", solodocs.Kubernetes + "tasks/configure-pod-container/security-context/"}, true, func(c *Check) {
 		perContainer(c, "read-only root filesystem", func(o *store.Object, ps map[string]any, k ktr, sys string, v *verdict) {
 			if !k.long() {
 				return
@@ -725,7 +726,7 @@ func kubernetesChecks(e env) []Check {
 	add(spec{"k8s.default-serviceaccount", "Identity", "medium", "Workloads use their own ServiceAccount",
 		"Every pod in a namespace that uses the default ServiceAccount shares one identity, so any permission given to one is given to all.",
 		"apiVersion: v1\nkind: ServiceAccount\nmetadata: {name: <app>, namespace: <ns>}\nautomountServiceAccountToken: false\n---\nspec:\n  template:\n    spec:\n      serviceAccountName: <app>",
-		"https://kubernetes.io/docs/concepts/security/service-accounts/"}, true, func(c *Check) {
+		"https://kubernetes.io/docs/concepts/security/service-accounts/", solodocs.Kubernetes + "concepts/security/service-accounts/"}, true, func(c *Check) {
 		if len(sec) == 0 {
 			na(c, noWorkloads)
 			return
@@ -761,7 +762,7 @@ func kubernetesChecks(e env) []Check {
 	add(spec{"k8s.sa-token-automount", "Identity", "medium", "API tokens are mounted only where they are used",
 		"A mounted token is a credential for the Kubernetes API. If the ServiceAccount has no role it is not needed, and it is one more thing to steal.",
 		"apiVersion: v1\nkind: ServiceAccount\nmetadata: {name: <app>}\nautomountServiceAccountToken: false",
-		"https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/"}, true, func(c *Check) {
+		"https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/", solodocs.Kubernetes + "tasks/configure-pod-container/configure-service-account/"}, true, func(c *Check) {
 		if len(sec) == 0 {
 			na(c, noWorkloads)
 			return
@@ -853,7 +854,7 @@ func kubernetesChecks(e env) []Check {
 
 	add(spec{"k8s.rbac-wildcards", "Identity", "high", "No wildcard RBAC rules",
 		"verbs: [\"*\"] or resources: [\"*\"] grants every permission that exists now and every one added later.",
-		"rules:\n- apiGroups: [\"\"]\n  resources: [configmaps]\n  verbs: [get, list, watch]", "https://kubernetes.io/docs/concepts/security/rbac-good-practices/"}, true, func(c *Check) {
+		"rules:\n- apiGroups: [\"\"]\n  resources: [configmaps]\n  verbs: [get, list, watch]", "https://kubernetes.io/docs/concepts/security/rbac-good-practices/", solodocs.Kubernetes + "concepts/security/rbac-good-practices/"}, true, func(c *Check) {
 		roles := rbacRoles(c)
 		for _, r := range roles {
 			v := newVerdict()
@@ -884,7 +885,7 @@ func kubernetesChecks(e env) []Check {
 
 	add(spec{"k8s.cluster-admin-bindings", "Identity", "critical", "cluster-admin is not granted to workloads or groups",
 		"A ServiceAccount with cluster-admin turns any compromise of that pod into full control of the cluster.",
-		"# replace with a role scoped to what the subject needs\nkubectl delete clusterrolebinding <name>", meshBase + "airgap-image-management/"}, true, func(c *Check) {
+		"# replace with a role scoped to what the subject needs\nkubectl delete clusterrolebinding <name>", meshBase + "airgap-image-management/", solodocs.Kubernetes + "concepts/security/rbac-good-practices/"}, true, func(c *Check) {
 		if !rb.nsOK {
 			na(c, rb.nsWhy)
 			return
@@ -931,7 +932,7 @@ func kubernetesChecks(e env) []Check {
 
 	add(spec{"k8s.rbac-secret-read", "Identity", "high", "Secret read access is narrow",
 		"get, list or watch on secrets reads every credential in scope; list and watch return values, not just names.",
-		"rules:\n- apiGroups: [\"\"]\n  resources: [secrets]\n  resourceNames: [<the one secret>]\n  verbs: [get]", "https://kubernetes.io/docs/concepts/security/rbac-good-practices/"}, true, func(c *Check) {
+		"rules:\n- apiGroups: [\"\"]\n  resources: [secrets]\n  resourceNames: [<the one secret>]\n  verbs: [get]", "https://kubernetes.io/docs/concepts/security/rbac-good-practices/", solodocs.Kubernetes + "concepts/security/rbac-good-practices/"}, true, func(c *Check) {
 		if !rb.nsOK {
 			na(c, rb.nsWhy)
 			return
@@ -984,7 +985,7 @@ func kubernetesChecks(e env) []Check {
 
 	add(spec{"k8s.rbac-escalation", "Identity", "high", "No RBAC paths to privilege escalation",
 		"Creating pods with Secret read, escalate, bind, impersonate, pods/exec, serviceaccounts/token and nodes/proxy each let a subject become someone more powerful.",
-		"# split the permissions across roles, or remove the verb\nrules:\n- apiGroups: [\"\"]\n  resources: [pods]\n  verbs: [get, list, watch]", "https://kubernetes.io/docs/concepts/security/rbac-good-practices/#privilege-escalation-risks"}, true, func(c *Check) {
+		"# split the permissions across roles, or remove the verb\nrules:\n- apiGroups: [\"\"]\n  resources: [pods]\n  verbs: [get, list, watch]", "https://kubernetes.io/docs/concepts/security/rbac-good-practices/#privilege-escalation-risks", solodocs.Kubernetes + "concepts/security/rbac-good-practices/"}, true, func(c *Check) {
 		roles := rbacRoles(c)
 		for _, r := range roles {
 			var found []string
@@ -1033,7 +1034,7 @@ func kubernetesChecks(e env) []Check {
 	add(spec{"k8s.secrets-in-env", "Identity", "low", "Credentials are not held in environment variables",
 		"Environment variables leak into crash dumps, child processes and debug endpoints; a literal value is also readable by anyone who can read the Deployment.",
 		"volumeMounts:\n- {name: creds, mountPath: /var/run/secrets/app, readOnly: true}\nvolumes:\n- name: creds\n  secret: {secretName: app-creds}",
-		"https://kubernetes.io/docs/concepts/security/secrets-good-practices/"}, true, func(c *Check) {
+		"https://kubernetes.io/docs/concepts/security/secrets-good-practices/", solodocs.Kubernetes + "concepts/security/secrets-good-practices/"}, true, func(c *Check) {
 		if len(sec) == 0 {
 			na(c, noWorkloads)
 			return
@@ -1121,7 +1122,7 @@ func kubernetesChecks(e env) []Check {
 	add(spec{"k8s.pod-security-admission", "Isolation", "high", "Namespaces enforce a Pod Security Standard",
 		"Pod Security Admission is the built-in guard that refuses privileged pods. Without an enforce label a namespace accepts anything.",
 		"kubectl label namespace <ns> pod-security.kubernetes.io/enforce=restricted pod-security.kubernetes.io/warn=restricted",
-		meshBase + "ztunnel-native-egress/"}, false, func(c *Check) {
+		meshBase + "ztunnel-native-egress/", solodocs.Kubernetes + "concepts/security/pod-security-admission/"}, false, func(c *Check) {
 		nss, ok := e.namespaces()
 		if !ok {
 			na(c, e.noNSWhy())
@@ -1172,7 +1173,7 @@ func kubernetesChecks(e env) []Check {
 	add(spec{"k8s.netpol-default-deny", "Isolation", "medium", "Application namespaces deny ingress by default",
 		"Without a default-deny NetworkPolicy every pod accepts connections from every other pod in the cluster.",
 		"apiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata: {name: default-deny-ingress, namespace: <ns>}\nspec:\n  podSelector: {}\n  policyTypes: [Ingress]",
-		meshBase + "zero-trust-agents-kubernetes/"}, true, func(c *Check) {
+		meshBase + "zero-trust-agents-kubernetes/", solodocs.Kubernetes + "concepts/services-networking/network-policies/"}, true, func(c *Check) {
 		if !npOK {
 			na(c, npWhy)
 			return
@@ -1215,7 +1216,7 @@ func kubernetesChecks(e env) []Check {
 	add(spec{"k8s.netpol-ambient-compatible", "Isolation", "medium", "NetworkPolicies in ambient namespaces allow HBONE and kubelet probes",
 		"In ambient, traffic arrives on HBONE port 15008 and kubelet probes come from 169.254.7.127. An ingress policy that blocks either breaks the mesh or the probes.",
 		"spec:\n  podSelector: {}\n  policyTypes: [Ingress]\n  ingress:\n  - ports: [{port: 15008, protocol: TCP}]\n  - from: [{ipBlock: {cidr: 169.254.7.127/32}}]",
-		"https://istio.io/latest/docs/ambient/usage/networkpolicy/"}, true, func(c *Check) {
+		"https://istio.io/latest/docs/ambient/usage/networkpolicy/", solodocs.Istio + "security/authorization/configure-networkpolicies/"}, true, func(c *Check) {
 		if !npOK {
 			na(c, npWhy)
 			return
@@ -1308,7 +1309,7 @@ func kubernetesChecks(e env) []Check {
 	add(spec{"k8s.service-exposure", "Isolation", "high", "Only gateways are exposed outside the cluster",
 		"A LoadBalancer or NodePort Service is reachable from outside the cluster. Istio debug and xDS ports, or an application bypassing the gateway, should never be.",
 		"metadata:\n  annotations:\n    service.beta.kubernetes.io/aws-load-balancer-scheme: internal   # or the provider equivalent\nspec:\n  type: ClusterIP   # route through the Gateway instead\n  loadBalancerSourceRanges: [10.0.0.0/8]",
-		meshBase + "istio-ambient-crds/"}, true, func(c *Check) {
+		meshBase + "istio-ambient-crds/", solodocs.Istio + "traffic-management/ingress/"}, true, func(c *Check) {
 		ok, why := e.evaluable("", "services", "Service", true)
 		if !ok {
 			na(c, why)
@@ -1400,7 +1401,7 @@ func kubernetesChecks(e env) []Check {
 
 	add(spec{"k8s.resource-requests", "Resilience", "medium", "Containers set CPU and memory requests and a memory limit",
 		"Without requests the scheduler packs pods blindly and they are first to be evicted; without a memory limit one leak can take the node down.",
-		"resources:\n  requests: {cpu: 100m, memory: 128Mi}\n  limits: {memory: 256Mi}", kbBase + "agentgateway-deployment-sizing/"}, true, func(c *Check) {
+		"resources:\n  requests: {cpu: 100m, memory: 128Mi}\n  limits: {memory: 256Mi}", kbBase + "agentgateway-deployment-sizing/", solodocs.Kubernetes + "concepts/configuration/manage-resources-containers/"}, true, func(c *Check) {
 		if len(sec) == 0 {
 			na(c, noWorkloads)
 			return
@@ -1439,7 +1440,7 @@ func kubernetesChecks(e env) []Check {
 	add(spec{"k8s.probes", "Resilience", "medium", "Long-running containers have readiness probes",
 		"Without a readiness probe a pod gets traffic before it can serve it, and keeps getting it after it stops.",
 		"readinessProbe:\n  httpGet: {path: /ready, port: 8080}\nlivenessProbe:\n  httpGet: {path: /healthz, port: 8080}\n  failureThreshold: 6",
-		"https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/"}, true, func(c *Check) {
+		"https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/", solodocs.Kubernetes + "tasks/configure-pod-container/configure-liveness-readiness-startup-probes/"}, true, func(c *Check) {
 		for _, o := range sec {
 			if o.Kind != "Deployment" && o.Kind != "StatefulSet" && o.Kind != "DaemonSet" {
 				continue
@@ -1509,7 +1510,7 @@ func kubernetesChecks(e env) []Check {
 
 	add(spec{"k8s.ha-replicas", "Resilience", "high", "Critical components run more than one replica",
 		"One istiod or one gateway replica means a node drain or a crash takes the control plane or all ingress with it.",
-		"spec:\n  replicas: 2\n---\napiVersion: autoscaling/v2\nkind: HorizontalPodAutoscaler\nspec:\n  minReplicas: 2", meshBase + "istio-ambient-gke-autopilot/"}, true, func(c *Check) {
+		"spec:\n  replicas: 2\n---\napiVersion: autoscaling/v2\nkind: HorizontalPodAutoscaler\nspec:\n  minReplicas: 2", meshBase + "istio-ambient-gke-autopilot/", solodocs.Istio + "setup/production-readiness/"}, true, func(c *Check) {
 		for _, h := range ha {
 			v := newVerdict()
 			src := "spec.replicas"
@@ -1541,7 +1542,7 @@ func kubernetesChecks(e env) []Check {
 	add(spec{"k8s.pdb", "Resilience", "medium", "Critical components have a working PodDisruptionBudget",
 		"A PDB keeps a drain from evicting every replica at once; one that allows no disruptions blocks node upgrades instead.",
 		"apiVersion: policy/v1\nkind: PodDisruptionBudget\nmetadata: {name: istiod, namespace: istio-system}\nspec:\n  minAvailable: 1\n  selector: {matchLabels: {app: istiod}}",
-		"https://kubernetes.io/docs/tasks/run-application/configure-pdb/"}, true, func(c *Check) {
+		"https://kubernetes.io/docs/tasks/run-application/configure-pdb/", solodocs.Kubernetes + "tasks/run-application/configure-pdb/"}, true, func(c *Check) {
 		ok, why := e.absenceOK("policy", "poddisruptionbudgets", "PodDisruptionBudget", true)
 		if !ok {
 			na(c, why)
@@ -1600,7 +1601,7 @@ func kubernetesChecks(e env) []Check {
 	add(spec{"k8s.spread", "Resilience", "medium", "Replicas are spread across nodes and zones",
 		"Replicas on one node share its fate: two istiod pods on the same node are one failure away from none.",
 		"spec:\n  topologySpreadConstraints:\n  - maxSkew: 1\n    topologyKey: kubernetes.io/hostname\n    whenUnsatisfiable: ScheduleAnyway\n    labelSelector: {matchLabels: {app: <app>}}",
-		"https://kubernetes.io/docs/concepts/scheduling-eviction/topology-spread-constraints/"}, true, func(c *Check) {
+		"https://kubernetes.io/docs/concepts/scheduling-eviction/topology-spread-constraints/", solodocs.Kubernetes + "concepts/scheduling-eviction/topology-spread-constraints/"}, true, func(c *Check) {
 		clusterZones := map[string]bool{}
 		for _, z := range zoneOf {
 			if z != "" {
@@ -1648,7 +1649,7 @@ func kubernetesChecks(e env) []Check {
 
 	add(spec{"k8s.image-pinned", "Supply chain", "high", "Images are pinned by digest",
 		"A tag can be moved to different content at any time; only a digest guarantees every replica runs the image you tested.",
-		"image: registry.example.com/app:1.4.2@sha256:<digest>", meshBase + "airgap-image-management/"}, true, func(c *Check) {
+		"image: registry.example.com/app:1.4.2@sha256:<digest>", meshBase + "airgap-image-management/", solodocs.Kubernetes + "concepts/containers/images/"}, true, func(c *Check) {
 		if len(sec) == 0 {
 			na(c, noWorkloads)
 			return
@@ -1724,7 +1725,7 @@ func kubernetesChecks(e env) []Check {
 
 	add(spec{"k8s.version-supported", "Platform", "high", "Kubernetes is a supported release",
 		"An end-of-life release gets no security fixes. Istio and Solo releases also support only recent Kubernetes versions.",
-		"# plan the upgrade one minor version at a time\nkubectl version", "https://kubernetes.io/releases/"}, false, func(c *Check) {
+		"# plan the upgrade one minor version at a time\nkubectl version", "https://kubernetes.io/releases/", solodocs.KubernetesSite + "releases/"}, false, func(c *Check) {
 		if e.runtimeNA(c, "the cluster version") {
 			return
 		}
@@ -1777,7 +1778,7 @@ func kubernetesChecks(e env) []Check {
 	add(spec{"k8s.node-health", "Platform", "high", "Nodes are Ready, without pressure, on a supported kubelet",
 		"A node under memory or disk pressure evicts pods; a kubelet outside the version skew policy is unsupported.",
 		"kubectl describe node <node>\nkubectl drain <node> --ignore-daemonsets   # then fix or replace it",
-		"https://kubernetes.io/releases/version-skew-policy/"}, true, func(c *Check) {
+		"https://kubernetes.io/releases/version-skew-policy/", solodocs.KubernetesSite + "releases/version-skew-policy/"}, true, func(c *Check) {
 		if e.runtimeNA(c, "node health") {
 			return
 		}
@@ -1816,7 +1817,7 @@ func kubernetesChecks(e env) []Check {
 
 	add(spec{"k8s.deprecated-apis", "Platform", "medium", "Applied manifests use current API versions",
 		"A manifest on a removed API fails the next time it is applied, often in the middle of an upgrade.",
-		"kubectl convert -f manifest.yaml --output-version <group>/<current version>", "https://kubernetes.io/docs/reference/using-api/deprecation-guide/"}, false, func(c *Check) {
+		"kubectl convert -f manifest.yaml --output-version <group>/<current version>", "https://kubernetes.io/docs/reference/using-api/deprecation-guide/", solodocs.Kubernetes + "reference/using-api/deprecation-guide/"}, false, func(c *Check) {
 		checked := 0
 		if e.declaredOnly() {
 			// A repo scan holds the manifests themselves: check every object's
@@ -1876,7 +1877,7 @@ func kubernetesChecks(e env) []Check {
 
 	add(spec{"k8s.helm-releases", "Platform", "medium", "Helm releases are deployed, not failed or stuck",
 		"A failed or pending release leaves the chart half applied, and Helm refuses the next upgrade until it is fixed.",
-		"helm history <release> -n <ns>\nhelm rollback <release> <last good revision> -n <ns>", "https://helm.sh/docs/helm/helm_history/"}, false, func(c *Check) {
+		"helm history <release> -n <ns>\nhelm rollback <release> <last good revision> -n <ns>", "https://helm.sh/docs/helm/helm_history/", ""}, false, func(c *Check) {
 		if e.runtimeNA(c, "Helm release status") {
 			return
 		}
@@ -1942,7 +1943,7 @@ func kubernetesChecks(e env) []Check {
 	add(spec{"k8s.cert-expiry", "Platform", "high", "Certificates are not close to expiry",
 		"When the mesh root or a serving certificate expires, mTLS and TLS handshakes fail everywhere at once.",
 		"kubectl get certificate -A\n# for the Istio root: rotate with an intermediate before it expires\nkubectl get configmap istio-ca-root-cert -n <ns> -o jsonpath='{.data.root-cert\\.pem}' | openssl x509 -noout -enddate",
-		"https://istio.io/latest/docs/ops/configuration/security/root-transition/"}, true, func(c *Check) {
+		meshBase + "istio-ambient-poc-eks/", solodocs.Istio + "security/workload-identity/"}, true, func(c *Check) {
 		if e.runtimeNA(c, "certificate expiry (status.notAfter and the istiod root)") {
 			return
 		}

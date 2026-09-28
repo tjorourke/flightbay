@@ -12,6 +12,7 @@ import (
 
 	"github.com/tjorourke/flightbay/internal/bundle"
 	"github.com/tjorourke/flightbay/internal/posture"
+	"github.com/tjorourke/flightbay/internal/solodocs"
 	"github.com/tjorourke/flightbay/internal/store"
 )
 
@@ -30,7 +31,8 @@ type Failure struct {
 	Severity string       `json:"severity"`
 	Title    string       `json:"title"`
 	Detail   string       `json:"detail"`
-	Guide    string       `json:"guide"`
+	Guide    string       `json:"guide"`          // the Solo field guide
+	Docs     string       `json:"docs,omitempty"` // the product documentation page (docs.solo.io)
 	Item     posture.Item `json:"item"`
 	File     string       `json:"file"`
 	Line     int          `json:"line,omitempty"`
@@ -111,7 +113,7 @@ func Evaluate(ws *store.Workspace) Gate {
 }
 
 func failure(ws *store.Workspace, c posture.Check, it posture.Item, fallback string) Failure {
-	f := Failure{Check: c.ID, Area: c.Area, Category: c.Category, Severity: c.Severity, Title: c.Title, Detail: it.Detail, Guide: c.Source, Item: it, New: true}
+	f := Failure{Check: c.ID, Area: c.Area, Category: c.Category, Severity: c.Severity, Title: c.Title, Detail: it.Detail, Guide: c.Source, Docs: c.Docs, Item: it, New: true}
 	if o := findObject(ws, it); o != nil {
 		ann := asMap(asMap(o.Obj["metadata"])["annotations"])
 		f.File = asStr(ann[SourceAnnotation])
@@ -427,8 +429,25 @@ func (g Gate) CodeQuality() []map[string]any {
 			"severity":    codeQualitySeverity[f.Severity],
 			"fingerprint": hex.EncodeToString(sum[:16]),
 			"location":    map[string]any{"path": f.File, "lines": map[string]int{"begin": line}},
-			"content":     map[string]string{"body": "Guide: " + f.Guide},
+			"content":     map[string]string{"body": strings.Join(links(f.Guide, f.Docs), "\n")},
 		})
+	}
+	return out
+}
+
+// links labels the field guide and the docs page, skipping empty ones and a
+// docs link that repeats the guide.
+func links(guide, docs string) []string {
+	var out []string
+	if guide != "" {
+		out = append(out, "Guide: "+guide)
+	}
+	if docs != "" && docs != guide {
+		label := "Solo docs: "
+		if !solodocs.IsSolo(docs) {
+			label = "Docs: "
+		}
+		out = append(out, label+docs)
 	}
 	return out
 }
@@ -528,9 +547,16 @@ func (g Gate) SARIF(version string) any {
 			if why == "" {
 				why = f.Title
 			}
-			help := "Fix:\n" + c.Fix
+			// helpUri is the product documentation where there is a page for
+			// it; the field guide goes in the help text either way.
+			helpURI := f.Docs
+			if helpURI == "" {
+				helpURI = f.Guide
+			}
+			ls := links(f.Guide, f.Docs)
+			help := "Fix:\n" + c.Fix + "\n\n" + strings.Join(ls, "\n")
 			rules = append(rules, sarifRule{ID: f.Check, Name: ruleName(f.Check), ShortDescription: sarifText{Text: f.Title}, FullDescription: sarifText{Text: why},
-				HelpURI: f.Guide, Help: sarifText{Text: help, Markdown: "**" + f.Title + "**\n\n" + why + "\n\n```yaml\n" + c.Fix + "\n```\n\nGuide: " + f.Guide},
+				HelpURI: helpURI, Help: sarifText{Text: help, Markdown: "**" + f.Title + "**\n\n" + why + "\n\n```yaml\n" + c.Fix + "\n```\n\n" + strings.Join(ls, "\n\n")},
 				DefaultConfiguration: map[string]any{"level": SARIFLevel(f.Severity)},
 				Properties:           map[string]any{"security-severity": securitySeverity[f.Severity], "tags": []string{"flightbay", f.Area, strings.ToLower(f.Category)}, "precision": "high"}})
 		}
