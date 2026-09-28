@@ -521,6 +521,10 @@ document.addEventListener('keydown', e => {
 
 // ---------- best practices ----------
 const pstColour = n => n >= 90 ? 'var(--teal)' : n >= 75 ? '#7fc97f' : n >= 60 ? 'var(--amber)' : 'var(--red)';
+const feature = name => !!(S.ws && S.ws.features && S.ws.features[name]);
+// Severity tag: coloured by weight with the Enterprise priority view, plain otherwise.
+const pstSev = sev => feature('priorities') ? `<span class="pst-sev pst-sev-${esc(sev)}">${esc(sev)}</span>` : `<span class="tag">${esc(sev)}</span>`;
+const pstPts = p => p >= 1 ? '+' + Math.round(p) : p > 0 ? '+<1' : '';
 const pstBadge = st => `<span class="pst-badge pst-${st}">${{fail: 'FAIL', warn: 'WARN', pass: 'PASS', na: 'N/A'}[st]}</span>`;
 
 // The filter box takes free text and key:value terms. Values match as a
@@ -573,16 +577,21 @@ async function posture() {
   const row = c => {
     const open = P.open === c.id;
     const items = c.items.filter(i => i.status !== 'na');
-    return `<div class="pst-check ${open ? 'open' : ''}"><button class="pst-head" data-pstopen="${esc(c.id)}">${pstBadge(c.status)}<span class="tag">${esc(c.severity)}</span><strong>${esc(c.title)}</strong><span class="muted">${esc(shortName[c.area] || c.area)} · ${esc(c.category)}</span><span style="flex:1"></span>${c.status === 'na' ? `<small class="muted">${esc(c.reason)}</small>` : `<small>${c.passed}/${c.total} pass</small>`}<span class="muted">${open ? '▾' : '▸'}</span></button>
+    return `<div class="pst-check ${open ? 'open' : ''}"><button class="pst-head" data-pstopen="${esc(c.id)}">${pstBadge(c.status)}${pstSev(c.severity)}<strong>${esc(c.title)}</strong><span class="muted">${esc(shortName[c.area] || c.area)} · ${esc(c.category)}</span><span style="flex:1"></span>${c.points ? `<span class="pst-pts" title="Area score points recovered if every object passed">${pstPts(c.points)} pts</span>` : ''}${c.status === 'na' ? `<small class="muted">${esc(c.reason)}</small>` : `<small>${c.passed}/${c.total} pass</small>`}<span class="muted">${open ? '▾' : '▸'}</span></button>
       ${open ? `<div class="pst-body"><p>${esc(c.why)}</p>
         ${items.length ? `<div class="table-scroll mt" style="max-height:40vh"><table><thead><tr><th></th><th>Object</th><th>What we found</th></tr></thead><tbody>${items.map((i, n) => `<tr><td>${pstBadge(i.status)}</td><td class="mono">${i.name ? `<button class="link" data-pstobj="${attr({c: c.id, n})}">${esc(i.kind)} ${esc(i.namespace ? i.namespace + '/' : '')}${esc(i.name)}</button>` : '<span class="muted">cluster</span>'}</td><td style="white-space:normal">${esc(i.detail)}</td></tr>`).join('')}</tbody></table></div>` : ''}
         ${c.status === 'fail' || c.status === 'warn' || c.status === 'na' ? `<div class="row between mt"><h3>How to fix</h3><div class="row"><button data-pstcopy="${esc(c.id)}">Copy YAML</button><a href="${esc(c.source)}" target="_blank" rel="noopener">Read the guide ↗</a></div></div><pre class="code mt">${esc(c.fix)}</pre>` : `<p class="mt"><a href="${esc(c.source)}" target="_blank" rel="noopener">Read the guide ↗</a></p>`}
       </div>` : ''}</div>`;
   };
+  const pri = (r.priorities || []).filter(p => !P.area || p.area === P.area);
+  const fixFirst = !feature('priorities') || !pri.length ? '' : `<section class="panel pst-first"><div class="panel-head"><h2>Fix these first</h2><small class="muted">Ranked by severity and how much of it fails. +N is the area score it gives back <span class="ent-pill">Enterprise</span></small></div>
+    <div class="pst-first-list">${pri.map(p => `<button class="pst-first-row" data-pstgo="${esc(p.id)}"><span class="pst-rank">${p.rank}</span><span class="pst-pts big">${pstPts(p.points)}</span>${pstBadge(p.status)}${pstSev(p.severity)}
+      <span class="pst-first-main"><strong>${esc(p.title)}</strong><small class="muted">${esc(shortName[p.area] || p.area)} · ${p.failing ? p.failing + ' failing' : ''}${p.failing && p.warning ? ', ' : ''}${p.warning ? p.warning + ' warning' : ''} of ${p.total}: <span class="mono">${esc(p.objects.join(', '))}</span></small></span><span class="muted">▸</span></button>`).join('')}</div></section>`;
   let lastArea = '';
   const rows = checks.map(c => { const h = !P.area && c.area !== lastArea ? `<div class="tl-day">${esc((r.areas.find(a => a.area === c.area) || {}).title || c.area)}</div>` : ''; lastArea = c.area; return h + row(c); }).join('');
   return head('Best practices', "Solo's guidance for agentic workloads, Istio, ingress and Kubernetes, checked against this snapshot. Problems first, each with its evidence and fix.", '<button id="pst-term">&gt;_ fbscore in terminal</button>') + `
     ${coverage}
+    ${fixFirst}
     <div class="pst-cards">${present.map(card).join('')}</div>
     <div class="toolbar mt"><div class="row wrap">${chip('area', '', 'All areas')}${present.map(a => chip('area', a.area, shortName[a.area] || a.title)).join('')}<span class="muted">·</span>${chip('status', 'attention', 'Needs attention')}${chip('status', 'fail', 'Failing')}${chip('status', 'pass', 'Passing')}${chip('status', 'na', 'Not applicable')}${chip('status', 'all', 'All')}</div>
       <input id="pst-q" placeholder="Filter. Try status: severity: area: category: kind: ns: or text" value="${esc(P.q)}" style="min-width:340px" autocomplete="off" spellcheck="false"></div>
@@ -592,6 +601,10 @@ async function posture() {
 after.posture = () => {
   const P = S.pst;
   document.querySelectorAll('[data-pst]').forEach(b => b.onclick = () => { const f = JSON.parse(b.dataset.pst); P[f.field] = f.v; render(); });
+  document.querySelectorAll('[data-pstgo]').forEach(b => b.onclick = () => {
+    const id = b.dataset.pstgo; P.open = id; P.status = 'attention'; P.q = '';
+    render().then(() => { const el = document.querySelector(`[data-pstopen="${CSS.escape(id)}"]`); if (el) el.scrollIntoView({block: 'start', behavior: 'smooth'}); });
+  });
   document.querySelectorAll('[data-pstarea]').forEach(b => b.onclick = () => { P.area = P.area === b.dataset.pstarea ? '' : b.dataset.pstarea; render(); });
   document.querySelectorAll('[data-pstopen]').forEach(b => b.onclick = () => { P.open = P.open === b.dataset.pstopen ? null : b.dataset.pstopen; render(); });
   document.querySelectorAll('[data-pstobj]').forEach(b => b.onclick = () => { const x = JSON.parse(b.dataset.pstobj); const it = S.pstData.checks.find(c => c.id === x.c).items.filter(i => i.status !== 'na')[x.n]; openObject({cluster: it.cluster, group: it.group, resource: it.resource, namespace: it.namespace, name: it.name}); });

@@ -234,6 +234,8 @@ contains "$score" "Kubernetes (workload and platform hygiene): " "fbscore scores
 contains "$score" "k8s.probes" "the planted checkout pod without probes is reported"
 contains "$score" "Agentic (agentgateway, kagent, MCP): " "fbscore prints the agentic area (scored, or why not)"
 absent "$pst" "$CANARY" "no canary in posture output"
+absent "$pst" '"priorities"' "the fix-first ranking stays off without Enterprise"
+if env FLIGHTBAY_URL=$URL FLIGHTBAY_TOKEN=$TOKEN "$WORK/ws/bin/fbscore" --top 3 >/dev/null 2>&1; then fail "fbscore --top must need Enterprise"; fi
 pass "posture API and fbscore score the snapshot and give fixes"
 kill "$DESK_PID"; wait "$DESK_PID" 2>/dev/null || true; DESK_PID=""
 

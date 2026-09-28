@@ -116,6 +116,8 @@ level:error ns:payments "timed out"    pod:checkout*    trace_id:a4e98f02    sta
 - **Ingress**: listeners without TLS, certificate Secrets that are missing or not granted, cross-namespace references without a ReferenceGrant, shared gateways open to every namespace, client IP policy that sees the wrong address, and kgateway auth that fails open.
 - **Kubernetes**: privileged pods and host access, capabilities (knowing what ztunnel and istio-cni legitimately need), RBAC wildcards and cluster-admin bindings, Pod Security Admission, NetworkPolicy, exposed Services, requests, probes, replicas and PDBs, unpinned images, supported versions, failed Helm releases and expiring certificates.
 
+**Flightbay Enterprise** adds a priority view: severity tags coloured by weight, a **Fix these first** list ranked by severity and how much of each check fails, and the area score each fix gives back ("+7"). `fbscore --top 10` prints the same ranking, and the MCP `best_practices` tool returns it as `priorities`. Turn it on for the desk with `FLIGHTBAY_ENTERPRISE=1 flightbay ui` (or `FLIGHTBAY_FEATURES=priorities`); `flightbay-desk features` lists what is on.
+
 Only problems are listed by default, with a line saying how many checks ran. Each check lists the objects it looked at, says why it matters and gives the YAML to fix it, with a link to the matching guide on mastertheagent.com or masterthemesh.com. Checks are weighted by severity. A check whose data wasn't collected, or that has nothing to apply to, is marked not applicable and doesn't count against the score.
 
 ![Best practices](docs/images/posture.png)
@@ -179,6 +181,7 @@ The MCP server only talks to your local workspace. Snapshot data reaches a model
 | `flightbay-desk search / query / findings / proxy-config / sql / posture` | The terminal helpers (`fbsearch`, `fbq`, `fbfind`, `fbpc`, `fbsql`, `fbscore`), usable anywhere a workspace is open |
 | `flightbay-desk diff A B` | Compare two captures |
 | `flightbay-desk mcp` | MCP server for agents |
+| `flightbay-desk features` | Flightbay Enterprise features and whether they are on |
 | `flightbay-desk keygen` | Create a key pair for `--encrypt-to` |
 
 ## How it works

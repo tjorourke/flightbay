@@ -218,3 +218,20 @@ details.cmp-other>summary h2::before{content:'▸ ';color:var(--muted)}details.c
 .pst-card:hover,.pst-card.on{border-color:var(--teal)}
 .pst-card .pst-ring{width:84px;height:84px}.pst-card .pst-ring>div{width:66px;height:66px}.pst-card .pst-ring strong{font-size:22px}
 .pst-coverage{margin-bottom:0}
+/* ---------- best practices: Enterprise priority view ---------- */
+.pst-sev{font:600 10px var(--mono);padding:3px 7px;border-radius:3px;white-space:nowrap;text-transform:uppercase;letter-spacing:.04em}
+.pst-sev-critical{background:var(--red);color:#fff}
+.pst-sev-high{border:1px solid var(--red);color:var(--red);padding:2px 6px}
+.pst-sev-medium{background:#3a3223;color:var(--amber)}
+.pst-sev-low{background:var(--raised);color:var(--muted)}
+[data-theme=light] .pst-sev-medium{background:#f8ecd3}
+.pst-pts{font:600 11px var(--mono);color:var(--teal);white-space:nowrap}
+.pst-pts.big{font-size:15px;min-width:38px;text-align:right}
+.pst-first{margin-top:14px}
+.pst-first-row{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:none;border:0;border-bottom:1px solid var(--line);border-radius:0;padding:10px 16px}
+.pst-first-row:last-child{border-bottom:0}
+.pst-first-row:hover{background:var(--raised)}
+.pst-rank{font:600 12px var(--mono);color:var(--muted);min-width:18px}
+.pst-first-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.pst-first-main small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ent-pill{font:600 9px var(--mono);letter-spacing:.06em;text-transform:uppercase;padding:2px 6px;border-radius:9px;border:1px solid var(--teal);color:var(--teal);margin-left:6px}

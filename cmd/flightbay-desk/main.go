@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/tjorourke/flightbay/internal/features"
 	"io"
 	"net"
 	"net/http"
@@ -39,7 +40,7 @@ var version = "0.1.0-dev"
 
 func main() {
 	root := &cobra.Command{Use: "flightbay-desk", Short: "Flightbay by Solo: investigate a snapshot bundle offline", SilenceUsage: true}
-	root.AddCommand(openCmd(), shellCmd(), queryCmd(), findingsCmd(), proxyConfigCmd(), searchCmd(), sqlCmd(), postureCmd(), diffCmd(), mcpCmd(), keygenCmd(), &cobra.Command{
+	root.AddCommand(openCmd(), shellCmd(), queryCmd(), findingsCmd(), proxyConfigCmd(), searchCmd(), sqlCmd(), postureCmd(), featuresCmd(), diffCmd(), mcpCmd(), keygenCmd(), &cobra.Command{
 		Use: "version", Short: "Print the version", Run: func(*cobra.Command, []string) { fmt.Println("flightbay-desk", version) },
 	})
 	if err := root.Execute(); err != nil {
@@ -616,22 +617,42 @@ func sqlCmd() *cobra.Command {
 	return c
 }
 
+func featuresCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "features",
+		Short: "List Flightbay Enterprise features and whether they are on",
+		Long:  "Enterprise features are off by default. Turn them all on with FLIGHTBAY_ENTERPRISE=1, or pick some with FLIGHTBAY_FEATURES=priorities (a leading - turns one off).",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			for _, f := range features.List() {
+				st := "off"
+				if f.Enabled {
+					st = "on"
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "%-12s %-3s  %s\n", f.Name, st, f.Title)
+			}
+			return nil
+		},
+	}
+}
+
 func postureCmd() *cobra.Command {
 	var area string
 	var all bool
+	var top int
 	c := &cobra.Command{
 		Use: "posture", Aliases: []string{"best-practices", "score"},
 		Short:   "Best-practice scores (agentic, Istio, ingress, Kubernetes) with fixes (the fbscore helper)",
-		Example: "  fbscore                 # failing and warning checks, with the YAML to fix them\n  fbscore --area agentic\n  fbscore --all           # every check, including passing and not applicable",
+		Example: "  fbscore                 # failing and warning checks, with the YAML to fix them\n  fbscore --area agentic\n  fbscore --all           # every check, including passing and not applicable\n  fbscore --top 10        # the ten fixes that recover the most score (Enterprise)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			u, t, err := deskEnv()
 			if err != nil {
 				return err
 			}
-			return cli.Posture(cmd.OutOrStdout(), u, t, area, all)
+			return cli.Posture(cmd.OutOrStdout(), u, t, area, all, top)
 		},
 	}
 	c.Flags().StringVar(&area, "area", "", "agentic, ambient, gateway or kubernetes")
+	c.Flags().IntVar(&top, "top", 0, "rank the N problems that recover the most score (Flightbay Enterprise)")
 	c.Flags().BoolVar(&all, "all", false, "show passing and not applicable checks too")
 	return c
 }

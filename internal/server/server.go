@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/tjorourke/flightbay/internal/diff"
+	"github.com/tjorourke/flightbay/internal/features"
 	"github.com/tjorourke/flightbay/internal/mcp"
 	"github.com/tjorourke/flightbay/internal/posture"
 	"io"
@@ -244,7 +245,10 @@ func (s *Server) Handler() http.Handler {
 	api("/api/search", s.search)
 	api("/api/objects/search", s.objectSearch)
 	api("/api/logs/fields", s.logFields)
-	api("/api/posture", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, posture.Evaluate(s.WS)) })
+	api("/api/posture", s.posture)
+	api("/api/features", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, map[string]any{"features": features.List(), "enabled": features.Map()})
+	})
 	api("/api/sql", s.sqlQuery)
 	api("/api/coverage", s.coverage)
 	api("/api/terminal", s.terminal)
@@ -288,7 +292,7 @@ func (s *Server) snapshot() time.Time { return apiserver.SnapshotTime(s.WS) }
 
 func (s *Server) workspace(w http.ResponseWriter, r *http.Request) {
 	h := s.WS.Header()
-	out := map[string]any{"state": s.WS.State(), "snapshot": s.snapshot(), "terminal": s.Terminal, "kubeconfig": s.KubeconfigPath()}
+	out := map[string]any{"state": s.WS.State(), "snapshot": s.snapshot(), "terminal": s.Terminal, "kubeconfig": s.KubeconfigPath(), "features": features.Map()}
 	if h != nil {
 		out["case"], out["bundleId"], out["collector"], out["captureStart"] = h.Case, h.BundleID, h.Collector, h.CaptureStart
 		out["contexts"], out["planned"], out["unavailable"] = h.Contexts, h.Planned, h.Unavailable
@@ -609,6 +613,24 @@ func (s *Server) logFields(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, out)
+}
+
+// posture serves best-practice scores. With the Enterprise priorities feature
+// it adds points recovered per check and the fix-first ranking (top=N limits it).
+func (s *Server) posture(w http.ResponseWriter, r *http.Request) {
+	rep := posture.Evaluate(s.WS)
+	if r.URL.Query().Get("top") != "" && !features.Enabled(features.Priorities) {
+		jerr(w, 403, "the fix-first ranking is a Flightbay Enterprise feature; start the desk with FLIGHTBAY_ENTERPRISE=1")
+		return
+	}
+	if features.Enabled(features.Priorities) {
+		top, _ := strconv.Atoi(r.URL.Query().Get("top"))
+		if top <= 0 {
+			top = 10
+		}
+		rep = rep.WithPriorities(top)
+	}
+	writeJSON(w, 200, rep)
 }
 
 // objectSearch serves the Search page.

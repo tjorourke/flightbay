@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -748,7 +749,7 @@ Examples:
   SELECT fields['trace_id'] AS trace, count(*) FROM logs WHERE fields['trace_id'] IS NOT NULL GROUP BY ALL;`
 
 // Posture prints best-practice scores and what to fix.
-func Posture(w io.Writer, base, token, area string, all bool) error {
+func Posture(w io.Writer, base, token, area string, all bool, top int) error {
 	var r struct {
 		Areas []struct {
 			Title, Area, Grade, Reason string
@@ -759,10 +760,22 @@ func Posture(w io.Writer, base, token, area string, all bool) error {
 		Checks []struct {
 			ID, Area, Category, Severity, Title, Status, Reason, Fix, Source string
 			Passed, Total                                                    int
+			Points                                                           float64
 			Items                                                            []struct{ Kind, Namespace, Name, Status, Detail string }
 		} `json:"checks"`
+		Priorities []struct {
+			Rank                                           int
+			ID, Area, Title, Severity, Status, Fix, Source string
+			Points                                         float64
+			Failing, Warning, Total                        int
+			Objects                                        []string
+		} `json:"priorities"`
 	}
-	if err := deskGet(base, token, "/api/posture", url.Values{}, &r); err != nil {
+	q := url.Values{}
+	if top > 0 {
+		q.Set("top", strconv.Itoa(top))
+	}
+	if err := deskGet(base, token, "/api/posture", q, &r); err != nil {
 		return err
 	}
 	for _, a := range r.Areas {
@@ -781,11 +794,32 @@ func Posture(w io.Writer, base, token, area string, all bool) error {
 		fmt.Fprintf(w, "%s: %d/100 (%s)   %s\n", a.Title, a.Score, a.Grade, strings.Join(cats, " · "))
 	}
 	mark := map[string]string{"fail": "FAIL", "warn": "WARN", "pass": "PASS", "na": "N/A "}
+	if top > 0 {
+		fmt.Fprintf(w, "\nFix these first (ranked by severity and share failing; +N is the area score it gives back):\n")
+		n := 0
+		for _, p := range r.Priorities {
+			if area != "" && p.Area != area {
+				continue
+			}
+			n++
+			fmt.Fprintf(w, "\n%2d. +%-5.1f [%s] %-8s %s  (%s)\n", p.Rank, p.Points, mark[p.Status], p.Severity, p.Title, p.ID)
+			fmt.Fprintf(w, "     %d failing, %d warning of %d: %s\n", p.Failing, p.Warning, p.Total, strings.Join(p.Objects, ", "))
+			fmt.Fprintf(w, "     Fix: %s\n", p.Source)
+		}
+		if n == 0 {
+			fmt.Fprintln(w, "  nothing to fix")
+		}
+		return nil
+	}
 	for _, c := range r.Checks {
 		if (area != "" && c.Area != area) || (!all && c.Status != "fail" && c.Status != "warn") {
 			continue
 		}
-		fmt.Fprintf(w, "\n[%s] %-8s %s  (%d/%d)  %s\n", mark[c.Status], c.Severity, c.Title, c.Passed, c.Total, c.ID)
+		pts := ""
+		if c.Points > 0 {
+			pts = fmt.Sprintf("  +%.1f if fixed", c.Points)
+		}
+		fmt.Fprintf(w, "\n[%s] %-8s %s  (%d/%d)  %s%s\n", mark[c.Status], c.Severity, c.Title, c.Passed, c.Total, c.ID, pts)
 		if c.Reason != "" {
 			fmt.Fprintf(w, "       %s\n", c.Reason)
 		}

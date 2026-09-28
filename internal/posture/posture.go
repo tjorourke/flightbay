@@ -56,7 +56,8 @@ type Check struct {
 	Items    []Item  `json:"items"`
 	Passed   int     `json:"passed"`
 	Total    int     `json:"total"`
-	Score    float64 `json:"score"` // 0..1
+	Score    float64 `json:"score"`            // 0..1
+	Points   float64 `json:"points,omitempty"` // area points recovered if fixed (Enterprise)
 }
 
 // AreaScore summarises one area.
@@ -73,8 +74,22 @@ type AreaScore struct {
 
 // Report is the full result.
 type Report struct {
-	Areas  []AreaScore `json:"areas"`
-	Checks []Check     `json:"checks"`
+	Areas      []AreaScore `json:"areas"`
+	Checks     []Check     `json:"checks"`
+	Priorities []Priority  `json:"priorities,omitempty"` // Enterprise: fix-first ranking
+}
+
+// WithPriorities fills in points recovered per check and the fix-first
+// ranking (the Flightbay Enterprise priority view). top <= 0 keeps them all.
+func (r Report) WithPriorities(top int) Report {
+	for i := range r.Checks {
+		r.Checks[i].Points = PointsIfFixed(r, r.Checks[i])
+	}
+	r.Priorities = Priorities(r, top)
+	if r.Priorities == nil {
+		r.Priorities = []Priority{}
+	}
+	return r
 }
 
 var weight = map[string]float64{"critical": 10, "high": 6, "medium": 3, "low": 1}
