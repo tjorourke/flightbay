@@ -24,7 +24,7 @@ async function api(path, params) {
   const qs = params ? '?' + new URLSearchParams(Object.entries(params).filter(([, v]) => v !== undefined && v !== null)).toString() : '';
   const r = await fetch(path + qs, {credentials: 'same-origin', headers: {Accept: 'application/json'}});
   const body = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(body.error || r.statusText);
+  if (!r.ok) { const err = new Error(body.error || r.statusText); err.body = body; err.status = r.status; throw err; }
   return body;
 }
 
@@ -75,7 +75,7 @@ async function render() {
   const seq = ++S.renderSeq;
   const navView = S.view === 'navigator' ? 'resources' : S.view;
   document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('active', a.dataset.view === navView));
-  const views = {navigator, search, overview, scorecard: posture, reach, resources, logs, timeline, findings, compare, proxies, coverage, ...(typeof reviewPage === 'function' ? {review: reviewPage} : {})};
+  const views = {navigator, search, overview, scorecard: posture, reach, resources, logs, timeline, findings, compare, proxies, coverage, ...(typeof reviewPage === 'function' ? {review: reviewPage} : {}), ...(typeof activityPage === 'function' ? {activity: activityPage, traffic: trafficPage} : {})};
   const fn = views[S.view] || overview;
   $('#crumb').textContent = S.ws ? `Workspace / ${S.ws.case ? 'Case ' + S.ws.case : 'Snapshot'} / ${S.view}` : 'Workspace';
   try {
@@ -92,7 +92,7 @@ const after = {};
 
 // Each view links to its page in the built-in documentation.
 const docPages = {overview: 'desk/overview/', search: 'desk/search/', navigator: 'desk/navigator/', resources: 'desk/resources/', logs: 'desk/logs/', timeline: 'desk/timeline/',
-  findings: 'desk/findings/', scorecard: 'desk/scorecard/', reach: 'desk/agent-reach/', compare: 'desk/compare/', proxies: 'desk/proxy-configs/', coverage: 'desk/coverage/', review: 'collect/review/'};
+  findings: 'desk/findings/', scorecard: 'desk/scorecard/', reach: 'desk/agent-reach/', activity: 'desk/activity/', traffic: 'desk/traffic/', compare: 'desk/compare/', proxies: 'desk/proxy-configs/', coverage: 'desk/coverage/', review: 'collect/review/'};
 function head(title, sub, actions = '') {
   const doc = docPages[S.view];
   const help = doc ? `<a class="help-link" href="/docs/${doc}" target="_blank" rel="noopener" title="How to use ${esc(title)}">? Docs</a>` : '';
@@ -337,6 +337,8 @@ async function loadWorkspace() {
   const n = (w.findings?.critical || 0) + (w.findings?.warning || 0);
   nf.textContent = n; nf.classList.toggle('hidden', !n);
   document.querySelector('.nav a[data-view="reach"]')?.classList.toggle('hidden', !feature('reach'));
+  document.querySelector('.nav a[data-view="activity"]')?.classList.toggle('hidden', !feature('activity'));
+  document.querySelector('.nav a[data-view="traffic"]')?.classList.toggle('hidden', !feature('traffic'));
   if (w.terminal) $('#terminal').classList.remove('hidden');
   if (!S.state) { S.state = w.state; renderImportStatus(); }
   if (typeof onWorkspace === 'function') onWorkspace(w);
@@ -1475,15 +1477,15 @@ function rcGraph(a, G) {
 
 // Pan and zoom for the graph viewport. The transform is kept per agent and
 // view in S.reach.gz so re-renders keep your place.
-function rcPanZoom(key) {
-  const R = S.reach, vp = $('#rg-vp'), svg = $('#rg-svg'), root = $('#rg-root');
+function rcPanZoom(key, st) {
+  const R = st || S.reach, vp = $('#rg-vp'), svg = $('#rg-svg'), root = $('#rg-root');
   if (!vp || !svg || !root) return;
   const W = +svg.dataset.w, H = +svg.dataset.h;
   const pct = $('#rg-pct');
   const apply = () => { const z = R.gz; root.setAttribute('transform', `translate(${z.x},${z.y}) scale(${z.k})`); if (pct) pct.textContent = Math.round(z.k * 100) + '%'; };
   const fitView = () => {
     const vw = vp.clientWidth, vh = vp.clientHeight;
-    const k = Math.max(0.2, Math.min(1.25, vw / (W + 20), R.gfull ? vh / (H + 20) : 1.25));
+    const k = Math.max(0.2, Math.min(1.25, vw / (W + 20), R.gfull || R.fitH ? vh / (H + 20) : 1.25));
     R.gz = {key, k, x: Math.max(10, (vw - W * k) / 2), y: H * k < vh ? (vh - H * k) / 2 : 10};
     apply();
   };
@@ -2386,7 +2388,7 @@ function closeModal() { $('#modal-root').innerHTML = ''; }
 
 function openSearch() {
   modal('Jump to an object or view', `<input id="gs" style="width:100%" placeholder="Any object: name, label, image, hostname. Try kind: ns: label:" autocomplete="off"><div id="gs-res" class="search-results"></div>`);
-  const views = ['navigator', 'search', 'overview', 'scorecard', ...(feature('reach') ? ['reach'] : []), 'resources', 'logs', 'timeline', 'findings', 'compare', 'proxies', 'coverage'];
+  const views = ['navigator', 'search', 'overview', 'scorecard', ...(feature('reach') ? ['reach'] : []), ...(feature('activity') ? ['activity'] : []), ...(feature('traffic') ? ['traffic'] : []), 'resources', 'logs', 'timeline', 'findings', 'compare', 'proxies', 'coverage'];
   let hits = [], sel = 0;
   const draw = () => {
     $('#gs-res').innerHTML = hits.map((h, i) => `<button class="${i === sel ? 'sel' : ''}" data-i="${i}">${h.all ? `<span class="green">⌕</span> Search everything for “${esc(h.all)}”<small>Search page</small>` : h.view ? `<span class="green">↗</span> ${esc(h.view)}<small>view</small>` : `<span class="badge">${esc(h.kind)}</span>${esc(h.namespace ? h.namespace + '/' : '')}${esc(h.name)}${h.snippet ? ` <span class="muted mono" style="font-size:10px">…${esc(h.snippet.slice(0, 70))}…</span>` : ''}<small>${esc(h.cluster)}</small>`}</button>`).join('');

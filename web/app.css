@@ -375,7 +375,7 @@ body.rg-noscroll{overflow:hidden}
 
 .rc-fmenu{position:relative;display:inline-block}
 .rc-fpop{position:absolute;z-index:30;top:calc(100% + 6px);left:0;width:440px;max-height:70vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.18);padding:6px}
-.rc-fhead{font:600 10.5px var(--sans);text-transform:uppercase;letter-spacing:.4px;color:var(--muted);padding:8px 8px 4px}
+.rc-fpop .rc-fhead{font:600 10.5px var(--sans);text-transform:uppercase;letter-spacing:.4px;color:var(--muted);padding:8px 8px 4px}
 .rc-fitem{all:unset;box-sizing:border-box;display:grid;grid-template-columns:1fr auto;gap:0 10px;width:100%;padding:6px 8px;border-radius:7px;cursor:pointer}
 .rc-fitem:hover:not([disabled]){background:var(--raised)}.rc-fitem.on{background:color-mix(in srgb,var(--teal) 14%,transparent)}
 .rc-fitem[disabled]{cursor:default}.rc-fitem[disabled] .rc-fname,.rc-fitem[disabled] .rc-fn{color:var(--muted)}
@@ -471,3 +471,23 @@ tr[data-nvrow]{cursor:pointer}
 .res-tabs{margin:-4px 0 16px}
 .res-tabs .pst-tab{text-decoration:none;flex-direction:column;align-items:flex-start;gap:0}
 .res-tabs .pst-tab small{font-weight:400;font-size:11px}
+/* ---------- activity and traffic map ---------- */
+.fb-stats{grid-template-columns:repeat(6,minmax(0,1fr))}
+.fb-stats .stat .value{font-size:24px}
+.fb-statbtn{cursor:pointer}.fb-statbtn:hover{background:var(--raised)}.fb-statbtn.on{box-shadow:inset 0 -2px 0 var(--teal)}
+.fb-cov{font-size:12px;margin:-10px 0 16px}
+.fb-row{cursor:pointer}.fb-row:hover td{background:var(--raised)}
+.rg-edge.fb-on .rg-line{stroke-width:3.2 !important;opacity:1}
+.tf-verdict{padding:12px 14px;border-radius:6px;border:1px solid var(--line);background:var(--raised);font-size:13px}
+.tf-v-allowed{border-color:color-mix(in srgb,var(--green) 45%,transparent)}.tf-v-denied{border-color:color-mix(in srgb,var(--red) 50%,transparent)}.tf-v-unknown{border-color:color-mix(in srgb,var(--amber) 50%,transparent)}
+.tf-steps{margin-top:8px}
+.tf-step{display:grid;grid-template-columns:30px minmax(0,1fr);gap:12px;position:relative;padding-bottom:12px}
+.tf-step:not(:last-child)::before{content:"";position:absolute;left:14px;top:28px;bottom:0;border-left:2px solid var(--line)}
+.tf-dot{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font:600 12px var(--mono);border:2px solid var(--line);background:var(--panel)}
+.tf-allowed .tf-dot{border-color:var(--green);color:var(--green)}.tf-denied .tf-dot{border-color:var(--red);color:var(--red)}.tf-unknown .tf-dot{border-color:var(--amber);color:var(--amber)}.tf-none .tf-dot{color:var(--muted)}
+.tf-sbody{border:1px solid var(--line);border-radius:6px;padding:9px 12px;background:var(--panel)}
+.tf-sbody p{margin:6px 0 4px;font-size:12px;color:var(--muted)}
+.tf-denied .tf-sbody{border-color:color-mix(in srgb,var(--red) 50%,transparent)}
+.tf-backend{font:600 11px var(--mono);color:var(--muted);margin:6px 0 8px}
+.tf-exl{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--muted)}
+@media (max-width:1100px){.fb-stats{grid-template-columns:repeat(3,minmax(0,1fr))}}

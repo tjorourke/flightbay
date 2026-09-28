@@ -23,9 +23,39 @@ type hop struct {
 	layer   string   // "L4" or "L7"
 	reasons []string // why, one line each, naming the policies
 	conds   []string // conditions we could not evaluate (JWT claims, when: clauses)
+	steps   []Step   // the same decision as a trace, one step per enforcement point
 }
 
 func (h *hop) add(r string) { h.reasons = append(h.reasons, r) }
+
+// Step is one enforcement point on the way from a source to a destination,
+// in the order traffic meets them, and what it decided.
+type Step struct {
+	Point    string `json:"point"`   // e.g. "NetworkPolicy egress", "mTLS", "ztunnel authorization"
+	Verdict  string `json:"verdict"` // allowed, denied, unknown, or "none" when nothing applies
+	Detail   string `json:"detail,omitempty"`
+	Backend  string `json:"backend,omitempty"` // the destination pod's workload, ns/name
+	Policies []Ref  `json:"policies,omitempty"`
+}
+
+func (h *hop) step(point, verdict, detail string, dst *workload, pols []*store.Object) {
+	st := Step{Point: point, Verdict: verdict, Detail: detail}
+	if dst != nil {
+		st.Backend = dst.ns + "/" + dst.name
+	}
+	for _, p := range pols {
+		st.Policies = append(st.Policies, *refOf(p))
+	}
+	h.steps = append(h.steps, st)
+}
+
+// npVerdict turns an empty NetworkPolicy answer into "none applies".
+func npVerdict(v, why string, pols []*store.Object) string {
+	if v == Allowed && len(pols) == 0 {
+		return "none"
+	}
+	return v
+}
 
 // ---------- Kubernetes NetworkPolicy ----------
 
@@ -458,6 +488,9 @@ func evalAuthz(pols []*store.Object, src *workload, ports []string, atZtunnel bo
 func (c *cluster) evalHop(src *workload, sv *service) hop {
 	h := hop{layer: "L4"}
 	if len(sv.backends) == 0 {
+		if wp := c.waypointFor(sv); wp != nil && sv.waypoint != "" {
+			return c.evalWaypointOnly(src, sv, wp)
+		}
 		h.verdict = Unknown
 		h.add("no captured pods behind the Service")
 		return h
@@ -514,43 +547,92 @@ func (c *cluster) evalHop(src *workload, sv *service) hop {
 				bh.add(v.why)
 			}
 		}
+		egPols := c.policiesSelecting(src.ns, src.labels, true)
+		bh.step("NetworkPolicy egress from "+src.name, npVerdict(eg, egWhy, egPols), egWhy, dst, egPols)
+		inPols := c.policiesSelecting(dst.ns, dst.labels, false)
+		if wp != nil {
+			inPols = append(c.policiesSelecting(wp.ns, wp.labels, false), inPols...)
+			inPols = append(inPols, c.policiesSelecting(wp.ns, wp.labels, true)...)
+		}
+		inPoint := "NetworkPolicy ingress to " + dst.name
+		if wp != nil {
+			inPoint = "NetworkPolicy through waypoint " + wp.name + " to " + dst.name
+		}
+		bh.step(inPoint, npVerdict(in, inWhy, inPols), inWhy, dst, inPols)
+		if wp != nil || (src.inMesh && dst.inMesh && !src.sidecar && !dst.sidecar) {
+			bh.steps[len(bh.steps)-2].Detail = strings.TrimSpace(bh.steps[len(bh.steps)-2].Detail + " (ambient: HBONE on port 15008)")
+		}
 		if eg == Denied || in == Denied {
 			h.reasons = append(h.reasons, bh.reasons...)
+			h.steps = append(h.steps, bh.steps...)
 			continue
 		}
 		if eg == Unknown || in == Unknown {
 			unknown = true
 		}
 		ok := true
+		// authzStep runs one enforcement point and records it as a step, with
+		// the reasons evalAuthz added as the detail.
+		authzStep := func(point string, pols []*store.Object, atZtunnel bool, where string) bool {
+			n := len(bh.reasons)
+			res := evalAuthz(pols, src, ports, atZtunnel, &bh, where)
+			v := Allowed
+			if !res {
+				v = Denied
+			} else if len(pols) == 0 {
+				v = "none"
+			}
+			detail := strings.Join(bh.reasons[n:], "; ")
+			if len(pols) == 0 {
+				detail = "no AuthorizationPolicy applies here, so it admits everything"
+			}
+			bh.step(point, v, detail, dst, pols)
+			return res
+		}
 		if dst.inMesh {
 			if !c.apKnown {
 				unknown = true
 				bh.add("AuthorizationPolicies not captured")
+				bh.step("Istio authorization", Unknown, "AuthorizationPolicies not captured", dst, nil)
 			} else {
 				zt, wp := c.authzFor(dst, sv)
-				if !src.inMesh && c.strictFor(dst) {
+				strict := c.strictFor(dst)
+				switch {
+				case !src.inMesh && strict:
 					ok = false
 					bh.add("mTLS is STRICT for " + dst.ns + " and " + src.name + " is not in the mesh")
+					bh.step("mTLS", Denied, "PeerAuthentication is STRICT for "+dst.ns+" and "+src.name+" is not in the mesh, so it cannot present a certificate", dst, c.peerAuthFor(dst))
+				case !src.inMesh:
+					bh.step("mTLS", Allowed, src.name+" is not in the mesh; PERMISSIVE mode lets its plaintext in, with no identity for policy to match", dst, c.peerAuthFor(dst))
+				default:
+					mode := "PERMISSIVE"
+					if strict {
+						mode = "STRICT"
+					}
+					bh.step("mTLS", Allowed, "both ends are in the mesh, so ztunnel carries it over HBONE with mutual TLS ("+mode+")", dst, c.peerAuthFor(dst))
 				}
-				if ok && !evalAuthz(zt, src, ports, true, &bh, "ztunnel") {
+				if ok && !authzStep("ztunnel authorization (L4)", zt, true, "ztunnel") {
 					ok = false
 				}
-				if ok && sv.waypoint != "" && !evalAuthz(wp, src, ports, false, &bh, "waypoint "+sv.waypoint) {
+				if ok && sv.waypoint != "" && !authzStep("waypoint "+sv.waypoint+" authorization (L7)", wp, false, "waypoint "+sv.waypoint) {
 					ok = false
 				}
 				if ok && sv.waypoint == "" && len(wp) > 0 {
 					bh.add("waypoint policies exist for " + sv.name + " but it has no waypoint, so they do not apply")
+					bh.step("waypoint authorization (L7)", "none", "policies target "+sv.name+" but it has no waypoint, so they do not apply", dst, wp)
 				}
 			}
 		} else {
 			bh.add(dst.name + " is not in the mesh, so no Istio policy applies to it")
+			bh.step("Istio authorization", "none", dst.name+" is not in the mesh, so no Istio policy applies to it", dst, nil)
 		}
 		if ok {
 			verdict = Allowed
-			h.reasons, h.methods, h.paths, h.layer, h.conds = bh.reasons, bh.methods, bh.paths, bh.layer, bh.conds
+			h.reasons, h.methods, h.paths, h.layer, h.conds, h.steps = bh.reasons, bh.methods, bh.paths, bh.layer, bh.conds, bh.steps
 			break
 		}
 		h.reasons = append(h.reasons, bh.reasons...)
+		h.steps = append(h.steps, bh.steps...)
 	}
 	if verdict == Denied && unknown {
 		verdict = Unknown
@@ -560,6 +642,90 @@ func (c *cluster) evalHop(src *workload, sv *service) hop {
 	}
 	h.verdict = verdict
 	return h
+}
+
+// evalWaypointOnly evaluates a Service with no pods of its own whose
+// waypoint answers for it: an agentgateway waypoint in front of a backend
+// outside the cluster, say. Traffic ends at the waypoint, so the path is the
+// caller to the waypoint, and the waypoint's policies are the ones that apply.
+func (c *cluster) evalWaypointOnly(src *workload, sv *service, wp *workload) hop {
+	h := hop{layer: "L4"}
+	h.add(sv.name + " has no pods; waypoint " + wp.name + " answers for it")
+	ports := []string{"15008"}
+	if !src.inMesh || src.sidecar {
+		for _, p := range sv.ports {
+			ports = append(ports, strconv.Itoa(p.port), p.target)
+		}
+	}
+	eg, egWhy := c.npEgress(src, wp.ns, wp.labels, ports, nil)
+	in, inWhy := c.npIngress(src, wp, ports)
+	egPols := c.policiesSelecting(src.ns, src.labels, true)
+	inPols := c.policiesSelecting(wp.ns, wp.labels, false)
+	h.step("NetworkPolicy egress from "+src.name, npVerdict(eg, egWhy, egPols), egWhy, wp, egPols)
+	h.step("NetworkPolicy ingress to waypoint "+wp.name, npVerdict(in, inWhy, inPols), inWhy, wp, inPols)
+	for _, why := range []string{egWhy, inWhy} {
+		if why != "" && !strings.HasPrefix(why, "no egress NetworkPolicy") {
+			h.add(why)
+		}
+	}
+	switch {
+	case eg == Denied || in == Denied:
+		h.verdict = Denied
+		return h
+	case eg == Unknown || in == Unknown:
+		h.verdict = Unknown
+		return h
+	}
+	switch {
+	case src.inMesh && !src.sidecar:
+		h.step("mTLS", Allowed, "the caller is in the mesh, so ztunnel carries it to the waypoint over HBONE with mutual TLS", wp, nil)
+	case c.strictFor(wp):
+		h.add("mTLS is STRICT for " + wp.ns + " and " + src.name + " is not in the mesh")
+		h.step("mTLS", Denied, "PeerAuthentication is STRICT for "+wp.ns+" and "+src.name+" is not in the mesh, so it cannot present a certificate", wp, c.peerAuthFor(wp))
+		h.verdict = Denied
+		return h
+	default:
+		h.step("mTLS", Allowed, src.name+" is not in the mesh; it reaches the waypoint in plaintext, with no identity for policy to match", wp, c.peerAuthFor(wp))
+	}
+	if !c.apKnown {
+		h.verdict = Unknown
+		h.add("AuthorizationPolicies not captured")
+		h.step("Istio authorization", Unknown, "AuthorizationPolicies not captured", wp, nil)
+		return h
+	}
+	_, wpPols := c.authzFor(wp, sv)
+	n := len(h.reasons)
+	ok := evalAuthz(wpPols, src, nil, false, &h, "waypoint "+wp.name)
+	v, detail := Allowed, strings.Join(h.reasons[n:], "; ")
+	if !ok {
+		v = Denied
+	} else if len(wpPols) == 0 {
+		v, detail = "none", "no Istio AuthorizationPolicy targets "+sv.name+" or its waypoint"
+	}
+	h.step("waypoint "+wp.name+" authorization (L7)", v, detail, wp, wpPols)
+	if names := c.agwPoliciesOn(sv); len(names) > 0 {
+		h.conds = append(h.conds, "agentgateway policies on the waypoint also apply and are not evaluated here: "+strings.Join(names, ", "))
+	}
+	h.verdict = Allowed
+	if !ok {
+		h.verdict = Denied
+	}
+	return h
+}
+
+// agwPoliciesOn names the agentgateway policies attached to a Service.
+func (c *cluster) agwPoliciesOn(sv *service) []string {
+	var out []string
+	for _, g := range []struct{ group, res string }{{"agentgateway.dev", "agentgatewaypolicies"}, {"enterpriseagentgateway.solo.io", "enterpriseagentgatewaypolicies"}} {
+		for _, p := range c.list(g.group, g.res) {
+			for _, tr := range l(path(p.Obj, "spec", "targetRefs")) {
+				if s(m(tr)["kind"]) == "Service" && s(m(tr)["name"]) == sv.name && p.Namespace == sv.ns {
+					out = append(out, p.Kind+" "+p.Namespace+"/"+p.Name)
+				}
+			}
+		}
+	}
+	return out
 }
 
 // strictFor reports whether mTLS is STRICT for dst (workload, namespace or
@@ -585,6 +751,23 @@ func (c *cluster) strictFor(dst *workload) bool {
 		}
 	}
 	return mode == "STRICT"
+}
+
+// peerAuthFor lists the PeerAuthentications that could set dst's mTLS mode.
+func (c *cluster) peerAuthFor(dst *workload) []*store.Object {
+	var out []*store.Object
+	for _, pa := range c.peerAuth {
+		sp := m(pa.Obj["spec"])
+		switch {
+		case pa.Namespace == dst.ns && sp["selector"] != nil && labelsMatch(dst.labels, strMap(path(sp, "selector", "matchLabels"))):
+		case pa.Namespace == dst.ns && sp["selector"] == nil:
+		case pa.Namespace == c.rootNS && sp["selector"] == nil:
+		default:
+			continue
+		}
+		out = append(out, pa)
+	}
+	return out
 }
 
 // egressTo evaluates a workload reaching an external IP (the internet or the

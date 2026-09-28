@@ -185,6 +185,61 @@ func tools() []tool {
 				}
 				return s.get("/api/reach", q)
 			}},
+		{Name: "agent_activity", Title: "Agent and tool activity",
+			Description: "From agentgateway request logs (gateways and agentgateway waypoints): who called which MCP tool, model or agent, as whom (mesh identity, JWT subject or address, resolved to a workload), how often, what was refused and why (with the agentgateway policies on the route, gateway or Service that could have refused it), what failed, and tokens and cost per model and caller. Tools are checked against the tools each kagent MCP server lists and against each declarative Agent's toolNames. With a baseline, tools added, removed or whose description changed (a rug pull). Pass view to trim: calls, tools, models, denials or changes. Needs Flightbay Enterprise.",
+			InputSchema: obj(map[string]any{"view": str("calls, tools, models, denials or changes; omit for everything")}),
+			call: func(s *Server, a map[string]any) (string, error) {
+				body, err := s.get("/api/activity", nil)
+				if err != nil || arg(a, "view") == "" {
+					return body, err
+				}
+				var r map[string]any
+				if json.Unmarshal([]byte(body), &r) != nil {
+					return body, nil
+				}
+				keep := map[string][]string{"calls": {"callers", "targets", "edges", "findings"}, "tools": {"targets", "tools"}, "models": {"targets", "callers"},
+					"denials": {"denials", "callers", "targets"}, "changes": {"changes", "findings"}}[arg(a, "view")]
+				if keep == nil {
+					return "", fmt.Errorf("view must be calls, tools, models, denials or changes")
+				}
+				out := map[string]any{"totals": r["totals"], "notes": r["notes"], "coverage": r["coverage"]}
+				for _, k := range keep {
+					out[k] = r[k]
+				}
+				b, _ := json.MarshalIndent(out, "", " ")
+				return string(b), nil
+			}},
+		{Name: "traffic_map", Title: "Ambient traffic map",
+			Description: "Every connection ztunnel logged between workloads and Services: connections, refusals, HBONE (mutual TLS) versus plaintext, the waypoint that carried it, and the verdict of the captured NetworkPolicies and AuthorizationPolicies from the Agent reach evaluator. Edges are flagged plaintext (between two mesh workloads), plaintext-in (from outside the mesh), unpoliced (no policy looks at it), denied, or mismatch (logs and policy disagree). Pass flag to keep only those edges. Needs Flightbay Enterprise.",
+			InputSchema: obj(map[string]any{"flag": str("plaintext, plaintext-in, unpoliced, denied or mismatch")}),
+			call: func(s *Server, a map[string]any) (string, error) {
+				body, err := s.get("/api/traffic", nil)
+				if err != nil || arg(a, "flag") == "" {
+					return body, err
+				}
+				var r map[string]any
+				if json.Unmarshal([]byte(body), &r) != nil {
+					return body, nil
+				}
+				var keep []any
+				for _, e := range r["edges"].([]any) {
+					for _, f := range e.(map[string]any)["flags"].([]any) {
+						if f == arg(a, "flag") {
+							keep = append(keep, e)
+							break
+						}
+					}
+				}
+				r["edges"] = keep
+				b, _ := json.MarshalIndent(r, "", " ")
+				return string(b), nil
+			}},
+		{Name: "explain_connection", Title: "Why was this allowed or denied?",
+			Description: "For one source workload and one destination Service: every enforcement point in the order traffic meets it (NetworkPolicy egress and ingress, mTLS, ztunnel L4 authorization, waypoint L7 authorization), the policies each one read and what it decided, conditions that cannot be evaluated from a snapshot, what the access logs saw for the pair, and the smallest YAML that would allow it when it is denied for want of an ALLOW rule. from is ns/workload, a pod or a SPIFFE ID; to is ns/service, a host name, or a workload. Needs Flightbay Enterprise.",
+			InputSchema: obj(map[string]any{"from": str("source workload: ns/name, pod, or spiffe:// ID"), "to": str("destination Service: ns/name or host"), "cluster": str("cluster, when there are several")}, "from", "to"),
+			call: func(s *Server, a map[string]any) (string, error) {
+				return s.get("/api/explain", url.Values{"from": {arg(a, "from")}, "to": {arg(a, "to")}, "cluster": {arg(a, "cluster")}})
+			}},
 		{Name: "list_resource_types", Title: "Resource types",
 			Description: "Captured resource types with counts and collection state (complete, excluded by customer, failed, truncated, loading). A type that is excluded or failed says nothing about whether objects exist.",
 			InputSchema: obj(map[string]any{"cluster": str("cluster")}),

@@ -1,0 +1,1030 @@
+package reach
+
+import (
+	"fmt"
+	"net"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/tjorourke/flightbay/internal/store"
+)
+
+// Activity is what agents actually did through agentgateway: who called
+// which MCP tool, model or agent, as whom, how often, what was refused and
+// what it cost in tokens. It is read from agentgateway request logs (gateways
+// and agentgateway waypoints), with callers resolved to workloads from the
+// captured pod addresses and SPIFFE identities, and set against the tools the
+// MCP servers declare. With a baseline it also says which tools appeared,
+// went away or changed their description between the two captures.
+type Activity struct {
+	Callers  []ActCaller   `json:"callers"`
+	Targets  []ActTarget   `json:"targets"`
+	Edges    []ActEdge     `json:"edges"`
+	Denials  []ActDenial   `json:"denials"`
+	Tools    []ToolInfo    `json:"tools"`
+	Findings []Finding     `json:"findings"`
+	Changes  *ToolChanges  `json:"changes,omitempty"`
+	Totals   ActTotals     `json:"totals"`
+	Gateways []string      `json:"gateways"`
+	Notes    []string      `json:"notes"`
+	First    time.Time     `json:"first"`
+	Last     time.Time     `json:"last"`
+	Clusters []string      `json:"clusters"`
+	Coverage []ActCoverage `json:"coverage"`
+}
+
+// ActTotals sums the whole report.
+type ActTotals struct {
+	Requests     int     `json:"requests"`
+	ToolCalls    int     `json:"toolCalls"`
+	LLMCalls     int     `json:"llmCalls"`
+	Denied       int     `json:"denied"`
+	Errors       int     `json:"errors"`
+	InputTokens  int64   `json:"inputTokens"`
+	OutputTokens int64   `json:"outputTokens"`
+	Cost         float64 `json:"cost"`
+	Anonymous    int     `json:"anonymous"` // tool, model and agent calls with no identity at all
+}
+
+// ActCoverage says which gateways logged requests, so an empty map can be
+// told apart from a gateway whose logs were not captured.
+type ActCoverage struct {
+	Gateway  string `json:"gateway"`
+	Pods     int    `json:"pods"`
+	Requests int    `json:"requests"`
+	Waypoint bool   `json:"waypoint"`
+}
+
+// ActCaller is who made calls: a workload, a mesh identity, a JWT subject or
+// an address.
+type ActCaller struct {
+	ID        string   `json:"id"`
+	Kind      string   `json:"kind"` // workload, identity, user, outside, address
+	Label     string   `json:"label"`
+	Namespace string   `json:"namespace,omitempty"`
+	Identity  string   `json:"identity,omitempty"` // SPIFFE ID
+	Users     []string `json:"users,omitempty"`    // JWT subjects seen on its calls
+	Addresses []string `json:"addresses,omitempty"`
+	AgentType string   `json:"agentType,omitempty"` // set when the workload is an agent
+	Ref       *Ref     `json:"ref,omitempty"`
+	Requests  int      `json:"requests"`
+	Denied    int      `json:"denied"`
+	Errors    int      `json:"errors"`
+	Tokens    int64    `json:"tokens"`
+	Cost      float64  `json:"cost,omitempty"`
+	// Anonymous: no mesh identity and no JWT subject on any of its calls.
+	Anonymous bool `json:"anonymous"`
+}
+
+// ActTarget is what was called.
+type ActTarget struct {
+	ID           string   `json:"id"`
+	Kind         string   `json:"kind"` // tool, model, agent, mcp, http
+	Label        string   `json:"label"`
+	Server       string   `json:"server,omitempty"`   // MCP target, or the route that serves it
+	Provider     string   `json:"provider,omitempty"` // LLM provider
+	Routes       []string `json:"routes,omitempty"`
+	Gateways     []string `json:"gateways,omitempty"`
+	Methods      []string `json:"methods,omitempty"` // MCP or A2A methods
+	Requests     int      `json:"requests"`
+	Denied       int      `json:"denied"`
+	Errors       int      `json:"errors"`
+	InputTokens  int64    `json:"inputTokens,omitempty"`
+	OutputTokens int64    `json:"outputTokens,omitempty"`
+	Cost         float64  `json:"cost,omitempty"`
+	// Declared is set for tools an MCP server in the capture lists; Undeclared
+	// for tools called that no captured server lists (only said when some
+	// server's tool list was captured).
+	Declared    bool   `json:"declared"`
+	Undeclared  bool   `json:"undeclared,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+// ActEdge is one caller calling one target.
+type ActEdge struct {
+	From         string         `json:"from"`
+	To           string         `json:"to"`
+	Requests     int            `json:"requests"`
+	Denied       int            `json:"denied"`
+	Errors       int            `json:"errors"`
+	Reasons      map[string]int `json:"reasons,omitempty"`  // agentgateway reason= values
+	Statuses     map[string]int `json:"statuses,omitempty"` // HTTP status -> count
+	InputTokens  int64          `json:"inputTokens,omitempty"`
+	OutputTokens int64          `json:"outputTokens,omitempty"`
+	Cost         float64        `json:"cost,omitempty"`
+	Gateways     []string       `json:"gateways"`
+	Routes       []string       `json:"routes,omitempty"`
+	Users        []string       `json:"users,omitempty"`
+	First        time.Time      `json:"first"`
+	Last         time.Time      `json:"last"`
+	Error        string         `json:"error,omitempty"` // one example
+	// OutsideAllowlist: the caller is a kagent agent whose spec lists the
+	// tools it may use, and this one is not among them.
+	OutsideAllowlist bool `json:"outsideAllowlist,omitempty"`
+}
+
+// ActDenial is a group of refused calls, with the policies that could have
+// refused them.
+type ActDenial struct {
+	From     string    `json:"from"`
+	To       string    `json:"to"`
+	Caller   string    `json:"caller"`
+	Target   string    `json:"target"`
+	Gateway  string    `json:"gateway"`
+	Route    string    `json:"route,omitempty"`
+	Reason   string    `json:"reason"` // agentgateway reason, or the HTTP status when it gave none
+	Status   string    `json:"status,omitempty"`
+	Count    int       `json:"count"`
+	Error    string    `json:"error,omitempty"`
+	Last     time.Time `json:"last"`
+	Meaning  string    `json:"meaning"`            // what the reason means, one sentence
+	Policies []PolRef  `json:"policies,omitempty"` // agentgateway policies on the route, gateway or Service
+	Look     string    `json:"look,omitempty"`     // what to check next
+}
+
+// PolRef is a policy that applies where a call was refused, and the sections
+// it sets.
+type PolRef struct {
+	Ref      Ref      `json:"ref"`
+	Target   string   `json:"target"`   // what it is attached to: Kind/ns/name
+	Sections []string `json:"sections"` // traffic.jwtAuthentication, backend.mcp.authorization...
+	Matches  bool     `json:"matches"`  // it has a section that produces this reason
+}
+
+// ToolInfo is one tool an MCP server declares, or one that was called.
+type ToolInfo struct {
+	Server      string   `json:"server"` // ns/name of the kagent server, or the MCP target seen in logs
+	Name        string   `json:"name"`
+	Description string   `json:"description,omitempty"`
+	Declared    bool     `json:"declared"`
+	Calls       int      `json:"calls"`
+	Callers     []string `json:"callers,omitempty"`
+	Ref         *Ref     `json:"ref,omitempty"`
+}
+
+// ToolChanges compares tools and callers with a baseline capture.
+type ToolChanges struct {
+	Baseline     string       `json:"baseline"`
+	Added        []ToolInfo   `json:"added"`
+	Removed      []ToolInfo   `json:"removed"`
+	Described    []ToolChange `json:"described"` // same tool, new description
+	NewlyCalled  []string     `json:"newlyCalled"`
+	NewCallers   []string     `json:"newCallers"` // caller -> target pairs not seen before
+	Compared     bool         `json:"compared"`   // both captures had some tool list or tool calls
+	BaselineNote string       `json:"baselineNote,omitempty"`
+}
+
+// ToolChange is a tool whose description changed.
+type ToolChange struct {
+	Server string `json:"server"`
+	Name   string `json:"name"`
+	Before string `json:"before"`
+	After  string `json:"after"`
+}
+
+// Denied reasons: agentgateway refused the call on policy.
+var denyReasons = map[string]string{
+	"JwtAuth":       "The request had no JWT, or its JWT did not validate: wrong issuer or audience, expired, or signed with a key the JWKS does not hold.",
+	"Oidc":          "The OIDC flow failed: no session, or the identity provider refused the login.",
+	"BasicAuth":     "The Basic authentication credentials were missing or did not match a user in the policy.",
+	"APIKeyAuth":    "The API key was missing or not one the policy accepts.",
+	"ExtAuth":       "The external authorisation service refused the request.",
+	"Authorization": "An authorization rule refused the caller: no allow rule matched, or a deny rule did. For MCP, this includes a tool the caller may not call.",
+	"RateLimit":     "The caller went over a rate limit (local, global or token budget).",
+	"Guardrail":     "A prompt guard or guardrail rejected the request or the response.",
+}
+
+// Error reasons: the call failed for a reason other than policy.
+var errorReasons = map[string]string{
+	"MCP":              "The MCP backend returned an error, or the MCP request was invalid.",
+	"UpstreamFailure":  "The call to the backend failed.",
+	"Timeout":          "The request or the backend call timed out.",
+	"NoHealthyBackend": "There was no healthy backend to send it to.",
+	"NotFound":         "No route, listener or Service matched the request.",
+	"Internal":         "agentgateway failed while processing the request.",
+	"ExtProc":          "The external processor failed.",
+	"DirectResponse":   "A direct response configured on the route answered it.",
+}
+
+// The policy sections that produce each denial reason.
+var reasonSections = map[string][]string{
+	"JwtAuth":       {"traffic.jwtAuthentication", "backend.mcp.authentication"},
+	"Oidc":          {"traffic.oidc"},
+	"BasicAuth":     {"traffic.basicAuthentication"},
+	"APIKeyAuth":    {"traffic.apiKeyAuthentication"},
+	"ExtAuth":       {"traffic.extAuth", "traffic.entExtAuth", "backend.extAuth"},
+	"Authorization": {"traffic.authorization", "backend.mcp.authorization", "traffic.csrf"},
+	"RateLimit":     {"traffic.rateLimit", "traffic.entRateLimit", "traffic.entBudgetEnforcement"},
+	"Guardrail":     {"backend.ai.promptGuard", "backend.ai.entPromptGuard"},
+}
+
+var reasonLook = map[string]string{
+	"JwtAuth":       "Compare the token's iss and aud with the policy's issuer and audiences, and check the JWKS it points at is reachable.",
+	"Authorization": "Read the policy's CEL rules against the caller's identity or claims, and the tool name for MCP.",
+	"RateLimit":     "Check the limit and what it is keyed on; a shared key makes every caller share one budget.",
+	"ExtAuth":       "Read the external authorisation service's logs for the same time.",
+	"Guardrail":     "Read the guard's rules and the gateway logs around the request.",
+	"APIKeyAuth":    "Check the key is in the Secret the policy reads.",
+	"BasicAuth":     "Check the user is in the Secret the policy reads.",
+}
+
+func isDenied(reason, status string) bool {
+	if _, ok := denyReasons[reason]; ok {
+		return true
+	}
+	return reason == "" && (status == "401" || status == "403" || status == "429")
+}
+
+func isError(reason, status string) bool {
+	if isDenied(reason, status) {
+		return false
+	}
+	if _, ok := errorReasons[reason]; ok && reason != "DirectResponse" {
+		return true
+	}
+	n, _ := strconv.Atoi(status)
+	return n >= 500
+}
+
+// EvaluateActivity builds the activity report. baseline may be nil; name
+// labels it in the report.
+func EvaluateActivity(ws, baseline *store.Workspace, baselineName string) Activity {
+	a := buildActivity(ws)
+	if baseline != nil {
+		b := buildActivity(baseline)
+		a.Changes = compareTools(b, a, baselineName)
+		if a.Changes != nil {
+			a.Findings = append(a.Findings, changeFindings(a.Changes)...)
+		}
+	}
+	sortFindings(a.Findings)
+	return a
+}
+
+func sortFindings(fs []Finding) {
+	rank := map[string]int{"critical": 0, "high": 1, "medium": 2, "low": 3}
+	sort.SliceStable(fs, func(i, j int) bool { return rank[fs[i].Severity] < rank[fs[j].Severity] })
+}
+
+type actBuilder struct {
+	a       *Activity
+	callers map[string]*ActCaller
+	targets map[string]*ActTarget
+	edges   map[[2]string]*ActEdge
+	denials map[string]*ActDenial
+	tools   map[string]*ToolInfo // server/name
+	cov     map[string]*ActCoverage
+	pods    map[string]map[string]bool
+	allow   map[string]map[string]bool // caller id -> tools its kagent Agent lists
+	servers map[string]string          // names a captured MCP server goes by -> its ns/name
+}
+
+func buildActivity(ws *store.Workspace) Activity {
+	a := Activity{Callers: []ActCaller{}, Targets: []ActTarget{}, Edges: []ActEdge{}, Denials: []ActDenial{}, Tools: []ToolInfo{},
+		Findings: []Finding{}, Gateways: []string{}, Notes: []string{}, Clusters: ws.Clusters(), Coverage: []ActCoverage{}}
+	b := &actBuilder{a: &a, callers: map[string]*ActCaller{}, targets: map[string]*ActTarget{}, edges: map[[2]string]*ActEdge{},
+		denials: map[string]*ActDenial{}, tools: map[string]*ToolInfo{}, cov: map[string]*ActCoverage{}, pods: map[string]map[string]bool{}, allow: map[string]map[string]bool{}, servers: map[string]string{}}
+	inventory := false
+	for _, cl := range ws.Clusters() {
+		c := newCluster(ws, cl)
+		agents := map[*workload]string{}
+		for _, w := range c.findAgents() {
+			agents[w] = w.agentType
+		}
+		if b.inventory(c) {
+			inventory = true
+		}
+		b.allowlists(c)
+		for _, r := range ws.AgentgatewayRequests(cl) {
+			b.add(c, agents, r)
+		}
+	}
+	b.finish(inventory)
+	return a
+}
+
+// inventory reads the tools kagent MCP servers declare (status.discoveredTools).
+func (b *actBuilder) inventory(c *cluster) bool {
+	found := false
+	for _, g := range []struct{ group, res string }{{"kagent.dev", "remotemcpservers"}, {"kagent.dev", "mcpservers"}, {"kagent.dev", "toolservers"}} {
+		for _, o := range c.list(g.group, g.res) {
+			ts := l(path(o.Obj, "status", "discoveredTools"))
+			if len(ts) > 0 {
+				found = true
+				srv := key(o.Namespace, o.Name)
+				b.servers[o.Name], b.servers[srv] = srv, srv
+				if u := s(path(o.Obj, "spec", "url")); u != "" {
+					host := strings.TrimPrefix(strings.TrimPrefix(u, "https://"), "http://")
+					host, _, _ = strings.Cut(host, "/")
+					host = stripPort(host)
+					b.servers[host] = srv
+					if p := strings.Split(host, "."); len(p) >= 2 {
+						b.servers[key(p[1], p[0])] = srv
+					}
+				}
+			}
+			for _, t := range ts {
+				tm := m(t)
+				name := s(tm["name"])
+				if name == "" {
+					continue
+				}
+				srv := key(o.Namespace, o.Name)
+				ti := b.tool(srv, name)
+				ti.Declared, ti.Description, ti.Ref = true, s(tm["description"]), refOf(o)
+			}
+		}
+	}
+	return found
+}
+
+// allowlists reads the tools each declarative kagent Agent lists.
+func (b *actBuilder) allowlists(c *cluster) {
+	for _, ag := range c.list("kagent.dev", "agents") {
+		tools := l(path(ag.Obj, "spec", "declarative", "tools"))
+		if len(tools) == 0 {
+			continue
+		}
+		names := map[string]bool{}
+		open := false
+		for _, t := range tools {
+			ms := m(m(t)["mcpServer"])
+			if ms == nil {
+				continue
+			}
+			tn := strList(l(ms["toolNames"]))
+			if len(tn) == 0 {
+				open = true // every tool of the server
+			}
+			for _, n := range tn {
+				names[n] = true
+			}
+		}
+		if open || len(names) == 0 {
+			continue
+		}
+		for _, w := range c.works {
+			if w.ns == ag.Namespace && w.name == ag.Name {
+				b.allow[w.id] = names
+			}
+		}
+	}
+}
+
+func (b *actBuilder) tool(server, name string) *ToolInfo {
+	k := server + "/" + name
+	if t := b.tools[k]; t != nil {
+		return t
+	}
+	t := &ToolInfo{Server: server, Name: name}
+	b.tools[k] = t
+	return t
+}
+
+// caller resolves who made a request: the mesh identity agentgateway saw
+// (waypoints log src.identity), else the source address, with the JWT
+// subject kept as the user.
+func (b *actBuilder) caller(c *cluster, agents map[*workload]string, f map[string]string) *ActCaller {
+	ident, user, addr := f["src.identity"], f["jwt.sub"], stripPort(f["src.addr"])
+	var w *workload
+	if ident != "" {
+		if ns, sa, ok := spiffeSA(ident); ok {
+			var hit *workload
+			shared := false
+			for _, x := range c.works {
+				if x.ns == ns && x.sa == sa {
+					if hit != nil {
+						shared = true
+					}
+					hit = x
+				}
+			}
+			if !shared {
+				w = hit
+			}
+		}
+	}
+	if w == nil && addr != "" {
+		w = c.ips().pod[addr]
+	}
+	var id string
+	var ca ActCaller
+	switch {
+	case w != nil:
+		id = "w:" + w.id
+		ca = ActCaller{Kind: "workload", Label: w.ns + "/" + w.name, Namespace: w.ns, AgentType: agents[w], Ref: refOf(w.obj)}
+		if ident != "" {
+			ca.Identity = ident
+		}
+	case ident != "":
+		ns, sa, _ := spiffeSA(ident)
+		id = "id:" + ident
+		ca = ActCaller{Kind: "identity", Label: "service account " + ns + "/" + sa, Namespace: ns, Identity: ident}
+	case user != "":
+		id = "user:" + user
+		ca = ActCaller{Kind: "user", Label: "JWT subject " + user}
+	case addr != "" && c.ips().node[addr]:
+		id = "node:" + c.name + "/" + addr
+		ca = ActCaller{Kind: "outside", Label: "outside the cluster, through node " + addr}
+	case addr != "" && isNodeGatewayIP(addr):
+		id = "node:" + c.name + "/" + addr
+		ca = ActCaller{Kind: "outside", Label: "outside the cluster, through " + addr}
+	case addr != "":
+		id = "ip:" + c.name + "/" + addr
+		ca = ActCaller{Kind: "address", Label: addr}
+	default:
+		id = "unknown"
+		ca = ActCaller{Kind: "address", Label: "unknown caller"}
+	}
+	if x := b.callers[id]; x != nil {
+		return x
+	}
+	ca.ID, ca.Anonymous = id, true
+	b.callers[id] = &ca
+	return &ca
+}
+
+// isNodeGatewayIP: the .1 address of a pod range is the node's bridge on kind
+// and most CNIs; traffic from outside the cluster arrives from it once SNATed.
+func isNodeGatewayIP(ip string) bool {
+	p := net.ParseIP(ip)
+	return p != nil && p.To4() != nil && p.To4()[3] == 1
+}
+
+// target works out what a request called.
+func target(f map[string]string) (id string, t ActTarget) {
+	route := f["route"]
+	mcpMethod := first(f["mcp.method.name"], f["mcp.method"])
+	tool := first(f["gen_ai.tool.name"], f["mcp.tool.name"], f["mcp.tool"])
+	server := first(f["mcp.target"], route, f["http.host"])
+	model := first(f["gen_ai.response.model"], f["gen_ai.request.model"])
+	provider := first(f["gen_ai.provider.name"], f["llm.provider"])
+	switch {
+	case mcpMethod == "tools/call" && tool != "":
+		name := tool
+		if tg := f["mcp.target"]; tg != "" && strings.HasPrefix(name, tg+"_") {
+			name = strings.TrimPrefix(name, tg+"_") // multiplexed MCP prefixes the target
+		}
+		return "tool:" + server + "/" + name, ActTarget{Kind: "tool", Label: name, Server: server}
+	case mcpMethod != "" || strings.EqualFold(f["protocol"], "mcp"):
+		return "mcp:" + server, ActTarget{Kind: "mcp", Label: server, Server: server}
+	case model != "" || provider != "" || strings.EqualFold(f["protocol"], "llm"):
+		label := model
+		if label == "" {
+			label = "(model not logged)"
+		}
+		return "model:" + provider + "/" + label, ActTarget{Kind: "model", Label: label, Provider: provider}
+	case f["a2a.method"] != "" || strings.EqualFold(f["protocol"], "a2a"):
+		return "agent:" + first(route, f["http.host"]), ActTarget{Kind: "agent", Label: first(route, f["http.host"])}
+	}
+	return "http:" + first(route, f["http.host"], "unrouted"), ActTarget{Kind: "http", Label: first(route, f["http.host"], "unrouted")}
+}
+
+func (b *actBuilder) add(c *cluster, agents map[*workload]string, r store.AgwRequest) {
+	f := r.Fields
+	gw := first(f["gateway"], r.Namespace+"/"+r.Pod)
+	cv := b.cov[gw]
+	if cv == nil {
+		cv = &ActCoverage{Gateway: gw, Waypoint: f["listener"] == "waypoint" || strings.Contains(gw, "waypoint")}
+		b.cov[gw] = cv
+		b.pods[gw] = map[string]bool{}
+	}
+	cv.Requests += r.Count
+	b.pods[gw][r.Namespace+"/"+r.Pod] = true
+
+	ca := b.caller(c, agents, f)
+	tid, tt := target(f)
+	t := b.targets[tid]
+	if t == nil {
+		tt.ID = tid
+		t = &tt
+		b.targets[tid] = t
+	}
+	status, reason := f["http.status"], f["reason"]
+	denied, failed := isDenied(reason, status), isError(reason, status)
+	if f["src.identity"] != "" || f["jwt.sub"] != "" {
+		ca.Anonymous = false
+	}
+	if u := f["jwt.sub"]; u != "" {
+		ca.Users = union(ca.Users, []string{u})
+	}
+	if a := stripPort(f["src.addr"]); a != "" && ca.Kind != "workload" {
+		ca.Addresses = union(ca.Addresses, []string{a})
+	}
+	tokens := r.InputTokens + r.OutputTokens
+	ca.Requests += r.Count
+	ca.Tokens += tokens
+	ca.Cost += r.Cost
+	t.Requests += r.Count
+	t.InputTokens += r.InputTokens
+	t.OutputTokens += r.OutputTokens
+	t.Cost += r.Cost
+	t.Gateways = union(t.Gateways, []string{gw})
+	if rt := f["route"]; rt != "" {
+		t.Routes = union(t.Routes, []string{rt})
+	}
+	if mth := first(f["mcp.method.name"], f["mcp.method"], f["a2a.method"]); mth != "" {
+		t.Methods = union(t.Methods, []string{mth})
+	}
+	if t.Provider == "" {
+		t.Provider = first(f["gen_ai.provider.name"], f["llm.provider"])
+	}
+	e := b.edges[[2]string{ca.ID, tid}]
+	if e == nil {
+		e = &ActEdge{From: ca.ID, To: tid, Reasons: map[string]int{}, Statuses: map[string]int{}, Gateways: []string{}}
+		b.edges[[2]string{ca.ID, tid}] = e
+	}
+	e.Requests += r.Count
+	e.InputTokens += r.InputTokens
+	e.OutputTokens += r.OutputTokens
+	e.Cost += r.Cost
+	e.Gateways = union(e.Gateways, []string{gw})
+	if rt := f["route"]; rt != "" {
+		e.Routes = union(e.Routes, []string{rt})
+	}
+	if u := f["jwt.sub"]; u != "" {
+		e.Users = union(e.Users, []string{u})
+	}
+	if status != "" {
+		e.Statuses[status] += r.Count
+	}
+	if reason != "" {
+		e.Reasons[reason] += r.Count
+	}
+	if e.First.IsZero() || (!r.First.IsZero() && r.First.Before(e.First)) {
+		e.First = r.First
+	}
+	if r.Last.After(e.Last) {
+		e.Last = r.Last
+	}
+	if r.Error != "" && (denied || failed) {
+		e.Error = r.Error
+	}
+	b.a.Totals.Requests += r.Count
+	b.a.Totals.InputTokens += r.InputTokens
+	b.a.Totals.OutputTokens += r.OutputTokens
+	b.a.Totals.Cost += r.Cost
+	switch t.Kind {
+	case "tool":
+		b.a.Totals.ToolCalls += r.Count
+		ti := b.tool(t.Server, t.Label)
+		ti.Calls += r.Count
+		ti.Callers = union(ti.Callers, []string{ca.Label})
+		if allowed, ok := b.allow[strings.TrimPrefix(ca.ID, "w:")]; ok && !allowed[t.Label] {
+			e.OutsideAllowlist = true
+		}
+	case "model":
+		b.a.Totals.LLMCalls += r.Count
+	}
+	if denied {
+		ca.Denied += r.Count
+		t.Denied += r.Count
+		e.Denied += r.Count
+		b.a.Totals.Denied += r.Count
+		b.denial(c, ca, t, gw, f, r)
+	} else if failed {
+		ca.Errors += r.Count
+		t.Errors += r.Count
+		e.Errors += r.Count
+		b.a.Totals.Errors += r.Count
+	}
+	if !r.First.IsZero() && (b.a.First.IsZero() || r.First.Before(b.a.First)) {
+		b.a.First = r.First
+	}
+	if r.Last.After(b.a.Last) {
+		b.a.Last = r.Last
+	}
+}
+
+func (b *actBuilder) denial(c *cluster, ca *ActCaller, t *ActTarget, gw string, f map[string]string, r store.AgwRequest) {
+	reason := f["reason"]
+	if reason == "" {
+		reason = "HTTP " + f["http.status"]
+	}
+	k := strings.Join([]string{ca.ID, t.ID, gw, f["route"], reason}, "|")
+	d := b.denials[k]
+	if d == nil {
+		d = &ActDenial{From: ca.ID, To: t.ID, Caller: ca.Label, Target: t.Label, Gateway: gw, Route: f["route"], Reason: reason, Status: f["http.status"]}
+		switch {
+		case denyReasons[reason] != "":
+			d.Meaning = denyReasons[reason]
+		case f["http.status"] == "401":
+			d.Meaning = "Refused as unauthenticated (401). The log gave no reason; an authentication policy on the route or gateway is the likely cause."
+		case f["http.status"] == "403":
+			d.Meaning = "Refused as forbidden (403). The log gave no reason; an authorization policy on the route or gateway is the likely cause."
+		case f["http.status"] == "429":
+			d.Meaning = "Refused as over a limit (429)."
+		}
+		d.Look = reasonLook[reason]
+		d.Policies = c.policiesAt(gw, f["route"], f["http.host"], reason)
+		b.denials[k] = d
+	}
+	d.Count += r.Count
+	if r.Error != "" {
+		d.Error = r.Error
+	}
+	if r.Last.After(d.Last) {
+		d.Last = r.Last
+	}
+}
+
+// policiesAt lists the agentgateway policies attached to a route, its
+// gateway, or (for a waypoint) the Service it serves, with the sections each
+// sets and whether one of them produces this denial reason.
+func (c *cluster) policiesAt(gateway, route, host, reason string) []PolRef {
+	targets := map[string]bool{}
+	add := func(kind, nsName string) {
+		if nsName != "" && strings.Contains(nsName, "/") {
+			targets[kind+"/"+nsName] = true
+		}
+	}
+	add("Gateway", gateway)
+	add("HTTPRoute", route)
+	add("GRPCRoute", route)
+	add("Service", route) // waypoint logs name the Service as the route
+	if h := strings.Split(host, "."); len(h) >= 2 && !strings.Contains(host, ":") && net.ParseIP(host) == nil {
+		add("Service", h[1]+"/"+h[0])
+	}
+	var out []PolRef
+	for _, g := range []struct{ group, res string }{{"agentgateway.dev", "agentgatewaypolicies"}, {"enterpriseagentgateway.solo.io", "enterpriseagentgatewaypolicies"}} {
+		for _, p := range c.list(g.group, g.res) {
+			sp := m(p.Obj["spec"])
+			for _, tr := range l(sp["targetRefs"]) {
+				k := s(m(tr)["kind"]) + "/" + p.Namespace + "/" + s(m(tr)["name"])
+				if !targets[k] {
+					continue
+				}
+				pr := PolRef{Ref: *refOf(p), Target: k, Sections: policySections(sp)}
+				for _, want := range reasonSections[reason] {
+					if has(pr.Sections, want) {
+						pr.Matches = true
+					}
+				}
+				out = append(out, pr)
+				break
+			}
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Matches && !out[j].Matches })
+	return out
+}
+
+func policySections(sp map[string]any) []string {
+	var out []string
+	for _, top := range []string{"traffic", "backend", "frontend"} {
+		sec := m(sp[top])
+		keys := make([]string, 0, len(sec))
+		for k := range sec {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			out = append(out, top+"."+k)
+			if k == "mcp" || k == "ai" {
+				sub := m(sec[k])
+				var sk []string
+				for x := range sub {
+					sk = append(sk, x)
+				}
+				sort.Strings(sk)
+				for _, x := range sk {
+					out = append(out, top+"."+k+"."+x)
+				}
+			}
+		}
+	}
+	return out
+}
+
+func (b *actBuilder) finish(inventory bool) {
+	a := b.a
+	for _, cv := range b.cov {
+		cv.Pods = len(b.pods[cv.Gateway])
+		a.Coverage = append(a.Coverage, *cv)
+		a.Gateways = append(a.Gateways, cv.Gateway)
+	}
+	sort.Slice(a.Coverage, func(i, j int) bool { return a.Coverage[i].Requests > a.Coverage[j].Requests })
+	sort.Strings(a.Gateways)
+	for _, t := range b.targets {
+		if t.Kind == "tool" {
+			// A call is checked against the one server it can be matched to by
+			// name, URL host or route; with no match there is nothing to check
+			// it against.
+			if srv := b.serverOf(t); srv != "" {
+				if ti := b.tools[srv+"/"+t.Label]; ti != nil && ti.Declared {
+					t.Declared, t.Description = true, ti.Description
+				} else {
+					t.Undeclared = true
+				}
+			} else if ti := b.declaredTool(t.Label); ti != nil {
+				t.Declared, t.Description = true, ti.Description
+			}
+		}
+		a.Targets = append(a.Targets, *t)
+	}
+	sort.Slice(a.Targets, func(i, j int) bool {
+		if a.Targets[i].Requests != a.Targets[j].Requests {
+			return a.Targets[i].Requests > a.Targets[j].Requests
+		}
+		return a.Targets[i].ID < a.Targets[j].ID
+	})
+	for _, ca := range b.callers {
+		if ca.Anonymous {
+			for _, e := range b.edges {
+				if e.From == ca.ID && !strings.HasPrefix(e.To, "http:") {
+					a.Totals.Anonymous += e.Requests
+				}
+			}
+		}
+		a.Callers = append(a.Callers, *ca)
+	}
+	sort.Slice(a.Callers, func(i, j int) bool {
+		if a.Callers[i].Requests != a.Callers[j].Requests {
+			return a.Callers[i].Requests > a.Callers[j].Requests
+		}
+		return a.Callers[i].ID < a.Callers[j].ID
+	})
+	for _, e := range b.edges {
+		if len(e.Reasons) == 0 {
+			e.Reasons = nil
+		}
+		if len(e.Statuses) == 0 {
+			e.Statuses = nil
+		}
+		a.Edges = append(a.Edges, *e)
+	}
+	sort.Slice(a.Edges, func(i, j int) bool {
+		if a.Edges[i].Requests != a.Edges[j].Requests {
+			return a.Edges[i].Requests > a.Edges[j].Requests
+		}
+		return a.Edges[i].From+a.Edges[i].To < a.Edges[j].From+a.Edges[j].To
+	})
+	for _, d := range b.denials {
+		a.Denials = append(a.Denials, *d)
+	}
+	sort.Slice(a.Denials, func(i, j int) bool {
+		if a.Denials[i].Count != a.Denials[j].Count {
+			return a.Denials[i].Count > a.Denials[j].Count
+		}
+		return a.Denials[i].From+a.Denials[i].To < a.Denials[j].From+a.Denials[j].To
+	})
+	for _, t := range b.tools {
+		a.Tools = append(a.Tools, *t)
+	}
+	sort.Slice(a.Tools, func(i, j int) bool {
+		if a.Tools[i].Calls != a.Tools[j].Calls {
+			return a.Tools[i].Calls > a.Tools[j].Calls
+		}
+		return a.Tools[i].Server+a.Tools[i].Name < a.Tools[j].Server+a.Tools[j].Name
+	})
+	if len(b.cov) == 0 {
+		a.Notes = append(a.Notes, "no agentgateway request logs in this capture: either no agentgateway ran, or its pods' logs were not collected")
+	}
+	if !inventory {
+		a.Notes = append(a.Notes, "no MCP server tool list was captured (kagent RemoteMCPServer or MCPServer status), so called tools cannot be checked against what the servers declare")
+	}
+	if a.Totals.LLMCalls > 0 && a.Totals.InputTokens+a.Totals.OutputTokens == 0 {
+		a.Notes = append(a.Notes, "LLM calls were logged without token counts")
+	}
+	a.Findings = append(a.Findings, b.findings()...)
+}
+
+// serverOf matches a called tool to a captured MCP server.
+func (b *actBuilder) serverOf(t *ActTarget) string {
+	keys := []string{t.Server}
+	keys = append(keys, t.Routes...)
+	for _, r := range t.Routes {
+		keys = append(keys, lastPart(r))
+	}
+	for _, k := range keys {
+		if srv := b.servers[k]; srv != "" {
+			return srv
+		}
+	}
+	return ""
+}
+
+func (b *actBuilder) declaredTool(name string) *ToolInfo {
+	for _, t := range b.tools {
+		if t.Declared && t.Name == name {
+			return t
+		}
+	}
+	return nil
+}
+
+const activityGuide = "https://mastertheagent.com/solo/agentgateway-mcp-authz-kind/"
+
+func (b *actBuilder) findings() []Finding {
+	a := b.a
+	var out []Finding
+	label := func(id string) string {
+		if c := b.callers[id]; c != nil {
+			return c.Label
+		}
+		if t := b.targets[id]; t != nil {
+			if t.Server != "" && t.Kind == "tool" {
+				return t.Server + "/" + t.Label
+			}
+			return t.Label
+		}
+		return id
+	}
+	// Anonymous calls to tools, models and agents.
+	var anon []FindingItem
+	for _, e := range a.Edges {
+		ca := b.callers[e.From]
+		if ca == nil || !ca.Anonymous || strings.HasPrefix(e.To, "http:") || e.Requests == e.Denied {
+			continue
+		}
+		anon = append(anon, FindingItem{Target: label(e.To), Access: fmt.Sprintf("%d calls", e.Requests-e.Denied), Note: "from " + ca.Label + " through " + strings.Join(e.Gateways, ", ")})
+	}
+	if len(anon) > 0 {
+		out = append(out, Finding{Severity: "high", Title: "Tools, models or agents answered calls that carried no identity",
+			Detail: "These calls reached their target with neither a mesh identity nor a JWT subject in the log, so nobody can say who made them, and per-caller limits and authorization cannot apply.",
+			Items:  anon, Advice: []string{"Require JWT authentication on the route (traffic.jwtAuthentication, mode Strict), or send agents through an agentgateway waypoint so their mesh identity is checked."},
+			Source: activityGuide, Docs: "https://docs.solo.io/agentgateway/kubernetes/latest/security/jwt/"})
+	}
+	// Tools outside an agent's allowlist.
+	var outside []FindingItem
+	for _, e := range a.Edges {
+		if e.OutsideAllowlist {
+			outside = append(outside, FindingItem{Target: label(e.To), Access: fmt.Sprintf("%d calls", e.Requests), Note: "by " + label(e.From)})
+		}
+	}
+	if len(outside) > 0 {
+		out = append(out, Finding{Severity: "high", Title: "Agents called tools their Agent spec does not list",
+			Detail: "The kagent Agent lists the tools it may use (toolNames), but these calls went to other tools. The list is only a prompt-time filter; enforce it at the gateway.",
+			Items:  outside, Advice: []string{"Add an MCP authorization rule on the gateway (backend.mcp.authorization) that allows only the listed tools for this agent's identity."},
+			Source: activityGuide, Docs: "https://docs.solo.io/agentgateway/kubernetes/latest/mcp/mcp-access/"})
+	}
+	// Tools called that no server declares.
+	var undecl []FindingItem
+	for _, t := range a.Targets {
+		if t.Undeclared {
+			undecl = append(undecl, FindingItem{Target: t.Server + "/" + t.Label, Access: fmt.Sprintf("%d calls", t.Requests)})
+		}
+	}
+	if len(undecl) > 0 {
+		out = append(out, Finding{Severity: "medium", Title: "Tools were called that their MCP server does not list",
+			Detail: "The call was matched to a captured MCP server, and the server's discovered tool list does not have this tool. Its tool list may have changed after discovery, or the call went to a different server of the same name.",
+			Items:  undecl, Source: activityGuide})
+	}
+	// Refusals.
+	if len(a.Denials) > 0 {
+		var items []FindingItem
+		for _, d := range a.Denials {
+			items = append(items, FindingItem{Target: d.Target, Class: d.Reason, Access: fmt.Sprintf("%d refused", d.Count), Note: d.Caller + " through " + d.Gateway})
+		}
+		out = append(out, Finding{Severity: "low", Title: fmt.Sprintf("%d calls were refused by gateway policy", a.Totals.Denied),
+			Detail: "Refusals are the policy working, unless the caller should have been allowed. The Denials tab lists the policies at each gateway and what to check.",
+			Items:  items, Source: activityGuide})
+	}
+	// Unattributed spend.
+	var spend []FindingItem
+	for _, e := range a.Edges {
+		ca := b.callers[e.From]
+		if ca != nil && ca.Anonymous && strings.HasPrefix(e.To, "model:") && e.InputTokens+e.OutputTokens > 0 {
+			spend = append(spend, FindingItem{Target: label(e.To), Access: fmt.Sprintf("%d tokens", e.InputTokens+e.OutputTokens), Note: "from " + ca.Label})
+		}
+	}
+	if len(spend) > 0 {
+		out = append(out, Finding{Severity: "medium", Title: "LLM spend that cannot be put down to a caller",
+			Detail: "These tokens were used by calls without an identity, so a per-caller budget or rate limit cannot apply to them.",
+			Items:  spend, Source: "https://mastertheagent.com/solo/agentgateway-virtual-keys-kind/"})
+	}
+	return out
+}
+
+func actKeyTools(a Activity) map[string]ToolInfo {
+	out := map[string]ToolInfo{}
+	for _, t := range a.Tools {
+		out[t.Server+"/"+t.Name] = t
+	}
+	return out
+}
+
+// compareTools diffs the tool lists and the calls of two captures.
+func compareTools(before, after Activity, name string) *ToolChanges {
+	ch := &ToolChanges{Baseline: name, Added: []ToolInfo{}, Removed: []ToolInfo{}, Described: []ToolChange{}, NewlyCalled: []string{}, NewCallers: []string{}}
+	bt, at := actKeyTools(before), actKeyTools(after)
+	declBefore, declAfter := map[string]bool{}, map[string]bool{}
+	for _, t := range before.Tools {
+		if t.Declared {
+			declBefore[t.Server] = true
+		}
+	}
+	for _, t := range after.Tools {
+		if t.Declared {
+			declAfter[t.Server] = true
+		}
+	}
+	for k, t := range at {
+		o, ok := bt[k]
+		switch {
+		case t.Declared && (!ok || !o.Declared) && declBefore[t.Server]:
+			ch.Added = append(ch.Added, t)
+		case t.Declared && ok && o.Declared && o.Description != t.Description:
+			ch.Described = append(ch.Described, ToolChange{Server: t.Server, Name: t.Name, Before: o.Description, After: t.Description})
+		}
+		if t.Calls > 0 && (!ok || o.Calls == 0) && before.Totals.ToolCalls > 0 {
+			ch.NewlyCalled = append(ch.NewlyCalled, t.Server+"/"+t.Name)
+		}
+	}
+	for k, o := range bt {
+		t, ok := at[k]
+		if o.Declared && (!ok || !t.Declared) && declAfter[o.Server] {
+			ch.Removed = append(ch.Removed, o)
+		}
+	}
+	labels := func(a Activity) (map[string]string, map[string]string) {
+		c, t := map[string]string{}, map[string]string{}
+		for _, x := range a.Callers {
+			c[x.ID] = x.Label
+		}
+		for _, x := range a.Targets {
+			t[x.ID] = x.Label
+			if x.Kind == "tool" {
+				t[x.ID] = x.Server + "/" + x.Label
+			}
+		}
+		return c, t
+	}
+	bc, btg := labels(before)
+	ac, atg := labels(after)
+	seen := map[string]bool{}
+	for _, e := range before.Edges {
+		seen[bc[e.From]+" → "+btg[e.To]] = true
+	}
+	for _, e := range after.Edges {
+		if strings.HasPrefix(e.To, "http:") {
+			continue
+		}
+		k := ac[e.From] + " → " + atg[e.To]
+		if !seen[k] && before.Totals.ToolCalls+before.Totals.LLMCalls > 0 {
+			ch.NewCallers = append(ch.NewCallers, k)
+		}
+	}
+	ch.Compared = len(before.Tools) > 0 && len(after.Tools) > 0
+	switch {
+	case !ch.Compared:
+		ch.BaselineNote = "one of the captures has no tool list and no tool calls, so tools cannot be compared"
+	case before.Totals.ToolCalls+before.Totals.LLMCalls == 0 && after.Totals.ToolCalls+after.Totals.LLMCalls > 0:
+		ch.BaselineNote = "the baseline's logs have no tool or model calls (its log window may not overlap any), so calls are not compared; tool lists are"
+	}
+	for _, xs := range [][]string{ch.NewlyCalled, ch.NewCallers} {
+		sort.Strings(xs)
+	}
+	sort.Slice(ch.Added, func(i, j int) bool { return ch.Added[i].Server+ch.Added[i].Name < ch.Added[j].Server+ch.Added[j].Name })
+	sort.Slice(ch.Removed, func(i, j int) bool {
+		return ch.Removed[i].Server+ch.Removed[i].Name < ch.Removed[j].Server+ch.Removed[j].Name
+	})
+	sort.Slice(ch.Described, func(i, j int) bool {
+		return ch.Described[i].Server+ch.Described[i].Name < ch.Described[j].Server+ch.Described[j].Name
+	})
+	return ch
+}
+
+func changeFindings(ch *ToolChanges) []Finding {
+	var out []Finding
+	if len(ch.Described) > 0 {
+		var items []FindingItem
+		for _, d := range ch.Described {
+			items = append(items, FindingItem{Target: d.Server + "/" + d.Name, Note: "was: " + clip(d.Before, 120) + " | now: " + clip(d.After, 120)})
+		}
+		out = append(out, Finding{Severity: "high", Title: "MCP tools changed their description since the baseline",
+			Detail: "A tool's description is part of the prompt the model reads. A description that changes without a new release is how a tool gets turned against its callers (a rug pull).",
+			Items:  items, Advice: []string{"Confirm each change with the server's owner.", "Pin the server image by digest, and register servers through agentregistry so a change needs approval."},
+			Source: "https://mastertheagent.com/solo/agentregistry-push-best-practices/"})
+	}
+	if len(ch.Added) > 0 {
+		var items []FindingItem
+		for _, t := range ch.Added {
+			items = append(items, FindingItem{Target: t.Server + "/" + t.Name, Note: clip(t.Description, 140)})
+		}
+		out = append(out, Finding{Severity: "medium", Title: "MCP servers offer tools that were not there in the baseline",
+			Detail: "New tools are new things an agent can be talked into doing. Check each is expected, and that tool-level authorization covers it.",
+			Items:  items, Source: activityGuide})
+	}
+	return out
+}
+
+func clip(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n-1] + "…"
+}
+
+// first returns the first value that is set ("-" counts as unset, as in
+// agentgateway's text logs).
+func first(v ...string) string {
+	for _, x := range v {
+		if x != "" && x != "-" {
+			return x
+		}
+	}
+	return ""
+}

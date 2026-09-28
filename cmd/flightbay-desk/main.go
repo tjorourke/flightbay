@@ -45,7 +45,7 @@ var version = "0.1.0-dev"
 // newRoot builds the command tree (also used to generate the CLI reference).
 func newRoot() *cobra.Command {
 	root := &cobra.Command{Use: "flightbay-desk", Short: "Solo flightbay: investigate a snapshot bundle offline", SilenceUsage: true}
-	root.AddCommand(openCmd(), startCmd(), liveCmd(), shellCmd(), queryCmd(), findingsCmd(), proxyConfigCmd(), searchCmd(), sqlCmd(), flowsCmd(), postureCmd(), reachCmd(), featuresCmd(), diffCmd(), driftCmd(), mcpCmd(), keygenCmd(), &cobra.Command{
+	root.AddCommand(openCmd(), startCmd(), liveCmd(), shellCmd(), queryCmd(), findingsCmd(), proxyConfigCmd(), searchCmd(), sqlCmd(), flowsCmd(), postureCmd(), reachCmd(), activityCmd(), trafficCmd(), explainCmd(), featuresCmd(), diffCmd(), driftCmd(), mcpCmd(), keygenCmd(), &cobra.Command{
 		Use: "version", Short: "Print the version", Run: func(*cobra.Command, []string) { fmt.Println("flightbay-desk", version) },
 	})
 	return root
@@ -664,9 +664,10 @@ func mcpCmd() *cobra.Command {
 		Use:   "mcp",
 		Short: "Serve the open workspace to AI agents over MCP (stdio), read-only",
 		Long: `Serves the open workspace as a Model Context Protocol server on stdin/stdout.
-Tools: workspace_summary, list_findings, best_practices, agent_reach, search_logs, log_context,
-search_objects, run_sql, list_resource_types, list_objects, get_object, proxy_config,
-compare_baseline. Prompt: triage. best_practices priorities and agent_reach need Flightbay Enterprise.
+Tools: workspace_summary, list_findings, best_practices, agent_reach, agent_activity, traffic_map,
+explain_connection, search_logs, log_context, search_objects, run_sql, list_resource_types,
+list_objects, get_object, proxy_config, compare_baseline. Prompt: triage. best_practices
+priorities, agent_reach, agent_activity, traffic_map and explain_connection need Flightbay Enterprise.
 
 The server only talks to the local desk. Snapshot data reaches a model only if the
 agent you connect is configured to use one.`,
@@ -795,6 +796,69 @@ func reachCmd() *cobra.Command {
 		},
 	}
 	c.Flags().BoolVar(&fix, "fix", false, "print the YAML that locks each finding down")
+	return c
+}
+
+func activityCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "activity [calls|tools|models|denials|changes]",
+		Short: "Who called which MCP tool, model or agent through agentgateway, refusals, tokens and tool changes (the fbactivity helper; Flightbay Enterprise)",
+		Example: "  fbactivity                 # caller -> tool, model or agent, with findings\n  fbactivity tools           # every tool called, and whether its server lists it\n" +
+			"  fbactivity models          # tokens per model and per caller\n  fbactivity denials         # refused calls and the policies that could have refused them\n" +
+			"  fbactivity changes         # tools added, removed or re-described since the baseline",
+		Args:      cobra.MaximumNArgs(1),
+		ValidArgs: []string{"calls", "tools", "models", "denials", "changes"},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			u, t, err := deskEnv()
+			if err != nil {
+				return err
+			}
+			view := ""
+			if len(args) == 1 {
+				view = args[0]
+			}
+			return cli.Activity(cmd.OutOrStdout(), u, t, view)
+		},
+	}
+}
+
+func trafficCmd() *cobra.Command {
+	var flag, ns string
+	var fix bool
+	c := &cobra.Command{
+		Use:     "traffic",
+		Short:   "The ambient traffic map: connections with mTLS, waypoints and policy verdicts (the fbtraffic helper; Flightbay Enterprise)",
+		Example: "  fbtraffic\n  fbtraffic --flag plaintext      # plaintext between mesh workloads\n  fbtraffic --flag unpoliced --fix\n  fbtraffic --namespace kagent",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			u, t, err := deskEnv()
+			if err != nil {
+				return err
+			}
+			return cli.Traffic(cmd.OutOrStdout(), u, t, flag, ns, fix)
+		},
+	}
+	c.Flags().StringVar(&flag, "flag", "", "only edges with this flag: plaintext, plaintext-in, unpoliced, denied or mismatch")
+	c.Flags().StringVarP(&ns, "namespace", "n", "", "only edges to or from this namespace")
+	c.Flags().BoolVar(&fix, "fix", false, "print the YAML for each finding")
+	return c
+}
+
+func explainCmd() *cobra.Command {
+	var cluster string
+	c := &cobra.Command{
+		Use:     "explain <from-workload> <to-service>",
+		Short:   "Why a workload can or cannot reach a Service: every check in order, the policies each read, and the logs (the fbexplain helper; Flightbay Enterprise)",
+		Example: "  fbexplain kagent/tom-demo kagent/github-mcp\n  fbexplain agents/eval-agent postgres.tools.svc.cluster.local\n  fbexplain spiffe://cluster.local/ns/agents/sa/eval-agent tools/postgres --cluster mesh1",
+		Args:    cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			u, t, err := deskEnv()
+			if err != nil {
+				return err
+			}
+			return cli.Explain(cmd.OutOrStdout(), u, t, cluster, args[0], args[1])
+		},
+	}
+	c.Flags().StringVar(&cluster, "cluster", "", "cluster, when the capture has several")
 	return c
 }
 

@@ -30,11 +30,15 @@ type Feature struct {
 const (
 	Priorities = "priorities" // best practices: fix-first ranking, points if fixed, severity colours
 	Reach      = "reach"      // agent reach: per-agent blast radius, network paths, fixes
+	Activity   = "activity"   // agent and tool activity: who called which tool or model, refusals, tokens, tool changes
+	Traffic    = "traffic"    // ambient traffic map and the "why was this denied?" explainer
 )
 
 var catalogue = map[string]string{
 	Priorities: "Best practices: fix-first ranking, points recovered per fix, severity colours",
 	Reach:      "Agent reach: every agent's blast radius, the network paths it has and what to lock down",
+	Activity:   "Activity: who called which MCP tool, model or agent through agentgateway, refusals, token spend and tool changes",
+	Traffic:    "Traffic map: ambient connections with mTLS, waypoints and policy verdicts, and why a connection was denied",
 }
 
 var (
