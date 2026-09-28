@@ -1,10 +1,10 @@
 ---
-title: Flightbay
+title: Solo flightbay
 weight: 1
 description: Take a redacted snapshot of a Kubernetes cluster and investigate it offline as if it were live.
 ---
 
-# Flightbay by Solo
+# Solo flightbay
 
 Flightbay takes a redacted snapshot of a Kubernetes cluster and lets you investigate it offline as if it were live. You can browse every object, search every log line, run `kubectl` and `k9s` against it, read the Envoy, ztunnel and agentgateway config dumps, and get findings that know about Istio ambient, agentgateway and kgateway.
 

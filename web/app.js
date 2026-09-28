@@ -1,5 +1,5 @@
 'use strict';
-// Flightbay desk UI. Plain JS, no framework, served from the flightbay-desk binary.
+// Solo flightbay desk UI. Plain JS, no framework, served from the flightbay-desk binary.
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
@@ -462,7 +462,7 @@ async function navigator() {
         <dt>${live ? 'Now:' : 'Snapshot:'}</dt><dd style="color:var(--amber)">${fmtDateTime(w.snapshot)}</dd>
         <dt>Connection:</dt>${conn}</dl>
       ${headKeys}
-      <div class="nv-logo"> ┌─┐ ┌─┐ ┌─┐\n │ │ │ │ │ │  flightbay\n │ └─┘ │ │ │  ${live ? 'live     ' : 'snapshot '}\n └─────┘ └─┘  navigator</div>
+      <div class="nv-logo"> ┌─┐ ┌─┐ ┌─┐\n │ │ │ │ │ │  solo flightbay\n │ └─┘ │ │ │  ${live ? 'live     ' : 'snapshot '}\n └─────┘ └─┘  navigator</div>
     </div>`;
   const cmdline = N.cmd ? `<div class="nv-cmd"><span>:</span><input id="nv-cmdline" placeholder="pods · deploy kube-system · ns kagent · ctx 2 · help   (Tab completes, Enter runs, Esc cancels)" autocomplete="off" spellcheck="false"></div>` : '';
   const help = N.help ? `<div class="nv-help" id="nv-help"><div class="row between"><strong>Keys</strong><small class="muted">Esc or ? to close</small></div><div class="nv-help-grid">${nvKeys.map(([t, ks]) => `<div><h4>${t}</h4>${ks.map(([k, d]) => `<div class="nv-help-row"><b>${esc(k)}</b><span>${esc(d)}</span></div>`).join('')}</div>`).join('')}</div></div>` : '';
@@ -702,7 +702,7 @@ document.addEventListener('keydown', e => {
 });
 
 // ---------- best practices ----------
-const pstColour = n => n >= 90 ? 'var(--teal)' : n >= 75 ? '#7fc97f' : n >= 60 ? 'var(--amber)' : 'var(--red)';
+const pstColour = n => n >= 90 ? 'var(--green)' : n >= 75 ? '#7fc97f' : n >= 60 ? 'var(--amber)' : 'var(--red)';
 const feature = name => !!(S.ws && S.ws.features && S.ws.features[name]);
 // Severity tag: coloured by weight with the Enterprise priority view, plain otherwise.
 // The field guide and the product docs page, side by side. Either may be
@@ -2377,7 +2377,7 @@ function ensureTerminal() {
   if (S.term) return S.term;
   if (!window.Terminal) { toast('Terminal assets failed to load'); return null; }
   const term = new window.Terminal({fontSize: 12, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', cursorBlink: true, scrollback: 5000,
-    theme: {background: '#0d1215', foreground: '#c9d6de', cursor: '#72d6be', selectionBackground: '#2b4a41'}});
+    theme: {background: '#080b14', foreground: '#c9d3e3', cursor: '#20b7f3', selectionBackground: '#1e3a5c'}});
   const fit = new window.FitAddon.FitAddon();
   term.loadAddon(fit);
   term.open($('#term-body'));
@@ -2552,7 +2552,7 @@ async function liveRefresh() {
     $('#bundle-sub').textContent = `${w.live.context} · read-only`;
     $('#collector').textContent = w.collector || '';
     document.querySelectorAll('#cluster option').forEach(o => { if (o.value) o.textContent = o.value + '@live'; });
-    document.title = `Flightbay · Live · ${w.live.context}`;
+    document.title = `Solo flightbay · Live · ${w.live.context}`;
     const meta = document.querySelector('.terminal-meta');
     if (meta) meta.textContent = 'bash · KUBECONFIG points at the read-only live mirror · kubectl, k9s (watches update), fbsearch, fbq, fbpc, fbscore';
     renderImportStatus();

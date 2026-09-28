@@ -6,7 +6,7 @@ description: "Every flightbay-desk command and flag, generated from the command 
 
 Generated from the `flightbay-desk` command tree. Run any command with `--help` for the same text.
 
-Flightbay by Solo: investigate a snapshot bundle offline
+Solo flightbay: investigate a snapshot bundle offline
 
 ## flightbay-desk diff
 

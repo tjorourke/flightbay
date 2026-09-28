@@ -255,18 +255,18 @@ func (s *Server) docs(w http.ResponseWriter, r *http.Request) {
 
 var docTmpl = template.Must(template.New("doc").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{{.Page.Title}} · Flightbay docs</title>
+<title>{{.Page.Title}} · Solo flightbay docs</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <script>document.documentElement.dataset.theme = localStorage.getItem('flightbay-theme') || 'dark';</script>
 <style>
-:root{--bg:#101316;--panel:#161a1e;--raised:#1c2126;--line:#2a3036;--text:#e1e6ea;--muted:#939ea8;--teal:#72d6be;--red:#f18e92;--amber:#efbe72;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--sans:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-[data-theme=light]{--bg:#f6f7f8;--panel:#fff;--raised:#f0f2f4;--line:#dfe3e7;--text:#1d262d;--muted:#5d6b76;--teal:#0f7f6a}
+:root{--bg:#0c111d;--panel:#151927;--raised:#1d2233;--line:#2a3144;--text:#e8ecf3;--muted:#8c92a4;--teal:#20b7f3;--red:#f97066;--amber:#fdb022;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--sans:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+[data-theme=light]{--bg:#f9fafb;--panel:#fff;--raised:#f2f4f7;--line:#eaecf0;--text:#222635;--muted:#475467;--teal:#0274a0}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.65 var(--sans)}
 a{color:var(--teal);text-decoration:none}a:hover{text-decoration:underline}
 .top{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:18px;padding:12px 24px;background:var(--panel);border-bottom:1px solid var(--line)}
-.brand{font-weight:700;font-size:17px;color:var(--text)}.brand b{color:var(--teal)}.brand small{color:var(--muted);font-weight:500;margin-left:6px}
+.brand{font-weight:400;font-size:17px;color:var(--text);white-space:nowrap}.brand b{font-weight:700}.brand small{color:var(--muted);font-weight:500;margin-left:6px}
 .top input{flex:1;max-width:460px;background:var(--raised);border:1px solid var(--line);color:var(--text);border-radius:6px;padding:8px 12px;font:14px var(--sans)}
 .top .sp{flex:1}.top button{background:var(--raised);border:1px solid var(--line);color:var(--text);border-radius:6px;padding:7px 11px;cursor:pointer}
 .wrap{display:grid;grid-template-columns:280px minmax(0,1fr);max-width:1400px;margin:0 auto}
@@ -298,7 +298,7 @@ main blockquote{margin:14px 0;padding:8px 16px;border-left:3px solid var(--teal)
 #results small{display:block;color:var(--muted);font-size:12.5px;margin-top:2px}#results mark{background:color-mix(in srgb,var(--teal) 30%,transparent);color:inherit}
 @media (max-width:900px){.wrap{grid-template-columns:1fr}nav.side{display:none}main{padding:20px}#results{margin-left:0}}
 </style></head><body>
-<header class="top"><a class="brand" href="/docs/"><b>///</b> flightbay <small>docs</small></a>
+<header class="top"><a class="brand" href="/docs/"><svg viewBox="0 0 27 32" width="18" height="21" aria-hidden="true" style="color:var(--teal);vertical-align:-4px;margin-right:6px"><path fill="currentColor" fill-rule="evenodd" clip-rule="evenodd" d="M9.91404 21.8278C11.6896 23.6033 14.0969 24.6021 16.6078 24.605C19.1197 24.6036 21.5284 23.6054 23.3051 21.8298C25.0818 20.0541 26.0814 17.646 26.0843 15.134C26.0814 12.6221 25.0818 10.214 23.3051 8.43834C21.5284 6.66266 19.1197 5.66454 16.6078 5.66309C14.0969 5.66599 11.6896 6.66476 9.91404 8.44028C8.13852 10.2158 7.13976 12.6231 7.13685 15.134C7.13976 17.645 8.13852 20.0523 9.91404 21.8278ZM12.6324 11.1583C13.6868 10.1037 15.1165 9.5105 16.6078 9.5088V9.50972C18.0998 9.5102 19.5307 10.1027 20.5862 11.1572C21.6418 12.2118 22.2357 13.642 22.2376 15.134C22.2359 16.6261 21.6421 18.0566 20.5865 19.1111C19.5309 20.1657 18.0999 20.7581 16.6078 20.7584C15.1167 20.7567 13.6871 20.1636 12.6327 19.1092C11.5783 18.0548 10.9852 16.6252 10.9835 15.134C10.9849 13.6427 11.5779 12.2129 12.6324 11.1583ZM5.64927 19.6716C6.24653 21.1097 7.12205 22.4156 8.22553 23.5144L5.52831 26.208C4.07097 24.7557 2.91491 23.0298 2.12653 21.1294C1.33815 19.2291 0.932998 17.1916 0.934329 15.1342L0.934329 6.0397H4.74524V15.1342C4.74479 16.6915 5.05201 18.2334 5.64927 19.6716Z"/></svg><b>Solo</b> flightbay <small>docs</small></a>
 <input id="q" placeholder="Search the docs ( / )" autocomplete="off" aria-label="Search the docs"><div id="results"></div>
 <span class="sp"></span><a href="/">Back to the desk ↗</a><button id="theme" title="Light or dark">◐</button></header>
 <div class="wrap"><nav class="side" aria-label="Documentation">
@@ -311,7 +311,7 @@ main blockquote{margin:14px 0;padding:8px 16px;border-left:3px solid var(--teal)
 {{.HTML}}
 {{if .List}}<div class="cards">{{range .List}}<a href="/docs/{{.Path}}"><b>{{.Title}}</b><span>{{.Description}}</span></a>{{end}}</div>{{end}}
 <div class="pn"><div>{{with .Prev}}<a href="/docs/{{.Path}}"><small>Previous</small>{{.Title}}</a>{{end}}</div><div style="text-align:right">{{with .Next}}<a href="/docs/{{.Path}}"><small>Next</small>{{.Title}}</a>{{end}}</div></div>
-<p class="foot">Flightbay by Solo · <a href="{{.Source}}">Edit this page</a></p>
+<p class="foot">Solo flightbay · <a href="{{.Source}}">Edit this page</a></p>
 </main></div>
 <script>
 document.getElementById('theme').onclick = () => { const t = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light'; document.documentElement.dataset.theme = t; localStorage.setItem('flightbay-theme', t); };

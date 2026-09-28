@@ -327,7 +327,7 @@ func (s *Server) handle(req request) (any, *rpcError) {
 		return map[string]any{
 			"protocolVersion": v,
 			"capabilities":    map[string]any{"tools": map[string]any{}, "prompts": map[string]any{}},
-			"serverInfo":      map[string]any{"name": "flightbay", "title": "Flightbay by Solo", "version": s.Version},
+			"serverInfo":      map[string]any{"name": "flightbay", "title": "Solo flightbay", "version": s.Version},
 			"instructions":    "Read-only access to an offline Flightbay snapshot of Kubernetes clusters. Start with workspace_summary, then list_findings. Use the triage prompt for a guided investigation.",
 		}, nil
 	case "ping":

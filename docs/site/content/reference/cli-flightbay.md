@@ -6,7 +6,7 @@ description: "Every flightbay command and flag, generated from the command tree.
 
 Generated from the `flightbay` command tree. Run any command with `--help` for the same text.
 
-Flightbay by Solo: collect an offline, redacted snapshot of Kubernetes clusters
+Solo flightbay: collect an offline, redacted snapshot of Kubernetes clusters
 
 ## flightbay collect
 

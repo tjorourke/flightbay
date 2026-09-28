@@ -55,9 +55,15 @@ let rvStarted = false;
 const rvRemove = () => (S.rv.plan.remove = S.rv.plan.remove || {});
 const rvList = k => (rvRemove()[k] = rvRemove()[k] || []);
 const rvSame = (a, b) => Object.keys({...a, ...b}).every(k => (a[k] || '') === (b[k] || ''));
-const rvHas = (k, ref) => rvList(k).some(x => rvSame(x, ref));
+// rvCovers reports whether a plan entry applies to a row the way the export
+// does: an empty field matches anything, and * and ? are globs. A plan written
+// by hand or downloaded ({namespace: payments}, {name: debug-*}) shows ticked.
+const rvGlob = p => new RegExp('^' + p.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$');
+const rvCovers = (entry, row) => Object.entries(entry).every(([k, v]) => !v || v === (row[k] || '') || (/[*?]/.test(v) && rvGlob(v).test(row[k] || '')));
+const rvHas = (k, ref) => rvList(k).some(x => rvCovers(x, ref));
 function rvToggle(k, ref, on) {
-  const l = rvList(k).filter(x => !rvSame(x, ref));
+  // Turning a row off also drops broader entries that covered it.
+  const l = rvList(k).filter(x => !rvSame(x, ref) && !(on === false && rvCovers(x, ref)));
   if (on) l.push(ref);
   rvRemove()[k] = l;
   rvChanged();

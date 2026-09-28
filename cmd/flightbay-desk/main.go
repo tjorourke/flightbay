@@ -44,7 +44,7 @@ var version = "0.1.0-dev"
 
 // newRoot builds the command tree (also used to generate the CLI reference).
 func newRoot() *cobra.Command {
-	root := &cobra.Command{Use: "flightbay-desk", Short: "Flightbay by Solo: investigate a snapshot bundle offline", SilenceUsage: true}
+	root := &cobra.Command{Use: "flightbay-desk", Short: "Solo flightbay: investigate a snapshot bundle offline", SilenceUsage: true}
 	root.AddCommand(openCmd(), startCmd(), liveCmd(), shellCmd(), queryCmd(), findingsCmd(), proxyConfigCmd(), searchCmd(), sqlCmd(), flowsCmd(), postureCmd(), reachCmd(), featuresCmd(), diffCmd(), driftCmd(), mcpCmd(), keygenCmd(), &cobra.Command{
 		Use: "version", Short: "Print the version", Run: func(*cobra.Command, []string) { fmt.Println("flightbay-desk", version) },
 	})

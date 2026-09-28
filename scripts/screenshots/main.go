@@ -1,0 +1,504 @@
+// Command screenshots retakes the desk screenshots in docs/images.
+//
+//	go run ./scripts/screenshots                                  # every shot the bundles allow
+//	go run ./scripts/screenshots -mesh ~/Downloads/flightbay-MESH1-*.tar.zst
+//	go run ./scripts/screenshots -only overview,review
+//
+// It opens the sample bundle (and, with -mesh, a capture of a cluster with
+// agents for Agent reach) in flightbay-desk, drives its own headless Chrome
+// over the DevTools protocol and writes 1440x900 PNGs. It uses its own Chrome
+// profile and never the browser you are using. A bundle whose shots are not
+// possible (no -mesh) is skipped with a note, and the old image is kept.
+package main
+
+import (
+	"bufio"
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"net"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/coder/websocket"
+
+	"github.com/tjorourke/flightbay/internal/review"
+	"github.com/tjorourke/flightbay/internal/sign"
+)
+
+type shot struct {
+	name  string // docs/images/<name>.png
+	desk  string // sample, mesh, reviewed
+	hash  string // #view
+	theme string // dark or light
+	setup string // JavaScript run after the page has loaded; may return a promise
+	wait  time.Duration
+}
+
+var shots = []shot{
+	{name: "overview", desk: "sample", hash: "overview", theme: "dark"},
+	{name: "search", desk: "sample", hash: "search", theme: "dark"},
+	{name: "logs", desk: "sample", hash: "logs", theme: "dark"},
+	{name: "timeline", desk: "sample", hash: "timeline", theme: "light"},
+	{name: "findings", desk: "sample", hash: "findings", theme: "dark"},
+	{name: "posture", desk: "sample", hash: "scorecard", theme: "light"},
+	{name: "proxies", desk: "sample", hash: "proxies", theme: "dark"},
+	{name: "k9s", desk: "sample", hash: "resources", theme: "dark", setup: `document.querySelector('#term-k9s').click()`, wait: 6 * time.Second},
+	{name: "review", desk: "sample", hash: "review", theme: "dark",
+		setup: `apiPost('api/review/preview', {reviewer: 'Jane Smith, platform', scrubNames: true, remove: {namespaces: [{namespace: 'payments'}]}}).then(() => { S.rv.data = null; return render(); })`},
+	{name: "coverage-origin", desk: "reviewed", hash: "coverage", theme: "dark"},
+	{name: "scorecard-summary", desk: "mesh", hash: "scorecard", theme: "dark"},
+	{name: "navigator", desk: "mesh", hash: "navigator", theme: "dark", setup: `S.nv.resource = 'deployments'; S.nv.group = 'apps'; render()`},
+	{name: "search-typeahead", desk: "mesh", hash: "search", theme: "dark",
+		setup: `(() => { const i = document.querySelector('#obj-q'); i.focus(); i.value = 'kind:pod label:ap'; i.setSelectionRange(i.value.length, i.value.length); i.dispatchEvent(new Event('input', {bubbles: true})); })()`},
+	{name: "reach-list", desk: "mesh", hash: "reach", theme: "dark"},
+	{name: "reach-graph", desk: "mesh", hash: "reach?agent=kagent/demo-agent", theme: "dark", setup: `document.querySelector('#rc-detail').scrollIntoView({block: 'start'})`},
+	{name: "reach-external", desk: "mesh", hash: "reach?agent=kagent/demo-agent", theme: "dark",
+		setup: `document.querySelector('[data-rctab=external]').click(); new Promise(r => setTimeout(r, 800)).then(() => document.querySelector('#rc-detail').scrollIntoView({block: 'start'}))`},
+}
+
+func main() {
+	root, _ := os.Getwd()
+	desk := flag.String("desk", "", "flightbay-desk binary (default: build it into a temporary directory)")
+	chrome := flag.String("chrome", defaultChrome(), "Chrome or Chromium binary")
+	sample := flag.String("sample", filepath.Join(root, "examples/sample-bundle.tar.zst"), "the sample bundle")
+	mesh := flag.String("mesh", "", "a capture with kagent agents, for Agent reach, Navigator and the Scorecard summary (FLIGHTBAY_ENTERPRISE is set for it)")
+	out := flag.String("out", filepath.Join(root, "docs/images"), "where the PNGs go")
+	only := flag.String("only", "", "comma-separated shot names")
+	flag.Parse()
+	if err := run(*desk, *chrome, *sample, *mesh, *out, *only); err != nil {
+		fmt.Fprintln(os.Stderr, "screenshots:", err)
+		os.Exit(1)
+	}
+}
+
+func defaultChrome() string {
+	if c := os.Getenv("CHROME"); c != "" {
+		return c
+	}
+	for _, c := range []string{"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"} {
+		if _, err := os.Stat(c); err == nil {
+			return c
+		}
+	}
+	return "google-chrome"
+}
+
+func run(deskBin, chromeBin, sample, mesh, out, only string) error {
+	tmp, err := os.MkdirTemp("", "fb-shots-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmp)
+	if deskBin == "" {
+		deskBin = filepath.Join(tmp, "flightbay-desk")
+		fmt.Println("building flightbay-desk")
+		b := exec.Command("go", "build", "-o", deskBin, "./cmd/flightbay-desk")
+		b.Stdout, b.Stderr = os.Stdout, os.Stderr
+		if err := b.Run(); err != nil {
+			return err
+		}
+	}
+	want := map[string]bool{}
+	for _, n := range strings.Split(only, ",") {
+		if n = strings.TrimSpace(n); n != "" {
+			want[n] = true
+		}
+	}
+	needed := map[string]bool{}
+	var todo []shot
+	for _, s := range shots {
+		if len(want) > 0 && !want[s.name] {
+			continue
+		}
+		if s.desk == "mesh" && mesh == "" {
+			fmt.Printf("skip %s: needs -mesh\n", s.name)
+			continue
+		}
+		needed[s.desk] = true
+		todo = append(todo, s)
+	}
+	if len(todo) == 0 {
+		return errors.New("nothing to take")
+	}
+
+	// A signed bundle with the payments namespace removed, for the Solo-side view.
+	key, _ := sign.Generate("ACME platform team")
+	pub := filepath.Join(tmp, "acme.pub")
+	if err := os.WriteFile(pub, key.Public().MarshalPublic(), 0o644); err != nil {
+		return err
+	}
+	desks := map[string]*deskProc{}
+	defer func() {
+		for _, d := range desks {
+			d.stop()
+		}
+	}()
+	start := func(name, bundle string, env []string, args ...string) error {
+		d, err := startDesk(deskBin, filepath.Join(tmp, name), bundle, env, args...)
+		if err != nil {
+			return fmt.Errorf("%s desk: %w", name, err)
+		}
+		desks[name] = d
+		return nil
+	}
+	if needed["sample"] {
+		keyFile := filepath.Join(tmp, "acme.key")
+		if err := os.WriteFile(keyFile, key.MarshalPrivate(), 0o600); err != nil {
+			return err
+		}
+		demo := filepath.Join(tmp, "flightbay-DEMO-0001-20260928T0036Z.tar.zst")
+		if err := copyFile(sample, demo); err != nil {
+			return err
+		}
+		if err := start("sample", demo, nil, "--sign", keyFile); err != nil {
+			return err
+		}
+	}
+	if needed["reviewed"] {
+		reviewed := filepath.Join(tmp, "flightbay-DEMO-reviewed.tar.zst")
+		_, err := review.WriteFile(context.Background(), sample, reviewed, &review.Plan{Reviewer: "Jane Smith", ScrubNames: true,
+			Remove: review.Removals{Namespaces: []review.NamespaceRef{{Namespace: "payments"}}, Types: []review.TypeRef{{Resource: "configmaps"}}}},
+			review.Options{Signer: key, Tool: "screenshots"})
+		if err != nil {
+			return err
+		}
+		if err := start("reviewed", reviewed, nil, "--verify-key", pub); err != nil {
+			return err
+		}
+	}
+	if needed["mesh"] {
+		if err := start("mesh", mesh, []string{"FLIGHTBAY_ENTERPRISE=1"}); err != nil {
+			return err
+		}
+	}
+
+	br, err := startChrome(chromeBin, filepath.Join(tmp, "chrome"))
+	if err != nil {
+		return err
+	}
+	defer br.stop()
+	for _, s := range todo {
+		d := desks[s.desk]
+		png, err := br.capture(d, s)
+		if err != nil {
+			return fmt.Errorf("%s: %w", s.name, err)
+		}
+		if err := os.WriteFile(filepath.Join(out, s.name+".png"), png, 0o644); err != nil {
+			return err
+		}
+		fmt.Printf("wrote %s.png\n", s.name)
+	}
+	return nil
+}
+
+func copyFile(src, dst string) error {
+	b, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dst, b, 0o644)
+}
+
+// ---------- desks ----------
+
+type deskProc struct {
+	cmd   *exec.Cmd
+	base  string
+	token string
+}
+
+var uiLine = regexp.MustCompile(`UI:\s+(http://[^/\s]+)/\?token=([0-9a-f]+)`)
+
+func freePort() (int, error) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port, nil
+}
+
+func startDesk(bin, home, bundle string, env []string, args ...string) (*deskProc, error) {
+	port, err := freePort()
+	if err != nil {
+		return nil, err
+	}
+	// Run from the bundle's directory so the UI shows file names, not local paths.
+	argv := append([]string{"open", filepath.Base(bundle), "--listen", fmt.Sprintf("127.0.0.1:%d", port), "--no-browser"}, args...)
+	cmd := exec.Command(bin, argv...)
+	cmd.Dir = filepath.Dir(bundle)
+	cmd.Env = append(append(os.Environ(), "FLIGHTBAY_HOME="+home), env...)
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	d := &deskProc{cmd: cmd}
+	ready := make(chan error, 1)
+	go func() {
+		sc := bufio.NewScanner(stderr)
+		sent := false
+		for sc.Scan() {
+			line := sc.Text()
+			if m := uiLine.FindStringSubmatch(line); m != nil {
+				d.base, d.token = m[1], m[2]
+			}
+			if !sent && strings.HasPrefix(line, "Import complete") {
+				ready <- nil
+				sent = true
+			}
+			if !sent && (strings.HasPrefix(line, "Import stopped") || strings.HasPrefix(line, "Error")) {
+				ready <- errors.New(line)
+				sent = true
+			}
+		}
+		if !sent {
+			ready <- errors.New("desk exited before the import finished")
+		}
+	}()
+	select {
+	case err := <-ready:
+		if err != nil {
+			d.stop()
+			return nil, err
+		}
+	case <-time.After(3 * time.Minute):
+		d.stop()
+		return nil, errors.New("timed out waiting for the import")
+	}
+	return d, nil
+}
+
+func (d *deskProc) stop() {
+	if d.cmd.Process != nil {
+		_ = d.cmd.Process.Signal(os.Interrupt)
+		done := make(chan struct{})
+		go func() { _ = d.cmd.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			_ = d.cmd.Process.Kill()
+		}
+	}
+}
+
+// ---------- Chrome over the DevTools protocol ----------
+
+type browser struct {
+	cmd     *exec.Cmd
+	conn    *websocket.Conn
+	next    atomic.Int64
+	mu      sync.Mutex
+	waiting map[int64]chan json.RawMessage
+	errs    map[int64]string
+}
+
+func startChrome(bin, profile string) (*browser, error) {
+	cmd := exec.Command(bin, "--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-first-run", "--no-default-browser-check",
+		"--remote-debugging-port=0", "--user-data-dir="+profile, "about:blank")
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	var port string
+	for i := 0; i < 100; i++ {
+		if b, err := os.ReadFile(filepath.Join(profile, "DevToolsActivePort")); err == nil {
+			port = strings.SplitN(string(b), "\n", 2)[0]
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if port == "" {
+		_ = cmd.Process.Kill()
+		return nil, errors.New("chrome did not start its DevTools endpoint")
+	}
+	resp, err := http.Get("http://127.0.0.1:" + port + "/json/version")
+	if err != nil {
+		return nil, err
+	}
+	var v struct {
+		WS string `json:"webSocketDebuggerUrl"`
+	}
+	err = json.NewDecoder(resp.Body).Decode(&v)
+	resp.Body.Close()
+	if err != nil {
+		return nil, err
+	}
+	conn, _, err := websocket.Dial(context.Background(), v.WS, nil)
+	if err != nil {
+		return nil, err
+	}
+	conn.SetReadLimit(64 << 20)
+	b := &browser{cmd: cmd, conn: conn, waiting: map[int64]chan json.RawMessage{}, errs: map[int64]string{}}
+	go b.read()
+	return b, nil
+}
+
+func (b *browser) read() {
+	for {
+		_, data, err := b.conn.Read(context.Background())
+		if err != nil {
+			return
+		}
+		var msg struct {
+			ID     int64           `json:"id"`
+			Result json.RawMessage `json:"result"`
+			Error  *struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if json.Unmarshal(data, &msg) != nil || msg.ID == 0 {
+			continue // events
+		}
+		b.mu.Lock()
+		ch := b.waiting[msg.ID]
+		if msg.Error != nil {
+			b.errs[msg.ID] = msg.Error.Message
+		}
+		b.mu.Unlock()
+		if ch != nil {
+			ch <- msg.Result
+		}
+	}
+}
+
+func (b *browser) call(session, method string, params any, out any) error {
+	id := b.next.Add(1)
+	ch := make(chan json.RawMessage, 1)
+	b.mu.Lock()
+	b.waiting[id] = ch
+	b.mu.Unlock()
+	msg := map[string]any{"id": id, "method": method, "params": params}
+	if session != "" {
+		msg["sessionId"] = session
+	}
+	data, _ := json.Marshal(msg)
+	if err := b.conn.Write(context.Background(), websocket.MessageText, data); err != nil {
+		return err
+	}
+	select {
+	case res := <-ch:
+		b.mu.Lock()
+		e := b.errs[id]
+		delete(b.waiting, id)
+		b.mu.Unlock()
+		if e != "" {
+			return fmt.Errorf("%s: %s", method, e)
+		}
+		if out != nil {
+			return json.Unmarshal(res, out)
+		}
+		return nil
+	case <-time.After(60 * time.Second):
+		return fmt.Errorf("%s: timed out", method)
+	}
+}
+
+func (b *browser) eval(session, js string) error {
+	var r struct {
+		Exception *struct {
+			Text      string `json:"text"`
+			Exception struct {
+				Description string `json:"description"`
+			} `json:"exception"`
+		} `json:"exceptionDetails"`
+	}
+	if err := b.call(session, "Runtime.evaluate", map[string]any{"expression": js, "awaitPromise": true}, &r); err != nil {
+		return err
+	}
+	if r.Exception != nil {
+		return fmt.Errorf("%s %s", r.Exception.Text, r.Exception.Exception.Description)
+	}
+	return nil
+}
+
+// waitFor polls a JavaScript condition for up to 30 seconds.
+func (b *browser) waitFor(session, cond string) error {
+	for i := 0; i < 300; i++ {
+		var r struct {
+			Result struct {
+				Value bool `json:"value"`
+			} `json:"result"`
+		}
+		if err := b.call(session, "Runtime.evaluate", map[string]any{"expression": "!!(" + cond + ")", "returnByValue": true}, &r); err == nil && r.Result.Value {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return fmt.Errorf("timed out waiting for %s", cond)
+}
+
+// capture opens a fresh tab for each shot, so no state leaks between shots.
+func (b *browser) capture(d *deskProc, s shot) ([]byte, error) {
+	var t struct {
+		TargetID string `json:"targetId"`
+	}
+	if err := b.call("", "Target.createTarget", map[string]any{"url": "about:blank"}, &t); err != nil {
+		return nil, err
+	}
+	defer b.call("", "Target.closeTarget", map[string]any{"targetId": t.TargetID}, nil)
+	var a struct {
+		SessionID string `json:"sessionId"`
+	}
+	if err := b.call("", "Target.attachToTarget", map[string]any{"targetId": t.TargetID, "flatten": true}, &a); err != nil {
+		return nil, err
+	}
+	ss := a.SessionID
+	if err := b.call(ss, "Emulation.setDeviceMetricsOverride", map[string]any{"width": 1440, "height": 900, "deviceScaleFactor": 1, "mobile": false}, nil); err != nil {
+		return nil, err
+	}
+	// Sign in (sets the session cookie), choose the theme, then load the view.
+	if err := b.call(ss, "Page.navigate", map[string]any{"url": d.base + "/?token=" + d.token}, nil); err != nil {
+		return nil, err
+	}
+	if err := b.waitFor(ss, fmt.Sprintf(`location.href.startsWith(%q) && document.readyState === 'complete'`, d.base)); err != nil {
+		return nil, err
+	}
+	// The theme is read once per page load, and the next navigation only
+	// changes the hash, so apply it to this page as well.
+	if err := b.eval(ss, fmt.Sprintf(`localStorage.setItem('flightbay-theme', %[1]q); document.documentElement.dataset.theme = %[1]q; true`, s.theme)); err != nil {
+		return nil, err
+	}
+	if err := b.call(ss, "Page.navigate", map[string]any{"url": d.base + "/#" + s.hash}, nil); err != nil {
+		return nil, err
+	}
+	if err := b.waitFor(ss, `document.readyState === 'complete' && !!document.querySelector('#main .page-head, #main .nv-frame, #main .nv')`); err != nil {
+		return nil, err
+	}
+	time.Sleep(1500 * time.Millisecond)
+	if s.setup != "" {
+		if err := b.eval(ss, s.setup); err != nil {
+			return nil, fmt.Errorf("setup: %w", err)
+		}
+	}
+	w := s.wait
+	if w == 0 {
+		w = 2 * time.Second
+	}
+	time.Sleep(w)
+	var shotRes struct {
+		Data string `json:"data"`
+	}
+	if err := b.call(ss, "Page.captureScreenshot", map[string]any{"format": "png"}, &shotRes); err != nil {
+		return nil, err
+	}
+	return base64.StdEncoding.DecodeString(shotRes.Data)
+}
+
+func (b *browser) stop() {
+	_ = b.conn.Close(websocket.StatusNormalClosure, "")
+	_ = b.cmd.Process.Kill()
+	_, _ = b.cmd.Process.Wait()
+}

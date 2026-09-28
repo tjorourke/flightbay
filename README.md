@@ -1,4 +1,4 @@
-# Flightbay by Solo
+# Solo flightbay
 
 Flightbay takes a redacted snapshot of a Kubernetes cluster and lets you investigate it offline as if it were live. You can browse every object, search every log line, run `kubectl` and `k9s` against it, read the Envoy, ztunnel and agentgateway config dumps, and get findings that know about Istio ambient, agentgateway and kgateway.
 
@@ -243,6 +243,7 @@ MESH_CONTEXT=kind-mesh1 test/e2e/mesh.sh      # Solo diagnostics against an exis
 test/e2e/reach.sh                             # agent reach on kind + Istio ambient: applies the generated fixes, proves traffic blocked (make e2e-reach)
 FLIGHTBAY_SCALE=10000000 go test ./internal/store -run TestScale -v -timeout 60m
 docker build -t flightbay-desk .              # UI image with kubectl, k9s, istioctl, stern, jq and yq
+go run ./scripts/screenshots -mesh BUNDLE     # retake docs/images from the sample bundle and a capture with agents (own headless Chrome)
 ```
 
 ## Status
