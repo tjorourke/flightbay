@@ -51,6 +51,9 @@ Every tool is read-only and marked as such.
 | `run_sql` | `query` (required), `limit` (200) | One read-only DuckDB statement. See [SQL](/desk/sql/). |
 | `best_practices` | `area`, `status` | The [Scorecard](/desk/scorecard/): scores and grades per area, and every check with its status, objects, reason and fix YAML. With Flightbay Enterprise, also `priorities`. |
 | `agent_reach` | `agent` (namespace/name) | [Agent reach](/desk/agent-reach/): every agent, or one in full. Needs Flightbay Enterprise. |
+| `agent_activity` | `view` (`calls`, `tools`, `models`, `denials`, `changes`) | [Activity](/desk/activity/): callers, tools, models and agents called through agentgateway, refusals with the policies behind them, tokens, and tool changes. Needs Flightbay Enterprise. |
+| `traffic_map` | `flag` (`plaintext`, `plaintext-in`, `unpoliced`, `denied`, `mismatch`) | The [Traffic map](/desk/traffic/): every ztunnel edge with transport, waypoint, verdict and flags. Needs Flightbay Enterprise. |
+| `explain_connection` | `from`, `to` (required), `cluster` | Why a workload can or cannot reach a Service: every check in order, the policies each read, the logs, and a fix. Needs Flightbay Enterprise. |
 | `list_resource_types` | `cluster` | Captured types with counts and collection state (complete, excluded, failed, truncated, loading) |
 | `list_objects` | `resource` (required), `group`, `cluster`, `namespace`, `filter` | Objects of one type, with the columns `kubectl get` prints |
 | `get_object` | `cluster`, `resource`, `name` (required), `group`, `namespace` | One object as captured (redacted YAML), its related objects, its events and, for pods, its log streams |

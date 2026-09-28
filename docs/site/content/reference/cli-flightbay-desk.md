@@ -8,6 +8,24 @@ Generated from the `flightbay-desk` command tree. Run any command with `--help` 
 
 Solo flightbay: investigate a snapshot bundle offline
 
+## flightbay-desk activity
+
+Who called which MCP tool, model or agent through agentgateway, refusals, tokens and tool changes (the fbactivity helper; Flightbay Enterprise)
+
+```text
+flightbay-desk activity [calls|tools|models|denials|changes]
+```
+
+Examples:
+
+```bash
+  fbactivity                 # caller -> tool, model or agent, with findings
+  fbactivity tools           # every tool called, and whether its server lists it
+  fbactivity models          # tokens per model and per caller
+  fbactivity denials         # refused calls and the policies that could have refused them
+  fbactivity changes         # tools added, removed or re-described since the baseline
+```
+
 ## flightbay-desk diff
 
 Compare two bundles from the same customer: objects, image versions and findings
@@ -54,6 +72,26 @@ Examples:
 |---|---|
 | `-i, --identity strings` | age identity file for encrypted bundles |
 | `--json` | print the report as JSON |
+
+## flightbay-desk explain
+
+Why a workload can or cannot reach a Service: every check in order, the policies each read, and the logs (the fbexplain helper; Flightbay Enterprise)
+
+```text
+flightbay-desk explain <from-workload> <to-service> [flags]
+```
+
+Examples:
+
+```bash
+  fbexplain kagent/tom-demo kagent/github-mcp
+  fbexplain agents/eval-agent postgres.tools.svc.cluster.local
+  fbexplain spiffe://cluster.local/ns/agents/sa/eval-agent tools/postgres --cluster mesh1
+```
+
+| Flag | Description |
+|---|---|
+| `--cluster string` | cluster, when the capture has several |
 
 ## flightbay-desk features
 
@@ -192,9 +230,10 @@ Examples:
 ## flightbay-desk mcp
 
 Serves the open workspace as a Model Context Protocol server on stdin/stdout.
-Tools: workspace_summary, list_findings, best_practices, agent_reach, search_logs, log_context,
-search_objects, run_sql, list_resource_types, list_objects, get_object, proxy_config,
-compare_baseline. Prompt: triage. best_practices priorities and agent_reach need Flightbay Enterprise.
+Tools: workspace_summary, list_findings, best_practices, agent_reach, agent_activity, traffic_map,
+explain_connection, search_logs, log_context, search_objects, run_sql, list_resource_types,
+list_objects, get_object, proxy_config, compare_baseline. Prompt: triage. best_practices
+priorities, agent_reach, agent_activity, traffic_map and explain_connection need Flightbay Enterprise.
 
 The server only talks to the local desk. Snapshot data reaches a model only if the
 agent you connect is configured to use one.
@@ -420,6 +459,29 @@ Examples:
 | `--no-terminal` | disable the in-browser terminal in the desk |
 | `--shell string` | shell for the desk's terminal (default /bin/bash) |
 | `--workdir string` | workspace directory for uploads, clones, scans and the desk (default ~/.flightbay/workspaces/ws-*) |
+
+## flightbay-desk traffic
+
+The ambient traffic map: connections with mTLS, waypoints and policy verdicts (the fbtraffic helper; Flightbay Enterprise)
+
+```text
+flightbay-desk traffic [flags]
+```
+
+Examples:
+
+```bash
+  fbtraffic
+  fbtraffic --flag plaintext      # plaintext between mesh workloads
+  fbtraffic --flag unpoliced --fix
+  fbtraffic --namespace kagent
+```
+
+| Flag | Description |
+|---|---|
+| `--fix` | print the YAML for each finding |
+| `--flag string` | only edges with this flag: plaintext, plaintext-in, unpoliced, denied or mismatch |
+| `-n, --namespace string` | only edges to or from this namespace |
 
 ## flightbay-desk version
 

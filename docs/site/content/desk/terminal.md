@@ -72,6 +72,9 @@ Each helper is a small script in the workspace's `bin/` that runs `flightbay-des
 | `fbsql` | `flightbay-desk sql` | Read-only SQL |
 | `fbscore` | `flightbay-desk posture` | Best-practice scores |
 | `fbreach` | `flightbay-desk reach` | Agent reach (Enterprise) |
+| `fbactivity` | `flightbay-desk activity` | Tool, model and agent calls through agentgateway (Enterprise) |
+| `fbtraffic` | `flightbay-desk traffic` | Ambient traffic map (Enterprise) |
+| `fbexplain` | `flightbay-desk explain` | Why a connection is allowed or denied (Enterprise) |
 | `fbflows` | `flightbay-desk flows` | Observed traffic |
 
 ### fbq
@@ -163,6 +166,37 @@ fbscore --top 10             # the ten fixes that give back the most score (Ente
 fbreach
 fbreach kagent/demo-agent
 fbreach kagent/demo-agent --fix      # include the YAML for each finding
+```
+
+### fbactivity
+
+[Activity](/desk/activity/): who called which tool, model or agent. Needs Flightbay Enterprise.
+
+```bash
+fbactivity
+fbactivity tools
+fbactivity models
+fbactivity denials
+fbactivity changes           # needs a baseline
+```
+
+### fbtraffic
+
+The [Traffic map](/desk/traffic/) as a table, worst first. Needs Flightbay Enterprise.
+
+```bash
+fbtraffic
+fbtraffic --flag plaintext   # plaintext, plaintext-in, unpoliced, denied or mismatch
+fbtraffic --namespace kagent --fix
+```
+
+### fbexplain
+
+Why a workload can or cannot reach a Service: each check in order, the policies it read, what the logs saw, and the YAML to allow it. Needs Flightbay Enterprise.
+
+```bash
+fbexplain kagent/tom-demo kagent/github-mcp
+fbexplain spiffe://cluster.local/ns/agents/sa/eval-agent tools/postgres --cluster mesh1
 ```
 
 ### fbflows

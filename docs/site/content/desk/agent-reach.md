@@ -278,7 +278,7 @@ Reach is what the policies allow. Observed traffic is what the capture shows act
 
 ## How verdicts are worked out
 
-Everything is computed from captured objects: Services and their pods, NetworkPolicies, Istio AuthorizationPolicies, PeerAuthentications and waypoints, agentgateway routes and policies, ServiceAccounts, RBAC, Secrets and PVCs. Where a type was not captured, the verdict is **unknown**, never assumed to be allowed or denied.
+Everything is computed from captured objects: Services and their pods, NetworkPolicies, Istio AuthorizationPolicies, PeerAuthentications and waypoints, agentgateway routes and policies, ServiceAccounts, RBAC, Secrets and PVCs. Where a type was not captured, the verdict is **unknown**, never assumed to be allowed or denied. A Service with no pods of its own whose waypoint answers for it, such as an agentgateway waypoint in front of an MCP server outside the cluster, is evaluated to the waypoint. The [Traffic map](/desk/traffic/)'s **Why?** explainer shows every check behind any one verdict.
 
 For each Service, for each pod behind it:
 
