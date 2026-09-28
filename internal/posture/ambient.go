@@ -52,7 +52,7 @@ func ambientChecks(e env) []Check {
 
 	add(spec{"ambient.namespace-enrolled", "Encryption", "high", "Namespaces with workloads are enrolled in ambient",
 		"Without istio.io/dataplane-mode: ambient a namespace stays plain Kubernetes: no mTLS, no workload identity, no L4 authorization.",
-		"kubectl label namespace <ns> istio.io/dataplane-mode=ambient", kbBase + "istio-ambient-crds/"}, func(c *Check) {
+		"kubectl label namespace <ns> istio.io/dataplane-mode=ambient", meshBase + "istio-ambient-crds/"}, func(c *Check) {
 		if !nsKnown {
 			na(c, noNS)
 			return
@@ -83,7 +83,7 @@ func ambientChecks(e env) []Check {
 
 	add(spec{"ambient.no-opt-out", "Isolation", "medium", "No workload opts out of an ambient namespace",
 		"A per-pod istio.io/dataplane-mode: none quietly gives that one workload no identity or encryption.",
-		"# remove from the pod template, or document the exception\nmetadata:\n  labels:\n    istio.io/dataplane-mode: none   # delete", kbBase + "istio-ambient-crds/"}, func(c *Check) {
+		"# remove from the pod template, or document the exception\nmetadata:\n  labels:\n    istio.io/dataplane-mode: none   # delete", meshBase + "istio-ambient-crds/"}, func(c *Check) {
 		if !nsKnown {
 			na(c, noNS)
 			return
@@ -110,7 +110,7 @@ func ambientChecks(e env) []Check {
 
 	add(spec{"ambient.no-sidecar-mix", "Isolation", "medium", "No sidecar injection alongside ambient",
 		"Mixing sidecars into ambient namespaces splits where policy is enforced, and Sidecar resources do nothing in ambient.",
-		"metadata:\n  labels:\n    istio.io/dataplane-mode: ambient\n    # remove: istio-injection: enabled", kbBase + "istio-ambient-crds/"}, func(c *Check) {
+		"metadata:\n  labels:\n    istio.io/dataplane-mode: ambient\n    # remove: istio-injection: enabled", meshBase + "istio-ambient-crds/"}, func(c *Check) {
 		if !nsKnown {
 			na(c, noNS)
 			return
@@ -145,7 +145,7 @@ func ambientChecks(e env) []Check {
 
 	add(spec{"ambient.mtls-strict", "Encryption", "high", "mTLS is STRICT",
 		"STRICT is the only mode that refuses plaintext from callers outside the mesh; with no PeerAuthentication the effective mode is PERMISSIVE.",
-		"apiVersion: security.istio.io/v1\nkind: PeerAuthentication\nmetadata: {name: default, namespace: istio-system}\nspec:\n  mtls: {mode: STRICT}", kbBase + "istio-ambient-crds/"}, func(c *Check) {
+		"apiVersion: security.istio.io/v1\nkind: PeerAuthentication\nmetadata: {name: default, namespace: istio-system}\nspec:\n  mtls: {mode: STRICT}", meshBase + "istio-ambient-crds/"}, func(c *Check) {
 		ok, why := e.evaluable("security.istio.io", "peerauthentications", "PeerAuthentication", true)
 		if !ok {
 			na(c, why)
@@ -191,7 +191,7 @@ func ambientChecks(e env) []Check {
 
 	add(spec{"ambient.default-deny", "Authorization", "high", "Each ambient namespace starts from default-deny",
 		"Zero trust starts from zero: an empty ALLOW policy denies everything, then you allow by identity only what you meant.",
-		"apiVersion: security.istio.io/v1\nkind: AuthorizationPolicy\nmetadata: {name: default-deny, namespace: <ns>}\nspec: {}", kbBase + "zero-trust-agents-kubernetes/"}, func(c *Check) {
+		"apiVersion: security.istio.io/v1\nkind: AuthorizationPolicy\nmetadata: {name: default-deny, namespace: <ns>}\nspec: {}", meshBase + "zero-trust-agents-kubernetes/"}, func(c *Check) {
 		if !apOK {
 			na(c, apWhy)
 			return
@@ -237,7 +237,7 @@ func ambientChecks(e env) []Check {
 
 	add(spec{"ambient.no-allow-all", "Authorization", "critical", "No ALLOW policy admits any source",
 		"Once an ALLOW policy targets a workload everything else is denied; a rule with no source constraint turns that back into allow-all.",
-		"rules:\n- from:\n  - source:\n      principals: [\"cluster.local/ns/<ns>/sa/<caller>\"]", kbBase + "istio-ambient-crds/"}, func(c *Check) {
+		"rules:\n- from:\n  - source:\n      principals: [\"cluster.local/ns/<ns>/sa/<caller>\"]", meshBase + "istio-ambient-crds/"}, func(c *Check) {
 		if !apOK {
 			na(c, apWhy)
 			return
@@ -279,7 +279,7 @@ func ambientChecks(e env) []Check {
 
 	add(spec{"ambient.l7-needs-waypoint", "Authorization", "high", "L7 policy is attached to a waypoint",
 		"Only a waypoint parses HTTP. L7 rules on a selector-attached policy are not enforced as written by ztunnel.",
-		"spec:\n  targetRefs:\n  - {kind: Gateway, group: gateway.networking.k8s.io, name: <waypoint>}\n  rules:\n  - to:\n    - operation: {methods: [GET]}", kbBase + "istio-ambient-crds/"}, func(c *Check) {
+		"spec:\n  targetRefs:\n  - {kind: Gateway, group: gateway.networking.k8s.io, name: <waypoint>}\n  rules:\n  - to:\n    - operation: {methods: [GET]}", meshBase + "istio-ambient-crds/"}, func(c *Check) {
 		if !apOK {
 			na(c, apWhy)
 			return
@@ -313,7 +313,7 @@ func ambientChecks(e env) []Check {
 	add(spec{"ambient.waypoint-wiring", "Authorization", "high", "Waypoints referenced by use-waypoint exist",
 		"A dangling istio.io/use-waypoint label sends traffic to a waypoint that is not there, and L7 policy becomes a silent no-op.",
 		"apiVersion: gateway.networking.k8s.io/v1\nkind: Gateway\nmetadata:\n  name: <waypoint>\n  namespace: <ns>\n  labels: {istio.io/waypoint-for: service}\nspec:\n  gatewayClassName: istio-waypoint\n  listeners: [{name: mesh, port: 15008, protocol: HBONE}]",
-		kbBase + "istio-ambient-crds/"}, func(c *Check) {
+		meshBase + "istio-ambient-crds/"}, func(c *Check) {
 		gws := map[string]string{}
 		for _, gw := range e.list("gateway.networking.k8s.io", "gateways") {
 			gws[gw.Namespace+"/"+gw.Name] = s(path(gw.Obj, "spec", "gatewayClassName"))
@@ -350,7 +350,7 @@ func ambientChecks(e env) []Check {
 	add(spec{"ambient.request-auth-enforced", "Authentication", "high", "RequestAuthentication is backed by a policy requiring a token",
 		"RequestAuthentication only rejects invalid tokens; a request with no token passes unless an AuthorizationPolicy requires a principal.",
 		"spec:\n  targetRefs: [{kind: Gateway, group: gateway.networking.k8s.io, name: <waypoint>}]\n  action: ALLOW\n  rules:\n  - from:\n    - source: {requestPrincipals: [\"https://issuer.example.com/*\"]}",
-		kbBase + "istio-ambient-crds/"}, func(c *Check) {
+		meshBase + "istio-ambient-crds/"}, func(c *Check) {
 		ras := e.list("security.istio.io", "requestauthentications")
 		if len(ras) == 0 {
 			na(c, "no RequestAuthentication")
@@ -379,7 +379,7 @@ func ambientChecks(e env) []Check {
 	add(spec{"ambient.egress-controlled", "Isolation", "high", "Outbound traffic from mesh namespaces is controlled",
 		"An agent's reach includes everything its callees can fetch; outbound should go through an allowlisted egress point.",
 		"apiVersion: security.istio.io/v1\nkind: AuthorizationPolicy\nmetadata: {name: egress-allowlist, namespace: istio-egress}\nspec:\n  targetRefs: [{kind: Gateway, group: gateway.networking.k8s.io, name: egress-waypoint}]\n  action: ALLOW\n  rules:\n  - to:\n    - operation: {hosts: [\"api.anthropic.com\"]}",
-		kbBase + "zero-trust-agents-kubernetes/"}, func(c *Check) {
+		meshBase + "zero-trust-agents-kubernetes/"}, func(c *Check) {
 		ok, why := e.evaluable("networking.k8s.io", "networkpolicies", "NetworkPolicy", true)
 		if !ok {
 			na(c, why)
@@ -419,7 +419,7 @@ func ambientChecks(e env) []Check {
 
 	add(spec{"ambient.no-tls-disable", "Encryption", "medium", "No DestinationRule disables TLS",
 		"tls.mode DISABLE on an in-mesh host removes encryption; external hosts need SIMPLE or MUTUAL origination.",
-		"trafficPolicy:\n  tls: {mode: SIMPLE, sni: api.external.example.com}", kbBase + "istio-ambient-crds/"}, func(c *Check) {
+		"trafficPolicy:\n  tls: {mode: SIMPLE, sni: api.external.example.com}", meshBase + "istio-ambient-crds/"}, func(c *Check) {
 		drs := e.list("networking.istio.io", "destinationrules")
 		if len(drs) == 0 {
 			na(c, "no DestinationRules")
@@ -436,7 +436,7 @@ func ambientChecks(e env) []Check {
 
 	add(spec{"ambient.telemetry", "Observability", "medium", "Mesh access logging is configured",
 		"Denials are where probing shows up; without access logs you will not see it.",
-		"apiVersion: telemetry.istio.io/v1\nkind: Telemetry\nmetadata: {name: mesh-default, namespace: istio-system}\nspec:\n  accessLogging:\n  - providers: [{name: envoy}]", kbBase + "istio-ambient-crds/"}, func(c *Check) {
+		"apiVersion: telemetry.istio.io/v1\nkind: Telemetry\nmetadata: {name: mesh-default, namespace: istio-system}\nspec:\n  accessLogging:\n  - providers: [{name: envoy}]", meshBase + "istio-ambient-crds/"}, func(c *Check) {
 		ok, why := e.evaluable("telemetry.istio.io", "telemetries", "Telemetry", true)
 		if !ok {
 			na(c, why)
@@ -456,7 +456,7 @@ func ambientChecks(e env) []Check {
 
 	add(spec{"ambient.extension-hygiene", "Supply chain", "low", "No EnvoyFilter, and security Wasm fails closed",
 		"EnvoyFilter is a brittle back door across upgrades; a security-phase Wasm module that fails open is a bypass.",
-		"spec:\n  phase: AUTHN\n  failStrategy: FAIL_CLOSE\n  sha256: <digest>", kbBase + "istio-ambient-crds/"}, func(c *Check) {
+		"spec:\n  phase: AUTHN\n  failStrategy: FAIL_CLOSE\n  sha256: <digest>", meshBase + "istio-ambient-crds/"}, func(c *Check) {
 		for _, ef := range e.list("networking.istio.io", "envoyfilters") {
 			c.Items = append(c.Items, e.item(ef, Warn, "EnvoyFilter"))
 		}
@@ -472,5 +472,6 @@ func ambientChecks(e env) []Check {
 			na(c, "no EnvoyFilters or WasmPlugins")
 		}
 	})
+	out = append(out, ambientExtra(e)...)
 	return out
 }

@@ -8,28 +8,45 @@ import (
 	"github.com/tjorourke/flightbay/internal/store"
 )
 
-// Evaluate runs every check on every cluster and scores both areas.
+// areaDef is one scored area. present decides whether a cluster has the
+// technology at all; checks runs every best practice for it.
+type areaDef struct {
+	id, title, absent string
+	present           func(env) bool
+	checks            func(env) []Check
+}
+
+var areaDefs = []areaDef{
+	{"agentic", "Agentic (agentgateway, kagent, MCP)", "no agentgateway, kagent or agentregistry objects in this capture", isAgentic, agenticChecks},
+	{"ambient", "Istio (ambient and control plane)", "no Istio ambient in this capture (no ztunnel or Istio resources)", isAmbient, ambientChecks},
+	{"gateway", "Ingress (Gateway API, kgateway)", "no Gateway API ingress or kgateway objects in this capture", isGateway, gatewayChecks},
+	{"kubernetes", "Kubernetes (workload and platform hygiene)", "no pods with full object detail in this capture", isKubernetes, kubernetesChecks},
+}
+
+// Evaluate runs every check on every cluster and scores each area.
 func Evaluate(ws *store.Workspace) Report {
 	var checks []Check
-	agenticPresent, ambientPresent := false, false
+	present := map[string]bool{}
 	for _, cl := range ws.Clusters() {
 		e := env{ws: ws, cluster: cl}
-		if isAgentic(e) {
-			agenticPresent = true
-			checks = merge(checks, agenticChecks(e))
-		}
-		if isAmbient(e) {
-			ambientPresent = true
-			checks = merge(checks, ambientChecks(e))
+		for _, a := range areaDefs {
+			if a.present(e) {
+				present[a.id] = true
+				checks = merge(checks, a.checks(e))
+			}
 		}
 	}
 	for i := range checks {
 		finish(&checks[i])
 	}
+	order := map[string]int{}
+	for i, a := range areaDefs {
+		order[a.id] = i
+	}
 	sort.SliceStable(checks, func(i, j int) bool {
 		a, b := checks[i], checks[j]
 		if a.Area != b.Area {
-			return a.Area < b.Area
+			return order[a.Area] < order[b.Area]
 		}
 		if statusRank[a.Status] != statusRank[b.Status] {
 			return statusRank[a.Status] < statusRank[b.Status]
@@ -37,8 +54,9 @@ func Evaluate(ws *store.Workspace) Report {
 		return weight[a.Severity] > weight[b.Severity]
 	})
 	r := Report{Checks: checks}
-	r.Areas = append(r.Areas, area(checks, "agentic", "Agentic (agentgateway, kagent, MCP)", agenticPresent, "no agentgateway, kagent or agentregistry objects in this capture"))
-	r.Areas = append(r.Areas, area(checks, "ambient", "Istio ambient", ambientPresent, "no Istio ambient in this capture (no ztunnel or Istio resources)"))
+	for _, a := range areaDefs {
+		r.Areas = append(r.Areas, area(checks, a.id, a.title, present[a.id], a.absent))
+	}
 	if r.Checks == nil {
 		r.Checks = []Check{}
 	}

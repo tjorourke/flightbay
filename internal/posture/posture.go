@@ -302,7 +302,9 @@ func hasAuthn(ps []policy) (bool, bool) {
 	authn, meshOnly := false, false
 	for _, p := range ps {
 		t := m(p.spec["traffic"])
-		if len(l(path(t, "jwtAuthentication", "providers"))) > 0 || t["extAuth"] != nil || t["entExtAuth"] != nil {
+		if len(l(path(t, "jwtAuthentication", "providers"))) > 0 || t["extAuth"] != nil || t["entExtAuth"] != nil ||
+			authnEnforcing(m(t["apiKeyAuthentication"])) || authnEnforcing(m(t["basicAuthentication"])) ||
+			path(p.spec, "backend", "mcp", "authentication") != nil || path(p.spec, "backend", "extAuth") != nil {
 			authn = true
 		}
 		for _, a := range []any{t["authorization"], path(p.spec, "backend", "mcp", "authorization")} {
@@ -312,6 +314,16 @@ func hasAuthn(ps []policy) (bool, bool) {
 		}
 	}
 	return authn, meshOnly
+}
+
+// authnEnforcing: an api-key or basic-auth block counts as authentication
+// unless its mode lets requests without a credential through.
+func authnEnforcing(a map[string]any) bool {
+	if a == nil {
+		return false
+	}
+	mode := s(a["mode"])
+	return mode != "Optional" && mode != "Permissive"
 }
 
 // eastWest reports whether every route to the backend hangs off a waypoint
@@ -363,12 +375,33 @@ var sensitiveEnv = regexp.MustCompile(`(?i)(password|passwd|secret|token|api[_-]
 var settingEnv = regexp.MustCompile(`(?i)(passthrough|enabled?|disabled?|_mode|_file|_path|_dir|_url|_uri|_endpoint|_header|_name|_ref|_ttl|_expiry|_timeout|_type|_audience|_issuer)$`)
 var keyLike = regexp.MustCompile(`^(Bearer |gh[pousr]_|sk-|AKIA)|\[REDACTED`)
 
+// mcpTargets returns each static MCP target. A target naming a Service by
+// backendRef is returned with host set to its cluster-local name.
 func mcpTargets(b *backend) []map[string]any {
 	var out []map[string]any
 	for _, t := range l(b.mcp["targets"]) {
-		if st := m(m(t)["static"]); st != nil {
-			out = append(out, st)
+		st := m(m(t)["static"])
+		if st == nil {
+			continue
 		}
+		if s(st["host"]) == "" {
+			if br := m(st["backendRef"]); br != nil {
+				ns := s(br["namespace"])
+				if ns == "" {
+					ns = b.o.Namespace
+				}
+				cp := map[string]any{}
+				for k, v := range st {
+					cp[k] = v
+				}
+				cp["host"] = s(br["name"]) + "." + ns + ".svc.cluster.local"
+				if cp["port"] == nil {
+					cp["port"] = br["port"]
+				}
+				st = cp
+			}
+		}
+		out = append(out, st)
 	}
 	return out
 }

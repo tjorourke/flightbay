@@ -15,7 +15,12 @@ func (sp spec) check(area string) Check {
 	return Check{ID: sp.id, Area: area, Category: sp.category, Severity: sp.severity, Title: sp.title, Why: sp.why, Fix: sp.fix, Source: sp.source}
 }
 
-const kbBase = "https://mastertheagent.com/solo/"
+// Guide links: agentic pages live on mastertheagent.com, mesh pages on
+// masterthemesh.com (the same catalogue, served under two brands).
+const (
+	kbBase   = "https://mastertheagent.com/solo/"
+	meshBase = "https://masterthemesh.com/solo/"
+)
 
 func agenticChecks(e env) []Check {
 	md := newModel(e)
@@ -243,9 +248,21 @@ func agenticChecks(e env) []Check {
 			if len(l(path(b.spec, "policies", "ai", "promptGuard", dir))) > 0 {
 				st, detail = Pass, "inline on the backend"
 			}
+			for _, g := range l(path(b.ai, "groups")) {
+				for _, pr := range l(m(g)["providers"]) {
+					if len(l(path(pr, "policies", "ai", "promptGuard", dir))) > 0 {
+						st, detail = Pass, "on provider "+s(m(pr)["name"])
+					}
+				}
+			}
+			if dir == "request" && path(b.ai, "provider", "bedrock", "guardrail") != nil {
+				st, detail = Pass, "Bedrock guardrail"
+			}
 			for _, p := range md.applicable(b) {
-				if len(l(path(p.spec, "backend", "ai", "promptGuard", dir))) > 0 {
-					st, detail = Pass, "promptGuard."+dir+" in "+p.o.Name
+				for _, key := range []string{"promptGuard", "entPromptGuard"} {
+					if len(l(path(p.spec, "backend", "ai", key, dir))) > 0 {
+						st, detail = Pass, key+"."+dir+" in "+p.o.Name
+					}
 				}
 			}
 			c.Items = append(c.Items, e.item(b.o, st, detail))
@@ -289,7 +306,20 @@ func agenticChecks(e env) []Check {
 		secOK, secWhy := e.evaluable("", "secrets", "Secret", true)
 		check := func(b *backend, ref map[string]any, what string) {
 			name := s(m(ref["secretRef"])["name"])
+			refKind := s(m(ref["secretRef"])["kind"])
+			var federated string
+			for _, k := range []string{"aws", "azure", "gcp", "oauthTokenExchange", "workloadIdentity", "entTokenExchange"} {
+				if ref[k] != nil {
+					federated = k
+				}
+			}
 			switch {
+			case federated != "":
+				c.Items = append(c.Items, e.item(b.o, Pass, what+": "+federated+" (no static key to leak)"))
+			case name != "" && refKind != "" && refKind != "Secret":
+				c.Items = append(c.Items, e.item(b.o, Pass, what+": "+refKind+" "+name+" (existence not checked)"))
+			case name == "" && ref["passthrough"] != nil:
+				c.Items = append(c.Items, e.item(b.o, Warn, what+": the client's token is passed through (see agentic.no-token-passthrough)"))
 			case name == "":
 				c.Items = append(c.Items, e.item(b.o, Fail, what+": no auth.secretRef"))
 			case !secOK:
@@ -548,7 +578,7 @@ func agenticChecks(e env) []Check {
 				if al == nil {
 					continue
 				}
-				if strings.Contains(fmt.Sprint(al), "jwt.") {
+				if str := fmt.Sprint(al); strings.Contains(str, "jwt.") || strings.Contains(str, "apiKey.") || strings.Contains(str, "source.identity") {
 					st, detail = Pass, "identity in the access log ("+p.o.Name+")"
 				} else if st == Fail {
 					st, detail = Warn, "access log without identity attributes ("+p.o.Name+")"
@@ -607,6 +637,7 @@ func agenticChecks(e env) []Check {
 			}
 		}
 	})
+	out = append(out, agenticExtra(e, md)...)
 	return out
 }
 
