@@ -740,6 +740,35 @@ function rcLogQuery(f) {
   if (f.source === 'envoy') return [f.srcPod ? `pod:${f.srcPod}` : '', host ? q(host) : ''].filter(Boolean).join(' ');
   return '';
 }
+// rcConfigLinks opens the objects the evidence names (the Backend, route,
+// Gateway, ConfigMap, ModelConfig or the agent's own Deployment) in a modal,
+// with the lines that mention the destination highlighted.
+function rcConfigLinks(x, external) {
+  const refs = x.configRefs || [];
+  if (!refs.length) return '';
+  const sv = rcSvc(x.to);
+  const hl = external ? [x.host] : sv ? [`${sv.name}.${sv.namespace}`, sv.name] : [];
+  return `<div class="rc-cfg"><h4>Open the config</h4>${refs.map(r => {
+    const env = /\(env ([A-Za-z_][A-Za-z0-9_]*)\)/.exec(r.label || '');
+    return `<button class="rc-cfgbtn" data-rcref="${attr({ref: {cluster: r.cluster, group: r.group, resource: r.resource, namespace: r.namespace, name: r.name}, label: r.label || `${r.kind} ${r.namespace ? r.namespace + '/' : ''}${r.name}`, hl: env ? [env[1], ...hl] : hl})}"><span class="rc-cfgk">${esc(r.kind)}</span> <span class="mono">${esc(r.namespace ? r.namespace + '/' : '')}${esc(r.name)}</span>${env ? ` <span class="muted">env ${esc(env[1])}</span>` : ''}</button>`;
+  }).join('')}</div>`;
+}
+// rcConfigModal shows one object's captured YAML, the matching lines marked.
+async function rcConfigModal({ref, label, hl}) {
+  const d = await api('api/object', ref).catch(e => ({error: e.message}));
+  if (d.error) { toast(d.error); return; }
+  const terms = (hl || []).filter(Boolean).map(t => t.toLowerCase());
+  const lines = String(d.yaml || '').split('\n');
+  const hit = l => terms.some(t => l.toLowerCase().includes(t));
+  const n = lines.filter(hit).length;
+  modal(label, `<div class="row between wrap" style="margin-bottom:10px"><small class="muted">Captured object (redacted)${n ? ` · ${n} line${n === 1 ? '' : 's'} mention ${esc(hl.join(' or '))}` : ''}</small>
+      <div class="row"><button id="cm-copy">Copy YAML</button><button id="cm-open">Open in the object view</button></div></div>
+    <pre class="code rc-cmyaml">${lines.map(l => `<span class="${hit(l) ? 'rc-cmhit' : ''}">${esc(l)}</span>`).join('\n')}</pre>`);
+  $('.modal').classList.add('modal-wide');
+  $('#cm-copy').onclick = () => navigator.clipboard.writeText(d.yaml).then(() => toast('YAML copied'), () => toast('Clipboard unavailable'));
+  $('#cm-open').onclick = () => { closeModal(); openObject(ref); };
+  $('.rc-cmhit')?.scrollIntoView({block: 'center'});
+}
 // rcEvidence is the panel that opens under a destination: what said it is
 // reachable, where it is configured, and the flow records that show it.
 function rcEvidence(x, external, agent) {
@@ -763,6 +792,7 @@ function rcEvidence(x, external, agent) {
     <div><h4>${external ? 'How it is reached' : 'Policy verdict'}</h4>${policy}</div>
     <div><h4>Configured in</h4>${decl}</div>
     <div><h4>Flow sources</h4>${rcSources.map(([k]) => { const saw = ((external ? x.sources : x.observedBy) || []).includes(k), st = rcSrcState(k, agent); return `<div class="rc-srow">${saw ? `<span class="rc-src rc-src-${k}">${k}</span> <span class="green">saw it</span>` : `<span class="rc-src rc-src-off">${k}</span> <span class="${st.cls === 'green' ? 'amber' : 'muted'}">${st.cls === 'green' ? 'covers this agent, did not see it' : st.text}</span>`}</div>`; }).join('')}${x.ip && external ? `<div class="rc-small muted">address ${esc(x.ip)}${(x.sources || []).includes('coredns') ? ', named by its DNS lookup' : ''}</div>` : ''}</div></div>
+    ${rcConfigLinks(x, external)}
     ${ev.length ? `<h4 class="mt">Flow records <small class="muted">${ev.length}${ev.length >= 20 ? ', the largest 20' : ''} · counts are per source and never added across sources</small></h4>
       <div class="table-scroll"><table class="rc-evt"><thead><tr><th>Source</th><th>From</th><th>Count</th><th>Request</th><th>Caller as logged</th><th>Destination as logged</th><th>Route</th><th>Verdict</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`
       : `<p class="muted mt">${seen ? 'Seen, but the records were merged away.' : none}</p>`}</div>`;
@@ -1364,6 +1394,7 @@ after.reach = () => {
   document.querySelectorAll('[data-rcef]').forEach(b => b.onclick = () => { R.efound = b.dataset.rcef; const y = scrollY; render().then(() => scrollTo(0, y)); });
   document.querySelectorAll('[data-rcev]').forEach(b => b.onclick = () => { R.evOpen = R.evOpen || {}; R.evOpen[b.dataset.rcev] = !R.evOpen[b.dataset.rcev]; const y = scrollY; render().then(() => scrollTo(0, y)); });
   document.querySelectorAll('[data-rclogs]').forEach(b => b.onclick = () => openLogs({q: b.dataset.rclogs}));
+  document.querySelectorAll('[data-rcref]').forEach(b => b.onclick = () => rcConfigModal(JSON.parse(b.dataset.rcref)));
   const dq = $('#rc-dq');
   if (dq) { let t; dq.oninput = e => { clearTimeout(t); t = setTimeout(() => { const c = e.target.selectionStart, v = e.target.value, y = scrollY; R.dq = v; render().then(() => { scrollTo(0, y); refocus('#rc-dq', c, v); }); }, 250); }; }
 };

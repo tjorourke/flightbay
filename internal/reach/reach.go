@@ -20,6 +20,7 @@ type Ref struct {
 	Kind      string `json:"kind"`
 	Namespace string `json:"namespace"`
 	Name      string `json:"name"`
+	Label     string `json:"label,omitempty"` // how the evidence names it, when it is a link
 }
 
 func refOf(o *store.Object) *Ref {
@@ -67,6 +68,8 @@ type Edge struct {
 	DeclaredIn []string `json:"declaredIn,omitempty"`     // where it is configured
 	Risk       string   `json:"risk"`                     // red, amber, green, grey
 	Why        string   `json:"why"`
+	// ConfigRefs are the objects DeclaredIn and Via name, to open.
+	ConfigRefs []Ref `json:"configRefs,omitempty"`
 	// Evidence is the flow records that show the traffic (at most
 	// maxEvidence, largest first), so a reader can see how it was found.
 	Evidence []store.Flow `json:"evidence,omitempty"`
@@ -714,6 +717,23 @@ func (e *engine) agent(w *workload, all []*workload, obs map[string]*observed, c
 		}
 	}
 	a.Paths = append(a.Paths, externalPaths(w, a)...)
+	for i := range a.Direct {
+		a.Direct[i].ConfigRefs = c.configRefs(w, append(append([]string{}, a.Direct[i].DeclaredIn...), a.Direct[i].Via)...)
+	}
+	for i := range a.External {
+		x := &a.External[i]
+		phrases := append([]string{}, x.DeclaredIn...)
+		if x.Route != "" {
+			phrases = append(phrases, "route "+x.Route)
+		}
+		if x.Gateway != "" {
+			phrases = append(phrases, "gateway "+x.Gateway)
+		}
+		if x.GatewayRoute != "" {
+			phrases = append(phrases, x.GatewayRoute) // "ns/gw route ns/name": a route exists, though unused
+		}
+		x.ConfigRefs = c.configRefs(w, phrases...)
+	}
 
 	a.Findings = e.findings(w, a, reach, all, declSvcs, declHosts)
 	for _, f := range a.Findings {
@@ -727,6 +747,11 @@ func (e *engine) agent(w *workload, all []*workload, obs map[string]*observed, c
 	a.Radius = radius(a)
 	a.Summary = summary(w, a, internetVia)
 	a.Nodes, a.Edges = e.graph(w, a, reach, internetVia)
+	for i := range a.Edges {
+		if a.Edges[i].Via != "" {
+			a.Edges[i].ConfigRefs = c.configRefs(w, a.Edges[i].Via)
+		}
+	}
 	return a
 }
 

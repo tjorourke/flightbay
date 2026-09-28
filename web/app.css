@@ -374,3 +374,7 @@ body.rg-noscroll{overflow:hidden}
 .rc-fname{font:600 12px var(--mono);color:var(--text)}.rc-fn{font:12px var(--mono);color:var(--muted);text-align:right}
 .rc-fsub{grid-column:1 / -1;font-size:11px;line-height:1.35}
 .rc-srow{font-size:11px;line-height:1.9}.rc-src-off{opacity:.55}
+.rc-cfg{margin-top:12px;display:flex;flex-wrap:wrap;align-items:center;gap:6px}.rc-cfg h4{width:100%;margin:0 0 2px}
+.rc-cfgbtn{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;padding:4px 10px;border-radius:7px;border:1px solid var(--line);background:var(--panel);cursor:pointer;color:var(--text)}
+.rc-cfgbtn:hover{border-color:var(--blue)}.rc-cfgbtn .rc-cfgk{color:var(--blue);font-weight:600}
+.modal.modal-wide{width:min(980px,95vw)}.rc-cmyaml{max-height:62vh;overflow:auto}.rc-cmhit{display:inline-block;min-width:100%;background:color-mix(in srgb,var(--amber) 24%,transparent);border-radius:3px}

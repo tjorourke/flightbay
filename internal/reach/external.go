@@ -52,7 +52,8 @@ type External struct {
 	IP           string       `json:"ip,omitempty"`
 	Risk         string       `json:"risk"`
 	Why          string       `json:"why"`
-	Evidence     []store.Flow `json:"evidence,omitempty"` // flow records and DNS lookups that show it, largest first
+	Evidence     []store.Flow `json:"evidence,omitempty"`   // flow records and DNS lookups that show it, largest first
+	ConfigRefs   []Ref        `json:"configRefs,omitempty"` // the objects DeclaredIn, Route and Gateway name, to open
 }
 
 // Ways an external host is reached.

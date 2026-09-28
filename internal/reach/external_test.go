@@ -167,6 +167,14 @@ func TestExternalRegistryThroughGateway(t *testing.T) {
 	if x.ReachedVia != ViaGateway || x.Gateway != "agentgateway-system/agw" || x.Route != "agentgateway-system/jfrog" || !x.Authn || x.ReadOnly {
 		t.Fatalf("through the gateway: %+v", x)
 	}
+	// The objects behind the words, so the UI can open them.
+	var kinds []string
+	for _, r := range x.ConfigRefs {
+		kinds = append(kinds, r.Kind+" "+r.Namespace+"/"+r.Name)
+	}
+	if !has(kinds, "HTTPRoute agentgateway-system/jfrog") || !has(kinds, "Gateway agentgateway-system/agw") {
+		t.Fatalf("config refs: %v", kinds)
+	}
 	// Writes are still possible (no method rule), so the finding stands,
 	// and its fix makes the existing route read-only.
 	f := finding(a, "Can reach an external registry")
