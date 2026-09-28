@@ -356,3 +356,29 @@ func TestEnvoyBothSidesCountOnce(t *testing.T) {
 		t.Fatalf("want 3 requests, got %+v", o)
 	}
 }
+
+// A gateway that routes back to the agent's own Service: the graph shows the
+// gateway's other backends but not the agent reaching itself.
+func TestGraphSkipsTheAgentsOwnService(t *testing.T) {
+	objs := append(gatewayObjects(false),
+		svc("agents", "eval-agent", map[string]any{"app": "eval-agent"}, 8080, nil),
+		map[string]any{"kind": "HTTPRoute", "metadata": map[string]any{"name": "back", "namespace": "agentgateway-system"}, "spec": map[string]any{
+			"parentRefs": []any{map[string]any{"name": "agw"}},
+			"rules": []any{map[string]any{"backendRefs": []any{
+				map[string]any{"kind": "Service", "name": "eval-agent", "namespace": "agents", "port": float64(8080)},
+				map[string]any{"kind": "Service", "name": "postgres", "namespace": "tools", "port": float64(5432)},
+			}}}}})
+	a := agentNamed(t, Evaluate(add(t, incident(t, "no-waypoint"), objs...)), "eval-agent")
+	toPostgres := false
+	for _, e := range a.Edges {
+		if strings.HasSuffix(e.From, "/svc/agw") && strings.HasSuffix(e.To, "/svc/postgres") {
+			toPostgres = true
+		}
+		if strings.HasSuffix(e.To, "/agents/svc/eval-agent") {
+			t.Fatalf("the agent should not reach its own Service in the graph: %+v", e)
+		}
+	}
+	if !toPostgres {
+		t.Fatal("the graph should still draw agw -> postgres")
+	}
+}

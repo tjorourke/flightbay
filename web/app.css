@@ -328,6 +328,16 @@ body.rg-noscroll{overflow:hidden}
 .rg-frame rect{fill:color-mix(in srgb,var(--raised) 60%,transparent);stroke:var(--line);stroke-dasharray:5 4}
 .rg-frame .rg-fl{font:600 11px var(--mono);fill:var(--muted)}
 .rg-trunk{stroke-width:3}
+.rg-head .rg-hbg{fill:var(--raised);stroke:var(--line)}
+.rg-head .rg-hdot{fill:var(--panel);stroke:var(--line)}
+.rg-head .rg-hl{font:600 12px var(--sans);fill:var(--text)}.rg-head .rg-hn{font:10.5px var(--sans);fill:var(--muted)}
+.rg-ic{fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;overflow:visible}
+.rg-hic{stroke:var(--text)}
+.rg-nic{opacity:.85}
+.rg-red .rg-nic{stroke:var(--red)}.rg-amber .rg-nic{stroke:var(--amber)}.rg-green .rg-nic{stroke:var(--teal)}.rg-grey .rg-nic{stroke:var(--muted)}
+.rg-edge,.rg-node{transition:opacity .12s}
+.rg.rg-hl .rg-edge:not(.on){opacity:.1}.rg.rg-hl .rg-node:not(.on){opacity:.3}
+.rg.rg-hl .rg-edge.on .rg-line{stroke-width:2.4;opacity:1}
 .rc-src{display:inline-block;font:600 9.5px var(--mono);padding:1px 6px;margin:3px 4px 0 0;border-radius:8px;border:1px solid var(--line);color:var(--muted);background:var(--raised);white-space:nowrap}
 .rc-src-agentgateway{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 40%,transparent)}.rc-src-ztunnel{color:var(--teal);border-color:color-mix(in srgb,var(--teal) 40%,transparent)}
 .rc-src-hubble,.rc-src-calico{color:var(--blue);border-color:color-mix(in srgb,var(--blue) 40%,transparent)}

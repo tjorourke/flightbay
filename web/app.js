@@ -758,7 +758,7 @@ function rcDetail(a) {
       ${Object.keys(R.gexpand).length ? '<button class="ghost" id="rg-collapse">Fold namespaces</button>' : ''}<small class="muted">${G.folded ? `${G.shown} of ${G.total} shown one by one, ${G.folded} folded into ${G.groups} namespace${G.groups === 1 ? '' : 's'}` : `all ${G.total} destinations`}</small></div>
       <div class="row rc-zoom"><button id="rg-out" title="Zoom out (-)">−</button><span id="rg-pct" class="mono muted">100%</span><button id="rg-in" title="Zoom in (+)">+</button><button id="rg-fit" title="Fit (0)">Fit</button><button id="rg-full" title="${R.gfull ? 'Exit full screen (Esc)' : 'Full screen (f)'}">${R.gfull ? '⤡ Exit' : '⤢ Full screen'}</button></div></div>
     <div class="rg-vp" id="rg-vp" tabindex="0">${rcGraph(a, G)}</div>
-    <div class="rc-legend"><span><i class="rc-sw red"></i>open, write access or internet</span><span><i class="rc-sw amber"></i>allowed with no request-level rule, or unknown</span><span><i class="rc-sw green"></i>read-only or blocked</span><span><i class="rc-sw grey"></i>blocked or not applicable</span><span><i class="rc-sw dash"></i>denied or unknown verdict</span><span class="muted">Last column: hosts outside the cluster</span><span class="muted">Drag to move · pinch or Ctrl+scroll to zoom · click a box to open it</span></div></section>`;
+    <div class="rc-legend"><span><i class="rc-sw red"></i>open, write access or internet</span><span><i class="rc-sw amber"></i>allowed with no request-level rule, or unknown</span><span><i class="rc-sw green"></i>read-only or blocked</span><span><i class="rc-sw grey"></i>blocked or not applicable</span><span><i class="rc-sw dash"></i>denied or unknown verdict</span><span class="muted">Hover a box to trace its lines · drag to move · pinch or Ctrl+scroll to zoom · click a box to open it</span></div></section>`;
   const kindCls = {internet: 'red', fetcher: 'red', registry: 'red', exfil: 'red', metadata: 'red', credentials: 'red', store: 'amber', service: 'amber'};
   const paths = (a.paths || []).map(p => `<div class="rc-path"><span class="rc-kind ${kindCls[p.kind] || ''}">${esc(p.kind)}</span>
     <div class="rc-chain">${p.hops.map(h => `<span class="rc-hop ${h === 'internet' || h === '169.254.169.254' ? 'net' : ''}">${esc(h)}</span>`).join('<span class="rc-arrow">→</span>')}</div>
@@ -879,7 +879,13 @@ function rcGraphModel(a) {
     edges.push(e);
   }
   const first = nodes.filter(n => n.type === 'service' && (n.depth || 1) === 1 && edges.some(e => e.from === agentId && e.to === n.id));
-  const total = first.length;
+  // Every Service it reaches in one hop, including the few drawn further
+  // right because a gateway also leads to them.
+  const directSvc = (a.direct || []).filter(e => e.to.startsWith('svc:') && e.verdict !== 'denied');
+  const directBy = new Map(directSvc.map(e => [e.to, e]));
+  for (const n of nodes) if (n.type === 'service' && (n.depth || 1) > 1 && directBy.has(n.id)) n.alsoDirect = directBy.get(n.id).risk;
+  const direct = {n: directSvc.length, counts: directSvc.reduce((m, e) => (m[e.risk] = (m[e.risk] || 0) + 1, m), {})};
+  const total = Math.max(first.length, directSvc.length);
   const view = R.gview || (total > 14 ? 'risky' : 'all');
   const outgoing = new Set(edges.map(e => e.from));
   const keep = n => view === 'all' || R.gexpand[n.namespace] || outgoing.has(n.id) || (view === 'risky' && n.risk === 'red' && !/^group:/.test(n.id));
@@ -895,7 +901,38 @@ function rcGraphModel(a) {
     nodes.push({id, type: 'group', label: ns, namespace: ns, depth: 1, risk: worst, count: list.length, detail: list.map(n => n.label.split('/').pop()).join(', ')});
     edges.push({from: agentId, to: id, verdict: 'allowed', risk: worst, why: `${list.length} destinations in ${ns}; click to open the namespace up`});
   }
-  return {nodes, edges, view, total, shown: total - folded.size, folded: folded.size, groups: Object.keys(groups).length};
+  return {nodes, edges, view, total, direct, shown: total - folded.size, folded: folded.size, groups: Object.keys(groups).length};
+}
+
+// Line icons for the graph (24x24, stroked), drawn as nested SVGs.
+const rgIconPaths = {
+  bot: '<rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4M8 16h.01M16 16h.01"/>',
+  network: '<rect x="16" y="16" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="9" y="2" width="6" height="6" rx="1"/><path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3M12 12V8"/>',
+  router: '<rect x="2" y="14" width="20" height="8" rx="2"/><path d="M6 18h.01M10 18h.01M15 10v4M17.84 7.17a4 4 0 0 0-5.66 0M20.66 4.34a8 8 0 0 0-11.31 0"/>',
+  route: '<circle cx="6" cy="19" r="3"/><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/><circle cx="18" cy="5" r="3"/>',
+  globe: '<circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>',
+  cloud: '<path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>',
+  server: '<rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><path d="M6 6h.01M6 18h.01"/>',
+  database: '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5M3 12a9 3 0 0 0 18 0"/>',
+  key: '<circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6M15.5 7.5l3 3L22 7l-3-3"/>',
+  plug: '<path d="M12 22v-5M9 8V2M15 8V2M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/>',
+  sparkles: '<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 16v5M16.5 18.5h5"/>',
+  git: '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><path d="M6 9v6M18 9a9 9 0 0 1-9 9"/>',
+  package: '<path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/>',
+  download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>',
+  folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  alert: '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>',
+  swap: '<path d="M16 3l4 4-4 4M20 7H4M8 21l-4-4 4-4M4 17h16"/>',
+  service: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/>',
+};
+const rgIcon = (name, x, y, size, cls = '') => `<svg class="rg-ic ${cls}" x="${x}" y="${y}" width="${size}" height="${size}" viewBox="0 0 24 24">${rgIconPaths[name] || rgIconPaths.service}</svg>`;
+// rgNodeIcon picks the icon for a box from its type, then its first telling class.
+const rgClassIcon = {gateway: 'router', waypoint: 'router', store: 'database', storage: 'database', credentials: 'key', mcp: 'plug', llm: 'sparkles', git: 'git', registry: 'package', fetcher: 'download', exfil: 'alert', proxy: 'swap', apiserver: 'server', metadata: 'server'};
+function rgNodeIcon(n) {
+  const byType = {agent: 'bot', group: 'folder', internet: 'globe', metadata: 'server'}[n.type];
+  if (byType) return byType;
+  const c = (n.classes || []).find(k => rgClassIcon[k]);
+  return c ? rgClassIcon[c] : n.type === 'external' ? 'cloud' : 'service';
 }
 
 // rcGraph draws the model as columns: the agent, its direct destinations,
@@ -965,13 +1002,14 @@ function rcGraph(a, G) {
   }
   const extra = grid ? (nsub - 1) * (bw + sg) + 28 : 0; // extra width of column 1
   const long = es.filter(e => col[e.to] !== col[e.from] + 1);
-  const top = 18 + long.length * lane + (grid ? 26 : 0);
+  const HB = 52; // column headings
+  const top = HB + 18 + long.length * lane + (grid ? 26 : 0);
   const tall = Math.max(...cols.map((l, c) => c === 1 && grid ? Math.max(...c1.map(n => cell[n.id].r)) + 1 : l.length));
   const colX = c => 16 + c * (bw + gap) + (c > 1 ? extra : 0) + (c === 1 && grid ? 14 : 0);
   const nodeX = id => colX(col[id]) + (grid && col[id] === 1 ? cell[id].sc * (bw + sg) : 0);
   const X = c => colX(c), Y = id => top + row[id] * (bh + vg);
   const W = 32 + ncol * bw + (ncol - 1) * gap + extra, H = top + tall * (bh + vg) + 14;
-  const fit = (s, px) => { const n = Math.max(4, Math.floor((bw - 20) / px)); s = String(s || ''); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
+  const fit = (s, px) => { const n = Math.max(4, Math.floor((bw - 44) / px)); s = String(s || ''); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
   const byId = new Map(nodes.map(n => [n.id, n]));
   const labelOf = id => byId.get(id)?.label || id;
   const dash = e => e.verdict === 'denied' || e.verdict === 'unknown';
@@ -988,40 +1026,62 @@ function rcGraph(a, G) {
     const into = es.filter(intoGrid);
     const worst = into.reduce((w, e) => (rank[e.risk] ?? 3) < (rank[w] ?? 3) ? e.risk : w, 'grey');
     const fx = colX(1) - 14, fy = top - 30, fw = nsub * bw + (nsub - 1) * sg + 28, fh = H - fy - 4;
-    const counts = into.reduce((m, e) => (m[e.risk] = (m[e.risk] || 0) + 1, m), {});
+    const D = G.direct || {n: into.length, counts: {}}, dc = D.counts;
+    const beyond = nodes.filter(n => n.alsoDirect).length;
     const sy = Y(agent.id) + bh / 2;
-    frame = `<g class="rg-frame"><rect x="${fx}" y="${fy}" width="${fw}" height="${fh}" rx="10"/><text x="${fx + 14}" y="${fy + 18}" class="rg-fl">Reaches directly · ${into.length}${counts.red ? ` · ${counts.red} red` : ''}${counts.amber ? ` · ${counts.amber} amber` : ''}${counts.green ? ` · ${counts.green} green` : ''}</text></g>
-      <g class="rg-edge rg-${risk(worst)}"><title>${esc(`${labelOf(agent.id)} reaches ${into.length} destinations directly`)}</title><path class="rg-line rg-trunk" d="M${colX(0) + bw},${sy} H${fx - 3}" marker-end="url(#rga-${risk(worst)})"/></g>`;
+    frame = `<g class="rg-frame"><rect x="${fx}" y="${fy}" width="${fw}" height="${fh}" rx="10"/><text x="${fx + 14}" y="${fy + 18}" class="rg-fl">${D.n} Service${D.n === 1 ? '' : 's'}${['red', 'amber', 'green', 'grey'].filter(r => dc[r]).map(r => ` · ${dc[r]} ${r}`).join('')}${beyond ? ` · ${beyond} drawn to the right, behind a gateway` : ''}</text></g>
+      <g class="rg-edge rg-${risk(worst)}" data-f="${esc(agent.id)}" data-t="rg-frame"><title>${esc(`${labelOf(agent.id)} reaches ${D.n} Services directly`)}</title><path class="rg-line rg-trunk" d="M${colX(0) + bw},${sy} H${fx - 3}" marker-end="url(#rga-${risk(worst)})"/></g>`;
   }
   const edgeSvg = ordered.map(e => {
     const cs = col[e.from], ct = col[e.to];
     const sx = nodeX(e.from) + bw, sy = Y(e.from) + bh / 2, tx = nodeX(e.to) - 3, ty = Y(e.to) + bh / 2;
     let d;
     if (ct === cs + 1) {
-      const bx = sx + 22 + ((srcSlot[e.from] || 0) % 10) * 7;
+      const bx = sx + 20 + ((srcSlot[e.from] || 0) % 8) * 10;
       const r = Math.min(8, Math.abs(ty - sy) / 2);
       d = Math.abs(ty - sy) < 1 ? `M${sx},${sy} H${tx}` : `M${sx},${sy} H${bx - r} Q${bx},${sy} ${bx},${sy + Math.sign(ty - sy) * r} V${ty - Math.sign(ty - sy) * r} Q${bx},${ty} ${bx + r},${ty} H${tx}`;
     } else {
-      const i = li++, ly = 8 + i * lane;
+      const i = li++, ly = HB + 8 + i * lane;
       const g1 = sx + 12 + (i % 6) * 5, g2 = Math.max(4, nodeX(e.to) - 18 - (i % 6) * 5);
       d = `M${sx},${sy} H${g1} V${ly} H${g2} V${ty} H${tx}`;
     }
     const tip = [`${labelOf(e.from)} → ${labelOf(e.to)}`, `${e.verdict}${e.layer ? ' (' + e.layer + ')' : ''}: ${e.why || ''}`, ...(e.reasons || []), e.via ? 'via ' + e.via : '', e.methods ? 'methods: ' + e.methods.join(', ') : '', e.observed ? `called ${e.observed} times${(e.observedBy || []).length ? ' (seen by ' + e.observedBy.join(', ') + ')' : ''}` : '', (e.tools || []).length ? 'tools: ' + e.tools.join(', ') : ''].filter(Boolean).join('\n');
-    return `<g class="rg-edge rg-${risk(e.risk)} ${dash(e) ? 'rg-dash' : ''}"><title>${esc(tip)}</title><path class="rg-hit" d="${d}"/><path class="rg-line" d="${d}" marker-end="url(#rga-${risk(e.risk)})"/></g>`;
+    return `<g class="rg-edge rg-${risk(e.risk)} ${dash(e) ? 'rg-dash' : ''}" data-f="${esc(e.from)}" data-t="${esc(e.to)}"><title>${esc(tip)}</title><path class="rg-hit" d="${d}"/><path class="rg-line" d="${d}" marker-end="url(#rga-${risk(e.risk)})"/></g>`;
   }).join('');
   const split = n => n.type === 'service' && n.label.includes('/') ? [n.label.slice(n.label.indexOf('/') + 1), n.label.slice(0, n.label.indexOf('/'))] : [n.label, ''];
-  const title = n => n.type === 'group' ? `${n.label} (${n.count})` : split(n)[0];
-  const sub = n => n.type === 'agent' ? (rcTypes[a.type] || a.type) : n.type === 'group' ? `${n.count} Service${n.count === 1 ? '' : 's'} · click to open up` : n.type === 'internet' ? 'outside the cluster' : n.type === 'metadata' ? 'cloud instance metadata'
+  const title = n => n.type === 'group' ? `${n.label} (${n.count})` : n.type === 'agent' ? n.label.split('/').pop() : split(n)[0];
+  // Past the first column a box says which box leads to it, since the lines
+  // from several gateways share the gap between the columns.
+  const short = id => { const n = byId.get(id); return n ? split(n)[0].split('/').pop() : id; };
+  const viaOf = n => col[n.id] > 1 && n.type === 'service' ? [...new Set(es.filter(e => e.to === n.id && col[e.from] === col[n.id] - 1).map(e => short(e.from)))] : [];
+  const sub = n => n.type === 'agent' ? [rcTypes[a.type] || a.type, n.namespace].filter(Boolean).join(' · ') : n.type === 'group' ? `${n.count} Service${n.count === 1 ? '' : 's'} · click to open up` : n.type === 'internet' ? 'outside the cluster' : n.type === 'metadata' ? 'cloud instance metadata'
     : n.type === 'external' ? [...(n.classes || []), n.via].filter(Boolean).join(' · ') || 'external host'
+    : viaOf(n).length ? [`via ${viaOf(n).join(', ')}`, n.alsoDirect ? 'also direct' : '', ...(n.classes || [])].filter(Boolean).join(' · ')
     : [...(n.classes || []), split(n)[1]].filter(Boolean).join(' · ') || 'service';
   const nodeSvg = nodes.map(n => {
     const click = n.type === 'group' || n.ref || rcSvc(n.id);
-    const tip = [n.label, n.namespace && n.type !== 'group' ? 'namespace ' + n.namespace : '', (n.classes || []).join(', '), n.detail, click ? (n.type === 'group' ? 'Click to open the namespace up' : 'Click to open') : ''].filter(Boolean).join('\n');
-    return `<g class="rg-node rg-${risk(n.risk)} rg-t-${esc(n.type)} ${click ? 'rg-click' : ''}" data-rgid="${esc(n.id)}" transform="translate(${nodeX(n.id)},${Y(n.id)})"><title>${esc(tip)}</title>
-      <rect width="${bw}" height="${bh}" rx="7"/><text x="11" y="18" class="rg-l">${esc(fit(title(n), 7.1))}</text><text x="11" y="34" class="rg-s">${esc(fit(sub(n), 6.2))}</text></g>`;
+    const tip = [n.label, n.namespace && n.type !== 'group' ? 'namespace ' + n.namespace : '', (n.classes || []).join(', '), n.detail, viaOf(n).length ? `Reached through ${viaOf(n).join(', ')}` : '', n.alsoDirect ? `Also reachable directly (${n.alsoDirect})` : '', click ? (n.type === 'group' ? 'Click to open the namespace up' : 'Click to open') : ''].filter(Boolean).join('\n');
+    return `<g class="rg-node rg-${risk(n.risk)} rg-t-${esc(n.type)} ${click ? 'rg-click' : ''}" data-rgid="${esc(n.id)}"${grid && col[n.id] === 1 ? ' data-grid="1"' : ''} transform="translate(${nodeX(n.id)},${Y(n.id)})"><title>${esc(tip)}</title>
+      <rect width="${bw}" height="${bh}" rx="7"/>${rgIcon(rgNodeIcon(n), bw - 27, (bh - 16) / 2, 16, 'rg-nic')}<text x="11" y="18" class="rg-l">${esc(fit(title(n), 7.1))}</text><text x="11" y="34" class="rg-s">${esc(fit(sub(n), 6.2))}</text></g>`;
+  }).join('');
+  const heads = cols.map((list, c) => {
+    if (!list.length) return '';
+    const svcs = list.filter(n => n.type === 'service' || n.type === 'group');
+    const ins = es.filter(e => col[e.to] === c && col[e.from] === c - 1);
+    const viaGW = ins.length && ins.every(e => /^agentgateway route|^HTTP proxy/.test(e.via || ''));
+    let icon, label, note;
+    if (c === 0) [icon, label, note] = ['bot', 'Agent', rcTypes[a.type] || a.type];
+    else if (c === 1) [icon, label, note] = ['network', 'Reaches directly', `${G.direct?.n ?? list.length} Services, one hop`];
+    else if (list.some(n => n.type === 'external')) [icon, label, note] = ['cloud', 'Hosts outside the cluster', `${list.length} host${list.length === 1 ? '' : 's'} by name`];
+    else if (list.some(n => n.type === 'internet' || n.type === 'metadata')) [icon, label, note] = ['globe', 'Ways out', 'the internet and cloud metadata'];
+    else [icon, label, note] = viaGW ? ['router', 'Through a gateway', `${svcs.length} Service${svcs.length === 1 ? '' : 's'} behind a gateway`] : ['route', `Hop ${c}`, `${svcs.length} Service${svcs.length === 1 ? '' : 's'}, one hop further`];
+    const x = c === 1 && grid ? colX(1) - 14 : colX(c), w = c === 1 && grid ? nsub * bw + (nsub - 1) * sg + 28 : bw;
+    return `<g class="rg-head" transform="translate(${x},8)"><rect class="rg-hbg" width="${w}" height="${HB - 14}" rx="8"/>
+      <circle class="rg-hdot" cx="20" cy="${(HB - 14) / 2}" r="13"/>${rgIcon(icon, 11, (HB - 14) / 2 - 9, 18, 'rg-hic')}
+      <text x="42" y="16" class="rg-hl">${esc(label)}</text><text x="42" y="30" class="rg-hn">${esc(note)}</text></g>`;
   }).join('');
   const marker = r => `<marker id="rga-${r}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="rg-arrow-${r}"/></marker>`;
-  return `<svg class="rg" id="rg-svg" data-w="${W}" data-h="${H}" width="100%" height="100%" role="img" aria-label="Blast radius of ${esc(rcName(a))}"><defs>${['red', 'amber', 'green', 'grey'].map(marker).join('')}</defs><g id="rg-root">${frame}${edgeSvg}${nodeSvg}</g></svg>`;
+  return `<svg class="rg" id="rg-svg" data-w="${W}" data-h="${H}" width="100%" height="100%" role="img" aria-label="Blast radius of ${esc(rcName(a))}"><defs>${['red', 'amber', 'green', 'grey'].map(marker).join('')}</defs><g id="rg-root">${heads}${frame}${edgeSvg}${nodeSvg}</g></svg>`;
 }
 
 // Pan and zoom for the graph viewport. The transform is kept per agent and
@@ -1118,6 +1178,24 @@ after.reach = () => {
     if (n.ref) { openObject({cluster: n.ref.cluster, group: n.ref.group, resource: n.ref.resource, namespace: n.ref.namespace, name: n.ref.name}); return; }
     const sv = rcSvc(n.id); if (sv) openSvc(sv.namespace, sv.name);
   });
+  // Hovering a box keeps its own lines and neighbours and fades the rest.
+  const rg = $('#rg-svg');
+  if (rg) {
+    const clear = () => { rg.classList.remove('rg-hl'); rg.querySelectorAll('.on').forEach(x => x.classList.remove('on')); };
+    rg.querySelectorAll('[data-rgid]').forEach(g => {
+      g.onmouseenter = () => {
+        clear();
+        const id = g.dataset.rgid, near = new Set([id]);
+        rg.querySelectorAll('.rg-edge').forEach(e => {
+          const f = e.dataset.f, t = e.dataset.t;
+          if (f === id || t === id || (t === 'rg-frame' && g.dataset.grid)) { e.classList.add('on'); near.add(f); near.add(t); }
+        });
+        rg.querySelectorAll('[data-rgid]').forEach(x => { if (near.has(x.dataset.rgid)) x.classList.add('on'); });
+        rg.classList.add('rg-hl');
+      };
+      g.onmouseleave = clear;
+    });
+  }
   document.querySelectorAll('#main [data-rcsvc]').forEach(b => b.onclick = () => openObject(JSON.parse(b.dataset.rcsvc)));
   document.querySelectorAll('[data-rcfopen]').forEach(b => b.onclick = () => { const i = +b.dataset.rcfopen; R.fixOpen[i] = !R.fixOpen[i]; const y = scrollY; render().then(() => scrollTo(0, y)); });
   document.querySelectorAll('[data-rctab]').forEach(b => b.onclick = () => { R.dtab = b.dataset.rctab; const y = scrollY; render().then(() => scrollTo(0, y)); });

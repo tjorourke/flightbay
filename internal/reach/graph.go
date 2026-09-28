@@ -92,6 +92,9 @@ func (e *engine) graph(w *workload, a Agent, reach []pair, via []Path) ([]Node, 
 			if b.svc == nil {
 				continue // external backends are drawn from a.External below
 			}
+			if backs(b.svc, w) {
+				continue // the agent's own Service, reached back through the gateway
+			}
 			id := "svc:" + b.svc.id
 			addNode(Node{ID: id, Type: "service", Label: b.label, Depth: 2, Risk: b.risk, Detail: b.why, Classes: b.classes})
 			if !hasEdge(edges, "svc:"+n.sv.id, id) {
@@ -224,6 +227,16 @@ func (e *engine) graph(w *workload, a Agent, reach []pair, via []Path) ([]Node, 
 }
 
 var extTag = map[string]string{"registry": "registry", "proxy": "proxy", "llm": "llm", "git": "git", "storage": "storage", "exfil": "exfil", "metadata": "metadata"}
+
+// backs reports whether w is one of the workloads behind sv.
+func backs(sv *service, w *workload) bool {
+	for _, b := range sv.backends {
+		if b == w {
+			return true
+		}
+	}
+	return false
+}
 
 func hasEdge(es []Edge, from, to string) bool {
 	for _, e := range es {
