@@ -1,0 +1,131 @@
+---
+title: Sending a bundle
+weight: 70
+description: Encrypt a bundle so only Solo can read it, verify it before you send it, and unpack or stream it with standard tools.
+---
+
+# Sending a bundle
+
+A capture produces one file. This page covers making sure only the right person can read it, checking it has not been changed, and what is inside.
+
+Flightbay does not upload anything. You send the file however you normally share files with Solo.
+
+## Encrypting to a recipient
+
+`--encrypt-to` wraps the whole bundle in [age](https://age-encryption.org) encryption. Only the holder of the matching identity file can read it. The file name gets `.age` on the end.
+
+```bash
+flightbay collect --context mesh1 --case 01234567 --encrypt-to age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p
+# writes flightbay-01234567-20260927T1012Z.tar.zst.age
+```
+
+| Form | Meaning |
+|---|---|
+| `--encrypt-to age1...` | One recipient |
+| `--encrypt-to age1...,age1...` | Several recipients; any one of them can open it |
+| `--encrypt-to @recipients.txt` | Recipients from a file, one per line |
+
+Solo does not yet publish a shared support key, so ask your Solo contact for the recipient to use.
+
+### Creating a key pair (Solo side)
+
+```bash
+flightbay-desk keygen -o ~/.flightbay/support.key
+```
+
+It writes the private identity to the file (mode 0600) and prints the public recipient. Give the customer the `age1...` recipient; keep the file. It refuses to overwrite an existing key.
+
+### Opening an encrypted bundle
+
+Every command that reads a bundle takes `-i` (or `--identity`):
+
+```bash
+flightbay ui flightbay-01234567-20260927T1012Z.tar.zst.age -i ~/.flightbay/support.key
+flightbay inspect flightbay-01234567-20260927T1012Z.tar.zst.age -i ~/.flightbay/support.key
+flightbay extract flightbay-01234567-20260927T1012Z.tar.zst.age ./case -i ~/.flightbay/support.key
+flightbay-desk diff before.tar.zst.age after.tar.zst.age -i ~/.flightbay/support.key
+```
+
+## Verifying
+
+Every bundle ends with `manifest.json`, which holds a SHA-256 for every other file. `flightbay inspect` reads the whole bundle and checks each one:
+
+```bash
+flightbay inspect flightbay-01234567-20260927T1012Z.tar.zst
+```
+
+```text
+Bundle: b2a0ac0211211e27
+Case: DEMO-0001
+Collector: flightbay 0.1.0-dev
+Captured: 2026-09-28T00:36:14Z
+Clusters: kind-flightbay-e2e
+Collected categories: objects, logs, events, helm, proxies, control-plane, metrics
+Finished: 2026-09-28T00:36:19Z (complete: true, collection errors: 1)
+Verified: yes (every member matches the manifest checksum)
+Secret values: never collected
+```
+
+It then lists every collection with its item count and state, the collection log's problems, members by type and the redaction total.
+
+| Flag | Adds |
+|---|---|
+| `--contents` | Every file in the bundle |
+| `--redactions` | Redaction counts per file and rule |
+| `--policy` | The collection policy recorded in the bundle |
+| `-i FILE` | An age identity, for encrypted bundles |
+
+The desk verifies as it imports too. The header bar says **Verified** once every checksum has matched, and findings are marked provisional until then.
+
+## Unpacking
+
+`flightbay extract` verifies and unpacks into a directory:
+
+```bash
+flightbay extract flightbay-01234567-20260927T1012Z.tar.zst ./case-01234567
+```
+
+An unencrypted bundle is also a normal zstd-compressed tar, so standard tools work:
+
+```bash
+tar --zstd -tvf flightbay-01234567-20260927T1012Z.tar.zst
+tar --zstd -xf flightbay-01234567-20260927T1012Z.tar.zst -C ./case-01234567
+```
+
+The zstd window is 8 MiB by default, so stock `tar` and `zstd` open it without extra flags. `--window-size` raises it (up to 128 MiB, still readable by stock tools) for better compression on large captures.
+
+## Streaming
+
+`-o -` writes the bundle to standard output instead of a file. Pipe it straight into the desk to investigate a cluster you have access to without keeping a file:
+
+```bash
+flightbay collect --context mesh1 -o - | flightbay-desk open -
+```
+
+Or send it somewhere else:
+
+```bash
+flightbay collect --context mesh1 --encrypt-to age1... -o - | ssh jump 'cat > case.tar.zst.age'
+```
+
+`-o DIR` writes into a directory, and `-o FILE` to a specific file name. While a capture runs, the file is written as `NAME.partial` and renamed when it is complete. An interrupted capture leaves the `.partial` file, which fails verification.
+
+## File names
+
+```text
+flightbay-<case>-<UTC time>.tar.zst        e.g. flightbay-01234567-20260927T1012Z.tar.zst
+flightbay-<case>-<UTC time>.tar.zst.age    with --encrypt-to
+```
+
+Without `--case` the case part is `nocase`. `flightbay ui` and `flightbay-desk open` with no argument open the newest `flightbay-*.tar.zst` or `flightbay-*.tar.zst.age` in the current directory; given a directory, the newest in that directory.
+
+## What is inside
+
+The layout is described in full in [Bundle format](/reference/bundle-format/). In short:
+
+- `bundle.json` comes first: bundle ID, case, collector version, capture start, contexts and the resolved collection policy.
+- Objects, logs, events and diagnostics follow in bounded chunks under `clusters/<context>/`. Logs are written early and bulky diagnostics late, so the desk can open before the file has finished reading.
+- Every collection is followed by a coverage record saying whether it completed, failed, was excluded or was truncated.
+- `collection-log.jsonl` records every call, including failures.
+- `redaction-report.json` counts replacements.
+- `manifest.json` comes last: capture end, completion state and a SHA-256 for every member.
