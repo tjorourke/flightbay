@@ -25,7 +25,7 @@ func isKubernetes(e env) bool {
 	if ok, _ := e.fullDetail(); !ok {
 		return false
 	}
-	return len(e.list("", "pods")) > 0
+	return len(e.pods()) > 0
 }
 
 // ---------- container and security-context helpers ----------
@@ -1088,7 +1088,7 @@ func kubernetesChecks(e env) []Check {
 
 	nsl, nsKnown := e.nsLabels()
 	podNS := map[string][]*store.Object{}
-	for _, p := range e.list("", "pods") {
+	for _, p := range e.pods() {
 		podNS[p.Namespace] = append(podNS[p.Namespace], p)
 	}
 	nodeAgentNS := map[string]string{}
@@ -1124,7 +1124,7 @@ func kubernetesChecks(e env) []Check {
 		meshBase + "ztunnel-native-egress/"}, false, func(c *Check) {
 		nss, ok := e.namespaces()
 		if !ok {
-			na(c, "namespace labels were not captured (re-capture with this version of flightbay, which records the Namespace objects in scope)")
+			na(c, e.noNSWhy())
 			return
 		}
 		for _, n := range nss {
@@ -1221,7 +1221,7 @@ func kubernetesChecks(e env) []Check {
 			return
 		}
 		if !nsKnown {
-			na(c, "namespace labels were not captured")
+			na(c, e.noNSWhy())
 			return
 		}
 		allowsPort := func(np *store.Object) bool {
@@ -1634,7 +1634,11 @@ func kubernetesChecks(e env) []Check {
 			}
 		}
 		if len(c.Items) == 0 {
-			na(c, "no critical component has more than one captured replica")
+			if e.declaredOnly() {
+				na(c, DeclaredWhy+": pods and the nodes they run on exist only in a running cluster")
+			} else {
+				na(c, "no critical component has more than one captured replica")
+			}
 		} else if !nodesOK {
 			c.Reason = "zone spread not checked: Nodes were not captured (re-capture with --cluster-scoped)"
 		}
@@ -1650,7 +1654,7 @@ func kubernetesChecks(e env) []Check {
 			return
 		}
 		digests := map[string]map[string]bool{}
-		for _, p := range e.list("", "pods") {
+		for _, p := range e.pods() {
 			if platformNS(p.Namespace) {
 				continue
 			}
@@ -1721,6 +1725,9 @@ func kubernetesChecks(e env) []Check {
 	add(spec{"k8s.version-supported", "Platform", "high", "Kubernetes is a supported release",
 		"An end-of-life release gets no security fixes. Istio and Solo releases also support only recent Kubernetes versions.",
 		"# plan the upgrade one minor version at a time\nkubectl version", "https://kubernetes.io/releases/"}, false, func(c *Check) {
+		if e.runtimeNA(c, "the cluster version") {
+			return
+		}
 		if gitVersion == "" || serverMinor == 0 {
 			na(c, "the cluster /version was not captured")
 			return
@@ -1771,6 +1778,9 @@ func kubernetesChecks(e env) []Check {
 		"A node under memory or disk pressure evicts pods; a kubelet outside the version skew policy is unsupported.",
 		"kubectl describe node <node>\nkubectl drain <node> --ignore-daemonsets   # then fix or replace it",
 		"https://kubernetes.io/releases/version-skew-policy/"}, true, func(c *Check) {
+		if e.runtimeNA(c, "node health") {
+			return
+		}
 		if !nodesOK {
 			na(c, "Nodes were not captured; re-capture with --cluster-scoped")
 			return
@@ -1808,6 +1818,31 @@ func kubernetesChecks(e env) []Check {
 		"A manifest on a removed API fails the next time it is applied, often in the middle of an upgrade.",
 		"kubectl convert -f manifest.yaml --output-version <group>/<current version>", "https://kubernetes.io/docs/reference/using-api/deprecation-guide/"}, false, func(c *Check) {
 		checked := 0
+		if e.declaredOnly() {
+			// A repo scan holds the manifests themselves: check every object's
+			// declared apiVersion, which is what the next apply will send.
+			for _, o := range e.ws.AllObjects(e.cluster) {
+				av := s(o.Obj["apiVersion"])
+				if av == "" || s(annotations(o)[store.SynthesisedAnnotation]) == "true" {
+					continue
+				}
+				checked++
+				if d, bad := deprecatedAPI(av, o.Kind); bad {
+					st := Warn
+					if d.removed != "" {
+						st = Fail
+					}
+					c.Items = append(c.Items, e.item(o, st, fmt.Sprintf("declared as %s %s: %s", av, o.Kind, d.text())))
+				}
+			}
+			if len(c.Items) == 0 && checked > 0 {
+				c.Items = append(c.Items, Item{Cluster: e.cluster, Status: Pass, Detail: fmt.Sprintf("%d declared objects use current APIs", checked)})
+			}
+			if checked == 0 {
+				na(c, "no objects declared")
+			}
+			return
+		}
 		for _, o := range e.ws.AllObjects(e.cluster) {
 			la := s(annotations(o)["kubectl.kubernetes.io/last-applied-configuration"])
 			if la == "" {
@@ -1842,6 +1877,9 @@ func kubernetesChecks(e env) []Check {
 	add(spec{"k8s.helm-releases", "Platform", "medium", "Helm releases are deployed, not failed or stuck",
 		"A failed or pending release leaves the chart half applied, and Helm refuses the next upgrade until it is fixed.",
 		"helm history <release> -n <ns>\nhelm rollback <release> <last good revision> -n <ns>", "https://helm.sh/docs/helm/helm_history/"}, false, func(c *Check) {
+		if e.runtimeNA(c, "Helm release status") {
+			return
+		}
 		ok, why := e.evaluable("", "secrets", "Secret", true)
 		if !ok {
 			na(c, why)
@@ -1905,6 +1943,9 @@ func kubernetesChecks(e env) []Check {
 		"When the mesh root or a serving certificate expires, mTLS and TLS handshakes fail everywhere at once.",
 		"kubectl get certificate -A\n# for the Istio root: rotate with an intermediate before it expires\nkubectl get configmap istio-ca-root-cert -n <ns> -o jsonpath='{.data.root-cert\\.pem}' | openssl x509 -noout -enddate",
 		"https://istio.io/latest/docs/ops/configuration/security/root-transition/"}, true, func(c *Check) {
+		if e.runtimeNA(c, "certificate expiry (status.notAfter and the istiod root)") {
+			return
+		}
 		now := k8sNow()
 		for _, cert := range e.list("cert-manager.io", "certificates") {
 			v := newVerdict()

@@ -55,7 +55,28 @@ type Header struct {
 	Policy        json.RawMessage `json:"policy,omitempty"`
 	Planned       []string        `json:"planned,omitempty"`
 	Unavailable   []string        `json:"unavailable,omitempty"`
+	// Source is "" or "cluster" for a capture and "repo" for a scan of a code
+	// repository (flightbay scan): declared state, with no status, pods or logs.
+	Source string    `json:"source,omitempty"`
+	Repo   *RepoInfo `json:"repo,omitempty"`
 }
+
+// SourceRepo marks a bundle built by flightbay scan from a code repository.
+const SourceRepo = "repo"
+
+// RepoInfo describes the repository a declared-state bundle was built from.
+type RepoInfo struct {
+	Name    string         `json:"name"`
+	Path    string         `json:"path,omitempty"`
+	Remote  string         `json:"remote,omitempty"`
+	Commit  string         `json:"commit,omitempty"`
+	Branch  string         `json:"branch,omitempty"`
+	Dirty   bool           `json:"dirty,omitempty"`
+	Options map[string]any `json:"options,omitempty"` // render options: values, overlays, env, release, namespace
+}
+
+// Declared reports whether the header describes a repo scan.
+func (h *Header) Declared() bool { return h != nil && h.Source == SourceRepo }
 
 // Coverage types and states.
 const (
@@ -67,6 +88,9 @@ const (
 	// CoverageFlows is a flow log file attached to the bundle (Hubble, Calico,
 	// VPC flow logs, generic CSV/JSON) or collected from hubble-relay.
 	CoverageFlows = "flows"
+	// CoverageInput is one repo scan input: a manifest file, a Helm chart, a
+	// Kustomize overlay or a GitOps source (flightbay scan).
+	CoverageInput = "input"
 
 	StateComplete  = "complete"
 	StateFailed    = "failed"
@@ -93,6 +117,8 @@ type Coverage struct {
 	Items      int      `json:"items"`
 	State      string   `json:"state"`
 	Reason     string   `json:"reason,omitempty"`
+	Source     string   `json:"source,omitempty"`   // repo scan: the input path
+	Renderer   string   `json:"renderer,omitempty"` // repo scan: yaml, helm, kustomize, argocd, flux
 }
 
 // Manifest is manifest.json, written last.

@@ -429,7 +429,11 @@ func agenticChecks(e env) []Check {
 			if n == "" {
 				d := agentDeploy(a)
 				if d == nil {
-					c.Items = append(c.Items, e.item(a, NA, "agent deployment not captured"))
+					why := "agent deployment not captured"
+					if e.declaredOnly() {
+						why = DeclaredWhy + ": the kagent controller creates the agent Deployment and its service account"
+					}
+					c.Items = append(c.Items, e.item(a, NA, why))
 					continue
 				}
 				n = s(path(d.Obj, "spec", "template", "spec", "serviceAccountName"))
@@ -495,7 +499,7 @@ func agenticChecks(e env) []Check {
 		"Ambient gives every pod a SPIFFE identity and mTLS: the base for identity-based policy between agent, gateway and MCP server.",
 		"apiVersion: v1\nkind: Namespace\nmetadata:\n  name: <namespace>\n  labels: {istio.io/dataplane-mode: ambient}", kbBase + "agentgw-agentic-mcp/"}, func(c *Check) {
 		if !nsKnown {
-			na(c, "namespace labels were not captured (re-capture with this version of flightbay, which records the Namespace objects in scope)")
+			na(c, e.noNSWhy())
 			return
 		}
 		seen := map[string]string{}

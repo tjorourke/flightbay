@@ -1,0 +1,305 @@
+---
+title: "flightbay-desk CLI"
+weight: 20
+description: "Every flightbay-desk command and flag, generated from the command tree."
+---
+
+Generated from the `flightbay-desk` command tree. Run any command with `--help` for the same text.
+
+Flightbay by Solo: investigate a snapshot bundle offline
+
+## flightbay-desk diff
+
+Compare two bundles from the same customer: objects, image versions and findings
+
+```text
+flightbay-desk diff BEFORE AFTER [flags]
+```
+
+Examples:
+
+```bash
+  flightbay-desk diff flightbay-01234567-20260920T0900Z.tar.zst flightbay-01234567-20260927T1012Z.tar.zst
+  flightbay-desk diff before.tar.zst after.tar.zst --yaml    # include changed objects
+  flightbay-desk open after.tar.zst --baseline before.tar.zst  # the same in the UI
+```
+
+| Flag | Description |
+|---|---|
+| `-i, --identity strings` | age identity file for encrypted bundles |
+| `--json` | print the report as JSON |
+| `--yaml` | include the before and after YAML of changed objects |
+
+## flightbay-desk drift
+
+Drift compares a bundle from flightbay scan with a bundle from flightbay collect. It lists
+objects in Git but not in the cluster, objects in the cluster but not in Git (limited to the
+namespaces and kinds the repository declares, so system objects do not flood it), and fields
+that differ once status, server-set metadata and defaulted fields are removed.
+
+```text
+flightbay-desk drift REPO_BUNDLE CLUSTER_BUNDLE [flags]
+```
+
+Examples:
+
+```bash
+  flightbay scan deploy/ --bundle repo.tar.zst
+  flightbay collect --namespaces payments -o cluster.tar.zst
+  flightbay-desk drift repo.tar.zst cluster.tar.zst
+  flightbay-desk open cluster.tar.zst --baseline repo.tar.zst   # the same in the Compare view
+```
+
+| Flag | Description |
+|---|---|
+| `-i, --identity strings` | age identity file for encrypted bundles |
+| `--json` | print the report as JSON |
+
+## flightbay-desk features
+
+Enterprise features are off by default. Turn them all on with FLIGHTBAY_ENTERPRISE=1, or pick some with FLIGHTBAY_FEATURES=priorities (a leading - turns one off).
+
+```text
+flightbay-desk features
+```
+
+## flightbay-desk findings
+
+List findings in the open workspace (the fbfind helper)
+
+```text
+flightbay-desk findings
+```
+
+## flightbay-desk flows
+
+Who actually called whom: ztunnel, agentgateway, Envoy (sidecars, gateways, waypoints) and CoreDNS logs in the capture,
+plus flow logs attached with flightbay collect --attach-flows or added with flightbay-desk open --flows
+(Cilium Hubble, Calico, AWS / GCP / Azure VPC flow logs, generic CSV or JSON Lines).
+
+```text
+flightbay-desk flows [flags]
+```
+
+Examples:
+
+```bash
+  fbflows
+  fbflows --source agentgateway
+  fbflows --source hubble --cluster mesh1
+```
+
+| Flag | Description |
+|---|---|
+| `--cluster string` | only this cluster |
+| `--limit int` | maximum source/destination pairs (default 200) |
+| `--source string` | ztunnel, agentgateway, envoy, coredns, hubble, calico, aws-vpc, gcp-vpc, azure-vnet or generic |
+
+## flightbay-desk keygen
+
+Create an age key pair for encrypted bundles (give customers the public recipient)
+
+```text
+flightbay-desk keygen [flags]
+```
+
+| Flag | Description |
+|---|---|
+| `-o, --output string` | identity file to write (default "flightbay-identity.txt") |
+
+## flightbay-desk mcp
+
+Serves the open workspace as a Model Context Protocol server on stdin/stdout.
+Tools: workspace_summary, list_findings, search_logs, log_context, search_objects, run_sql,
+list_resource_types, list_objects, get_object, proxy_config, compare_baseline. Prompt: triage.
+
+The server only talks to the local desk. Snapshot data reaches a model only if the
+agent you connect is configured to use one.
+
+```text
+flightbay-desk mcp
+```
+
+Examples:
+
+```bash
+  claude mcp add flightbay -- flightbay-desk mcp
+  opencode: "mcp": {"flightbay": {"type": "local", "command": ["flightbay-desk", "mcp"]}}
+```
+
+## flightbay-desk open
+
+Open a bundle and start investigating while it loads (default: the newest bundle here)
+
+```text
+flightbay-desk open [BUNDLE | DIR | -] [flags]
+```
+
+Examples:
+
+```bash
+  flightbay-desk open                                  # the newest flightbay-*.tar.zst in this directory
+  flightbay-desk open flightbay-01234567-20260927T1012Z.tar.zst
+  flightbay collect -o - | flightbay-desk open -
+  flightbay-desk open bundle.tar.zst.age -i ~/.flightbay/support.key
+  flightbay-desk open bundle.tar.zst --defer logs      # load logs later from the UI
+  flightbay-desk open bundle.tar.zst --flows hubble.jsonl,vpc-flows.log@mesh2   # add flow logs (not signed)
+```
+
+| Flag | Description |
+|---|---|
+| `--allow-remote` | allow a non-loopback --listen (for containers); the token is still required |
+| `--baseline string` | an earlier bundle from the same customer to compare against (Compare view) |
+| `--defer strings` | categories to load later from the UI: objects, logs, events, diagnostics |
+| `--flows strings` | flow log files to add, FILE or FILE@CLUSTER (Hubble, Calico, AWS/GCP/Azure VPC, generic CSV/JSONL); marked as added by the reviewer, not signed |
+| `-i, --identity strings` | age identity file for encrypted bundles |
+| `--keep` | keep the workspace directory (DuckDB file, kubeconfig) after closing |
+| `--listen string` | loopback address for the UI and API (default "127.0.0.1:8484") |
+| `--no-browser` | do not open a browser |
+| `--no-terminal` | disable the in-browser terminal |
+| `--shell string` | shell for the terminal (default /bin/bash) |
+| `--throttle string` | limit import speed, e.g. 512KiB (rehearse slow uploads) |
+| `--workdir string` | workspace directory (default ~/.flightbay/workspaces/ws-*) |
+
+## flightbay-desk posture
+
+Best-practice scores (agentic, Istio, ingress, Kubernetes) with fixes (the fbscore helper)
+
+```text
+flightbay-desk posture [flags]
+```
+
+Aliases: `best-practices`, `score`
+
+Examples:
+
+```bash
+  fbscore                 # failing and warning checks, with the YAML to fix them
+  fbscore --area agentic
+  fbscore --all           # every check, including passing and not applicable
+  fbscore --top 10        # the ten fixes that recover the most score (Enterprise)
+```
+
+| Flag | Description |
+|---|---|
+| `--all` | show passing and not applicable checks too |
+| `--area string` | agentic, ambient, gateway or kubernetes |
+| `--top int` | rank the N problems that recover the most score (Flightbay Enterprise) |
+
+## flightbay-desk proxy-config
+
+Show a captured proxy or control-plane dump (the fbpc helper)
+
+```text
+flightbay-desk proxy-config [POD] [flags]
+```
+
+Examples:
+
+```bash
+  fbpc                                  # list captured components
+  fbpc ztunnel-5b4bw                    # workloads, services, policies, certificates
+  fbpc ai-gateway --section routes      # one table
+  fbpc istiod --file syncz.json | jq    # a raw captured file
+```
+
+| Flag | Description |
+|---|---|
+| `--cluster string` | cluster name in the bundle |
+| `--file string` | print one captured file as captured, e.g. config_dump.json |
+| `-n, --namespace string` | namespace of the pod |
+| `--section string` | only tables whose title contains this, e.g. routes |
+
+## flightbay-desk query
+
+Search logs in the open workspace (the fbq helper)
+
+```text
+flightbay-desk query QUERY [flags]
+```
+
+Examples:
+
+```bash
+  fbq 'level:error ns:istio-system since:2h "connection reset"'
+```
+
+| Flag | Description |
+|---|---|
+| `--limit int` | maximum lines (default 100) |
+
+## flightbay-desk reach
+
+Every agent's blast radius, or one agent's network paths and fixes (the fbreach helper; Flightbay Enterprise)
+
+```text
+flightbay-desk reach [agent] [flags]
+```
+
+Examples:
+
+```bash
+  fbreach                       # every agent, MCP server and agent gateway
+  fbreach kagent/demo-agent     # its paths, identity, findings and destinations
+  fbreach kagent/demo-agent --fix
+```
+
+| Flag | Description |
+|---|---|
+| `--fix` | print the YAML that locks each finding down |
+
+## flightbay-desk search
+
+Find objects of any kind in the open workspace (the fbsearch helper)
+
+```text
+flightbay-desk search QUERY [flags]
+```
+
+Examples:
+
+```bash
+  fbsearch checkout                              # names, labels and content of every captured object
+  fbsearch 'kind:pod ns:payments CrashLoopBackOff'
+  fbsearch 'label:app=checkout -kind:event'
+  fbsearch '"shop.example.com"'                  # e.g. which routes use a hostname
+```
+
+| Flag | Description |
+|---|---|
+| `--limit int` | maximum results (default 50) |
+
+## flightbay-desk shell
+
+Start a shell wired to the open workspace (kubectl or k, k9s, stern, fbsearch, fbq, fbfind, fbpc)
+
+```text
+flightbay-desk shell
+```
+
+## flightbay-desk sql
+
+Run read-only SQL over logs, objects, events and flows (the fbsql helper); no query starts a prompt
+
+```text
+flightbay-desk sql [QUERY] [flags]
+```
+
+Examples:
+
+```bash
+  fbsql "SELECT pod, count(*) FROM logs WHERE level = 'error' GROUP BY ALL ORDER BY 2 DESC"
+  fbsql            # interactive; type help for the tables
+```
+
+| Flag | Description |
+|---|---|
+| `--limit int` | maximum rows (default 200) |
+
+## flightbay-desk version
+
+Print the version
+
+```text
+flightbay-desk version
+```

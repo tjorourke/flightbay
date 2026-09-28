@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ if .IsHome }}{{ site.Title }}{{ else }}{{ .Title }} · {{ site.Title }}{{ end }}</title>
+<meta name="description" content="{{ .Description }}">
+<script>document.documentElement.dataset.theme = localStorage.getItem('flightbay-theme') || 'dark';</script>
+<link rel="stylesheet" href="{{ "docs.css" | relURL }}">
+</head><body>
+<header class="top"><a class="brand" href="{{ "/" | relURL }}"><b>///</b> flightbay <small>docs</small></a><span class="sp"></span>
+<button id="theme" title="Light or dark" onclick="const t=document.documentElement.dataset.theme==='light'?'dark':'light';document.documentElement.dataset.theme=t;localStorage.setItem('flightbay-theme',t)">◐</button></header>
+<div class="wrap"><nav class="side"><ul><li><a href="{{ "/" | relURL }}" class="{{ if .IsHome }}on{{ end }}">Introduction</a></li></ul>
+{{ partial "nav.html" (dict "pages" site.Home.Pages "cur" .) }}</nav>
+<main>{{ block "main" . }}{{ end }}</main></div></body></html>

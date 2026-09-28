@@ -46,6 +46,10 @@ flightbay ui                                # open the newest capture in your br
 | Who called whom: access logs and flow logs | [Observed traffic](/collect/observed-traffic/) |
 | Least-privilege RBAC for the collector | [RBAC](/collect/rbac/) |
 | Encryption, verification and the bundle file | [Sending a bundle](/collect/sending/) |
+| Build a bundle from a Git repository and score it before it is deployed | [Scanning a repository](/scan/) |
+| Fail a pull request on new failing checks, with SARIF | [Using it in CI](/scan/ci/) |
+| What Git declares compared with what is running | [Repo compared with the cluster](/scan/drift/) |
+| YAML for failing checks, mapped to the source files | [Fix packs](/scan/fix-packs/) |
 | Opening a bundle and finding your way round | [The desk](/desk/) |
 | Every object, by name, label or content | [Search](/desk/search/), [Navigator](/desk/navigator/), [Resources](/desk/resources/) |
 | Every log line | [Log explorer](/desk/logs/) |

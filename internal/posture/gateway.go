@@ -233,7 +233,7 @@ func gwClassicService(e env, gw *store.Object) (*store.Object, string) {
 		return nil, gw.Namespace
 	}
 	podNS := ""
-	for _, p := range e.ws.List(e.cluster, "", "pods", "", sel) {
+	for _, p := range e.podsIn("", sel) {
 		if podNS == "" || p.Namespace == gw.Namespace {
 			podNS = p.Namespace
 		}

@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -36,12 +37,21 @@ import (
 
 var version = "0.1.0-dev"
 
-func main() {
+// newRoot builds the command tree (also used to generate the CLI reference).
+func newRoot() *cobra.Command {
 	root := &cobra.Command{Use: "flightbay", Short: "Flightbay by Solo: collect an offline, redacted snapshot of Kubernetes clusters", SilenceUsage: true}
-	root.AddCommand(collectCmd(), inspectCmd(), extractCmd(), rbacCmd(), docsCmd(), uiCmd(), &cobra.Command{
+	root.AddCommand(collectCmd(), scanCmd(), inspectCmd(), extractCmd(), rbacCmd(), docsCmd(), uiCmd(), &cobra.Command{
 		Use: "version", Short: "Print the version", Run: func(*cobra.Command, []string) { fmt.Println("flightbay", version) },
 	})
-	if err := root.Execute(); err != nil {
+	return root
+}
+
+func main() {
+	if err := newRoot().Execute(); err != nil {
+		var ec exitError
+		if errors.As(err, &ec) {
+			os.Exit(ec.code)
+		}
 		os.Exit(1)
 	}
 }

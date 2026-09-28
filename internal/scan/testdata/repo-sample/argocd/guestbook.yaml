@@ -1,0 +1,26 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: guestbook
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/example/repo-sample.git
+    path: apps/guestbook
+    targetRevision: main
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: guestbook
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: external
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/someone/else.git
+    path: deploy
+  destination:
+    namespace: other

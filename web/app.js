@@ -89,8 +89,13 @@ async function render() {
 }
 const after = {};
 
+// Each view links to its page in the built-in documentation.
+const docPages = {overview: 'desk/overview/', search: 'desk/search/', navigator: 'desk/navigator/', resources: 'desk/resources/', logs: 'desk/logs/', timeline: 'desk/timeline/',
+  findings: 'desk/findings/', scorecard: 'desk/scorecard/', reach: 'desk/agent-reach/', compare: 'desk/compare/', proxies: 'desk/proxy-configs/', coverage: 'desk/coverage/'};
 function head(title, sub, actions = '') {
-  return `<div class="page-head"><div><h1>${esc(title)}</h1><p>${sub}</p></div><div class="row wrap">${actions}</div></div>`;
+  const doc = docPages[S.view];
+  const help = doc ? `<a class="help-link" href="/docs/${doc}" target="_blank" rel="noopener" title="How to use ${esc(title)}">? Docs</a>` : '';
+  return `<div class="page-head"><div><h1>${esc(title)}</h1><p>${sub}</p></div><div class="row wrap">${actions}${help}</div></div>`;
 }
 
 // refocus puts the caret back in a query input after a re-render replaced it.
@@ -313,12 +318,15 @@ function onState(st) {
   }
 }
 
+// declaredText describes a repo scan (flightbay scan): declared state, not a capture.
+const declaredText = w => w.source === 'repo' ? `Declared state from repo ${w.repo?.name || ''}${w.repo?.commit ? ' at commit ' + w.repo.commit.slice(0, 7) : ''}${w.repo?.dirty ? ' (uncommitted changes)' : ''}` : '';
+
 async function loadWorkspace() {
   const w = await api('api/workspace');
   S.ws = w;
   $('#bundle-case').textContent = w.case ? `Case ${w.case}` : 'Snapshot';
   $('#bundle-sub').textContent = `${(w.contexts || []).length} cluster(s) · ${fmtDateTime(w.snapshot)}`;
-  $('#snapshot-time').textContent = `Captured ${fmtDateTime(w.snapshot)}`;
+  $('#snapshot-time').textContent = declaredText(w) || `Captured ${fmtDateTime(w.snapshot)}`;
   $('#collector').textContent = w.collector || '';
   const sel = $('#cluster');
   const cur = sel.value;
@@ -346,7 +354,7 @@ async function overview() {
   const tot = k => clusters.reduce((a, c) => a + (c[k] || 0), 0);
   const pol = w.policy || {};
   const st = w.state || {};
-  return head(w.case ? `Case ${w.case}` : 'Snapshot', `${(w.contexts || []).join(', ')} · captured ${fmtDateTime(w.snapshot)}`,
+  return head(w.case ? `Case ${w.case}` : 'Snapshot', `${(w.contexts || []).join(', ')} · ${declaredText(w) || 'captured ' + fmtDateTime(w.snapshot)}`,
     `<button id="go-coverage">Coverage &amp; redactions</button><button class="primary" id="go-findings">Investigate findings →</button>`) + `
   <div class="stats">
     <div class="stat"><div class="eyebrow">Clusters</div><div class="value">${clusters.length}<small>${esc(clusters.map(c => c.version).filter(Boolean)[0] || '')}</small></div><p>${tot('nodes')} nodes captured · ${tot('namespaces')} namespaces</p></div>
@@ -1532,6 +1540,7 @@ async function openObject(ref, tab = 'summary') {
         const cs = (st.containerStatuses || []).map(c => { const w = c.state?.waiting?.reason; const t = c.lastState?.terminated; return `<tr><td class="mono">${esc(c.name)}</td><td>${c.ready ? '<span class="green">ready</span>' : '<span class="amber">not ready</span>'}</td><td>${statusCell(w || Object.keys(c.state || {})[0] || '')}</td><td>${esc(c.restartCount ?? 0)}</td><td class="muted">${t ? esc(`${t.reason || ''} exit ${t.exitCode ?? ''} at ${fmtTime(t.finishedAt)}`) : ''}</td></tr>`; }).join('');
         return `<dl class="metadata"><dt>Kind</dt><dd>${esc(o.kind)} <span class="muted">${esc(o.group ? o.group + '/' + o.version : o.version)}</span></dd><dt>Namespace</dt><dd>${esc(o.namespace || '—')}</dd><dt>Cluster</dt><dd>${esc(o.cluster)}@snapshot</dd>
           <dt>Created</dt><dd>${fmtDateTime(md.creationTimestamp)}</dd><dt>Labels</dt><dd>${Object.entries(md.labels || {}).map(([k, v]) => `<span class="tag">${esc(k)}=${esc(v)}</span>`).join(' ') || '—'}</dd>
+          ${md.annotations?.['flightbay.dev/source'] ? `<dt>Source</dt><dd class="mono">${esc(md.annotations['flightbay.dev/source'])}${md.annotations['flightbay.dev/source-line'] ? ':' + esc(md.annotations['flightbay.dev/source-line']) : ''} <span class="muted">${esc(md.annotations['flightbay.dev/rendered-by'] || '')}</span></dd>` : ''}
           ${o.object.spec?.nodeName ? `<dt>Node</dt><dd>${esc(o.object.spec.nodeName)}</dd>` : ''}${st.phase ? `<dt>Phase</dt><dd>${statusCell(st.phase)}</dd>` : ''}</dl>
           ${cs ? `<h3 class="mt">Containers</h3><div class="table-scroll"><table><thead><tr><th>Name</th><th>Ready</th><th>State</th><th>Restarts</th><th>Last termination</th></tr></thead><tbody>${cs}</tbody></table></div>` : ''}
           ${o.object['x-flightbay'] ? '<div class="notice info mt">Secret values were never collected. Only metadata' + (o.object['x-flightbay'].keys ? ', key names and byte lengths are' : ' is') + ' shown.</div>' : ''}

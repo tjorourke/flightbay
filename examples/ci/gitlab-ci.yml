@@ -1,0 +1,79 @@
+# Flightbay repo scan as a GitLab CI gate.
+#
+# Include this in .gitlab-ci.yml (or copy the job) in the project that holds your
+# Kubernetes manifests, Helm charts or Kustomize overlays.
+#
+# Report format: GitLab Code Quality (flightbay scan --format codequality). It is
+# the Code Climate issue format GitLab reads from artifacts:reports:codequality,
+# works on every GitLab tier, and shows new and resolved findings in the merge
+# request widget and on the diff. The SAST report format needs GitLab Ultimate
+# and a vulnerability schema that does not fit configuration checks well, so it
+# is not used here. SARIF (--format sarif) is kept as a plain artifact for tools
+# that read it.
+#
+# In merge requests the job reports and gates only failures the change adds:
+# the target branch is scanned from a temporary git worktree with the same flags.
+
+variables:
+  FAIL_ON: high                # critical, high, medium or low
+  SCAN_PATHS: "."              # space separated; narrow it to deploy/ or charts/ in a big repository
+  SCAN_FLAGS: ""               # for example: --env prod   or   --values charts/api=values-prod.yaml
+  FLIGHTBAY_VERSION: "main"    # a tag such as v0.2.0, or main
+
+flightbay:
+  stage: test
+  image: golang:1.27-bookworm
+  variables:
+    GIT_DEPTH: 0               # --base-ref needs the target branch history
+    CGO_ENABLED: "0"           # the collector is pure Go
+  before_script:
+    - go install github.com/tjorourke/flightbay/cmd/flightbay@${FLIGHTBAY_VERSION}
+    - flightbay version
+  script:
+    - |
+      set +e
+      if [ -n "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" ]; then
+        git fetch --quiet origin "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+        BASE="--new-only --base-ref origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+      else
+        BASE=""
+      fi
+      flightbay scan $SCAN_PATHS $SCAN_FLAGS $BASE --fail-on "$FAIL_ON" --format codequality -o gl-code-quality-report.json --bundle flightbay-scan.tar.zst
+      code=$?
+      flightbay scan $SCAN_PATHS $SCAN_FLAGS $BASE --no-bundle -q --format sarif -o flightbay.sarif
+      flightbay scan $SCAN_PATHS $SCAN_FLAGS $BASE --no-bundle -q --fail-on "$FAIL_ON" --format text
+      exit $code             # 1: a check at FAIL_ON or above fails; 2: the scan could not run
+  artifacts:
+    when: always
+    expire_in: 2 weeks
+    reports:
+      codequality: gl-code-quality-report.json
+    paths:
+      - gl-code-quality-report.json
+      - flightbay.sarif
+      - flightbay-scan.tar.zst   # open with: flightbay-desk open flightbay-scan.tar.zst
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# Fix pack as a merge request (optional). flightbay scan --fix-pack writes one
+# YAML file per failing check and README.md listing each check, its objects and
+# the files that declare them; it never edits your files. Uncomment, set a
+# project access token with write_repository and api scopes as FLIGHTBAY_PUSH_TOKEN,
+# and review every file in the merge request before merging.
+#
+# flightbay-fix-pack:
+#   stage: test
+#   image: golang:1.27-bookworm
+#   rules:
+#     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+#       when: manual
+#   script:
+#     - CGO_ENABLED=0 go install github.com/tjorourke/flightbay/cmd/flightbay@${FLIGHTBAY_VERSION}
+#     - flightbay scan $SCAN_PATHS $SCAN_FLAGS --no-bundle --fix-pack /tmp/fixes
+#     - '[ -d /tmp/fixes/proposals ] || { echo "No new-object proposals"; exit 0; }'
+#     - git switch -c "flightbay/fixes-$CI_PIPELINE_ID"
+#     - cp -R /tmp/fixes/proposals/. . && mkdir -p flightbay-fixes && cp /tmp/fixes/*.yaml /tmp/fixes/README.md flightbay-fixes/
+#     - git add -A && git -c user.name=flightbay -c user.email=flightbay@example.com commit -m "Flightbay: proposed fixes for failing checks"
+#     - git push "https://oauth2:${FLIGHTBAY_PUSH_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" HEAD
+#       -o merge_request.create -o merge_request.target="$CI_DEFAULT_BRANCH" -o merge_request.title="Flightbay: proposed fixes"

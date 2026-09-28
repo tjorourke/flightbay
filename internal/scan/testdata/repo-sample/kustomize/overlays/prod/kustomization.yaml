@@ -1,0 +1,5 @@
+namespace: worker-prod
+resources:
+- ../../base
+patches:
+- path: replicas.yaml

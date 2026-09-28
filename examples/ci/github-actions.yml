@@ -1,0 +1,187 @@
+# Flightbay repo scan as a GitHub Actions gate.
+#
+# Copy to .github/workflows/flightbay.yml in the repository that holds your
+# Kubernetes manifests, Helm charts or Kustomize overlays. On every pull request it:
+#   1. renders the repository (no cluster, no network for charts unless you add --helm-fetch),
+#   2. runs the Flightbay Scorecard on the declared state,
+#   3. uploads SARIF so failures show in the Security tab and inline on the diff,
+#   4. comments on the pull request with the failures the change introduces,
+#   5. fails the job when the change adds a failing check at FAIL_ON or above.
+# On pushes to the default branch it uploads the full SARIF without gating, so
+# code scanning tracks what is open on main.
+#
+# The fix pack job at the bottom is commented out. It writes the YAML for each
+# failing check and opens a pull request with the proposals; read its notes first.
+name: flightbay
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  security-events: write # upload SARIF to code scanning
+  pull-requests: write   # the summary comment
+
+env:
+  FAIL_ON: high                # critical, high, medium or low
+  SCAN_PATHS: .                # space separated; narrow it to deploy/ or charts/ in a big repository
+  SCAN_FLAGS: ""               # for example: --env prod   or   --values charts/api=values-prod.yaml
+  FLIGHTBAY_VERSION: latest    # a release tag such as v0.2.0, or "source" to build from main
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # --base-ref needs the base commit
+
+      - name: Install flightbay
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin"
+          if [ "$FLIGHTBAY_VERSION" = "source" ]; then
+            # The collector is pure Go: no cgo, one static binary.
+            curl -fsSL https://go.dev/dl/go1.27.1.linux-amd64.tar.gz | tar -xz -C "$RUNNER_TEMP"
+            CGO_ENABLED=0 GOBIN="$RUNNER_TEMP/bin" "$RUNNER_TEMP/go/bin/go" install github.com/tjorourke/flightbay/cmd/flightbay@main
+          else
+            tag=""
+            [ "$FLIGHTBAY_VERSION" != "latest" ] && tag="$FLIGHTBAY_VERSION"
+            gh release download $tag --repo tjorourke/flightbay --pattern 'flightbay_*_linux_amd64.tar.gz' --dir "$RUNNER_TEMP"
+            tar -xzf "$RUNNER_TEMP"/flightbay_*_linux_amd64.tar.gz -C "$RUNNER_TEMP/bin" flightbay
+          fi
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/bin/flightbay" version
+
+      # Pull requests: report and gate only what the change introduces. The base
+      # commit is scanned from a temporary git worktree with the same flags.
+      - name: Scan (pull request, new failures only)
+        if: github.event_name == 'pull_request'
+        id: pr
+        run: |
+          set +e
+          flightbay scan $SCAN_PATHS $SCAN_FLAGS \
+            --new-only --base-ref "origin/${{ github.base_ref }}" \
+            --fail-on "$FAIL_ON" --format sarif -o flightbay.sarif --bundle flightbay-scan.tar.zst
+          echo "code=$?" >> "$GITHUB_OUTPUT"
+          # The same comparison as Markdown-friendly text and workflow annotations.
+          flightbay scan $SCAN_PATHS $SCAN_FLAGS --no-bundle -q \
+            --new-only --base-ref "origin/${{ github.base_ref }}" --fail-on "$FAIL_ON" --format text -o flightbay.txt
+          flightbay scan $SCAN_PATHS $SCAN_FLAGS --no-bundle -q \
+            --new-only --base-ref "origin/${{ github.base_ref }}" --fail-on "$FAIL_ON" --format github
+          exit 0
+
+      - name: Scan (default branch, everything)
+        if: github.event_name != 'pull_request'
+        run: flightbay scan $SCAN_PATHS $SCAN_FLAGS --format sarif -o flightbay.sarif --bundle flightbay-scan.tar.zst
+
+      - name: Upload SARIF to code scanning
+        if: always() && hashFiles('flightbay.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: flightbay.sarif
+          category: flightbay
+
+      - name: Keep the bundle (open it with flightbay-desk open)
+        if: always() && hashFiles('flightbay-scan.tar.zst') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: flightbay-scan
+          path: flightbay-scan.tar.zst
+          retention-days: 14
+
+      - name: Comment on the pull request
+        if: github.event_name == 'pull_request' && always() && hashFiles('flightbay.txt') != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('flightbay.txt', 'utf8');
+            const failed = '${{ steps.pr.outputs.code }}' === '1';
+            const marker = '<!-- flightbay-scan -->';
+            const body = [
+              marker,
+              failed
+                ? `### Flightbay: this change adds failing checks at ${process.env.FAIL_ON} or above`
+                : `### Flightbay: no new failing checks at ${process.env.FAIL_ON} or above`,
+              '',
+              '```',
+              report.length > 60000 ? report.slice(0, 60000) + '\n... (truncated; see the Security tab)' : report,
+              '```',
+              '',
+              'Each line is `file:line  object: detail`. The full results are in the Security tab (code scanning), and the rendered bundle is attached to the run as `flightbay-scan`.',
+            ].join('\n');
+            const {owner, repo} = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(github.rest.issues.listComments, {owner, repo, issue_number});
+            const mine = comments.find(c => c.body && c.body.includes(marker));
+            if (mine) {
+              await github.rest.issues.updateComment({owner, repo, comment_id: mine.id, body});
+            } else {
+              await github.rest.issues.createComment({owner, repo, issue_number, body});
+            }
+
+      - name: Gate
+        if: github.event_name == 'pull_request'
+        run: |
+          if [ "${{ steps.pr.outputs.code }}" = "1" ]; then
+            echo "::error::Flightbay: this change adds failing checks at $FAIL_ON or above (see the comment and the Security tab)"
+            exit 1
+          fi
+          if [ "${{ steps.pr.outputs.code }}" != "0" ]; then
+            echo "::error::flightbay scan could not run (exit ${{ steps.pr.outputs.code }})"
+            exit 1
+          fi
+
+  # ---------------------------------------------------------------------------
+  # Fix pack as a pull request (optional).
+  #
+  # flightbay scan --fix-pack writes one YAML file per failing check, with the
+  # object names filled in, and README.md listing each check, the objects and
+  # the files that declare them. It never edits your files. New objects for
+  # manifests in plain YAML (NetworkPolicy, AuthorizationPolicy,
+  # PeerAuthentication, PodDisruptionBudget) are written under proposals/ in the
+  # same layout as the repository, so copying proposals/ over the repository
+  # root puts each one next to the manifest it protects.
+  #
+  # To use it: uncomment the job, give the workflow "contents: write" and
+  # "pull-requests: write", and check the repository setting that lets Actions
+  # create pull requests. Review every file in the pull request: fixes for Helm
+  # charts and overlays belong in values or patches, which the README points at.
+  # ---------------------------------------------------------------------------
+  # fix-pack:
+  #   needs: scan
+  #   if: github.event_name == 'push'
+  #   runs-on: ubuntu-latest
+  #   permissions:
+  #     contents: write
+  #     pull-requests: write
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - name: Install flightbay
+  #       env:
+  #         GH_TOKEN: ${{ github.token }}
+  #       run: |
+  #         gh release download --repo tjorourke/flightbay --pattern 'flightbay_*_linux_amd64.tar.gz' --dir "$RUNNER_TEMP"
+  #         tar -xzf "$RUNNER_TEMP"/flightbay_*_linux_amd64.tar.gz -C "$RUNNER_TEMP" flightbay
+  #         echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+  #     - name: Write the fix pack
+  #       run: flightbay scan $SCAN_PATHS $SCAN_FLAGS --no-bundle --fix-pack "$RUNNER_TEMP/fixes"
+  #     - name: Open a pull request with the proposals
+  #       env:
+  #         GH_TOKEN: ${{ github.token }}
+  #       run: |
+  #         set -euo pipefail
+  #         [ -d "$RUNNER_TEMP/fixes/proposals" ] || { echo "No new-object proposals"; exit 0; }
+  #         branch="flightbay/fixes-${GITHUB_RUN_ID}"
+  #         git switch -c "$branch"
+  #         cp -R "$RUNNER_TEMP/fixes/proposals/." .
+  #         mkdir -p flightbay-fixes && cp "$RUNNER_TEMP"/fixes/*.yaml "$RUNNER_TEMP/fixes/README.md" flightbay-fixes/
+  #         git add -A
+  #         git -c user.name="flightbay" -c user.email="flightbay@users.noreply.github.com" commit -m "Flightbay: proposed fixes for failing checks"
+  #         git push origin "$branch"
+  #         gh pr create --title "Flightbay: proposed fixes for failing checks" --body-file "$RUNNER_TEMP/fixes/README.md" --base "${{ github.event.repository.default_branch }}" --head "$branch"

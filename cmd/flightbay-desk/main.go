@@ -35,16 +35,22 @@ import (
 	"github.com/tjorourke/flightbay/internal/mcp"
 	"github.com/tjorourke/flightbay/internal/server"
 	"github.com/tjorourke/flightbay/internal/store"
+	_ "github.com/tjorourke/flightbay/internal/store/duckdb" // SQL and log search
 )
 
 var version = "0.1.0-dev"
 
-func main() {
+// newRoot builds the command tree (also used to generate the CLI reference).
+func newRoot() *cobra.Command {
 	root := &cobra.Command{Use: "flightbay-desk", Short: "Flightbay by Solo: investigate a snapshot bundle offline", SilenceUsage: true}
-	root.AddCommand(openCmd(), shellCmd(), queryCmd(), findingsCmd(), proxyConfigCmd(), searchCmd(), sqlCmd(), flowsCmd(), postureCmd(), reachCmd(), featuresCmd(), diffCmd(), mcpCmd(), keygenCmd(), &cobra.Command{
+	root.AddCommand(openCmd(), shellCmd(), queryCmd(), findingsCmd(), proxyConfigCmd(), searchCmd(), sqlCmd(), flowsCmd(), postureCmd(), reachCmd(), featuresCmd(), diffCmd(), driftCmd(), mcpCmd(), keygenCmd(), &cobra.Command{
 		Use: "version", Short: "Print the version", Run: func(*cobra.Command, []string) { fmt.Println("flightbay-desk", version) },
 	})
-	if err := root.Execute(); err != nil {
+	return root
+}
+
+func main() {
+	if err := newRoot().Execute(); err != nil {
 		os.Exit(1)
 	}
 }
@@ -549,6 +555,57 @@ func diffCmd() *cobra.Command {
 	c.Flags().StringSliceVarP(&identities, "identity", "i", nil, "age identity file for encrypted bundles")
 	c.Flags().BoolVar(&jsonOut, "json", false, "print the report as JSON")
 	c.Flags().BoolVar(&showYAML, "yaml", false, "include the before and after YAML of changed objects")
+	return c
+}
+
+func driftCmd() *cobra.Command {
+	var identities []string
+	var jsonOut bool
+	c := &cobra.Command{
+		Use:   "drift REPO_BUNDLE CLUSTER_BUNDLE",
+		Short: "Compare a repo scan (declared state) with a capture of the cluster (live state)",
+		Long: `Drift compares a bundle from flightbay scan with a bundle from flightbay collect. It lists
+objects in Git but not in the cluster, objects in the cluster but not in Git (limited to the
+namespaces and kinds the repository declares, so system objects do not flood it), and fields
+that differ once status, server-set metadata and defaulted fields are removed.`,
+		Example: `  flightbay scan deploy/ --bundle repo.tar.zst
+  flightbay collect --namespaces payments -o cluster.tar.zst
+  flightbay-desk drift repo.tar.zst cluster.tar.zst
+  flightbay-desk open cluster.tar.zst --baseline repo.tar.zst   # the same in the Compare view`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ids, err := cli.LoadIdentities(identities)
+			if err != nil {
+				return err
+			}
+			repo, err1 := loadBundle(cmd.Context(), args[0], ids)
+			live, err2 := loadBundle(cmd.Context(), args[1], ids)
+			for _, e := range []error{err1, err2} {
+				if e != nil {
+					if repo == nil || live == nil {
+						return e
+					}
+					fmt.Fprintln(cmd.ErrOrStderr(), "warning:", e)
+				}
+			}
+			if !diff.IsDeclared(repo) && diff.IsDeclared(live) {
+				repo, live = live, repo
+				fmt.Fprintln(cmd.ErrOrStderr(), "note: the second bundle is the repo scan; comparing it as the declared side")
+			}
+			if !diff.IsDeclared(repo) {
+				return fmt.Errorf("%s is not a repo scan (flightbay scan); use flightbay-desk diff to compare two captures", args[0])
+			}
+			r := diff.Drift(repo, live)
+			if jsonOut {
+				_, err = cmd.OutOrStdout().Write(append(r.JSON(), '\n'))
+				return err
+			}
+			fmt.Fprint(cmd.OutOrStdout(), r.Text())
+			return nil
+		},
+	}
+	c.Flags().StringSliceVarP(&identities, "identity", "i", nil, "age identity file for encrypted bundles")
+	c.Flags().BoolVar(&jsonOut, "json", false, "print the report as JSON")
 	return c
 }
 

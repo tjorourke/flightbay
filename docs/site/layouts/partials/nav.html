@@ -1,0 +1,7 @@
+{{ $cur := .cur }}
+<ul>
+{{ range .pages.ByWeight }}
+  <li class="{{ if .IsSection }}sec{{ end }}"><a href="{{ .RelPermalink }}" class="{{ if eq .RelPermalink $cur.RelPermalink }}on{{ end }}">{{ .Title }}</a>
+  {{ if .IsSection }}{{ partial "nav.html" (dict "pages" (.Pages) "cur" $cur) }}{{ end }}</li>
+{{ end }}
+</ul>

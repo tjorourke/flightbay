@@ -1,0 +1,5 @@
+name: build
+on: [push]
+jobs:
+  test:
+    runs-on: ubuntu-latest

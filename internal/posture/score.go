@@ -84,7 +84,7 @@ func isAgentic(e env) bool {
 }
 
 func isAmbient(e env) bool {
-	for _, p := range e.ws.List(e.cluster, "", "pods", "", nil) {
+	for _, p := range e.podsIn("", nil) {
 		if strings.HasPrefix(p.Name, "ztunnel-") || p.Labels()["app"] == "ztunnel" {
 			return true
 		}

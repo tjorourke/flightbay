@@ -327,6 +327,7 @@ func (c *cluster) buildWorkloads() {
 			w.inMesh, w.sidecar = true, true
 		}
 	}
+	c.templateWorkloads(byID)
 	for _, w := range c.works {
 		lb := w.labels
 		if lb["gateway.networking.k8s.io/gateway-name"] != "" || lb["gateway.istio.io/managed"] != "" || lb["istio"] == "ingressgateway" || lb["istio"] == "eastwestgateway" {
@@ -341,6 +342,53 @@ func (c *cluster) buildWorkloads() {
 		w.classes = classify(w.name, w.images)
 	}
 	sort.Slice(c.works, func(i, j int) bool { return c.works[i].id < c.works[j].id })
+}
+
+// templateWorkloads adds a workload for every Deployment, StatefulSet,
+// DaemonSet, Job and CronJob that has no pods: a repo scan (declared state,
+// no pods at all) or a workload scaled to zero. Its labels, service account
+// and containers come from the pod template, so reach is evaluated on what
+// would run.
+func (c *cluster) templateWorkloads(byID map[string]*workload) {
+	for kind, gr := range resourceOfKind {
+		if kind == "ReplicaSet" {
+			continue
+		}
+		for _, o := range c.list(gr[0], gr[1]) {
+			if kind == "Job" {
+				if k, _ := ownerOf(o); k == "CronJob" {
+					continue
+				}
+			}
+			id := c.name + "/" + o.Namespace + "/" + kind + "/" + o.Name
+			if byID[id] != nil {
+				continue
+			}
+			spec := podSpec(o)
+			if spec == nil {
+				continue
+			}
+			lb := templateLabels(o)
+			ann := strMap(path(o.Obj, "spec", "template", "metadata", "annotations"))
+			if kind == "CronJob" {
+				lb = strMap(path(o.Obj, "spec", "jobTemplate", "spec", "template", "metadata", "labels"))
+				ann = strMap(path(o.Obj, "spec", "jobTemplate", "spec", "template", "metadata", "annotations"))
+			}
+			w := &workload{obj: o, id: id, ns: o.Namespace, name: o.Name, kind: kind, labels: lb, spec: spec}
+			w.sa = s(spec["serviceAccountName"])
+			if w.sa == "" {
+				w.sa = "default"
+			}
+			for _, ct := range l(spec["containers"]) {
+				w.images = append(w.images, s(m(ct)["image"]))
+			}
+			if ann["sidecar.istio.io/inject"] == "true" {
+				w.inMesh, w.sidecar = true, true
+			}
+			byID[id] = w
+			c.works = append(c.works, w)
+		}
+	}
 }
 
 func hostNetwork(w *workload) bool { b, _ := w.spec["hostNetwork"].(bool); return b }
@@ -402,6 +450,12 @@ func (c *cluster) buildServices() {
 						sv.backends = append(sv.backends, w)
 						break
 					}
+				}
+				// A workload built from its template (no pods) is matched on
+				// the template's labels.
+				if len(w.pods) == 0 && !seen[w] && labelsMatch(w.labels, sv.selector) {
+					seen[w] = true
+					sv.backends = append(sv.backends, w)
 				}
 			}
 		}

@@ -522,7 +522,7 @@ func (x *meshCtx) podsOfService(sv *store.Object) []*store.Object {
 	if len(sel) == 0 {
 		return nil
 	}
-	return x.e.ws.List(x.e.cluster, "", "pods", sv.Namespace, sel)
+	return x.e.podsIn(sv.Namespace, sel)
 }
 
 // apSelects reports whether an AuthorizationPolicy applies to a Service's
@@ -613,7 +613,7 @@ func ambientExtra(e env) []Check {
 	}
 	na := func(c *Check, why string) { c.Status, c.Reason = NA, why }
 	x := newMeshCtx(e)
-	noNS := "namespace labels were not captured (re-capture with this version of flightbay, which records the Namespace objects in scope)"
+	noNS := e.noNSWhy()
 	apOK, apWhy := e.evaluable("security.istio.io", "authorizationpolicies", "AuthorizationPolicy", true)
 	detailOK, detailWhy := e.fullDetail()
 
@@ -884,7 +884,7 @@ func ambientExtra(e env) []Check {
 				if ns == x.root {
 					ns = ""
 				}
-				if len(e.ws.List(e.cluster, "", "pods", ns, ml)) == 0 {
+				if len(e.podsIn(ns, ml)) == 0 {
 					worse(Warn, fmt.Sprintf("selector %v matches no pod", ml))
 				}
 			}
@@ -1016,11 +1016,14 @@ func ambientExtra(e env) []Check {
 		"A pod in an ambient namespace is only in the mesh once istio-cni has redirected its traffic. Pods on the host network, or ones the CNI missed, send and accept plaintext with no identity.",
 		"# restart pods that started before the CNI was ready\nkubectl rollout restart deployment -n <ns>\n# check\nkubectl get pods -n <ns> -o jsonpath='{range .items[*]}{.metadata.name} {.metadata.annotations.ambient\\.istio\\.io/redirection}{\"\\n\"}{end}'",
 		meshBase + "istio-ambient-poc-eks/"}, func(c *Check) {
+		if e.runtimeNA(c, "ztunnel redirection (a pod annotation set by istio-cni)") {
+			return
+		}
 		if !x.nsKnown {
 			na(c, noNS)
 			return
 		}
-		for _, p := range sortedObjs(e.list("", "pods")) {
+		for _, p := range sortedObjs(e.pods()) {
 			lb := labels(p)
 			if !(x.ambientNS[p.Namespace] || lb["istio.io/dataplane-mode"] == "ambient") || lb["istio.io/dataplane-mode"] == "none" || x.isGatewayPod(p) {
 				continue
@@ -1162,7 +1165,7 @@ func ambientExtra(e env) []Check {
 		for _, se := range x.ses {
 			addUser(se, se.Namespace, labels(se))
 		}
-		for _, p := range e.list("", "pods") {
+		for _, p := range e.pods() {
 			addUser(p, p.Namespace, labels(p))
 		}
 		var routes []*store.Object
@@ -1294,7 +1297,11 @@ func ambientExtra(e env) []Check {
 			case len(warns) > 0:
 				c.Items = append(c.Items, e.item(ds, Warn, strings.Join(warns, "; ")))
 			default:
-				c.Items = append(c.Items, e.item(ds, Pass, fmt.Sprintf("system-node-critical, requests set, %d/%d ready", int(ready), int(want))))
+				if !ok {
+					c.Items = append(c.Items, e.item(ds, Pass, "system-node-critical, requests set"))
+				} else {
+					c.Items = append(c.Items, e.item(ds, Pass, fmt.Sprintf("system-node-critical, requests set, %d/%d ready", int(ready), int(want))))
+				}
 			}
 		}
 		if len(c.Items) == 0 {
@@ -1356,7 +1363,7 @@ func ambientExtra(e env) []Check {
 			return
 		}
 		revs := map[string]bool{}
-		for _, p := range e.list("", "pods") {
+		for _, p := range e.pods() {
 			if lb := labels(p); lb["app"] == "istiod" {
 				r := lb["istio.io/rev"]
 				if r == "" {
@@ -1639,7 +1646,7 @@ func ambientExtra(e env) []Check {
 		"istiod's plaintext xDS (15010), monitoring (15014) and debug (8080) ports, and the Envoy admin port (15000), give away config or control. None should be on a LoadBalancer or NodePort.",
 		"# keep istiod ClusterIP, and expose only 15012/15017 through the east-west gateway\nspec:\n  type: ClusterIP\n# east-west gateway\nspec:\n  loadBalancerSourceRanges: [<peer CIDRs>]",
 		meshBase + "hbone-east-west/"}, func(c *Check) {
-		pods := e.list("", "pods")
+		pods := e.pods()
 		svcKeys := make([]string, 0, len(x.svcs))
 		for k := range x.svcs {
 			svcKeys = append(svcKeys, k)

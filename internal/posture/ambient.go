@@ -23,11 +23,11 @@ func ambientChecks(e env) []Check {
 	}
 	na := func(c *Check, why string) { c.Status, c.Reason = NA, why }
 	nsl, nsKnown := e.nsLabels()
-	noNS := "namespace labels were not captured (re-capture with this version of flightbay, which records the Namespace objects in scope)"
+	noNS := e.noNSWhy()
 
 	// Namespaces that run workloads, excluding system ones.
 	workloadNS := map[string]int{}
-	for _, p := range e.list("", "pods") {
+	for _, p := range e.pods() {
 		if !isSystem(p.Namespace) {
 			workloadNS[p.Namespace]++
 		}
@@ -88,7 +88,7 @@ func ambientChecks(e env) []Check {
 			na(c, noNS)
 			return
 		}
-		for _, p := range e.list("", "pods") {
+		for _, p := range e.pods() {
 			if !ambientNS[p.Namespace] {
 				continue
 			}
@@ -121,7 +121,7 @@ func ambientChecks(e env) []Check {
 				c.Items = append(c.Items, e.item(nsObj(ns), Fail, "ambient and sidecar injection labels together"))
 			}
 		}
-		for _, p := range e.list("", "pods") {
+		for _, p := range e.pods() {
 			if !ambientNS[p.Namespace] {
 				continue
 			}

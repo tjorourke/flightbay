@@ -84,11 +84,27 @@ func Run(ws *store.Workspace) []Finding {
 		out = append(out, gatewayAPI(ws, cluster)...)
 	}
 	out = append(out, signatures(ws)...)
+	if h := ws.Header(); h.Declared() {
+		repo := "the repository"
+		if h.Repo != nil && h.Repo.Name != "" {
+			repo = h.Repo.Name
+		}
+		out = append(out, Finding{Rule: "scan.declared-only", Severity: Info,
+			Title:  "Declared state only (repo scan) of " + repo,
+			Detail: "This bundle was built from a code repository, so the rules on pod status, restarts, image pulls, scheduling, logs, proxy and certificate diagnostics and policy conditions do not apply. They run on a capture of the cluster."})
+	}
 	for _, c := range ws.Coverage() {
 		if c.State == "failed" {
 			target := c.Resource
 			if c.Type == "logs" {
 				target = fmt.Sprintf("logs %s/%s/%s (%s)", c.Namespace, c.Pod, c.Container, c.Stream)
+			}
+			if c.Type == "input" {
+				out = append(out, Finding{Rule: "scan.render-failed", Severity: Warning, Cluster: c.Cluster,
+					Title:    fmt.Sprintf("%s %s could not be rendered", c.Renderer, c.Source),
+					Detail:   c.Reason + ". Objects it declares are missing from this scan.",
+					Evidence: []string{"coverage " + c.ID}})
+				continue
 			}
 			out = append(out, Finding{Rule: "collection.gap", Severity: Info, Cluster: c.Cluster,
 				Title:    fmt.Sprintf("%s was not collected on %s", target, c.Cluster),
@@ -227,7 +243,7 @@ func gatewayRules(ws *store.Workspace, cluster string) []Finding {
 					if name != "" && ws.Get(cluster, "", "services", ns, name) == nil {
 						out = append(out, Finding{Rule: "gateway.unresolved-backend", Severity: Warning, Cluster: cluster, Object: ref(o),
 							Title:    fmt.Sprintf("%s %s/%s references missing Service %s", o.Kind, o.Namespace, o.Name, name),
-							Detail:   fmt.Sprintf("No Service %s/%s was captured, and the Service collection for %s completed.", ns, name, cluster),
+							Detail:   missingServiceDetail(ws, ns, name, cluster),
 							NextStep: "Compare with other clusters, or check whether the backend was renamed.",
 							Evidence: []string{fmt.Sprintf("spec.rules[].backendRefs[].name: %s", name)}})
 					}
@@ -246,6 +262,13 @@ func gatewayRules(ws *store.Workspace, cluster string) []Finding {
 		}
 	}
 	return out
+}
+
+func missingServiceDetail(ws *store.Workspace, ns, name, cluster string) string {
+	if ws.Header().Declared() {
+		return fmt.Sprintf("No Service %s/%s is declared in the scanned paths. It may come from a chart or repository that was not scanned.", ns, name)
+	}
+	return fmt.Sprintf("No Service %s/%s was captured, and the Service collection for %s completed.", ns, name, cluster)
 }
 
 func policies(ws *store.Workspace, cluster string) []Finding {

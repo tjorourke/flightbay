@@ -192,6 +192,8 @@ func (s *Server) Handler() http.Handler {
 	files := http.FileServer(http.FS(static))
 	mux := http.NewServeMux()
 	mux.Handle("/k8s/", s.api)
+	mux.HandleFunc("/docs", s.docs)
+	mux.HandleFunc("/docs/", s.docs)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if t := r.URL.Query().Get("token"); t != "" {
 			if subtle.ConstantTimeCompare([]byte(t), []byte(s.Token)) != 1 {
@@ -300,6 +302,9 @@ func (s *Server) workspace(w http.ResponseWriter, r *http.Request) {
 		out["case"], out["bundleId"], out["collector"], out["captureStart"] = h.Case, h.BundleID, h.Collector, h.CaptureStart
 		out["contexts"], out["planned"], out["unavailable"] = h.Contexts, h.Planned, h.Unavailable
 		out["policy"] = s.WS.Policy()
+		if h.Declared() {
+			out["source"], out["repo"] = h.Source, h.Repo // a repo scan: declared state
+		}
 	}
 	if m := s.WS.Manifest(); m != nil {
 		out["captureEnd"], out["complete"], out["collectionErrors"] = m.CaptureEnd, m.Complete, m.Errors

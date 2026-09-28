@@ -5,3 +5,6 @@ dist/
 .DS_Store
 .gstack/
 !examples/*.tar.zst
+docs/site/public/
+docs/site/resources/
+docs/site/.hugo_build.lock

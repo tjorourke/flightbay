@@ -125,6 +125,18 @@ func (e env) list(group, resource string) []*store.Object {
 // evaluable reports whether a type was captured completely enough for a
 // check to trust the absence of an object, and why not otherwise.
 func (e env) evaluable(group, resource, kind string, namespaced bool) (bool, string) {
+	if e.declaredOnly() {
+		// A repo scan holds everything the scanned paths declare, so absence
+		// there means the repository does not declare it. Pods, nodes, events
+		// and the like are made by the cluster and never judged.
+		if runtimeOnlyType(group, resource) {
+			return false, DeclaredWhy + ": " + resource + " exist only in a running cluster"
+		}
+		if group == "" && resource == "secrets" {
+			return false, DeclaredWhy + ": Secrets are normally created outside the repository (sealed, external or by hand), so a missing one proves nothing"
+		}
+		return true, ""
+	}
 	st := e.ws.CollectionState(e.cluster, group, resource, kind, namespaced)
 	switch st.State {
 	case store.StateComplete, store.StateTruncated:
@@ -148,6 +160,10 @@ func (e env) evaluable(group, resource, kind string, namespaced bool) (bool, str
 }
 
 func (e env) item(o *store.Object, st Status, detail string) Item {
+	if t := m(o.Obj[templateKey]); t != nil {
+		// A repo scan's stand-in pod: report on the workload that declares it.
+		return Item{Cluster: e.cluster, Group: s(t["group"]), Resource: s(t["resource"]), Kind: s(t["kind"]), Namespace: o.Namespace, Name: o.Name, Status: st, Detail: detail}
+	}
 	return Item{Cluster: e.cluster, Group: o.Group, Resource: o.Resource, Kind: o.Kind, Namespace: o.Namespace, Name: o.Name, Status: st, Detail: detail}
 }
 
@@ -155,6 +171,16 @@ func (e env) item(o *store.Object, st Status, detail string) Item {
 // synthesised ones exist (their labels are unknown).
 func (e env) namespaces() ([]*store.Object, bool) {
 	ns := e.list("", "namespaces")
+	if e.declaredOnly() {
+		// Only the Namespace objects the repository declares have known labels.
+		var real []*store.Object
+		for _, n := range ns {
+			if ann := m(path(n.Obj, "metadata", "annotations")); s(ann[store.SynthesisedAnnotation]) != "true" {
+				real = append(real, n)
+			}
+		}
+		return real, len(real) > 0
+	}
 	for _, n := range ns {
 		if ann := m(path(n.Obj, "metadata", "annotations")); s(ann[store.SynthesisedAnnotation]) == "true" {
 			return nil, false

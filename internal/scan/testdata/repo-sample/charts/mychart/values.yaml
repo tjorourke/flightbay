@@ -1,0 +1,4 @@
+replicas: 1
+image: busybox:1.36
+sub:
+  message: hello

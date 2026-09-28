@@ -15,8 +15,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/duckdb/duckdb-go/v2"
-
 	"github.com/tjorourke/flightbay/internal/bundle"
 	"github.com/tjorourke/flightbay/internal/logs"
 	"github.com/tjorourke/flightbay/internal/policy"
@@ -56,9 +54,21 @@ func openDB(path string) (*logDB, error) {
 		_ = os.Remove(path)
 		_ = os.Remove(path + ".wal")
 	}
-	db, err := sql.Open("duckdb", path)
+	db, err := sql.Open(sqlDriverName(), path)
 	if err != nil {
 		return nil, err
+	}
+	if !haveDuckDB() {
+		// No DuckDB linked (the collector, and flightbay scan): objects stay
+		// in memory and every SQL or log query returns an error instead of
+		// running. One worker drains queued log chunks, which fail at once.
+		l := &logDB{db: db, path: path, jobs: make(chan func(), 16)}
+		go func() {
+			for j := range l.jobs {
+				j()
+			}
+		}()
+		return l, nil
 	}
 	if _, err := db.Exec(schema + flowsSchema); err != nil {
 		db.Close()
@@ -95,30 +105,14 @@ func (l *logDB) appendRows(table string, rows [][]driver.Value) error {
 		return err
 	}
 	defer conn.Close()
-	return conn.Raw(func(dc any) error {
-		a, err := duckdb.NewAppenderFromConn(dc.(driver.Conn), "", table)
-		if err != nil {
-			return err
-		}
-		for _, r := range rows {
-			if err := a.AppendRow(r...); err != nil {
-				_ = a.Close()
-				return err
-			}
-		}
-		return a.Close() // commits the chunk
-	})
+	return conn.Raw(func(dc any) error { return duckAppend(dc, table, rows) })
 }
 
 func toMap(m map[string]string) any {
 	if len(m) == 0 {
 		return nil
 	}
-	out := duckdb.Map{}
-	for k, v := range m {
-		out[k] = v
-	}
-	return out
+	return duckMapOf(m)
 }
 
 func str(v any) string { s, _ := v.(string); return s }
@@ -724,36 +718,14 @@ func (w *Workspace) SQL(query string, limit int) (*SQLResult, error) {
 
 // mapValue converts the shapes the driver uses for MAP columns.
 func mapValue(v any) map[string]any {
-	switch t := v.(type) {
-	case duckdb.Map:
-		m := make(map[string]any, len(t))
-		for k, x := range t {
-			m[fmt.Sprint(k)] = x
-		}
-		return m
-	case duckdb.OrderedMap:
-		return mapValue(&t)
-	case *duckdb.OrderedMap:
-		m := make(map[string]any, t.Len())
-		for _, k := range t.Keys() {
-			x, _ := t.Get(k)
-			m[fmt.Sprint(k)] = x
-		}
-		return m
-	}
-	return nil
+	m, _ := duckMapValue(v)
+	return m
 }
 
 func jsonable(v any) any {
 	switch t := v.(type) {
 	case []byte:
 		return string(t)
-	case duckdb.Map, duckdb.OrderedMap, *duckdb.OrderedMap:
-		m := map[string]any{}
-		for k, x := range mapValue(t) {
-			m[k] = jsonable(x)
-		}
-		return m
 	case []any:
 		for i := range t {
 			t[i] = jsonable(t[i])
@@ -767,6 +739,13 @@ func jsonable(v any) any {
 	case time.Time:
 		return t.UTC().Format(time.RFC3339Nano)
 	default:
+		if mv, ok := duckMapValue(t); ok {
+			m := map[string]any{}
+			for k, x := range mv {
+				m[k] = jsonable(x)
+			}
+			return m
+		}
 		if _, err := json.Marshal(t); err != nil {
 			return fmt.Sprint(t)
 		}

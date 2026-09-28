@@ -112,6 +112,9 @@ type Side struct {
 	Captured time.Time `json:"captured"`
 	Clusters []string  `json:"clusters"`
 	Verified bool      `json:"verified"`
+	Source   string    `json:"source,omitempty"` // "repo" for a repo scan
+	Repo     string    `json:"repo,omitempty"`   // name@commit of a repo scan
+	Label    string    `json:"label,omitempty"`  // Declared (repo) or Live (cluster) when one side is a repo scan
 }
 
 // Report is the bundle-to-bundle comparison.
@@ -124,12 +127,22 @@ type Report struct {
 	Resolved      []analyze.Finding `json:"resolvedFindings"`
 	NotComparable []string          `json:"notComparable"`
 	Summary       map[string]int    `json:"summary"`
+	Drift         *DriftReport      `json:"drift,omitempty"` // set when one side is a repo scan
 }
 
 func side(ws *store.Workspace) Side {
 	s := Side{Clusters: ws.Clusters(), Verified: ws.State().Verified}
 	if h := ws.Header(); h != nil {
-		s.BundleID, s.Case, s.Captured = h.BundleID, h.Case, h.CaptureStart
+		s.BundleID, s.Case, s.Captured, s.Source = h.BundleID, h.Case, h.CaptureStart, h.Source
+		if h.Repo != nil {
+			s.Repo = h.Repo.Name
+			if c := h.Repo.Commit; c != "" {
+				if len(c) > 12 {
+					c = c[:12]
+				}
+				s.Repo += "@" + c
+			}
+		}
 	}
 	if m := ws.Manifest(); m != nil && !m.CaptureEnd.IsZero() {
 		s.Captured = m.CaptureEnd
@@ -187,8 +200,14 @@ func changedFields(a, b map[string]any) []string {
 // skipKinds are captured per replica or per event and churn on every capture.
 var skipKinds = map[string]bool{"events": true, "leases": true, "endpoints": true, "endpointslices": true, "controllerrevisions": true}
 
-// Compare reports what changed from before to after.
+// Compare reports what changed from before to after. When one side is a
+// repo scan it reports drift instead (see Drift), with the declared side as
+// "before": in Git and not in the cluster reads as removed, in the cluster
+// and not in Git as added.
 func Compare(before, after *store.Workspace) Report {
+	if IsDeclared(before) != IsDeclared(after) {
+		return compareDrift(before, after)
+	}
 	r := Report{Before: side(before), After: side(after), Summary: map[string]int{}}
 	type key struct{ cluster, group, resource, ns, name string }
 	index := func(ws *store.Workspace) map[key]*store.Object {
@@ -340,6 +359,9 @@ func findings(before, after *store.Workspace) (added, resolved []analyze.Finding
 
 // Text renders the report for the terminal.
 func (r Report) Text(showYAML bool) string {
+	if r.Drift != nil {
+		return r.Drift.Text()
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "Before: %s case %s captured %s\nAfter:  %s case %s captured %s\n", r.Before.BundleID, r.Before.Case, r.Before.Captured.Format(time.RFC3339), r.After.BundleID, r.After.Case, r.After.Captured.Format(time.RFC3339))
 	fmt.Fprintf(&b, "\n%d added, %d removed, %d changed objects; %d image changes; %d new and %d resolved findings\n",

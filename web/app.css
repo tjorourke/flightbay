@@ -386,3 +386,5 @@ body.rg-noscroll{overflow:hidden}
 .px-head{padding:2px 0 12px;margin-bottom:6px;border-bottom:1px solid var(--line)}.px-head h2{font-size:17px;margin:0}
 .px-meta{display:flex;flex-wrap:wrap;gap:6px 22px;margin:10px 0 0}.px-meta div{min-width:0}.px-meta dt{font:600 10px var(--sans);text-transform:uppercase;letter-spacing:.4px;color:var(--muted)}.px-meta dd{margin:2px 0 0;font-size:12px;overflow-wrap:anywhere}
 td.px-short{white-space:nowrap}td.px-long{white-space:normal;overflow-wrap:anywhere;min-width:260px;max-width:560px}
+.help-link{font-size:12px;padding:7px 11px;border:1px solid var(--line);border-radius:6px;color:var(--muted);white-space:nowrap}
+.help-link:hover{color:var(--teal);border-color:var(--teal);text-decoration:none}

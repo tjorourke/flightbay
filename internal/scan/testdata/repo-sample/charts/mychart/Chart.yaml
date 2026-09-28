@@ -1,0 +1,9 @@
+apiVersion: v2
+name: mychart
+version: 0.1.0
+dependencies:
+- name: sub
+  version: 0.1.0
+- name: missingdep
+  version: 1.0.0
+  repository: https://charts.example.com

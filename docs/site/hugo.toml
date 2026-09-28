@@ -1,0 +1,21 @@
+# Flightbay docs. Build with: hugo --source docs/site
+# The same Markdown is embedded in flightbay-desk and served at /docs.
+baseURL = "https://flightbay.solo.io/"
+title = "Flightbay docs"
+languageCode = "en-gb"
+disableKinds = ["taxonomy", "term", "RSS"]
+
+[markup.goldmark.renderer]
+unsafe = true
+
+[[module.mounts]]
+source = "content"
+target = "content"
+
+[[module.mounts]]
+source = "static"
+target = "static"
+
+[[module.mounts]]
+source = "../images"
+target = "static/images"

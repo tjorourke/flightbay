@@ -1,0 +1,53 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo
+  labels:
+    team: payments
+---
+# the web front end
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: demo
+  labels:
+    app: web
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+      - name: web
+        image: nginx:1.27
+        ports:
+        - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: demo
+spec:
+  selector:
+    app: web
+  ports:
+  - port: 80
+    targetPort: 80
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: web-creds
+  namespace: demo
+type: Opaque
+data:
+  password: c3VwZXJzZWNyZXQ=
+stringData:
+  token: plain-text-token-value

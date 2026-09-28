@@ -159,6 +159,16 @@ flightbay ui after.tar.zst --baseline before.tar.zst   # the same, in the Compar
 
 An object only counts as removed if both captures covered its type and namespace. Anything else is reported as not comparable.
 
+### Scan a repository instead of a cluster
+
+```bash
+flightbay scan deploy/ --env prod                                   # manifests, Helm charts, Kustomize overlays, Argo CD and Flux sources
+flightbay scan . --fail-on high --new-only --base-ref origin/main --format sarif -o flightbay.sarif   # CI gate
+flightbay-desk drift repo-scan.tar.zst cluster.tar.zst              # in Git and not running, running and not in Git, fields changed by hand
+```
+
+`flightbay scan` renders what a repository declares into a normal bundle marked `source: repo`, so the desk, the Scorecard and Agent reach work on it. Checks that need a running cluster say "declared state only (repo scan)" instead of failing. `examples/ci/` has GitHub Actions and GitLab CI workflows. See the [scan docs](docs/site/content/scan/_index.md).
+
 ### AI agents
 
 `flightbay-desk mcp` makes the open workspace available to AI agents over MCP. The tools are read-only: search objects and logs, read-only SQL, findings, best-practice scores, objects and proxy configs, plus a `triage` prompt for a guided investigation.
@@ -174,6 +184,7 @@ The MCP server only talks to your local workspace. Snapshot data reaches a model
 | Command | |
 |---|---|
 | `flightbay collect` | Capture a cluster (alias `capture`) |
+| `flightbay scan [PATH...]` | Build a bundle from a code repository and score it; `--fail-on` makes it a CI gate |
 | `flightbay ui [bundle \| dir]` | Open the UI on a capture (default: the newest in this directory) |
 | `flightbay inspect BUNDLE` | Verify a bundle and show what's in it |
 | `flightbay extract BUNDLE DIR` | Verify and unpack it (it's also a normal `tar.zst`: `tar --zstd -xf`) |
@@ -182,6 +193,7 @@ The MCP server only talks to your local workspace. Snapshot data reaches a model
 | `flightbay-desk open` | What `flightbay ui` runs; `--keep` keeps the workspace, `-i key` opens encrypted bundles |
 | `flightbay-desk search / query / findings / proxy-config / sql / posture` | The terminal helpers (`fbsearch`, `fbq`, `fbfind`, `fbpc`, `fbsql`, `fbscore`), usable anywhere a workspace is open |
 | `flightbay-desk diff A B` | Compare two captures |
+| `flightbay-desk drift REPO CLUSTER` | Compare a repo scan with a capture |
 | `flightbay-desk mcp` | MCP server for agents |
 | `flightbay-desk features` | Flightbay Enterprise features and whether they are on |
 | `flightbay-desk keygen` | Create a key pair for `--encrypt-to` |

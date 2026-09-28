@@ -287,6 +287,22 @@ func Inspect(w io.Writer, src io.Reader, o InspectOptions) error {
 	if h != nil {
 		fmt.Fprintf(w, "Bundle: %s\nCase: %s\nCollector: %s\nCaptured: %s\nClusters: %s\n", h.BundleID, orDash(h.Case), orDash(h.Collector),
 			h.CaptureStart.Format(time.RFC3339), strings.Join(h.Contexts, ", "))
+		if h.Declared() && h.Repo != nil {
+			fmt.Fprintf(w, "Source: declared state from repository %s", h.Repo.Name)
+			if h.Repo.Commit != "" {
+				fmt.Fprintf(w, " at commit %s", h.Repo.Commit)
+			}
+			if h.Repo.Branch != "" {
+				fmt.Fprintf(w, " (branch %s)", h.Repo.Branch)
+			}
+			if h.Repo.Dirty {
+				fmt.Fprint(w, ", with uncommitted changes")
+			}
+			fmt.Fprintln(w)
+			if h.Repo.Remote != "" {
+				fmt.Fprintf(w, "Remote: %s\n", h.Repo.Remote)
+			}
+		}
 		if len(h.Planned) > 0 {
 			fmt.Fprintf(w, "Collected categories: %s\n", strings.Join(h.Planned, ", "))
 		}
@@ -322,6 +338,9 @@ func Inspect(w io.Writer, src io.Reader, o InspectOptions) error {
 		}
 		if c.Type == bundle.CoverageLogs {
 			target = fmt.Sprintf("logs %s/%s/%s (%s)", c.Namespace, c.Pod, c.Container, c.Stream)
+		}
+		if c.Type == bundle.CoverageInput {
+			target = c.Renderer + " " + c.Source
 		}
 		state := c.State
 		if c.Reason != "" {

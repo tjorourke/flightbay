@@ -3,6 +3,7 @@ package posture
 import (
 	"fmt"
 	"strings"
+	"sync"
 
 	collectpolicy "github.com/tjorourke/flightbay/internal/policy"
 	"github.com/tjorourke/flightbay/internal/store"
@@ -164,7 +165,7 @@ func (e env) workloads() []*store.Object {
 			out = append(out, j)
 		}
 	}
-	for _, p := range e.list("", "pods") {
+	for _, p := range e.list("", "pods") { // real pods only: templatePods is built from this list
 		if k, _ := ownerOf(p); k == "" {
 			out = append(out, p)
 		}
@@ -195,7 +196,7 @@ func (e env) podsOf(o *store.Object) []*store.Object {
 	if len(sel) == 0 {
 		return nil
 	}
-	return e.ws.List(e.cluster, "", "pods", o.Namespace, sel)
+	return e.podsIn(o.Namespace, sel)
 }
 
 // selects reports whether a label selector (matchLabels only, which is what
@@ -222,7 +223,7 @@ func gatewayClass(gw *store.Object) string { return s(path(gw.Obj, "spec", "gate
 // gatewayPods are the proxy pods a Gateway runs (both Istio and kgateway
 // label them with gateway.networking.k8s.io/gateway-name).
 func (e env) gatewayPods(gw *store.Object) []*store.Object {
-	return e.ws.List(e.cluster, "", "pods", gw.Namespace, map[string]string{"gateway.networking.k8s.io/gateway-name": gw.Name})
+	return e.podsIn(gw.Namespace, map[string]string{"gateway.networking.k8s.io/gateway-name": gw.Name})
 }
 
 // gatewayService is the Service fronting a Gateway's proxies, or nil.
@@ -275,4 +276,131 @@ func objName(o *store.Object) string {
 		return o.Kind + " " + o.Name
 	}
 	return fmt.Sprintf("%s %s/%s", o.Kind, o.Namespace, o.Name)
+}
+
+// ---------- declared state (flightbay scan) ----------
+
+// DeclaredWhy is the reason a check is not applicable on a repo scan: the
+// bundle holds what the repository declares, with no status and no pods.
+const DeclaredWhy = "declared state only (repo scan)"
+
+// declaredOnly reports whether the workspace is a repo scan rather than a
+// capture of a running cluster.
+func (e env) declaredOnly() bool { return e.ws.Header().Declared() }
+
+// runtimeNA marks c not applicable on a repo scan and says what it needed.
+// It returns true when it did, so a check can return straight away.
+func (e env) runtimeNA(c *Check, needs string) bool {
+	if !e.declaredOnly() {
+		return false
+	}
+	c.Status, c.Reason, c.Items = NA, DeclaredWhy+": "+needs+" exists only in a running cluster", nil
+	return true
+}
+
+// templateKey marks a pod made from a workload's template on a repo scan.
+const templateKey = "x-flightbay-template"
+
+var tplCache struct {
+	sync.Mutex
+	ws      *store.Workspace
+	cluster string
+	rev     int64
+	pods    []*store.Object
+}
+
+// templatePods stands in for pods on a repo scan: one per workload, with the
+// template's labels, annotations and spec, owned by the workload. Items
+// about them are reported on the workload (see item).
+func (e env) templatePods() []*store.Object {
+	rev := e.ws.Revision()
+	tplCache.Lock()
+	defer tplCache.Unlock()
+	if tplCache.ws == e.ws && tplCache.cluster == e.cluster && tplCache.rev == rev {
+		return tplCache.pods
+	}
+	var out []*store.Object
+	for _, w := range e.workloads() {
+		if w.Kind == "Pod" {
+			continue
+		}
+		tpl := m(path(w.Obj, "spec", "template"))
+		if w.Kind == "CronJob" {
+			tpl = m(path(w.Obj, "spec", "jobTemplate", "spec", "template"))
+		}
+		if tpl == nil {
+			continue
+		}
+		md := map[string]any{"name": w.Name, "namespace": w.Namespace}
+		tm := m(tpl["metadata"])
+		if lb := m(tm["labels"]); lb != nil {
+			md["labels"] = lb
+		}
+		ann := map[string]any{}
+		for k, v := range m(tm["annotations"]) {
+			ann[k] = v
+		}
+		for k, v := range m(path(w.Obj, "metadata", "annotations")) {
+			if strings.HasPrefix(k, "flightbay.dev/") {
+				ann[k] = v
+			}
+		}
+		md["annotations"] = ann
+		md["ownerReferences"] = []any{map[string]any{"apiVersion": s(w.Obj["apiVersion"]), "kind": w.Kind, "name": w.Name, "controller": true}}
+		out = append(out, &store.Object{Cluster: w.Cluster, Version: "v1", Resource: "pods", Kind: "Pod", Namespaced: true, Namespace: w.Namespace, Name: w.Name,
+			Obj: map[string]any{"apiVersion": "v1", "kind": "Pod", "metadata": md, "spec": m(tpl["spec"]),
+				templateKey: map[string]any{"group": w.Group, "resource": w.Resource, "kind": w.Kind}}})
+	}
+	tplCache.ws, tplCache.cluster, tplCache.rev, tplCache.pods = e.ws, e.cluster, rev, out
+	return out
+}
+
+// pods returns the captured pods, or on a repo scan the declared bare Pods
+// plus one stand-in per workload template.
+func (e env) pods() []*store.Object { return e.podsIn("", nil) }
+
+// podsIn is pods limited to a namespace ("" for all) and a label selector.
+func (e env) podsIn(ns string, sel map[string]string) []*store.Object {
+	real := e.ws.List(e.cluster, "", "pods", ns, sel)
+	if !e.declaredOnly() {
+		return real
+	}
+	out := append([]*store.Object{}, real...)
+	for _, p := range e.templatePods() {
+		if ns != "" && p.Namespace != ns {
+			continue
+		}
+		lb := p.Labels()
+		ok := true
+		for k, v := range sel {
+			if lb[k] != v {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// isTemplatePod reports whether o is a stand-in made by templatePods.
+func isTemplatePod(o *store.Object) bool { return o != nil && o.Obj[templateKey] != nil }
+
+func runtimeOnlyType(group, resource string) bool {
+	switch group + "/" + resource {
+	case "/pods", "/nodes", "/events", "/endpoints", "discovery.k8s.io/endpointslices", "apps/replicasets", "apps/controllerrevisions",
+		"coordination.k8s.io/leases", "events.k8s.io/events", "certificates.k8s.io/certificatesigningrequests":
+		return true
+	}
+	return false
+}
+
+// noNSWhy is why namespace labels are unknown.
+func (e env) noNSWhy() string {
+	if e.declaredOnly() {
+		return "the scanned paths declare no Namespace objects, so namespace labels are unknown (scan the directory that declares them)"
+	}
+	return "namespace labels were not captured (re-capture with this version of flightbay, which records the Namespace objects in scope)"
 }

@@ -1427,6 +1427,10 @@ func (x *xctx) listenerTLS(c *Check) {
 		}
 	}
 	if len(c.Items) == 0 {
+		if x.e.declaredOnly() && len(x.md.agentgatewayGateways()) > 0 {
+			xNA(c, DeclaredWhy+": the Service in front of each Gateway is created by the controller, so whether it is exposed is known only in a running cluster")
+			return
+		}
 		xNA(c, "no agentgateway Gateway is exposed outside the cluster (or its Service was not captured)")
 	}
 }
@@ -1852,7 +1856,11 @@ func (x *xctx) policyStatus(c *Check) {
 		ref("entExtAuth", "extauth.solo.io", "authconfigs", "AuthConfig", m(path(t, "entExtAuth", "authConfigRef")))
 		ref("entWAF", "waf.solo.io", "wafpolicies", "WAFPolicy", m(path(t, "entWAF", "wafPolicyRef")))
 		if !f.any() {
-			f.ok("accepted and attached; targets exist")
+			if x.e.declaredOnly() {
+				f.ok("targets exist (Accepted and Attached are not known: " + DeclaredWhy + ")")
+			} else {
+				f.ok("accepted and attached; targets exist")
+			}
 		}
 		c.Items = append(c.Items, f.item(x.e, p.o))
 	}
@@ -1932,7 +1940,11 @@ func (x *xctx) agentRefs(c *Check) {
 			}
 		}
 		if !f.any() {
-			f.ok("references resolve; accepted and ready")
+			if x.e.declaredOnly() {
+				f.ok("references resolve (Accepted and Ready are not known: " + DeclaredWhy + ")")
+			} else {
+				f.ok("references resolve; accepted and ready")
+			}
 		}
 		c.Items = append(c.Items, f.item(x.e, a))
 	}
