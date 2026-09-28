@@ -183,7 +183,8 @@ details.field .facet{padding-left:18px}
 .pst-ring{width:108px;height:108px;border-radius:50%;background:conic-gradient(var(--col) calc(var(--pct)*1%),var(--line) 0);display:grid;place-items:center;flex-shrink:0}
 .pst-ring>div{width:86px;height:86px;border-radius:50%;background:var(--panel);display:grid;place-items:center;align-content:center}
 .pst-ring strong{font-size:28px;line-height:1}.pst-ring span{font-size:13px;color:var(--muted);font-weight:600}
-.pst-cat{display:grid;grid-template-columns:110px 1fr 30px;gap:10px;align-items:center;font-size:12px;margin:3px 0}
+.pst-cat{display:grid;grid-template-columns:110px 1fr 30px;gap:10px;align-items:center;font-size:12px;margin:1px 0;width:100%;text-align:left;background:none;border:0;border-radius:4px;padding:2px 4px;color:inherit;cursor:pointer}
+.pst-cat:hover{background:var(--raised)}.pst-cat:hover span{text-decoration:underline dotted}
 .pst-bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden}.pst-bar i{display:block;height:100%}
 .pst-check{border-bottom:1px solid var(--line)}
 .pst-head{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:none;border:0;border-radius:0;padding:12px 16px}

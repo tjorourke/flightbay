@@ -714,6 +714,29 @@ const guideLinks = (source, docs) => [
   docs && docs !== source ? `<a href="${esc(docs)}" target="_blank" rel="noopener" title="${esc(docs)}">${docsLabel(docs)} ↗</a>` : ''].filter(Boolean).join('');
 const pstSev = sev => feature('priorities') ? `<span class="pst-sev pst-sev-${esc(sev)}">${esc(sev)}</span>` : `<span class="tag">${esc(sev)}</span>`;
 const pstPts = p => p >= 1 ? '+' + Math.round(p) : p > 0 ? '+<1' : '';
+// What each category covers. Shown on hover over the category bars and in
+// the check rows; keep in step with docs/site/content/desk/scorecard.md.
+const pstCatInfo = {
+  'Authentication': 'Callers have to prove who they are: JWT, API keys or mTLS required on MCP, A2A, LLM and ingress routes, with issuer and audience pinned and failures closed.',
+  'Authorization': 'What an authenticated caller is allowed to do: authorization policies, default deny, no allow-all or overly broad rules, per-tool MCP access and waypoints wired so L7 policy is enforced.',
+  'Encryption': 'Traffic is encrypted and certificates are checked: workloads in the mesh with strict mTLS, TLS on listeners, TLS verified to upstreams, valid TLS secrets, credentials not stored in plain text.',
+  'Guardrails': 'Controls on what agents and models may do: prompt guards on requests, responses and streams, agents going through the LLM gateway, tool scope and enforcement that fails closed.',
+  'Identity': 'Credentials and who workloads run as: no literal or passed-through tokens, secret references that resolve, dedicated service accounts, RBAC without wildcards, escalation or secret reads, and a shared mesh root of trust.',
+  'Isolation': 'Limiting what can reach what: egress control, network policies, Pod Security admission, host access, namespace-restricted routes, MCP servers not reachable directly, the metadata endpoint blocked.',
+  'Resilience': 'Keeping things up under failure and load: replicas and HA, disruption budgets, probes, resource requests, spread, timeouts, retries, rate limits, and references and policies that actually resolve and attach.',
+  'Supply chain': 'Where the software comes from: images pinned to a digest or fixed tag, the Solo Istio distribution, agent artifacts pinned, a hardened registry, MCP selectors scoped, and extensions kept in check.',
+  'Workload security': 'How containers run: not privileged, no privilege escalation, dropped capabilities, running as non-root, seccomp and a read-only root filesystem.',
+  'Platform': 'The cluster underneath: a supported Kubernetes version, healthy nodes, certificates not about to expire, no deprecated APIs and Helm releases in a good state.',
+  'Cost': 'Spend and wasted work: LLM spend limits, rate-limit keys that cannot be spoofed, retries only on idempotent calls, and waypoints that are doing a job.',
+  'Observability': 'Being able to see what happened: tracing, audit and access logs, and mesh telemetry.',
+  'Multicluster': 'Multicluster mesh set-up: peer gateway configuration and no legacy remote secrets.',
+  'Network exposure': 'Mesh ports such as 15008 and 15012 not exposed outside the cluster.',
+  'Health': 'The control plane reporting clean metrics, with no config rejections or push errors.',
+  'Config hygiene': 'Configuration that points at things that exist, such as istio.io/rev labels resolving to a running revision.',
+  'Routing': 'Routing rules that behave in ambient mode, such as VirtualService source matches.',
+  'Security': 'General HTTP security settings on ingress, such as a safe CORS policy.',
+};
+const pstCatTip = k => pstCatInfo[k] || 'A group of related checks.';
 const pstBadge = st => `<span class="pst-badge pst-${st}">${{fail: 'FAIL', warn: 'WARN', pass: 'PASS', na: 'N/A'}[st]}</span>`;
 
 // The filter box takes free text and key:value terms. Values match as a
@@ -750,12 +773,12 @@ async function posture() {
     return `<section class="panel pst-card ${P.area === a.area ? 'on' : ''}" data-pstarea="${esc(a.area)}" title="Show only ${esc(a.title)}"><div class="panel-body">
       <div class="row" style="gap:16px;align-items:center"><div class="pst-ring" style="--pct:${a.score};--col:${pstColour(a.score)}"><div><strong>${a.score}</strong><span>${esc(a.grade || '')}</span></div></div>
       <div style="min-width:0"><h2 style="font-size:15px">${esc(a.title)}</h2><p class="muted" style="margin:4px 0 0;font-size:12px"><span class="red">${c.fail || 0} failing</span> · <span class="amber">${c.warn || 0} warnings</span> · ${c.pass || 0} passing · ${c.na || 0} n/a</p></div></div>
-      <div class="mt">${cats.map(([k, v]) => `<div class="pst-cat"><span>${esc(k)}</span><div class="pst-bar"><i style="width:${v}%;background:${pstColour(v)}"></i></div><small>${v}</small></div>`).join('')}</div></div></section>`;
+      <div class="mt">${cats.map(([k, v]) => `<button class="pst-cat" data-pstcat="${attr({area: a.area, cat: k})}" title="${esc(k)}: ${esc(pstCatTip(k))}&#10;&#10;Score ${v}. Click to list these checks."><span>${esc(k)}</span><div class="pst-bar"><i style="width:${v}%;background:${pstColour(v)}"></i></div><small>${v}</small></button>`).join('')}</div></div></section>`;
   };
   const tot = {fail: 0, warn: 0, pass: 0, na: 0};
   r.checks.forEach(c => tot[c.status]++);
   const objs = r.checks.reduce((n, c) => n + c.total, 0);
-  const coverage = `<p class="muted pst-coverage-line">Scanned <strong>${r.checks.length}</strong> checks across ${present.length} area${present.length === 1 ? '' : 's'} and ${objs} object${objs === 1 ? '' : 's'}: <span class="red">${tot.fail} failing</span>, <span class="amber">${tot.warn} warnings</span>, ${tot.pass} passing, ${tot.na} not applicable.${absent.length ? ` Not scored: ${absent.map(a => `${esc(shortName[a.area] || a.title)} (${esc(a.reason)})`).join('; ')}.` : ''}</p>`;
+  const coverage = `<p class="muted pst-coverage-line">Scanned <strong>${r.checks.length}</strong> checks across ${present.length} area${present.length === 1 ? '' : 's'} and ${objs} object${objs === 1 ? '' : 's'}: <span class="red">${tot.fail} failing</span>, <span class="amber">${tot.warn} warnings</span>, ${tot.pass} passing, ${tot.na} not applicable. Hover a category bar to see what it covers, or click it to list its checks.${absent.length ? ` Not scored: ${absent.map(a => `${esc(shortName[a.area] || a.title)} (${esc(a.reason)})`).join('; ')}.` : ''}</p>`;
   // Tabs: Summary, one per scored area, All checks.
   const areaIds = present.map(a => a.area);
   if (P.tab !== 'summary' && P.tab !== 'all' && !areaIds.includes(P.tab)) P.tab = 'summary';
@@ -773,7 +796,7 @@ async function posture() {
   const row = c => {
     const open = P.open === c.id;
     const items = c.items.filter(i => i.status !== 'na');
-    return `<div class="pst-check ${open ? 'open' : ''}"><button class="pst-head" data-pstopen="${esc(c.id)}">${pstBadge(c.status)}${pstSev(c.severity)}<strong>${esc(c.title)}</strong><span class="muted">${esc(shortName[c.area] || c.area)} · ${esc(c.category)}</span><span style="flex:1"></span>${c.points ? `<span class="pst-pts" title="Area score points recovered if every object passed">${pstPts(c.points)} pts</span>` : ''}${c.status === 'na' ? `<small class="muted">${esc(c.reason)}</small>` : `<small>${c.passed}/${c.total} pass</small>`}<span class="muted">${open ? '▾' : '▸'}</span></button>
+    return `<div class="pst-check ${open ? 'open' : ''}"><button class="pst-head" data-pstopen="${esc(c.id)}">${pstBadge(c.status)}${pstSev(c.severity)}<strong>${esc(c.title)}</strong><span class="muted" title="${esc(c.category)}: ${esc(pstCatTip(c.category))}">${esc(shortName[c.area] || c.area)} · ${esc(c.category)}</span><span style="flex:1"></span>${c.points ? `<span class="pst-pts" title="Area score points recovered if every object passed">${pstPts(c.points)} pts</span>` : ''}${c.status === 'na' ? `<small class="muted">${esc(c.reason)}</small>` : `<small>${c.passed}/${c.total} pass</small>`}<span class="muted">${open ? '▾' : '▸'}</span></button>
       ${open ? `<div class="pst-body"><p>${esc(c.why)}</p>
         ${items.length ? `<div class="table-scroll mt" style="max-height:40vh"><table><thead><tr><th></th><th>Object</th><th>What we found</th></tr></thead><tbody>${items.map((i, n) => `<tr><td>${pstBadge(i.status)}</td><td class="mono">${i.name ? `<button class="link" data-pstobj="${attr({c: c.id, n})}">${esc(i.kind)} ${esc(i.namespace ? i.namespace + '/' : '')}${esc(i.name)}</button>` : '<span class="muted">cluster</span>'}</td><td style="white-space:normal">${esc(i.detail)}</td></tr>`).join('')}</tbody></table></div>` : ''}
         ${c.status === 'fail' || c.status === 'warn' || c.status === 'na' ? `<div class="row between mt"><h3>How to fix</h3><div class="row"><button data-pstcopy="${esc(c.id)}">Copy YAML</button>${guideLinks(c.source, c.docs)}</div></div><pre class="code mt">${esc(c.fix)}</pre>` : `<p class="mt row">${guideLinks(c.source, c.docs)}</p>`}
@@ -820,6 +843,12 @@ after.scorecard = () => {
     render().then(() => { const el = document.querySelector(`[data-pstopen="${CSS.escape(id)}"]`); if (el) el.scrollIntoView({block: 'start', behavior: 'smooth'}); });
   });
   document.querySelectorAll('[data-pstarea]').forEach(b => b.onclick = () => { P.tab = P.tab === b.dataset.pstarea ? 'summary' : b.dataset.pstarea; P.open = null; render(); });
+  // A category bar opens its area with the checks in that category, whatever their status.
+  document.querySelectorAll('[data-pstcat]').forEach(b => b.onclick = e => {
+    e.stopPropagation();
+    const x = JSON.parse(b.dataset.pstcat); P.tab = x.area; P.open = null; P.status = 'all'; P.q = `category:"${x.cat.toLowerCase()}"`;
+    render().then(() => { const el = $('#pst-q'); if (el) el.scrollIntoView({block: 'center', behavior: 'smooth'}); });
+  });
   document.querySelectorAll('[data-pstopen]').forEach(b => b.onclick = () => { P.open = P.open === b.dataset.pstopen ? null : b.dataset.pstopen; render(); });
   document.querySelectorAll('[data-pstobj]').forEach(b => b.onclick = () => { const x = JSON.parse(b.dataset.pstobj); const it = S.pstData.checks.find(c => c.id === x.c).items.filter(i => i.status !== 'na')[x.n]; openObject({cluster: it.cluster, group: it.group, resource: it.resource, namespace: it.namespace, name: it.name}); });
   document.querySelectorAll('[data-pstcopy]').forEach(b => b.onclick = () => { const c = S.pstData.checks.find(x => x.id === b.dataset.pstcopy); navigator.clipboard.writeText(c.fix).then(() => toast('Fix copied'), () => toast('Clipboard unavailable')); });

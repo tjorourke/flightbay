@@ -63,7 +63,7 @@ An area's score is the average of its checks' scores, weighted by severity:
 | medium | 3 |
 | low | 1 |
 
-Each area also shows a score per category (Authentication, Isolation, Resilience and so on), worked out the same way.
+Each area also shows a score per category, worked out the same way from only the checks in that category. See [Categories](#categories).
 
 | Score | Grade |
 |---|---|
@@ -72,6 +72,33 @@ Each area also shows a score per category (Authentication, Isolation, Resilience
 | 60 to 74 | C |
 | 40 to 59 | D |
 | below 40 | F |
+
+## Categories
+
+Every check belongs to one category. A category bar on an area card is that area's score for just those checks, so a low bar tells you which kind of problem is pulling the area down. Hover a bar to see what the category covers; click it to open the area filtered to `category:"<name>"`, with every status shown.
+
+| Category | What it covers |
+|---|---|
+| Authentication | Callers have to prove who they are: JWT, API keys or mTLS required on MCP, A2A, LLM and ingress routes, with issuer and audience pinned and failures closed. |
+| Authorization | What an authenticated caller may do: authorization policies, default deny, no allow-all or overly broad rules, per-tool MCP access, and waypoints wired so L7 policy is enforced. |
+| Encryption | Traffic is encrypted and certificates are checked: workloads in the mesh with strict mTLS, TLS on listeners, TLS verified to upstreams, valid TLS secrets, credentials not stored in plain text. |
+| Guardrails | Controls on what agents and models may do: prompt guards on requests, responses and streams, agents going through the LLM gateway, tool scope, and enforcement that fails closed. |
+| Identity | Credentials and who workloads run as: no literal or passed-through tokens, secret references that resolve, dedicated service accounts, RBAC without wildcards, escalation or secret reads, and a shared mesh root of trust. |
+| Isolation | What can reach what: egress control, network policies, Pod Security admission, host access, namespace-restricted routes, MCP servers not reachable directly, the cloud metadata endpoint blocked. |
+| Resilience | Staying up under failure and load: replicas and HA, disruption budgets, probes, resource requests, spread, timeouts, retries, rate limits, and references and policies that resolve and attach. |
+| Supply chain | Where the software comes from: images pinned to a digest or fixed tag, the Solo Istio distribution, agent artifacts pinned, a hardened registry, MCP selectors scoped, extensions kept in check. |
+| Workload security | How containers run: not privileged, no privilege escalation, dropped capabilities, non-root, seccomp and a read-only root filesystem. |
+| Platform | The cluster underneath: a supported Kubernetes version, healthy nodes, certificates not about to expire, no deprecated APIs, Helm releases in a good state. |
+| Cost | Spend and wasted work: LLM spend limits, rate-limit keys that cannot be spoofed, retries only on idempotent calls, waypoints that are doing a job. |
+| Observability | Seeing what happened: tracing, audit and access logs, mesh telemetry. |
+| Multicluster | Multicluster mesh set-up: peer gateway configuration and no legacy remote secrets. |
+| Network exposure | Mesh ports such as 15008 and 15012 not exposed outside the cluster. |
+| Health | The control plane reporting clean metrics, with no config rejections or push errors. |
+| Config hygiene | Configuration that points at things that exist, such as `istio.io/rev` labels resolving to a running revision. |
+| Routing | Routing rules that behave in ambient mode, such as VirtualService source matches. |
+| Security | General HTTP security settings on ingress, such as a safe CORS policy. |
+
+Every check, with its category, is listed on [Scorecard checks](/desk/scorecard-checks/).
 
 ## Not applicable
 
@@ -85,7 +112,7 @@ Not applicable checks carry their reason ("clusterrolebindings.rbac.authorizatio
 
 ## Using the page
 
-The top of the page has a card per scored area: the score, grade, counts of failing, warning, passing and N/A checks, and a bar per category. Click a card to open that area. Below the cards, a line says how many checks ran across how many objects, and which areas were not scored and why.
+The top of the page has a card per scored area: the score, grade, counts of failing, warning, passing and N/A checks, and a bar per category. Click a card to open that area, or a category bar to list the checks in it. Below the cards, a line says how many checks ran across how many objects, and which areas were not scored and why.
 
 ### Tabs
 
