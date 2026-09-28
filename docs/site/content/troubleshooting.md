@@ -49,6 +49,22 @@ Nodes, CRDs, ClusterRoles and other cluster-scoped types need `--cluster-scoped`
 
 The CoreDNS `log` plugin is off by default. Add `log` to the Corefile before capturing. See [Observed traffic](/collect/observed-traffic/).
 
+### "the approved policy ... can only be narrowed on the command line"
+
+You passed `--policy-key` and a flag that would widen the signed policy, such as `--namespaces`, `--since` or `--include-resources`. Narrowing flags (`--exclude-namespaces`, `--exclude-resources`, `--no-logs`, `--no-proxy-dumps`, `--no-portforward`, `--drop-field`, `--redact-extra`, `--case`) are allowed. To change what it allows, edit the file and have the approver sign it again with `flightbay policy sign`. See [Signing and approved policies](/collect/signing/).
+
+### "does not match its approval signature"
+
+The policy file changed after it was signed, so `FILE.sig` no longer matches. This is refused with or without `--policy-key`. Get the edited file signed again, or delete the stale `.sig` if the file was never meant to be approved.
+
+### "is not signed" or "is not one of the --policy-key keys"
+
+`--policy-key` needs `FILE.sig` next to the file, made by one of the keys you passed. Check it with `flightbay policy verify FILE --key approver.pub`.
+
+### "can be read by other users ... run chmod 600"
+
+Flightbay refuses to sign with a private key that other users can read. Run the `chmod 600` it prints.
+
 ### The capture was interrupted
 
 Ctrl+C, or a lost connection, leaves `NAME.partial`. It has no manifest and fails verification. Run the capture again. If one cluster of several fails, the others are still collected and that cluster is marked incomplete in the collection log.
@@ -68,6 +84,24 @@ flightbay ui flightbay-01234567-20260927T1012Z.tar.zst.age -i ~/.flightbay/suppo
 ```
 
 "decrypt bundle: ..." means the identity does not match any recipient. Ask for the bundle to be encrypted to your recipient (`flightbay-desk keygen` prints it).
+
+### "Signature invalid" or "key not trusted"
+
+| Shown | Means | Do |
+|---|---|---|
+| Signed by NAME, key not trusted | The bundle is unchanged since it was signed, but by a key you have not trusted | Get the customer's `.pub` through a channel you trust and put it in `~/.flightbay/trusted-keys/`, or pass `--verify-key` |
+| Signature invalid | The manifest changed after it was signed, or the signature is damaged | Treat the bundle as untrusted and ask for it again |
+| Not signed | No `manifest.sig` | Ask for `flightbay collect --sign` or `flightbay review --sign` |
+
+`flightbay inspect BUNDLE --verify-key customer.pub` gives the same answer on the command line and fails unless the bundle is signed by that key.
+
+### Review: "this bundle is encrypted; review needs the identity that opens it"
+
+You can only review what you can read. Capture without `--encrypt-to`, review, and encrypt the reviewed bundle with `flightbay review --encrypt-to`. If you do hold the identity, pass it with `-i`.
+
+### Review: "the original bundle did not verify"
+
+The export reads the whole original and checks it against its manifest first. A truncated or altered capture is never signed again. Capture again, or check the file with `flightbay inspect`.
 
 ### "bundle failed verification" or "bundle is incomplete"
 
@@ -98,7 +132,7 @@ The desk only listens on loopback unless you pass `--allow-remote`, which is mea
 
 ### The browser says "not signed in" or "invalid token"
 
-Open the exact `UI:` address the desk printed, token included. Each desk makes a new token, so an old tab from a previous desk will not work.
+Open the exact `UI:` address the desk printed, token included. Each desk makes a new token, so an old tab from a previous desk will not work. Several desks can be open in one browser at once: each keeps its own session cookie, named for its port.
 
 ### Helpers say "no open workspace found"
 
@@ -119,6 +153,10 @@ Buttons in the UI already run k9s with `--readonly`. If k9s misbehaves against t
 That is expected: the snapshot cannot be changed. `Forbidden: ... was excluded by the customer's collection policy` means that type was not collected on purpose.
 
 ## Reading the results
+
+### A Scorecard check says "removed by the customer before sending"
+
+The customer took that type, or some of its objects, out in review. The check is not applicable rather than failed. **Coverage** shows the review ledger: how much was removed and, if the customer chose to list them, the names.
 
 ### A Scorecard check says "not applicable" or "was not captured"
 

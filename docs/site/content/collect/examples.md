@@ -80,6 +80,12 @@ flightbay collect --context prod-eu --namespaces payments --secrets metadata --c
 # never read these resource types
 flightbay collect --context prod-eu --namespaces payments --exclude-resources configmaps,secrets
 
+# only these resource types (an allowlist; exclusions still win)
+flightbay collect --context prod-eu --namespaces payments --include-resources 'pods,deployments.apps,*.gateway.networking.k8s.io'
+
+# remove your own annotations from every object before writing
+flightbay collect --context prod-eu --namespaces payments --drop-field 'metadata.annotations["corp.example/*"]'
+
 # only objects with a label
 flightbay collect --context prod-eu --namespaces kagent --label-selector app.kubernetes.io/part-of=kagent
 
@@ -114,6 +120,43 @@ flightbay collect --context prod-eu --namespaces payments --encrypt-to age1qyqsz
 ```
 
 The file ends in `.tar.zst.age`. It opens with `flightbay ui FILE -i key.txt`. See [Sending a bundle](/collect/sending/).
+
+## Sign it
+
+Create a key once, send Solo the `.pub`, and sign every capture with the private key:
+
+```bash
+flightbay keygen --name "ACME platform team"
+flightbay collect --context prod-eu --namespaces payments --sign flightbay-signing.key
+```
+
+See [Signing and approved policies](/collect/signing/).
+
+## Only run the policy your security team approved
+
+```bash
+flightbay policy sign collection.yaml --key approver.key       # the approver, once
+flightbay collect --config collection.yaml --policy-key approver.pub --sign flightbay-signing.key
+```
+
+An edited or unsigned policy, or a flag that widens it, is refused.
+
+## Review it, then send the reviewed copy
+
+Capture without encryption, pick what to leave out in the UI, and export a signed, encrypted copy:
+
+```bash
+flightbay collect --context prod-eu --namespaces payments,istio-system
+flightbay review flightbay-nocase-*.tar.zst --sign flightbay-signing.key --encrypt-to age1...
+```
+
+The same review from a saved plan, without the UI:
+
+```bash
+flightbay review flightbay-nocase-*.tar.zst --plan review-plan.yaml --sign flightbay-signing.key
+```
+
+See [Reviewing before you send](/collect/review/).
 
 ## Add flow logs
 

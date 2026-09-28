@@ -51,6 +51,12 @@ If the browser does not open, use the `UI:` address, token included. Press Ctrl+
 | `--shell PATH` | `/bin/bash` | Shell for the terminal. |
 | `--defer CATEGORIES` | | Load `objects`, `logs`, `events` or `diagnostics` later, from the UI. |
 | `--throttle RATE` | | Limit import speed, e.g. `512KiB`, to rehearse a slow upload. |
+| `--verify-key FILE` | `~/.flightbay/trusted-keys/*.pub` | Public keys to check the bundle's signature against. See [Signing](/collect/signing/). |
+| `--review` | off | Review mode: opens on **Review and send** to choose what to export. `flightbay review` runs this. See [Reviewing before you send](/collect/review/). |
+| `--sign KEY` | | Review mode: sign the exported bundle with this private key. |
+| `--encrypt-to age1...` | | Review mode: encrypt the exported bundle. |
+| `--reviewer NAME` | | Review mode: who reviewed it, recorded in the ledger. |
+| `--review-out FILE` | `NAME-reviewed.tar.zst` | Review mode: where the export goes. |
 
 Workspace directories left behind by a desk that was killed rather than closed are removed after seven days.
 
@@ -88,6 +94,7 @@ The sidebar has every view:
 
 | View | For |
 |---|---|
+| [Review and send](/collect/review/) | Review mode only: choose what to send to Solo and export a signed bundle |
 | [Overview](/desk/overview/) | Where to start: counts, the top findings, clusters and provenance |
 | [Search](/desk/search/) | Every object, by name, label or anything in spec and status |
 | [Navigator](/desk/navigator/) | A keyboard-first, k9s-style browser |

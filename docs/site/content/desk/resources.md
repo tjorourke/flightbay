@@ -32,6 +32,8 @@ If a type did not collect cleanly, a note above the table says so, because it ch
 | excluded | The customer excluded this type. Its absence says nothing about the cluster. |
 | failed | Collection failed, with the reason (often RBAC). |
 | truncated | The list was cut short, with the reason (for example the bundle size budget). |
+| removed by customer | The customer removed the whole type in review before sending. |
+| some removed by customer | The customer removed some of these objects by name in review; the rest are here, so a missing object proves nothing. |
 
 ## The object drawer
 
@@ -52,6 +54,7 @@ Buttons in the summary:
 - **Open logs of all its pods** (Deployments, DaemonSets, StatefulSets, ReplicaSets, Jobs and CronJobs) opens the logs of every pod it owns.
 - **kubectl describe** runs `kubectl describe` for this object in the terminal.
 - **Compare across clusters** (bundles with more than one cluster) shows how the object differs between clusters. See [Compare](/desk/compare/).
+- **Remove from the bundle** (review mode only) leaves this object out of the bundle you export; press it again (**Keep in the bundle**) to undo. See [Reviewing before you send](/collect/review/).
 
 ## Terminal shortcuts
 

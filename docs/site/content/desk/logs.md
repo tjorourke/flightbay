@@ -107,9 +107,14 @@ Click a line (or focus it and press Enter) to open it in place:
 - **Inspect pod** opens the pod in the object drawer;
 - **All lines from this stream** filters to that pod, container and stream;
 - **Follow trace_id=... across pods** appears for any trace, request, span, correlation or connection ID on the line, and searches for that ID in every pod;
-- the line's parsed fields as JSON.
+- the line's parsed fields as JSON;
+- **Remove this line from the bundle**, in review mode only: the line is left out of the bundle you export.
 
 Trace, request and connection IDs are also shown inline on each line.
+
+## Removing lines before you send (review mode)
+
+When the desk was opened with `flightbay review`, the header has **Remove matching lines**. It leaves every line the current search and filters match out of the exported bundle, after asking you to confirm. Up to 20,000 lines at a time; for more, add a pattern under **Drop log lines** on the Review page. An empty search is refused: to remove every line of a stream, remove the stream on the Review page. Picked lines are listed on the Review page's **Picked items** tab. See [Reviewing before you send](/collect/review/).
 
 ## While the bundle loads
 
