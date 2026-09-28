@@ -669,6 +669,72 @@ const rcRisk = r => `<span class="rc-risk rc-${esc(r)}"><i></i>${esc(r)}</span>`
 // Flow sources as small badges: which logs saw a call.
 const rcSrcs = xs => (xs || []).map(x => `<span class="rc-src rc-src-${esc(x)}">${esc(x)}</span>`).join('');
 const rcSrcList = xs => (xs || []).length ? xs.join(', ') : '';
+// How a destination was found: the policy evaluation, the agent's own
+// configuration, a gateway route, and every flow source that saw it.
+const rcFoundLabel = {policy: 'policy', config: 'config', route: 'gateway route', image: 'image pull'};
+function rcFound(x, external) {
+  const out = [];
+  if (external) {
+    if ((x.declaredIn || []).some(d => !/node pull|image pulls/.test(d))) out.push('config');
+    if (x.reachedVia === 'gateway' && x.route) out.push('route');
+    if (x.reachedVia === 'node') out.push('image');
+  } else {
+    out.push('policy');
+    if (x.declared) out.push('config');
+  }
+  for (const s of (external ? x.sources : x.observedBy) || []) if (!out.includes(s)) out.push(s);
+  return out;
+}
+const rcFoundChips = ks => ks.map(k => `<span class="rc-src rc-src-${esc(k)}">${esc(rcFoundLabel[k] || k)}</span>`).join('');
+// rcFoundOk filters on how a destination was found.
+const rcFoundOk = (ks, k) => k === 'any' ? true : k === 'traffic' ? ks.some(x => !rcFoundLabel[x]) : k === 'only-policy' ? ks.length === 1 && ks[0] === 'policy' : ks.includes(k);
+function rcFoundChipRow(items, cur, attrName) {
+  const all = items.map(x => x.found);
+  const srcs = [...new Set(all.flat())].filter(k => !rcFoundLabel[k]).sort();
+  const keys = [['any', 'Any'], ...(all.some(ks => ks.includes('policy')) ? [['only-policy', 'Policy only']] : []), ...(all.some(ks => ks.includes('config')) ? [['config', 'Configured']] : []), ...(all.some(ks => ks.includes('route')) ? [['route', 'Gateway route']] : []), ...(srcs.length ? [['traffic', 'Seen in traffic']] : []), ...srcs.map(s => [s, s])];
+  return `<div class="row wrap rc-foundrow"><small class="muted">Found by</small>${keys.map(([k, label]) => `<button class="chip ${cur === k ? 'on' : ''}" ${attrName}="${k}">${esc(label)} <small>${all.filter(ks => rcFoundOk(ks, k)).length}</small></button>`).join('')}</div>`;
+}
+const rcOrigin = f => f.origin === 'bundle' ? `flow file ${f.file || ''}, in the bundle` : f.origin === 'reviewer' ? `flow file ${f.file || ''}, added when opened (not signed)` : 'captured logs';
+// rcLogQuery is a Logs search that finds the lines behind a flow record, for
+// the sources whose records come from captured logs.
+function rcLogQuery(f) {
+  if (f.origin && f.origin !== 'logs') return '';
+  const host = String(f.dstHost || f.dstIp || '').replace(/\.$/, '');
+  const q = s => `"${String(s).replace(/"/g, '')}"`;
+  const ip = /^[\d.]+$|:/.test(host);
+  if (f.source === 'ztunnel') return [f.srcPod ? `src.workload:${f.srcPod}` : '', host ? (ip ? q(host) : `dst.service:${host}`) : '', f.method ? `method:${f.method}` : ''].filter(Boolean).join(' ');
+  if (f.source === 'agentgateway') return ['scope:request', f.route ? `route:${f.route}` : '', host ? q(host) : '', f.method && f.protocol !== 'mcp' ? `http.method:${f.method}` : ''].filter(Boolean).join(' ');
+  if (f.source === 'coredns') return host ? `pod:coredns* ${q(host)}` : '';
+  if (f.source === 'envoy') return [f.srcPod ? `pod:${f.srcPod}` : '', host ? q(host) : ''].filter(Boolean).join(' ');
+  return '';
+}
+// rcEvidence is the panel that opens under a destination: what said it is
+// reachable, where it is configured, and the flow records that show it.
+function rcEvidence(x, external, agent) {
+  const ev = x.evidence || [];
+  const policy = external
+    ? `<div>${esc(rcVia(x))}${x.gateway ? ` · <span class="mono">${esc(x.gateway)}</span>` : ''}${x.route ? ` · route <span class="mono">${esc(x.route)}</span>` : ''}${x.verdict && x.reachedVia !== 'direct' ? ` · egress <span class="${rcNetCls[x.verdict] || ''}">${esc(x.verdict)}</span>` : x.verdict ? ` <span class="${rcNetCls[x.verdict] || ''}">${esc(x.verdict)}</span>` : ''}</div><div class="muted">${esc(x.why || '')}</div>`
+    : `<div><span class="${x.verdict === 'denied' ? 'green' : x.verdict === 'allowed' ? '' : 'amber'}">${esc(x.verdict)}</span>${x.layer ? ` by <strong>${esc(x.layer)}</strong>` : ''}${x.via ? ` · via ${esc(x.via)}` : ''}</div>${(x.reasons || []).map(r => `<div class="muted">${esc(r)}</div>`).join('')}${(x.conditions || []).map(r => `<div class="muted">if ${esc(r)}</div>`).join('')}`;
+  const decl = (x.declaredIn || []).length ? x.declaredIn.map(d => `<div class="mono">${esc(d)}</div>`).join('') : x.declared ? '<div>yes</div>' : '<span class="muted">not in its configuration</span>';
+  const seen = external ? (x.observed || x.lookups) : x.observed;
+  const none = agent.observed ? `No flow source saw it. ${esc(rcSrcList(agent.observedBy))} cover${(agent.observedBy || []).length === 1 ? 's' : ''} this agent, so it was allowed but not called while the capture ran.` : 'No flow logs cover this agent, so the capture cannot say whether it was called. Attach flow logs with <span class="mono">flightbay collect --attach-flows</span> or <span class="mono">flightbay-desk open --flows</span>.';
+  const rows = ev.map((f, i) => {
+    const req = f.source === 'coredns' ? `DNS lookup${f.method ? ' ' + esc(f.method) : ''}${f.dstIp ? ` <span class="muted">→ ${esc(f.dstIp)}</span>` : ''}` : [f.method, f.path, f.tool ? 'tool ' + f.tool : ''].filter(Boolean).map(esc).join(' ') || `<span class="muted">${esc(f.protocol || 'connection')}</span>`;
+    const dst = [f.dstHost, f.dstIp && f.dstIp !== f.dstHost && f.source !== 'coredns' ? f.dstIp : ''].filter(Boolean).join(' · ') + (f.dstPort ? ':' + f.dstPort : '');
+    const src = [f.srcNamespace && f.srcPod ? f.srcNamespace + '/' + f.srcPod : f.srcPod, f.srcIp, f.srcIdentity].filter(Boolean)[0] || '';
+    const lq = rcLogQuery(f);
+    return `<tr><td>${rcFoundChips([f.source])}</td><td class="rc-small">${esc(rcOrigin(f))}</td><td class="num">${num(f.count)}</td><td class="mono rc-small">${req}</td>
+      <td class="mono rc-small">${esc(src)}</td><td class="mono rc-small">${esc(dst)}</td><td class="mono rc-small">${esc([f.route, f.via && f.via !== f.route ? 'via ' + f.via : ''].filter(Boolean).join(' · '))}</td>
+      <td class="${f.verdict === 'denied' ? 'amber' : 'muted'} rc-small">${esc(f.verdict || '')}</td><td>${lq ? `<button class="link rc-small" data-rclogs="${esc(lq)}">log lines →</button>` : ''}</td></tr>`;
+  }).join('');
+  return `<div class="rc-ev-body"><div class="rc-ev-grid">
+    <div><h4>${external ? 'How it is reached' : 'Policy verdict'}</h4>${policy}</div>
+    <div><h4>Configured in</h4>${decl}</div>
+    <div><h4>Seen by</h4>${(external ? x.sources : x.observedBy || []).length ? rcFoundChips(external ? x.sources : x.observedBy) : '<span class="muted">nothing</span>'}${x.ip && external ? `<div class="rc-small muted">address ${esc(x.ip)}${(x.sources || []).includes('coredns') ? ', named by its DNS lookup' : ''}</div>` : ''}</div></div>
+    ${ev.length ? `<h4 class="mt">Flow records <small class="muted">${ev.length}${ev.length >= 20 ? ', the largest 20' : ''} · counts are per source and never added across sources</small></h4>
+      <div class="table-scroll"><table class="rc-evt"><thead><tr><th>Source</th><th>From</th><th>Count</th><th>Request</th><th>Caller as logged</th><th>Destination as logged</th><th>Route</th><th>Verdict</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`
+      : `<p class="muted mt">${seen ? 'Seen, but the records were merged away.' : none}</p>`}</div>`;
+}
 const rcClsTag = {registry: 'registry', proxy: 'proxy', llm: 'llm', git: 'git', storage: 'storage', exfil: 'exfil', metadata: 'metadata', unknown: 'unknown'};
 const rcVia = x => ({direct: 'direct egress', gateway: 'through agentgateway', 'egress-gateway': 'egress waypoint', proxy: 'HTTP proxy', blocked: 'blocked', node: 'image pulls (node)'})[x.reachedVia] || x.reachedVia;
 // svc:<cluster>/<ns>/svc/<name> -> {namespace, name}
@@ -807,26 +873,29 @@ function rcDetail(a) {
   const chipOk = (e, k) => k === 'risky' ? (e.risk === 'red' || e.risk === 'amber') : k === 'used' ? e.observed > 0 : k === 'never' ? never.has(dest(e)) : true;
   const dChipOk = e => chipOk(e, R.dchip);
   const dMatch = e => dterms.every(t => { const ok = (dest(e) + ' ' + e.verdict + ' ' + e.risk + ' ' + e.why + ' ' + (e.reasons || []).join(' ') + ' ' + (e.methods || ['any']).join(' ')).toLowerCase().includes((t.text ?? `${t.key}:${t.val}`).toLowerCase()); return t.neg ? !ok : ok; });
-  const drows = direct.filter(e => dChipOk(e) && dMatch(e));
+  direct.forEach(e => { e.found = rcFound(e, false); });
+  const drows = direct.filter(e => dChipOk(e) && dMatch(e) && rcFoundOk(e.found, R.dfound || 'any'));
   const counts = Object.fromEntries(['all', 'risky', 'used', 'never'].map(k => [k, direct.filter(e => chipOk(e, k)).length]));
   const dchip = (k, label) => `<button class="chip ${R.dchip === k ? 'on' : ''}" data-rcd="${k}">${label} <small>${counts[k]}</small></button>`;
   const cl = a.cluster;
   const destTable = `<section class="panel mt"><div class="panel-head"><h2>Destinations</h2><small class="muted">Every Service it can reach in one hop, riskiest first${a.observed ? ` · calls seen by ${esc(rcSrcList(a.observedBy))}` : ''}. Hosts outside the cluster are on the External tab</small></div><div class="panel-body" style="padding-bottom:0">
     <div class="toolbar"><div class="row wrap">${dchip('all', 'All')}${dchip('risky', 'Risky')}${dchip('used', 'Used')}${dchip('never', 'Never used')}</div>
-      <input id="rc-dq" placeholder="Filter destinations" value="${esc(R.dq)}" autocomplete="off" spellcheck="false" style="min-width:240px"></div></div>
-    <div class="table-scroll" style="max-height:60vh">${drows.length ? `<table class="rc-dest"><thead><tr><th>Risk</th><th>Destination</th><th>Verdict</th><th>Methods</th><th>Called</th><th>Configured</th><th>Why</th></tr></thead><tbody>
-      ${drows.map(e => { const s = rcSvc(e.to); return `<tr><td>${rcRisk(e.risk)}</td>
+      <input id="rc-dq" placeholder="Filter destinations" value="${esc(R.dq)}" autocomplete="off" spellcheck="false" style="min-width:240px"></div>
+    ${rcFoundChipRow(direct, R.dfound || 'any', 'data-rcdf')}</div>
+    <div class="table-scroll" style="max-height:60vh">${drows.length ? `<table class="rc-dest"><thead><tr><th>Risk</th><th>Destination</th><th>Verdict</th><th>Methods</th><th>Called</th><th>Found by</th><th>Why</th></tr></thead><tbody>
+      ${drows.map(e => { const s = rcSvc(e.to); const open = !!(R.evOpen || {})[e.to]; return `<tr class="rc-evrow ${open ? 'open' : ''}"><td>${rcRisk(e.risk)}</td>
         <td class="mono rc-dst">${s ? `<button class="link" data-rcsvc="${attr({cluster: cl, group: '', resource: 'services', namespace: s.namespace, name: s.name})}">${esc(dest(e))}</button>` : esc(dest(e))}${never.has(dest(e)) ? '<br><small class="muted">never used</small>' : ''}</td>
         <td class="${e.verdict === 'allowed' ? '' : e.verdict === 'denied' ? 'green' : 'amber'}">${esc(e.verdict)}${e.layer ? ` <small class="muted">${esc(e.layer)}</small>` : ''}</td>
         <td class="mono rc-small">${e.methods == null ? '<span class="muted">any method</span>' : esc(e.methods.join(', ') || 'none')}${e.write ? ' <span class="red">· write</span>' : ''}</td>
         <td class="rc-small">${e.observed ? `${num(e.observed)}${(e.observedMethods || []).length ? ` <span class="muted mono">${esc(e.observedMethods.join(', '))}</span>` : ''}${e.observedDenied ? ` <span class="amber">· ${num(e.observedDenied)} denied</span>` : ''}${(e.tools || []).length ? `<div class="rc-tools">tools ${e.tools.map(t => `<span class="mono">${esc(t)}</span>`).join(', ')}</div>` : ''}<div class="rc-srcs">${rcSrcs(e.observedBy)}</div>` : '<span class="muted">not seen</span>'}</td>
-        <td>${e.declared ? '<span class="green">yes</span>' : '<span class="muted">no</span>'}</td>
-        <td class="rc-wrap">${esc(e.why)}${(e.reasons || []).length ? `<br><small class="muted">${esc(e.reasons.join('; '))}</small>` : ''}${e.via ? `<br><small class="muted">via ${esc(e.via)}</small>` : ''}</td></tr>`; }).join('')}
+        <td class="rc-found"><button class="rc-evbtn" data-rcev="${esc(e.to)}" title="Show the evidence">${rcFoundChips(e.found)}<span class="muted">${open ? '▾' : '▸'}</span></button></td>
+        <td class="rc-wrap">${esc(e.why)}${(e.reasons || []).length ? `<br><small class="muted">${esc(e.reasons.join('; '))}</small>` : ''}${e.via ? `<br><small class="muted">via ${esc(e.via)}</small>` : ''}</td></tr>${open ? `<tr class="rc-ev"><td colspan="7">${rcEvidence(e, false, a)}</td></tr>` : ''}`; }).join('')}
     </tbody></table>` : `<div class="empty"><strong>${direct.length ? 'No destinations match' : 'No destinations'}</strong>${direct.length ? 'Change the filter above.' : 'Nothing in the cluster is reachable from this agent.'}</div>`}</div></section>`;
   const ext = a.external || [];
   const eChipOk = (x, k) => k === 'registries' ? (x.class === 'registry' || x.class === 'proxy') : k === 'llm' ? x.class === 'llm' : k === 'direct' ? x.reachedVia === 'direct' : k === 'gateway' ? x.reachedVia === 'gateway' : k === 'observed' ? (x.observed > 0 || x.lookups > 0) : true;
   const echips = [['all', 'All'], ['registries', 'Registries'], ['llm', 'LLM'], ['direct', 'Direct'], ['gateway', 'Through gateway'], ['observed', 'Observed']];
-  const erows = ext.filter(x => eChipOk(x, R.echip));
+  ext.forEach(x => { x.found = rcFound(x, true); });
+  const erows = ext.filter(x => eChipOk(x, R.echip) && rcFoundOk(x.found, R.efound || 'any'));
   const eHow = x => {
     const bits = [`<strong>${esc(rcVia(x))}</strong>`];
     if (x.reachedVia === 'gateway') bits.push(`<div class="mono rc-small">${esc(x.gateway || '')}${x.route ? ` · route ${esc(x.route)}` : ''}</div><div class="rc-small">${x.authn ? '<span class="green">authn required</span>' : '<span class="amber">no authn</span>'}${x.readOnly ? ' · <span class="green">read-only</span>' : ' · <span class="amber">any method</span>'}</div>`);
@@ -842,13 +911,15 @@ function rcDetail(a) {
     ? `${x.observed ? num(x.observed) : ''}${(x.methods || []).length ? ` <span class="mono ${x.writeSeen ? 'red' : 'muted'}">${esc(x.methods.join(', '))}</span>` : ''}${x.lookups ? `<div class="rc-small muted">${num(x.lookups)} DNS lookup${x.lookups === 1 ? '' : 's'}</div>` : ''}${(x.tools || []).length ? `<div class="rc-tools">tools ${x.tools.map(t => `<span class="mono">${esc(t)}</span>`).join(', ')}</div>` : ''}<div class="rc-srcs">${rcSrcs(x.sources)}</div>`
     : '<span class="muted">not seen</span>';
   const extTable = `<section class="panel mt"><div class="panel-head"><h2>External</h2><small class="muted">Every host outside the cluster it is configured for, was seen calling, or can reach through a gateway. A registry out there lends its reach just like one inside.</small></div><div class="panel-body" style="padding-bottom:0">
-    <div class="toolbar"><div class="row wrap">${echips.map(([k, label]) => `<button class="chip ${R.echip === k ? 'on' : ''}" data-rce="${k}">${label} <small>${ext.filter(x => eChipOk(x, k)).length}</small></button>`).join('')}</div></div></div>
-    <div class="table-scroll" style="max-height:62vh">${erows.length ? `<table class="rc-ext"><thead><tr><th>Host</th><th>What it is</th><th>How it's reached</th><th>Credential</th><th>Observed</th><th>Configured in</th><th>Risk</th></tr></thead><tbody>
-      ${erows.map(x => `<tr class="${x.reachedVia === 'node' ? 'rc-dim' : ''}"><td class="mono rc-host">${esc(x.host)}${x.ip && x.ip !== x.host ? `<br><small class="muted">${esc(x.ip)}</small>` : ''}</td>
+    <div class="toolbar"><div class="row wrap">${echips.map(([k, label]) => `<button class="chip ${R.echip === k ? 'on' : ''}" data-rce="${k}">${label} <small>${ext.filter(x => eChipOk(x, k)).length}</small></button>`).join('')}</div></div>
+    ${rcFoundChipRow(ext, R.efound || 'any', 'data-rcef')}</div>
+    <div class="table-scroll" style="max-height:62vh">${erows.length ? `<table class="rc-ext"><thead><tr><th>Host</th><th>What it is</th><th>How it's reached</th><th>Credential</th><th>Observed</th><th>Configured in</th><th>Found by</th><th>Risk</th></tr></thead><tbody>
+      ${erows.map(x => { const open = !!(R.evOpen || {})['ext:' + x.host]; return `<tr class="rc-evrow ${open ? 'open' : ''} ${x.reachedVia === 'node' ? 'rc-dim' : ''}"><td class="mono rc-host">${esc(x.host)}${x.ip && x.ip !== x.host ? `<br><small class="muted">${esc(x.ip)}</small>` : ''}</td>
         <td class="rc-what"><span class="rc-cls rc-cls-${esc(x.class)}">${esc(rcClsTag[x.class] || x.class)}</span><div class="rc-small">${esc(x.product || '')}</div></td>
         <td class="rc-how">${eHow(x)}</td><td class="rc-cred">${eCred(x)}</td><td class="rc-small rc-obs">${eObs(x)}</td>
         <td class="rc-small rc-in">${(x.declaredIn || []).map(d => `<div>${esc(d)}</div>`).join('') || '<span class="muted">not configured</span>'}</td>
-        <td class="rc-riskcell">${rcRisk(x.risk)}<div class="rc-small muted">${esc(x.why)}</div></td></tr>`).join('')}
+        <td class="rc-found"><button class="rc-evbtn" data-rcev="${esc('ext:' + x.host)}" title="Show the evidence">${rcFoundChips(x.found)}<span class="muted">${open ? '▾' : '▸'}</span></button></td>
+        <td class="rc-riskcell">${rcRisk(x.risk)}<div class="rc-small muted">${esc(x.why)}</div></td></tr>${open ? `<tr class="rc-ev"><td colspan="8">${rcEvidence(x, true, a)}</td></tr>` : ''}`; }).join('')}
     </tbody></table>` : `<div class="empty"><strong>${ext.length ? 'No hosts match' : 'No external destinations'}</strong>${ext.length ? 'Choose another filter above.' : 'Nothing in its configuration, its gateways or the flow logs points outside the cluster.'}</div>`}</div></section>`;
   const tabs = [['graph', 'Blast radius', ''], ['findings', 'Findings', (a.findings || []).length], ['paths', 'Paths', (a.paths || []).length], ['dest', 'Destinations', direct.length], ['external', 'External', ext.filter(x => x.reachedVia !== 'node').length], ['identity', 'Identity', '']];
   const tab = R.dtab || 'graph';
@@ -1063,9 +1134,11 @@ function rcGraph(a, G) {
     : n.type === 'external' ? [...(n.classes || []), n.via].filter(Boolean).join(' · ') || 'external host'
     : viaOf(n).length ? [`via ${viaOf(n).join(', ')}`, n.alsoDirect ? 'also direct' : '', ...(n.classes || [])].filter(Boolean).join(' · ')
     : [...(n.classes || []), split(n)[1]].filter(Boolean).join(' · ') || 'service';
+  const dEdge = new Map([...(a.direct || []).map(e => [e.to, rcFound(e, false)]), ...(a.external || []).map(x => ['ext:' + x.host, rcFound(x, true)])]);
+  const foundOf = n => (dEdge.get(n.id) || []).map(k => rcFoundLabel[k] || k).join(', ');
   const nodeSvg = nodes.map(n => {
     const click = n.type === 'group' || n.ref || rcSvc(n.id);
-    const tip = [n.label, n.namespace && n.type !== 'group' ? 'namespace ' + n.namespace : '', (n.classes || []).join(', '), n.detail, viaOf(n).length ? `Reached through ${viaOf(n).join(', ')}` : '', n.alsoDirect ? `Also reachable directly (${n.alsoDirect})` : '', click ? (n.type === 'group' ? 'Click to open the namespace up' : 'Click to open') : ''].filter(Boolean).join('\n');
+    const tip = [n.label, n.namespace && n.type !== 'group' ? 'namespace ' + n.namespace : '', (n.classes || []).join(', '), n.detail, viaOf(n).length ? `Reached through ${viaOf(n).join(', ')}` : '', n.alsoDirect ? `Also reachable directly (${n.alsoDirect})` : '', foundOf(n) ? `Found by ${foundOf(n)} (evidence on the ${n.type === 'external' ? 'External' : 'Destinations'} tab)` : '', click ? (n.type === 'group' ? 'Click to open the namespace up' : 'Click to open') : ''].filter(Boolean).join('\n');
     return `<g class="rg-node rg-${risk(n.risk)} rg-t-${esc(n.type)} ${click ? 'rg-click' : ''}" data-rgid="${esc(n.id)}"${grid && col[n.id] === 1 ? ' data-grid="1"' : ''} transform="translate(${nodeX(n.id)},${Y(n.id)})"><title>${esc(tip)}</title>
       <rect width="${bw}" height="${bh}" rx="7"/>${rgIcon(rgNodeIcon(n), bw - 27, (bh - 16) / 2, 16, 'rg-nic')}<text x="11" y="18" class="rg-l">${esc(fit(title(n), 7.1))}</text><text x="11" y="34" class="rg-s">${esc(fit(sub(n), 6.2))}</text></g>`;
   }).join('');
@@ -1207,6 +1280,10 @@ after.reach = () => {
   document.querySelectorAll('[data-rccopy]').forEach(b => b.onclick = () => { const f = a.findings[+b.dataset.rccopy]; navigator.clipboard.writeText(f.fix).then(() => toast('Fix copied'), () => toast('Clipboard unavailable')); });
   document.querySelectorAll('[data-rcd]').forEach(b => b.onclick = () => { R.dchip = b.dataset.rcd; const y = scrollY; render().then(() => scrollTo(0, y)); });
   document.querySelectorAll('[data-rce]').forEach(b => b.onclick = () => { R.echip = b.dataset.rce; const y = scrollY; render().then(() => scrollTo(0, y)); });
+  document.querySelectorAll('[data-rcdf]').forEach(b => b.onclick = () => { R.dfound = b.dataset.rcdf; const y = scrollY; render().then(() => scrollTo(0, y)); });
+  document.querySelectorAll('[data-rcef]').forEach(b => b.onclick = () => { R.efound = b.dataset.rcef; const y = scrollY; render().then(() => scrollTo(0, y)); });
+  document.querySelectorAll('[data-rcev]').forEach(b => b.onclick = () => { R.evOpen = R.evOpen || {}; R.evOpen[b.dataset.rcev] = !R.evOpen[b.dataset.rcev]; const y = scrollY; render().then(() => scrollTo(0, y)); });
+  document.querySelectorAll('[data-rclogs]').forEach(b => b.onclick = () => openLogs({q: b.dataset.rclogs}));
   const dq = $('#rc-dq');
   if (dq) { let t; dq.oninput = e => { clearTimeout(t); t = setTimeout(() => { const c = e.target.selectionStart, v = e.target.value, y = scrollY; R.dq = v; render().then(() => { scrollTo(0, y); refocus('#rc-dq', c, v); }); }, 250); }; }
 };

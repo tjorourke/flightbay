@@ -32,6 +32,26 @@ type observed struct {
 	ip        string // the address, for an external destination known by IP
 	lookups   int    // DNS lookups of the name (external hosts)
 	perSource map[string]*srcCount
+	records   []store.Flow // the flow records behind it, largest first, at most maxEvidence
+}
+
+// maxEvidence caps the flow records kept per destination as evidence.
+const maxEvidence = 20
+
+// keepEvidence merges flow records, largest counts first, capped.
+func keepEvidence(into, from []store.Flow) []store.Flow {
+	o := &observed{records: into}
+	o.keep(from...)
+	return o.records
+}
+
+// keep adds a flow record to the evidence, largest counts first.
+func (o *observed) keep(fs ...store.Flow) {
+	o.records = append(o.records, fs...)
+	sort.SliceStable(o.records, func(i, j int) bool { return o.records[i].Count > o.records[j].Count })
+	if len(o.records) > maxEvidence {
+		o.records = o.records[:maxEvidence]
+	}
 }
 
 type srcCount struct {
@@ -378,7 +398,9 @@ func (c *cluster) observe(flows []store.Flow) *flowSummary {
 			o.ip = ip
 		}
 		o.sources = union(o.sources, []string{f.Source})
+		o.keep(f)
 	}
+	dnsRecs := map[*workload]map[string][]store.Flow{} // querier -> name -> lookups, as evidence
 	for _, f := range flows {
 		if fs.td == "" && strings.HasPrefix(f.SrcIdentity, "spiffe://") {
 			fs.td = strings.SplitN(strings.TrimPrefix(f.SrcIdentity, "spiffe://"), "/", 2)[0]
@@ -406,6 +428,10 @@ func (c *cluster) observe(flows []store.Flow) *flowSummary {
 				n = 1
 			}
 			lookups[w][name] += n
+			if dnsRecs[w] == nil {
+				dnsRecs[w] = map[string][]store.Flow{}
+			}
+			dnsRecs[w][name] = append(dnsRecs[w][name], f)
 			if ip := stripPort(f.DstIP); ip != "" && net.ParseIP(ip) != nil {
 				byAnswer[dnsKey{w, ip}] = name
 				anyAnswer[ip] = name
@@ -494,6 +520,7 @@ func (c *cluster) observe(flows []store.Flow) *flowSummary {
 			o := get(w, "ext:"+n)
 			o.lookups += cnt
 			o.sources = union(o.sources, []string{"coredns"})
+			o.keep(dnsRecs[w][n]...)
 		}
 	}
 	for _, dsts := range fs.byW {
@@ -540,6 +567,7 @@ func mergeObserved(into, from *observed) {
 		into.ip = from.ip
 	}
 	into.lookups += from.lookups
+	into.keep(from.records...)
 }
 
 func hasInt(xs []int, x int) bool {

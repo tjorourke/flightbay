@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/tjorourke/flightbay/internal/redact"
+	"github.com/tjorourke/flightbay/internal/store"
 )
 
 // ---------- destinations outside the cluster ----------
@@ -24,33 +25,34 @@ import (
 
 // External is one destination outside the cluster, for one agent.
 type External struct {
-	Host         string   `json:"host"`
-	Class        string   `json:"class"`   // registry, proxy, llm, git, storage, exfil, metadata, unknown
-	Product      string   `json:"product"` // what it is, in words
-	Fetcher      bool     `json:"fetcher"` // fetches from elsewhere on request, so lends its reach
-	ReachedVia   string   `json:"reachedVia"`
-	Gateway      string   `json:"gateway,omitempty"` // ns/name of the gateway Service, or the proxy or egress waypoint
-	Route        string   `json:"route,omitempty"`
-	Authn        bool     `json:"authn"`
-	ReadOnly     bool     `json:"readOnly"` // the gateway route only admits reads
-	Verdict      string   `json:"verdict"`
-	DirectEgress string   `json:"directEgress,omitempty"`       // could the agent reach it without the gateway?
-	GatewayRoute string   `json:"gatewayRoute,omitempty"`       // a gateway route exists for it, though the agent calls it directly
-	GatewayCreds []string `json:"gatewayCredentials,omitempty"` // credentials the gateway adds on the way
-	Credentials  []string `json:"credentials,omitempty"`
-	Observed     int      `json:"observed"`
-	Denied       int      `json:"denied,omitempty"`
-	Lookups      int      `json:"lookups,omitempty"`
-	Methods      []string `json:"methods,omitempty"`
-	Paths        []string `json:"paths,omitempty"`
-	Tools        []string `json:"tools,omitempty"`
-	WriteSeen    bool     `json:"writeSeen"`
-	Write        bool     `json:"write"` // nothing on the way stops a write
-	Sources      []string `json:"sources,omitempty"`
-	DeclaredIn   []string `json:"declaredIn,omitempty"`
-	IP           string   `json:"ip,omitempty"`
-	Risk         string   `json:"risk"`
-	Why          string   `json:"why"`
+	Host         string       `json:"host"`
+	Class        string       `json:"class"`   // registry, proxy, llm, git, storage, exfil, metadata, unknown
+	Product      string       `json:"product"` // what it is, in words
+	Fetcher      bool         `json:"fetcher"` // fetches from elsewhere on request, so lends its reach
+	ReachedVia   string       `json:"reachedVia"`
+	Gateway      string       `json:"gateway,omitempty"` // ns/name of the gateway Service, or the proxy or egress waypoint
+	Route        string       `json:"route,omitempty"`
+	Authn        bool         `json:"authn"`
+	ReadOnly     bool         `json:"readOnly"` // the gateway route only admits reads
+	Verdict      string       `json:"verdict"`
+	DirectEgress string       `json:"directEgress,omitempty"`       // could the agent reach it without the gateway?
+	GatewayRoute string       `json:"gatewayRoute,omitempty"`       // a gateway route exists for it, though the agent calls it directly
+	GatewayCreds []string     `json:"gatewayCredentials,omitempty"` // credentials the gateway adds on the way
+	Credentials  []string     `json:"credentials,omitempty"`
+	Observed     int          `json:"observed"`
+	Denied       int          `json:"denied,omitempty"`
+	Lookups      int          `json:"lookups,omitempty"`
+	Methods      []string     `json:"methods,omitempty"`
+	Paths        []string     `json:"paths,omitempty"`
+	Tools        []string     `json:"tools,omitempty"`
+	WriteSeen    bool         `json:"writeSeen"`
+	Write        bool         `json:"write"` // nothing on the way stops a write
+	Sources      []string     `json:"sources,omitempty"`
+	DeclaredIn   []string     `json:"declaredIn,omitempty"`
+	IP           string       `json:"ip,omitempty"`
+	Risk         string       `json:"risk"`
+	Why          string       `json:"why"`
+	Evidence     []store.Flow `json:"evidence,omitempty"` // flow records and DNS lookups that show it, largest first
 }
 
 // Ways an external host is reached.
@@ -1252,6 +1254,7 @@ func (e *engine) externals(w *workload, a *Agent, reach []pair, obs map[string]*
 			ex.Methods = union(ex.Methods, o.methods)
 			ex.Tools = union(ex.Tools, o.tools)
 			ex.Sources = union(ex.Sources, o.sources)
+			ex.Evidence = keepEvidence(ex.Evidence, o.records)
 			for _, p := range o.paths {
 				if len(ex.Paths) < 5 && !has(ex.Paths, p) {
 					ex.Paths = append(ex.Paths, p)

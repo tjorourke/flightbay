@@ -253,6 +253,22 @@ func TestExternalFromFlows(t *testing.T) {
 	if !a.Observed || !has(a.ObservedBy, "ztunnel") || !has(a.ObservedBy, "agentgateway") || !has(a.ObservedBy, "hubble") || has(a.ObservedBy, "coredns") {
 		t.Fatalf("observed by: %v", a.ObservedBy)
 	}
+	// The evidence: every source's own record, so a reader can see how each
+	// destination was found. The registry was named by the DNS lookup and
+	// seen by ztunnel and Hubble; the gateway edge by agentgateway.
+	evSources := func(fs []store.Flow) []string {
+		var out []string
+		for _, f := range fs {
+			out = union(out, []string{f.Source})
+		}
+		return out
+	}
+	if got := evSources(x.Evidence); len(got) != 3 || !has(got, "ztunnel") || !has(got, "coredns") || !has(got, "hubble") {
+		t.Fatalf("registry evidence sources: %v (%+v)", got, x.Evidence)
+	}
+	if len(toGW.Evidence) != 1 || toGW.Evidence[0].Tool != "get_pull_request" || toGW.Evidence[0].Count != 12 {
+		t.Fatalf("gateway edge evidence: %+v", toGW.Evidence)
+	}
 }
 
 // The resolution rules on their own: source by IP, by SPIFFE ID, and

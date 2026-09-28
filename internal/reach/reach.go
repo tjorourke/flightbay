@@ -64,8 +64,12 @@ type Edge struct {
 	Tools      []string `json:"tools,omitempty"`          // MCP tools called
 	ObservedBy []string `json:"observedBy,omitempty"`     // flow sources that saw it: ztunnel, agentgateway, hubble...
 	Declared   bool     `json:"declared"`                 // configured as a dependency (env URL, ModelConfig, tool server)
+	DeclaredIn []string `json:"declaredIn,omitempty"`     // where it is configured
 	Risk       string   `json:"risk"`                     // red, amber, green, grey
 	Why        string   `json:"why"`
+	// Evidence is the flow records that show the traffic (at most
+	// maxEvidence, largest first), so a reader can see how it was found.
+	Evidence []store.Flow `json:"evidence,omitempty"`
 }
 
 // Node is a destination in the graph.
@@ -592,9 +596,10 @@ func (e *engine) agent(w *workload, all []*workload, obs map[string]*observed, c
 	for _, d := range append(append([]pair{}, reach...), deniedSeen...) {
 		k := key(d.sv.ns, d.sv.name)
 		ed := Edge{From: agentNode, To: "svc:" + d.sv.id, Verdict: d.h.verdict, Layer: d.h.layer, Methods: d.h.methods, Paths: d.h.paths,
-			Reasons: d.h.reasons, Conditions: d.h.conds, Declared: declSvcs[k], Write: canWrite(d.sv, d.h)}
+			Reasons: d.h.reasons, Conditions: d.h.conds, Declared: declSvcs[k], DeclaredIn: c.declarations(w).svcs[k], Write: canWrite(d.sv, d.h)}
 		if o := obs[k]; o != nil {
 			ed.Observed, ed.ObsMethods, ed.ObsPaths, ed.ObsDenied, ed.Tools, ed.ObservedBy = o.requests, o.methods, o.paths, o.denied, o.tools, o.sources
+			ed.Evidence = o.records
 		}
 		ed.Risk, ed.Why = edgeRisk(w, d.sv, ed)
 		if ed.Verdict == Denied {
