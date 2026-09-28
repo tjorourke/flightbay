@@ -30,7 +30,8 @@ const schema = `
 CREATE TABLE IF NOT EXISTS log_lines (
   id BIGINT, seq INTEGER, ts BIGINT,
   cluster VARCHAR, namespace VARCHAR, pod VARCHAR, container VARCHAR, stream VARCHAR, node VARCHAR,
-  level VARCHAR, scope VARCHAR, msg VARCHAR, fields MAP(VARCHAR, VARCHAR), raw VARCHAR, chunk VARCHAR);
+  level VARCHAR, scope VARCHAR, msg VARCHAR, fields MAP(VARCHAR, VARCHAR), raw VARCHAR, chunk VARCHAR,
+  workload VARCHAR, workload_kind VARCHAR);
 CREATE TABLE IF NOT EXISTS objects (
   cluster VARCHAR, api_group VARCHAR, version VARCHAR, resource VARCHAR, kind VARCHAR,
   namespace VARCHAR, name VARCHAR, labels MAP(VARCHAR, VARCHAR), object VARCHAR);
@@ -38,10 +39,10 @@ CREATE TABLE IF NOT EXISTS events (
   cluster VARCHAR, namespace VARCHAR, type VARCHAR, reason VARCHAR, object_kind VARCHAR, object_name VARCHAR,
   message VARCHAR, count BIGINT, last_seen VARCHAR, event VARCHAR);
 CREATE OR REPLACE VIEW logs AS
-  SELECT id, make_timestamp(ts // 1000) AS time, cluster, namespace, pod, container, stream, node, level, scope, msg, fields, raw
+  SELECT id, make_timestamp(ts // 1000) AS time, cluster, namespace, workload_kind, workload, pod, container, stream, node, level, scope, msg, fields, raw
   FROM log_lines;`
 
-const lineCols = "id, seq, ts, cluster, namespace, pod, container, stream, node, level, scope, msg, fields, raw, chunk"
+const lineCols = "id, seq, ts, cluster, namespace, pod, container, stream, node, level, scope, msg, fields, raw, chunk, workload, workload_kind"
 
 type logDB struct {
 	db      *sql.DB
@@ -175,6 +176,7 @@ func (w *Workspace) QueueLogLines(cluster, ns, pod, container, stream string, li
 		spec, _ := o.Obj["spec"].(map[string]any)
 		node, _ = spec["nodeName"].(string)
 	}
+	wkind, wname := w.workloadLocked(cluster, ns, pod)
 	key := streamKey(cluster, ns, pod, container, stream)
 	seq := w.streamSeq[key]
 	firstID := w.nextID + 1
@@ -187,11 +189,11 @@ func (w *Workspace) QueueLogLines(cluster, ns, pod, container, stream string, li
 		if done != nil {
 			defer done()
 		}
-		w.appendLines(firstID, seq, cluster, ns, pod, container, stream, node, chunk, kept)
+		w.appendLines(firstID, seq, cluster, ns, pod, container, stream, node, chunk, wkind, wname, kept)
 	}
 }
 
-func (w *Workspace) appendLines(firstID int64, seq int, cluster, ns, pod, container, stream, node, chunk string, kept []string) {
+func (w *Workspace) appendLines(firstID int64, seq int, cluster, ns, pod, container, stream, node, chunk, wkind, wname string, kept []string) {
 	rows := make([][]driver.Value, 0, len(kept))
 	var start, end time.Time
 	for i, l := range kept {
@@ -208,7 +210,7 @@ func (w *Workspace) appendLines(firstID int64, seq int, cluster, ns, pod, contai
 			}
 		}
 		rows = append(rows, []driver.Value{firstID + int64(i), int32(seq + i), tsn, cluster, ns, pod, container, stream, node,
-			p.Level, p.Scope, p.Msg, toMap(p.Fields), rest, chunk})
+			p.Level, p.Scope, p.Msg, toMap(p.Fields), rest, chunk, wname, wkind})
 	}
 	if err := w.ldb.appendRows("log_lines", rows); err != nil {
 		w.SetState(func(s *ImportState) { s.Error = "log store: " + err.Error() })
@@ -275,14 +277,14 @@ func scanLines(rows *sql.Rows) ([]*logs.Record, error) {
 		var (
 			id, ts                                                                   int64
 			seq                                                                      int32
-			cluster, ns, pod, container, stream, node, level, scope, msg, raw, chunk sql.NullString
+			cluster, ns, pod, container, stream, node, level, scope, msg, raw, chunk, wl, wk sql.NullString
 			fields                                                                   any
 		)
-		if err := rows.Scan(&id, &seq, &ts, &cluster, &ns, &pod, &container, &stream, &node, &level, &scope, &msg, &fields, &raw, &chunk); err != nil {
+		if err := rows.Scan(&id, &seq, &ts, &cluster, &ns, &pod, &container, &stream, &node, &level, &scope, &msg, &fields, &raw, &chunk, &wl, &wk); err != nil {
 			return nil, err
 		}
 		r := &logs.Record{ID: id, Seq: int(seq), Source: &logs.Source{Cluster: cluster.String, Namespace: ns.String, Pod: pod.String, Container: container.String,
-			Stream: stream.String, Node: node.String, Chunk: chunk.String}, Level: level.String, Scope: scope.String, Msg: msg.String, Raw: raw.String}
+			Stream: stream.String, Node: node.String, Chunk: chunk.String, Workload: wl.String, WorkloadKind: wk.String}, Level: level.String, Scope: scope.String, Msg: msg.String, Raw: raw.String}
 		if ts != 0 {
 			r.TS = time.Unix(0, ts).UTC()
 		}
@@ -345,6 +347,7 @@ type LogFilter struct {
 	Container string
 	Level     string
 	Stream    string
+	Workload  string // Kind/name or name
 	From, To  time.Time
 	Limit     int
 	Offset    int
@@ -370,7 +373,7 @@ type LogResult struct {
 	To        time.Time                 `json:"to"`
 }
 
-var facetCols = []string{"level", "namespace", "pod", "container", "stream", "cluster"}
+var facetCols = []string{"level", "namespace", "pod", "container", "stream", "workload", "cluster"}
 
 // SearchLogs evaluates a query over every committed line. The matches go into
 // a temporary table once; facets, the histogram, the count and the page are
@@ -403,22 +406,22 @@ func (w *Workspace) SearchLogs(f LogFilter) (*LogResult, error) {
 	ctx := context.Background()
 	// 1. Facets over the query alone: they ignore the facet filters so users
 	// can widen a selection. One pass with grouping sets.
-	rows, err := w.ldb.db.QueryContext(ctx, `SELECT GROUPING(level), GROUPING(namespace), GROUPING(pod), GROUPING(container), GROUPING(stream),
-	  coalesce(level, ''), coalesce(namespace, ''), coalesce(pod, ''), coalesce(container, ''), coalesce(stream, ''), coalesce(cluster, ''), count(*)
-	  FROM log_lines WHERE `+where+` GROUP BY GROUPING SETS ((level), (namespace), (pod), (container), (stream), (cluster))`, args...)
+	rows, err := w.ldb.db.QueryContext(ctx, `SELECT GROUPING(level), GROUPING(namespace), GROUPING(pod), GROUPING(container), GROUPING(stream), GROUPING(workload, workload_kind),
+	  coalesce(level, ''), coalesce(namespace, ''), coalesce(pod, ''), coalesce(container, ''), coalesce(stream, ''), coalesce(workload_kind, '') || '/' || coalesce(workload, ''), coalesce(cluster, ''), count(*)
+	  FROM log_lines WHERE `+where+` GROUP BY GROUPING SETS ((level), (namespace), (pod), (container), (stream), (workload, workload_kind), (cluster))`, args...)
 	if err != nil {
 		return nil, err
 	}
 	for rows.Next() {
-		var g [5]int
-		var v [6]string
+		var g [6]int
+		var v [7]string
 		var n int
-		if err := rows.Scan(&g[0], &g[1], &g[2], &g[3], &g[4], &v[0], &v[1], &v[2], &v[3], &v[4], &v[5], &n); err != nil {
+		if err := rows.Scan(&g[0], &g[1], &g[2], &g[3], &g[4], &g[5], &v[0], &v[1], &v[2], &v[3], &v[4], &v[5], &v[6], &n); err != nil {
 			rows.Close()
 			return nil, err
 		}
-		col := 5 // cluster: every other column rolled up
-		for k := 0; k < 5; k++ {
+		col := 6 // cluster: every other column rolled up
+		for k := 0; k < 6; k++ {
 			if g[k] == 0 {
 				col = k
 			}
@@ -432,6 +435,15 @@ func (w *Workspace) SearchLogs(f LogFilter) (*LogResult, error) {
 		if fc.v != "" {
 			fw += " AND " + fc.col + " = ?"
 			fargs = append(fargs, fc.v)
+		}
+	}
+	if f.Workload != "" { // "Deployment/kagent-controller" or just the name
+		if k, n, ok := strings.Cut(f.Workload, "/"); ok {
+			fw += " AND workload_kind = ? AND workload = ?"
+			fargs = append(fargs, k, n)
+		} else {
+			fw += " AND workload = ?"
+			fargs = append(fargs, f.Workload)
 		}
 	}
 	rw, rargs := fw, append([]any{}, fargs...)

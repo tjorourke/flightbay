@@ -167,3 +167,30 @@ func TestLogFieldsAndZoomedHistogram(t *testing.T) {
 		t.Fatalf("zoomed histogram from=%v to=%v bars=%d total=%d", res.From, res.To, n, res.Total)
 	}
 }
+
+func TestWorkloadResolutionAndFilter(t *testing.T) {
+	ws := New()
+	rs := bundle.APIResource{Group: "apps", Version: "v1", Resource: "replicasets", Kind: "ReplicaSet", Namespaced: true}
+	pods := bundle.APIResource{Version: "v1", Resource: "pods", Kind: "Pod", Namespaced: true}
+	ws.AddObjects("c", rs, []map[string]any{{"kind": "ReplicaSet", "metadata": map[string]any{"name": "kagent-controller-cdc96c97c", "namespace": "kagent",
+		"ownerReferences": []any{map[string]any{"kind": "Deployment", "name": "kagent-controller", "controller": true}}}}}, "r")
+	ws.AddObjects("c", pods, []map[string]any{
+		{"kind": "Pod", "metadata": map[string]any{"name": "kagent-controller-cdc96c97c-9bb2d", "namespace": "kagent", "ownerReferences": []any{map[string]any{"kind": "ReplicaSet", "name": "kagent-controller-cdc96c97c", "controller": true}}}},
+		{"kind": "Pod", "metadata": map[string]any{"name": "kagent-controller-cdc96c97c-aaaaa", "namespace": "kagent", "ownerReferences": []any{map[string]any{"kind": "ReplicaSet", "name": "kagent-controller-cdc96c97c", "controller": true}}}},
+		{"kind": "Pod", "metadata": map[string]any{"name": "ztunnel-5b4bw", "namespace": "istio-system", "ownerReferences": []any{map[string]any{"kind": "DaemonSet", "name": "ztunnel", "controller": true}}}},
+	}, "p")
+	ws.AddLogLines("c", "kagent", "kagent-controller-cdc96c97c-9bb2d", "controller", "current", []string{"2026-09-27T10:00:00Z reconcile a"}, "l1")
+	ws.AddLogLines("c", "kagent", "kagent-controller-cdc96c97c-aaaaa", "controller", "current", []string{"2026-09-27T10:00:01Z reconcile b"}, "l2")
+	ws.AddLogLines("c", "istio-system", "ztunnel-5b4bw", "istio-proxy", "current", []string{"2026-09-27T10:00:02Z inbound"}, "l3")
+	ws.AddLogLines("c", "istio-system", "istiod-7f9c8d6b5-x2q9m", "discovery", "current", []string{"2026-09-27T10:00:03Z push"}, "l4") // no pod object: name pattern
+	res, _ := ws.SearchLogs(LogFilter{Workload: "Deployment/kagent-controller"})
+	if res.Total != 2 {
+		t.Fatalf("both controller pods expected, got %d", res.Total)
+	}
+	if res.Facets["workload"]["DaemonSet/ztunnel"] != 1 || res.Facets["workload"]["Deployment/istiod"] != 1 {
+		t.Fatalf("workload facet %v", res.Facets["workload"])
+	}
+	if r, _ := ws.SearchLogs(LogFilter{Query: "workload:kagent-controller"}); r.Total != 2 || r.Records[0].WorkloadKind != "Deployment" {
+		t.Fatalf("workload: query %d", r.Total)
+	}
+}

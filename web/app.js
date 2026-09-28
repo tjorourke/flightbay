@@ -12,7 +12,7 @@ const attr = o => esc(JSON.stringify(o));
 const S = {
   view: 'overview', cluster: '', ws: null, state: null, renderSeq: 0,
   res: {group: null, resource: null, ns: '', q: '', nsOptions: []},
-  logs: {q: '', namespace: '', pod: '', container: '', level: '', stream: '', from: '', to: '', limit: 200, expanded: null, follow: false, total: 0, rev: 0, result: null},
+  logs: {q: '', namespace: '', workload: '', pod: '', container: '', level: '', stream: '', from: '', to: '', limit: 200, expanded: null, follow: false, total: 0, rev: 0, result: null},
   compare: null, findingSev: '', term: null,
   search: {q: '', limit: 200},
   nv: {resource: 'pods', group: '', ns: '', q: '', sel: 0, cmd: false},
@@ -49,7 +49,7 @@ function parseHash() {
   const [view, query] = h.split('?');
   const p = new URLSearchParams(query || '');
   if (view === 'logs') {
-    for (const k of ['q', 'namespace', 'pod', 'container', 'level', 'stream', 'from', 'to']) if (p.has(k)) S.logs[k] = p.get(k);
+    for (const k of ['q', 'namespace', 'workload', 'pod', 'container', 'level', 'stream', 'from', 'to']) if (p.has(k)) S.logs[k] = p.get(k);
   }
   if (view === 'search' && p.has('q')) S.search.q = p.get('q');
   if (view === 'resources' && p.has('resource')) { S.res.resource = p.get('resource'); S.res.group = p.get('group') || ''; }
@@ -61,7 +61,7 @@ function nav(view) {
 }
 
 function openLogs(filters) {
-  Object.assign(S.logs, {q: '', namespace: '', pod: '', container: '', level: '', stream: '', from: '', to: '', expanded: null}, filters);
+  Object.assign(S.logs, {q: '', namespace: '', workload: '', pod: '', container: '', level: '', stream: '', from: '', to: '', expanded: null}, filters);
   closeDrawer(); closeModal();
   if (S.view === 'logs') render(); else location.hash = 'logs';
 }
@@ -250,13 +250,13 @@ async function navigator() {
       <div class="nv-logo"> ┌─┐ ┌─┐ ┌─┐\n │ │ │ │ │ │  flightbay\n │ └─┘ │ │ │  snapshot\n └─────┘ └─┘  navigator</div>
     </div>
     <div class="nv-frame"><div class="nv-title">${esc(cur.kind || cur.resource)}(${esc(N.ns || 'all')}) [${list.rows.length}]</div>
-      ${N.cmd ? `<div class="nv-cmd"><span>:</span><input id="nv-cmdline" placeholder="pods, deploy, svc, httproute, gateway…  (Enter to switch, Esc to cancel)" autocomplete="off" list="nv-kinds"><datalist id="nv-kinds">${have.map(t => `<option value="${esc((t.shortNames || [])[0] || t.resource)}">${esc(t.kind)} (${t.count})</option>`).join('')}</datalist></div>` : ''}
+      ${N.cmd ? `<div class="nv-cmd"><span>:</span><input id="nv-cmdline" placeholder="pods, deploy, svc, httproute, gateway…  (Enter to switch, Esc to cancel)" autocomplete="off" list="nv-kinds"><datalist id="nv-kinds">${types.slice().sort((a, b) => b.count - a.count).map(t => `<option value="${esc(t.resource)}">${esc(t.kind)} · ${t.count}${t.group ? ' · ' + esc(t.group) : ''}</option>`).join('')}</datalist></div>` : ''}
       <div class="nv-bar">${quick.map(([r, g]) => `<button class="nv-type ${r === N.resource && g === N.group ? 'on' : ''}" data-nvtype="${attr({r, g})}">:${r}</button>`).join('')}
         <span style="flex:1"></span><select id="nv-ns"><option value="">All namespaces</option>${nss.map(n => `<option ${n === N.ns ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
         <input id="nv-q" placeholder="/ filter by name, status or label" value="${esc(N.q)}" style="width:280px"></div>
       <div class="table-scroll" style="max-height:58vh"><table><thead><tr>${cur.namespaced ? '<th>Namespace</th>' : ''}${list.columns.map(c => `<th>${esc(c)}</th>`).join('')}<th></th></tr></thead><tbody>
         ${list.rows.map((r, i) => `<tr class="${i === N.sel ? 'sel' : ''}" data-nvrow="${i}">${cur.namespaced ? `<td>${esc(r.namespace)}</td>` : ''}${r.cells.map((c, j) => `<td>${j === 0 && i === N.sel ? '› ' : ''}${j === statusCol ? statusCell(c) : esc(c)}</td>`).join('')}
-          <td style="text-align:right"><button class="ghost" data-nvyaml="${i}">YAML</button>${N.resource === 'pods' && !N.group ? `<button class="ghost" data-nvlogs="${i}">Logs</button>` : ''}</td></tr>`).join('') || `<tr><td colspan="9" class="muted">No ${esc(cur.kind || cur.resource)} objects${N.q ? ' match the filter' : ''}.</td></tr>`}
+          <td style="text-align:right"><button class="ghost" data-nvyaml="${i}">YAML</button>${(N.resource === 'pods' && !N.group) || workloadKinds.includes(r.kind) ? `<button class="ghost" data-nvlogs="${i}">Logs</button>` : ''}</td></tr>`).join('') || `<tr><td colspan="9" class="muted">No ${esc(cur.kind || cur.resource)} objects${N.q ? ' match the filter' : ''}.</td></tr>`}
       </tbody></table></div>
       <div class="nv-status"><span>${sel ? `${esc(sel.name)}${sel.namespace ? ' · ' + esc(sel.namespace) : ''}${!S.cluster ? ' · ' + esc(sel.cluster) : ''}` : ''}</span><span><b>Enter</b> describe · <b>y</b> yaml · <b>l</b> logs · <b>:</b> type · <b>/</b> filter</span></div>
     </div></div>`;
@@ -270,7 +270,7 @@ after.navigator = () => {
   document.querySelectorAll('[data-nvtype]').forEach(b => b.onclick = () => { const t = JSON.parse(b.dataset.nvtype); setType(t.r, t.g); });
   document.querySelectorAll('[data-nvrow]').forEach(tr => { tr.onclick = () => { N.sel = +tr.dataset.nvrow; render(); }; tr.ondblclick = () => openObject(nvRef(N.rows[+tr.dataset.nvrow])); });
   document.querySelectorAll('[data-nvyaml]').forEach(b => b.onclick = e => { e.stopPropagation(); openObject(nvRef(N.rows[+b.dataset.nvyaml]), 'yaml'); });
-  document.querySelectorAll('[data-nvlogs]').forEach(b => b.onclick = e => { e.stopPropagation(); const r = N.rows[+b.dataset.nvlogs]; openLogs({pod: r.name, namespace: r.namespace}); });
+  document.querySelectorAll('[data-nvlogs]').forEach(b => b.onclick = e => { e.stopPropagation(); const r = N.rows[+b.dataset.nvlogs]; openLogs(r.kind === 'Pod' ? {pod: r.name, namespace: r.namespace} : {workload: `${r.kind}/${r.name}`, namespace: r.namespace}); });
   $('#nv-ns').onchange = e => { N.ns = e.target.value; N.sel = 0; render(); };
   $('#nv-ctx').onchange = e => setCluster(e.target.value);
   let t; $('#nv-q').oninput = e => { clearTimeout(t); t = setTimeout(() => { N.q = e.target.value; N.sel = 0; render().then(() => { const i = $('#nv-q'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }); }, 200); };
@@ -283,8 +283,11 @@ after.navigator = () => {
       if (e.key !== 'Enter') return;
       const want = cl.value.trim().toLowerCase().replace(/^:/, '');
       const types = await api('api/resources', {cluster: S.cluster});
-      const m = types.find(x => x.resource === want || x.name === want || (x.kind || '').toLowerCase() === want || x.singularName === want || (x.shortNames || []).includes(want));
-      if (m) setType(m.resource, m.group); else toast(`No captured type "${want}"`);
+      const exact = x => x.resource === want || x.name === want || (x.kind || '').toLowerCase() === want || x.singularName === want || (x.shortNames || []).includes(want);
+      let m = types.filter(exact);
+      if (!m.length) m = types.filter(x => x.resource.startsWith(want) || (x.kind || '').toLowerCase().startsWith(want));
+      m.sort((a, b) => b.count - a.count || (a.group ? 1 : 0) - (b.group ? 1 : 0));
+      if (m.length) setType(m[0].resource, m[0].group); else toast(`No type matches "${want}" in this bundle`);
     };
   }
 };
@@ -301,9 +304,11 @@ document.addEventListener('keydown', e => {
   else if (k === 'k' || k === 'ArrowUp') { move(-1); e.preventDefault(); }
   else if (k === 'g') move(-rows.length);
   else if (k === 'G') move(rows.length);
-  else if (k === 'Enter' && r) openObject(nvRef(r));
+  else if (k === 'Enter' && r && !(N.resource === 'namespaces' && !N.group)) openObject(nvRef(r));
   else if (k === 'y' && r) openObject(nvRef(r), 'yaml');
   else if ((k === 'l' || k === 'p') && r && N.resource === 'pods' && !N.group) openLogs({pod: r.name, namespace: r.namespace, stream: k === 'p' ? 'previous' : ''});
+  else if ((k === 'l' || k === 'p') && r && workloadKinds.includes(r.kind)) openLogs({workload: `${r.kind}/${r.name}`, namespace: r.namespace, stream: k === 'p' ? 'previous' : ''});
+  else if (k === 'Enter' && r && N.resource === 'namespaces' && !N.group) { N.ns = r.name; N.resource = 'pods'; N.sel = 0; render(); }
   else if (k === 'd' && r) openObject(nvRef(r), 'events');
   else if (k === 's') openK9s(N.resource + (N.group ? '.' + N.group : ''), N.ns);
   else if (k === ':') { N.cmd = true; render(); e.preventDefault(); }
@@ -422,6 +427,7 @@ after.resources = () => {
 };
 
 // ---------- object drawer ----------
+const workloadKinds = ['Deployment', 'DaemonSet', 'StatefulSet', 'ReplicaSet', 'Job', 'CronJob'];
 async function openObject(ref, tab = 'summary') {
   S.drawerOpen = true;
   const d = await api('api/object', ref).catch(e => ({error: e.message}));
@@ -438,7 +444,7 @@ async function openObject(ref, tab = 'summary') {
           ${o.object.spec?.nodeName ? `<dt>Node</dt><dd>${esc(o.object.spec.nodeName)}</dd>` : ''}${st.phase ? `<dt>Phase</dt><dd>${statusCell(st.phase)}</dd>` : ''}</dl>
           ${cs ? `<h3 class="mt">Containers</h3><div class="table-scroll"><table><thead><tr><th>Name</th><th>Ready</th><th>State</th><th>Restarts</th><th>Last termination</th></tr></thead><tbody>${cs}</tbody></table></div>` : ''}
           ${o.object['x-flightbay'] ? '<div class="notice info mt">Secret values were never collected. Only metadata' + (o.object['x-flightbay'].keys ? ', key names and byte lengths are' : ' is') + ' shown.</div>' : ''}
-          <div class="row wrap mt">${isPod ? `<button class="primary" id="d-logs">Open pod logs →</button>` : ''}<button id="d-describe">&gt;_ kubectl describe</button><button id="d-compare">Compare across clusters</button></div>`;
+          <div class="row wrap mt">${isPod ? `<button class="primary" id="d-logs">Open pod logs →</button>` : ''}${workloadKinds.includes(o.kind) ? `<button class="primary" id="d-wlogs">Open logs of all its pods →</button>` : ''}<button id="d-describe">&gt;_ kubectl describe</button><button id="d-compare">Compare across clusters</button></div>`;
       },
       yaml: () => `<div class="row between" style="margin-bottom:10px"><small>Captured object (redacted)</small><button id="d-copy">Copy YAML</button></div><pre class="code">${esc(d.yaml)}</pre>`,
       json: () => `<pre class="code">${esc(d.json)}</pre>`,
@@ -455,6 +461,7 @@ async function openObject(ref, tab = 'summary') {
     document.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { tab = b.dataset.tab; draw(); });
     document.querySelectorAll('[data-rel]').forEach(b => b.onclick = () => openObject(JSON.parse(b.dataset.rel)));
     document.querySelectorAll('[data-stream]').forEach(b => b.onclick = () => { const s = JSON.parse(b.dataset.stream); openLogs({pod: o.name, namespace: o.namespace, container: s.c, stream: s.st}); });
+    const dw = $('#d-wlogs'); if (dw) dw.onclick = () => openLogs({workload: `${o.kind}/${o.name}`, namespace: o.namespace});
     const dl = $('#d-logs'); if (dl) dl.onclick = () => { const prev = (d.streams || []).find(s => s.endsWith('/previous')); openLogs({pod: o.name, namespace: o.namespace, stream: prev ? 'previous' : ''}); };
     const dd = $('#d-describe'); if (dd) dd.onclick = () => { closeDrawer(); termRun(`kubectl --context ${o.cluster}@snapshot describe ${o.resource}${o.group ? '.' + o.group : ''} ${o.name}${o.namespace ? ' -n ' + o.namespace : ''}`); };
     const dc = $('#d-compare'); if (dc) dc.onclick = () => { S.compare = {group: o.group, resource: o.resource, namespace: o.namespace, name: o.name, kind: o.kind}; closeDrawer(); nav('compare'); };
@@ -467,7 +474,7 @@ function closeDrawer() { $('#overlay').innerHTML = ''; S.drawerOpen = false; }
 // ---------- logs ----------
 function logParams(extra = {}) {
   const L = S.logs;
-  return Object.assign({q: L.q, cluster: S.cluster, namespace: L.namespace, pod: L.pod, container: L.container, level: L.level, stream: L.stream, from: L.from, to: L.to, limit: L.limit}, extra);
+  return Object.assign({q: L.q, cluster: S.cluster, namespace: L.namespace, workload: L.workload, pod: L.pod, container: L.container, level: L.level, stream: L.stream, from: L.from, to: L.to, limit: L.limit}, extra);
 }
 
 const logExamples = [
@@ -507,10 +514,15 @@ async function logs() {
     if (!vals.length && !extra) return '';
     return `<h3>${label}</h3>${extra}` + vals.map(([v, n]) => `<button class="facet ${L[field] === v ? 'active' : ''}" data-facet="${attr({field, v})}"><span></span><span>${esc(v || '—')}</span><small>${num(n)}</small></button>`).join('');
   };
+  const workloadFacet = (() => {
+    const vals = Object.entries(res.facets?.workload || {}).filter(([v]) => v && v !== '/').sort((a, b) => b[1] - a[1]).slice(0, 30);
+    if (!vals.length) return '';
+    return `<h3>Workload <small class="muted" style="text-transform:none;letter-spacing:0">all pods of a controller</small></h3>` + vals.map(([v, n]) => { const [k, name] = v.split('/'); return `<button class="facet ${L.workload === v ? 'active' : ''}" data-facet="${attr({field: 'workload', v})}" title="${esc(v)}"><span></span><span><span class="tag" style="font-size:9px;padding:1px 4px">${esc(k.replace('Deployment', 'deploy').replace('DaemonSet', 'ds').replace('StatefulSet', 'sts').replace('StaticPod', 'static'))}</span> ${esc(name)}</span><small>${num(n)}</small></button>`; }).join('');
+  })();
   const podPicker = Object.keys(res.facets?.pod || {}).length > 8 ? `<input id="pod-filter" placeholder="Find a pod…" value="${esc(L.podFilter || '')}" style="width:100%;margin:0 0 6px;font-size:12px">` : '';
   const fieldList = fields.length ? `<h3>Fields <small class="muted" style="text-transform:none;letter-spacing:0">click a value to filter</small></h3>` + fields.map(f => `<details class="field" ${L.openField === f.field ? 'open' : ''} data-fieldname="${esc(f.field)}"><summary><span class="mono">${esc(f.field)}</span><small>${num(f.count)}</small></summary>
       ${f.values.map(v => `<button class="facet" data-addterm="${attr(fieldTerm(f.field, v.value))}" title="${esc(f.field)}:${esc(v.value)}"><span></span><span class="mono" style="font-size:11px">${esc(v.value || '""')}</span><small>${num(v.count)}</small></button>`).join('')}</details>`).join('') : '';
-  const chips = ['namespace', 'pod', 'container', 'level', 'stream'].filter(k => L[k]).map(k => `<button class="chip" data-clear="${k}">${k}: ${esc(L[k])} ×</button>`).join('');
+  const chips = ['namespace', 'workload', 'pod', 'container', 'level', 'stream'].filter(k => L[k]).map(k => `<button class="chip" data-clear="${k}">${k}: ${esc(L[k])} ×</button>`).join('');
   const hist = res.histogram || [];
   const max = Math.max(1, ...hist.map(b => b.count));
   const span = res.to && res.from ? new Date(res.to) - new Date(res.from) : 0;
@@ -522,7 +534,7 @@ async function logs() {
       <span class="pod" title="${esc(r.cluster)} ${esc(r.namespace)}/${esc(r.pod)}">${esc(r.pod)}<br><span class="muted">${esc(r.container)}${r.stream === 'previous' ? ' · previous' : ''}</span></span>
       <span class="msg">${esc(r.msg)}${Object.entries(r.fields || {}).filter(([k]) => /trace|request_id|connection/.test(k)).map(([k, v]) => ` <span class="blue">${esc(k)}=${esc(v)}</span>`).join('')}</span></div>${L.expanded === r.id ? '<div id="log-detail"></div>' : ''}`).join('');
   return head('Log explorer', 'Search every captured log line. Drag across the chart to zoom into a time range; pinch or scroll over it to zoom around the cursor.', `<label class="row"><input type="checkbox" id="follow" ${L.follow ? 'checked' : ''}> Follow incoming data</label><button id="log-term">&gt;_ fbq in terminal</button>`) + `
-  <div class="log-layout"><aside class="facets" aria-label="Filters">${facet('level', 'level', 'Level')}${facet('namespace', 'namespace', 'Namespace')}${facet('pod', 'pod', 'Pod', podPicker)}${facet('container', 'container', 'Container')}${facet('stream', 'stream', 'Stream')}${!S.cluster ? facet('cluster', 'cluster_', 'Cluster') : ''}
+  <div class="log-layout"><aside class="facets" aria-label="Filters">${facet('level', 'level', 'Level')}${facet('namespace', 'namespace', 'Namespace')}${workloadFacet}${facet('pod', 'pod', 'Pod', podPicker)}${facet('container', 'container', 'Container')}${facet('stream', 'stream', 'Stream')}${!S.cluster ? facet('cluster', 'cluster_', 'Cluster') : ''}
     ${fieldList}
     <h3>Syntax</h3><div class="muted mono" style="font-size:10px;line-height:1.8">level:error<br>ns:payments pod:checkout*<br>trace_id:a4e98f02<br>"connection reset"<br>-healthz · a OR b<br>status:5* · since:15m</div></aside>
   <section><form class="query" id="log-form"><span class="green">⌕</span><input id="log-q" value="${esc(L.q)}" placeholder='Search, e.g. level:error ns:payments "timed out"' autocomplete="off" spellcheck="false" aria-label="Log query"><button class="primary">Search ↵</button></form>

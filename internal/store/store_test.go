@@ -50,8 +50,17 @@ func TestObjectsCommitAtomicallyWithRevisions(t *testing.T) {
 	if ws.Get("mesh1", "", "pods", "payments", "zzz") != nil {
 		t.Fatal("unexpected object")
 	}
-	if len(ws.Resources("mesh1")) != 1 {
-		t.Fatalf("resources not registered: %v", ws.Resources("mesh1"))
+	// pods, plus namespaces synthesised from them (not captured themselves).
+	rs := ws.Resources("mesh1")
+	if len(rs) != 2 || rs[0].Resource != "namespaces" || rs[1].Resource != "pods" {
+		t.Fatalf("resources not registered: %v", rs)
+	}
+	ns := ws.List("mesh1", "", "namespaces", "", nil)
+	if len(ns) == 0 || ws.Get("mesh1", "", "namespaces", "", "payments") == nil {
+		t.Fatalf("synthesised namespaces: %v", ns)
+	}
+	if st := ws.CollectionState("mesh1", "", "namespaces", "Namespace", false); st.State != StateComplete {
+		t.Fatalf("synthesised namespaces state %+v", st)
 	}
 }
 

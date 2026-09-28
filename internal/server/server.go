@@ -503,7 +503,7 @@ func (s *Server) object(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) logSearch(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	f := store.LogFilter{Query: q.Get("q"), Cluster: q.Get("cluster"), Namespace: q.Get("namespace"), Pod: q.Get("pod"), Container: q.Get("container"), Level: q.Get("level"), Stream: q.Get("stream")}
+	f := store.LogFilter{Query: q.Get("q"), Cluster: q.Get("cluster"), Namespace: q.Get("namespace"), Pod: q.Get("pod"), Container: q.Get("container"), Level: q.Get("level"), Stream: q.Get("stream"), Workload: q.Get("workload")}
 	f.Limit, _ = strconv.Atoi(q.Get("limit"))
 	f.Offset, _ = strconv.Atoi(q.Get("offset"))
 	if v := q.Get("from"); v != "" {

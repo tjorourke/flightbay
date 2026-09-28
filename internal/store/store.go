@@ -470,6 +470,7 @@ func (w *Workspace) Resources(cluster string) []bundle.APIResource {
 	for _, r := range w.resources[cluster] {
 		out = append(out, r)
 	}
+	out = append(out, w.virtualTypesLocked(cluster)...)
 	sort.Slice(out, func(i, j int) bool { return out[i].Name() < out[j].Name() })
 	return out
 }
@@ -504,7 +505,11 @@ func (w *Workspace) List(cluster, group, resource, ns string, labels map[string]
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	var out []*Object
-	for _, o := range w.byType[typeKey{cluster, group, resource}] {
+	objs := w.byType[typeKey{cluster, group, resource}]
+	if v, ok := w.virtualLocked(cluster, group, resource); ok {
+		objs = v
+	}
+	for _, o := range objs {
 		if ns != "" && o.Namespace != ns {
 			continue
 		}
@@ -540,7 +545,17 @@ func (w *Workspace) AllObjects(cluster string) []*Object {
 func (w *Workspace) Get(cluster, group, resource, ns, name string) *Object {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	return w.objects[objKey(cluster, group, resource, ns, name)]
+	if o := w.objects[objKey(cluster, group, resource, ns, name)]; o != nil {
+		return o
+	}
+	if v, ok := w.virtualLocked(cluster, group, resource); ok {
+		for _, o := range v {
+			if o.Namespace == ns && o.Name == name {
+				return o
+			}
+		}
+	}
+	return nil
 }
 
 // SetCoverage records a coverage record.
@@ -578,6 +593,17 @@ func (w *Workspace) CollectionState(cluster, group, resource, kind string, names
 	g := group
 	if g == "" {
 		g = "core"
+	}
+	if group == "" && resource == "namespaces" && !w.realNamespacesLocked(cluster) {
+		return Collection{State: StateComplete, Reason: "synthesised from the namespaces of captured objects; namespaces themselves were not captured"}
+	}
+	if group == "" && resource == "events" && len(w.byType[typeKey{cluster, "", "events"}]) == 0 {
+		for _, c := range w.coverage {
+			if c.Type == bundle.CoverageEvents && c.Cluster == cluster {
+				return Collection{State: c.State, Reason: c.Reason, Items: c.Items}
+			}
+		}
+		return Collection{State: StateComplete, Reason: "captured events"}
 	}
 	for _, c := range w.coverage {
 		if c.Type == bundle.CoverageResource && c.Cluster == cluster && c.Resource == resource && (c.Group == group || (group == "" && c.Group == "")) {

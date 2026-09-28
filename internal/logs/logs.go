@@ -21,7 +21,11 @@ type Source struct {
 	Container string `json:"container"`
 	Stream    string `json:"stream"`
 	Node      string `json:"node,omitempty"`
-	Chunk     string `json:"-"`
+	// Workload is the Deployment, DaemonSet, StatefulSet, Job (or bare pod)
+	// the pod belongs to, so a controller's logs can be read across pods.
+	Workload     string `json:"workload,omitempty"`
+	WorkloadKind string `json:"workloadKind,omitempty"`
+	Chunk        string `json:"-"`
 }
 
 // Record is one parsed log line. Source is embedded, so r.Pod and the JSON
@@ -366,6 +370,8 @@ func (c fieldClause) match(r *Record) bool {
 		have = r.Scope
 	case "node":
 		have = r.Node
+	case "workload", "deploy", "deployment":
+		have = r.Workload
 	default:
 		v, ok := r.Fields.Get(c.key)
 		if !ok {
@@ -544,7 +550,7 @@ func likeEscape(s string) string {
 	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
 }
 
-var fieldColumns = map[string]string{"ns": "namespace", "namespace": "namespace", "pod": "pod", "container": "container",
+var fieldColumns = map[string]string{"ns": "namespace", "namespace": "namespace", "pod": "pod", "container": "container", "workload": "workload", "deploy": "workload", "deployment": "workload",
 	"cluster": "cluster", "stream": "stream", "scope": "scope", "node": "node"}
 
 func valueSQL(col, want string) (string, []any) {
