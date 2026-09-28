@@ -88,11 +88,21 @@ type Path struct {
 
 // Finding is one thing to lock down.
 type Finding struct {
-	Severity string `json:"severity"` // critical, high, medium, low
-	Title    string `json:"title"`
-	Detail   string `json:"detail"`
-	Fix      string `json:"fix,omitempty"`
-	Source   string `json:"source"`
+	Severity string        `json:"severity"` // critical, high, medium, low
+	Title    string        `json:"title"`
+	Detail   string        `json:"detail"` // one or two sentences
+	Items    []FindingItem `json:"items,omitempty"`
+	Fix      string        `json:"fix,omitempty"`
+	Source   string        `json:"source"`
+}
+
+// FindingItem is one affected destination or object, for a table rather than prose.
+type FindingItem struct {
+	Target string   `json:"target"`           // ns/name, or a host
+	Class  string   `json:"class,omitempty"`  // data store, credential service, fetches from elsewhere
+	Access string   `json:"access,omitempty"` // methods allowed
+	Others []string `json:"others,omitempty"` // other agents with the same access
+	Note   string   `json:"note,omitempty"`
 }
 
 // Agent is the blast radius of one agent-like workload.

@@ -13,6 +13,9 @@ func (e *engine) findings(w *workload, a Agent, reach []pair, all []*workload, d
 	add := func(sev, title, detail, fix string) {
 		out = append(out, Finding{Severity: sev, Title: title, Detail: detail, Fix: fix, Source: guide})
 	}
+	addItems := func(sev, title, detail, fix string, items []FindingItem) {
+		out = append(out, Finding{Severity: sev, Title: title, Detail: detail, Items: items, Fix: fix, Source: guide})
+	}
 	// What the agent needs: what it is configured to call, plus what it did call.
 	var needed []*service
 	for _, d := range reach {
@@ -107,13 +110,9 @@ func (e *engine) findings(w *workload, a Agent, reach []pair, all []*workload, d
 		return rank[writes[i].cls] < rank[writes[j].cls]
 	})
 	if len(writes) > 0 {
-		var lines []string
-		for i, t := range writes {
-			if i == 12 {
-				lines = append(lines, fmt.Sprintf("and %d more", len(writes)-12))
-				break
-			}
-			lines = append(lines, fmt.Sprintf("%s (%s, %s)", svcLabel(t.sv), t.cls, t.verbs))
+		var items []FindingItem
+		for _, t := range writes {
+			items = append(items, FindingItem{Target: svcLabel(t.sv), Class: t.cls, Access: t.verbs})
 		}
 		first := writes[0]
 		fix := e.readOnlyPolicy(w, first.sv)
@@ -124,19 +123,20 @@ func (e *engine) findings(w *workload, a Agent, reach []pair, all []*workload, d
 		if len(writes) > 1 {
 			title = fmt.Sprintf("Can write to %d sensitive services", len(writes))
 		}
-		add("high", title,
-			fmt.Sprintf("The network lets %s change data on: %s. Only the application's own authentication stands in the way. Write access nobody audited is how the incident's agents turned a package registry into a message board. Allow only the methods and callers each one needs (the fix shows the first; repeat for the others).", w.name, strings.Join(lines, "; ")), fix)
+		addItems("high", title,
+			"Nothing on the network stops it changing data here; only each application's own login does. Unaudited write access is how the incident's agents turned a registry into a message board.",
+			"# Shown for "+svcLabel(first.sv)+"; repeat for each destination listed.\n"+fix, items)
 	}
-	var shared []string
+	var sharedItems []FindingItem
 	for _, t := range writes {
 		if len(t.with) > 0 {
-			shared = append(shared, fmt.Sprintf("%s (with %d other agent%s: %s)", svcLabel(t.sv), len(t.with), plural(len(t.with)), strings.Join(firstN(t.with, 3), ", ")))
+			sharedItems = append(sharedItems, FindingItem{Target: svcLabel(t.sv), Class: t.cls, Others: t.with})
 		}
 	}
-	if len(shared) > 0 {
-		add("high", fmt.Sprintf("Shares %d writable store%s with other agents", len(shared), plural(len(shared))),
-			"Anything one agent can write and another can read is a channel between them, whether intended or not: "+strings.Join(firstN(shared, 8), "; ")+".",
-			"# give each agent its own store, database or prefix, or make the shared one read-only for agents\n"+e.readOnlyPolicy(w, writes[0].sv))
+	if len(sharedItems) > 0 {
+		addItems("high", fmt.Sprintf("Shares %d writable store%s with other agents", len(sharedItems), plural(len(sharedItems))),
+			"Anything one agent can write and another can read is a channel between them, whether intended or not.",
+			"# give each agent its own store, database or prefix, or make the shared one read-only for agents\n"+e.readOnlyPolicy(w, writes[0].sv), sharedItems)
 	}
 	if len(a.Identity.SharedVolumes) > 0 {
 		add("high", "Mounts a volume other agents also mount", strings.Join(a.Identity.SharedVolumes, "; "), "# one PersistentVolumeClaim per agent, or mount shared data read-only\nvolumeMounts:\n- {name: shared, mountPath: /data, readOnly: true}")
@@ -158,8 +158,13 @@ func (e *engine) findings(w *workload, a Agent, reach []pair, all []*workload, d
 		if len(list) > 10 {
 			list = append(append([]string{}, list[:10]...), fmt.Sprintf("and %d more", len(a.NeverUsed)-10))
 		}
-		add("medium", fmt.Sprintf("%d allowed destinations were never used", a.Counts.NeverUsed),
-			"Allowed, not configured, and not called while the capture's access logs were recorded: "+strings.Join(list, ", ")+". These are the cheapest paths to close.", egressFix)
+		var items []FindingItem
+		for _, n := range a.NeverUsed {
+			items = append(items, FindingItem{Target: n, Note: "not configured, not called"})
+		}
+		_ = list
+		addItems("medium", fmt.Sprintf("%d allowed destinations were never used", a.Counts.NeverUsed),
+			"Allowed, not configured, and not called while the access logs were recorded. These are the cheapest paths to close.", egressFix, items)
 	}
 
 	switch {

@@ -168,6 +168,15 @@ func newCluster(ws *store.Workspace, name string) *cluster {
 	if !c.apKnown {
 		c.notes = append(c.notes, "Istio AuthorizationPolicies were not captured, so mesh rules could not be evaluated")
 	}
+	for _, crd := range []struct{ group, res, name string }{
+		{"cilium.io", "ciliumnetworkpolicies", "CiliumNetworkPolicy"}, {"cilium.io", "ciliumclusterwidenetworkpolicies", "CiliumClusterwideNetworkPolicy"},
+		{"crd.projectcalico.org", "networkpolicies", "Calico NetworkPolicy"}, {"crd.projectcalico.org", "globalnetworkpolicies", "Calico GlobalNetworkPolicy"},
+		{"policy.networking.k8s.io", "adminnetworkpolicies", "AdminNetworkPolicy"}, {"policy.networking.k8s.io", "baselineadminnetworkpolicies", "BaselineAdminNetworkPolicy"},
+	} {
+		if len(c.list(crd.group, crd.res)) > 0 {
+			c.notes = append(c.notes, crd.name+" objects exist but are not evaluated yet, so reach may look wider than it really is")
+		}
+	}
 	if !c.nsKnown {
 		c.notes = append(c.notes, "namespace labels were not captured, so ambient enrolment and namespace selectors are guesses")
 	}

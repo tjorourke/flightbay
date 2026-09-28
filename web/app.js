@@ -17,7 +17,7 @@ const S = {
   search: {q: '', limit: 200},
   pst: {tab: 'summary', area: '', status: 'attention', q: '', open: null},
   nv: {resource: 'pods', group: '', ns: '', q: '', sel: 0, cmd: false},
-  reach: {sel: '', q: '', type: '', dq: '', dchip: 'all', fixOpen: {}, list: null, listRev: null, detail: null, detailKey: '', scroll: false},
+  reach: {sel: '', q: '', type: '', dq: '', dchip: 'all', fixOpen: {}, list: null, listRev: null, detail: null, detailKey: '', scroll: false, gview: '', gexpand: {}, gz: null, gfull: false},
 };
 
 async function api(path, params) {
@@ -701,7 +701,7 @@ async function reach() {
     const key = R.sel + '\u0000' + rev;
     if (R.detailKey !== key) {
       R.detail = await api('api/reach', {agent: R.sel}).catch(e => ({error: e.message}));
-      R.detailKey = key; R.fixOpen = {};
+      R.detailKey = key; R.fixOpen = {}; R.gexpand = {}; R.gz = null;
     }
     detail = R.detail.error ? `<div class="notice bad mt">${esc(R.detail.error)}</div>` : rcDetail(R.detail);
   }
@@ -745,21 +745,40 @@ function rcDetail(a) {
       <div class="row wrap">${a.ref ? `<button id="rc-obj">Open ${esc(a.kind)}</button>` : ''}<button id="rc-logs">Logs from this agent</button><button id="rc-term">&gt;_ fbreach in terminal</button><button class="ghost" id="rc-close" title="Back to the list" aria-label="Close">✕</button></div></div>
     <p class="rc-summary">${esc(a.summary)}</p><p class="muted" style="font-size:12px;margin-top:4px">Why it is listed: ${esc(a.why)}</p>
     <div class="rc-tiles">${tiles}</div></div></section>`;
-  const graph = `<section class="panel mt"><div class="panel-head"><h2>Blast radius</h2><small class="muted">Left to right: the agent, what it reaches directly, what those reach for it, and the way out. Click a box to open it; hover a line for why it is allowed.</small></div>
-    <div class="rc-graph">${rcGraph(a)}</div>
-    <div class="rc-legend"><span><i class="rc-sw red"></i>open, write access or internet</span><span><i class="rc-sw amber"></i>allowed with no request-level rule, or unknown</span><span><i class="rc-sw green"></i>read-only or blocked</span><span><i class="rc-sw grey"></i>blocked or not applicable</span><span><i class="rc-sw dash"></i>denied or unknown verdict</span></div></section>`;
+  const G = rcGraphModel(a);
+  const vbtn = (v, label, hint) => `<button class="chip ${G.view === v ? 'on' : ''}" data-rgview="${v}" title="${esc(hint)}">${label}</button>`;
+  const graph = `<section class="panel mt rc-gpanel ${R.gfull ? 'full' : ''}" id="rc-gpanel"><div class="panel-head rc-ghead"><div class="row wrap"><h2>Blast radius</h2>
+      ${vbtn('risky', 'Risky', 'Red destinations and anything leading out of the cluster; the rest folded by namespace')}${vbtn('byns', 'By namespace', 'One box per namespace; click one to open it up')}${vbtn('all', 'Everything', 'Every destination as its own box')}
+      ${Object.keys(R.gexpand).length ? '<button class="ghost" id="rg-collapse">Fold namespaces</button>' : ''}<small class="muted">${G.folded ? `${G.shown} of ${G.total} shown one by one, ${G.folded} folded into ${G.groups} namespace${G.groups === 1 ? '' : 's'}` : `all ${G.total} destinations`}</small></div>
+      <div class="row rc-zoom"><button id="rg-out" title="Zoom out (-)">−</button><span id="rg-pct" class="mono muted">100%</span><button id="rg-in" title="Zoom in (+)">+</button><button id="rg-fit" title="Fit (0)">Fit</button><button id="rg-full" title="${R.gfull ? 'Exit full screen (Esc)' : 'Full screen (f)'}">${R.gfull ? '⤡ Exit' : '⤢ Full screen'}</button></div></div>
+    <div class="rg-vp" id="rg-vp" tabindex="0">${rcGraph(a, G)}</div>
+    <div class="rc-legend"><span><i class="rc-sw red"></i>open, write access or internet</span><span><i class="rc-sw amber"></i>allowed with no request-level rule, or unknown</span><span><i class="rc-sw green"></i>read-only or blocked</span><span><i class="rc-sw grey"></i>blocked or not applicable</span><span><i class="rc-sw dash"></i>denied or unknown verdict</span><span class="muted">Drag to move · pinch or Ctrl+scroll to zoom · click a box to open it</span></div></section>`;
   const kindCls = {internet: 'red', fetcher: 'red', metadata: 'red', credentials: 'red', store: 'amber', service: 'amber'};
   const paths = (a.paths || []).map(p => `<div class="rc-path"><span class="rc-kind ${kindCls[p.kind] || ''}">${esc(p.kind)}</span>
     <div class="rc-chain">${p.hops.map(h => `<span class="rc-hop ${h === 'internet' || h === '169.254.169.254' ? 'net' : ''}">${esc(h)}</span>`).join('<span class="rc-arrow">→</span>')}</div>
     <small class="muted rc-why">${esc(p.why)}</small></div>`).join('');
   const pathsPanel = `<section class="panel mt"><div class="panel-head"><h2>Paths that matter</h2><small class="muted">Chains from the agent to the internet, cloud metadata, fetchers and stores</small></div>
     ${paths || '<div class="empty"><strong>No path to the internet or cloud metadata</strong>Nothing this agent can reach leads out of the cluster.</div>'}</section>`;
-  const findings = (a.findings || []).map((f, i) => `<div class="rc-finding"><div class="row" style="align-items:flex-start"><span class="pst-sev pst-sev-${esc(f.severity)}">${esc(f.severity)}</span><div style="min-width:0;flex:1"><strong>${esc(f.title)}</strong><p class="muted" style="margin-top:4px;font-size:12px">${esc(f.detail)}</p>
-    <details class="rc-fix" data-rcfix="${i}" ${R.fixOpen[i] ? 'open' : ''}><summary>How to fix</summary>
-      ${f.fix ? `<div class="row between mt" style="margin-top:10px"><small class="muted">Apply, then take a new capture to confirm</small><div class="row"><button data-rccopy="${i}">Copy YAML</button>${f.source ? `<a href="${esc(f.source)}" target="_blank" rel="noopener">Read the guide ↗</a>` : ''}</div></div><pre class="code" style="margin-top:8px">${esc(f.fix)}</pre>`
-        : `<p class="muted" style="margin:8px 0 0;font-size:12px">No fix YAML came back for this finding.${f.source ? ` <a href="${esc(f.source)}" target="_blank" rel="noopener">Read the guide ↗</a>` : ''}</p>`}
-    </details></div></div></div>`).join('');
-  const findingsPanel = `<section class="panel"><div class="panel-head"><h2>Findings</h2><small class="muted">${c.critical || 0} critical · ${c.high || 0} high · ${(a.findings || []).length} in all</small></div>
+  // Findings: one line each; open one for the affected list and the fix.
+  const itemTable = f => {
+    const its = f.items || [];
+    if (!its.length) return '';
+    const hasCls = its.some(x => x.class), hasAcc = its.some(x => x.access), hasOth = its.some(x => (x.others || []).length), hasNote = its.some(x => x.note);
+    const link = t => t.includes('/') ? `<button class="link mono" data-rcsvc="${attr({cluster: a.cluster, group: '', resource: 'services', namespace: t.split('/')[0], name: t.split('/')[1]})}">${esc(t)}</button>` : `<span class="mono">${esc(t)}</span>`;
+    return `<div class="table-scroll rc-items"><table><thead><tr><th>Affected</th>${hasCls ? '<th>What it is</th>' : ''}${hasAcc ? '<th>Allowed</th>' : ''}${hasOth ? '<th>Also reachable by</th>' : ''}${hasNote ? '<th></th>' : ''}</tr></thead><tbody>
+      ${its.map(x => `<tr><td>${link(x.target)}</td>${hasCls ? `<td>${esc(x.class || '')}</td>` : ''}${hasAcc ? `<td class="mono red">${esc(x.access || '')}</td>` : ''}${hasOth ? `<td class="rc-small">${(x.others || []).length} other agent${(x.others || []).length === 1 ? '' : 's'} <span class="muted">${esc((x.others || []).join(', '))}</span></td>` : ''}${hasNote ? `<td class="muted rc-small">${esc(x.note || '')}</td>` : ''}</tr>`).join('')}</tbody></table></div>`;
+  };
+  const findings = (a.findings || []).map((f, i) => {
+    const open = !!R.fixOpen[i];
+    const n = (f.items || []).length;
+    return `<div class="rc-finding ${open ? 'open' : ''}"><button class="rc-fhead" data-rcfopen="${i}">
+      <span class="pst-sev pst-sev-${esc(f.severity)}">${esc(f.severity)}</span><strong>${esc(f.title)}</strong>
+      ${n ? `<span class="tag">${n} affected</span>` : ''}<span style="flex:1"></span>${f.fix ? '<small class="muted">fix included</small>' : ''}<span class="muted">${open ? '▾' : '▸'}</span></button>
+      ${open ? `<div class="rc-fbody"><p>${esc(f.detail)}</p>${itemTable(f)}
+        ${f.fix ? `<div class="row between mt"><h3>How to fix</h3><div class="row"><button data-rccopy="${i}">Copy YAML</button>${f.source ? `<a href="${esc(f.source)}" target="_blank" rel="noopener">Read the guide ↗</a>` : ''}</div></div><pre class="code mt">${esc(f.fix)}</pre>`
+          : f.source ? `<p class="mt"><a href="${esc(f.source)}" target="_blank" rel="noopener">Read the guide ↗</a></p>` : ''}</div>` : ''}</div>`;
+  }).join('');
+  const findingsPanel = `<section class="panel"><div class="panel-head"><h2>Findings</h2><small class="muted">${c.critical || 0} critical · ${c.high || 0} high · ${(a.findings || []).length} in all · open one for what it affects and the fix</small></div>
     ${findings || '<div class="empty"><strong>Nothing to lock down</strong>No findings for this agent.</div>'}</section>`;
   const yes = (b, good) => b ? `<span class="${good ? 'green' : 'amber'}">yes</span>` : `<span class="${good ? 'amber' : 'green'}">no</span>`;
   const lst = (xs, cls, none) => (xs || []).length ? xs.map(x => `<div class="${cls || ''}">${esc(x)}</div>`).join('') : `<span class="muted">${none || 'none'}</span>`;
@@ -798,19 +817,61 @@ function rcDetail(a) {
         <td>${e.declared ? '<span class="green">yes</span>' : '<span class="muted">no</span>'}</td>
         <td class="rc-wrap">${esc(e.why)}${(e.reasons || []).length ? `<br><small class="muted">${esc(e.reasons.join('; '))}</small>` : ''}${e.via ? `<br><small class="muted">via ${esc(e.via)}</small>` : ''}</td></tr>`; }).join('')}
     </tbody></table>` : `<div class="empty"><strong>${direct.length ? 'No destinations match' : 'No destinations'}</strong>${direct.length ? 'Change the filter above.' : 'Nothing in the cluster is reachable from this agent.'}</div>`}</div></section>`;
-  return header + graph + pathsPanel + `<div class="grid2 rc-grid mt">${findingsPanel}${identity}</div>` + destTable;
+  const tabs = [['graph', 'Blast radius', ''], ['findings', 'Findings', (a.findings || []).length], ['paths', 'Paths', (a.paths || []).length], ['dest', 'Destinations', direct.length], ['identity', 'Identity', '']];
+  const tab = R.dtab || 'graph';
+  const crit = (c.critical || 0) + (c.high || 0);
+  const tabBar = `<nav class="pst-tabs rc-tabs">${tabs.map(([k, label, n]) => `<button class="pst-tab ${tab === k ? 'on' : ''}" data-rctab="${k}">${label}${n !== '' && n ? `<span class="pst-tab-n ${k === 'findings' && crit ? 'red' : ''}">${n}</span>` : ''}</button>`).join('')}</nav>`;
+  const body = {graph: graph + pathsPanel, findings: `<div class="mt">${findingsPanel}</div>`, paths: pathsPanel, dest: destTable, identity: `<div class="mt">${identity}</div>`}[tab] || graph;
+  return header + tabBar + body;
 }
 
-// rcGraph draws the blast radius as columns: the agent, its direct
-// destinations, what they reach, then the way out (internet, metadata and
-// external hosts). Lines between adjacent columns stay in the gap between
-// them; a line that skips a column is routed along a lane above every box, so
-// no line crosses a box.
-function rcGraph(a) {
-  const nodes = a.nodes || [], edges = (a.edges || []).filter(e => e.from !== e.to);
+// rcGraphModel turns the agent's nodes and direct edges into the graph for
+// the chosen view. The server folds unremarkable destinations into one node
+// per namespace; here every destination is known (from a.direct), so the
+// view decides what to draw: only the risky ones, one box per namespace, or
+// everything. Folded namespaces open up when clicked.
+function rcGraphModel(a) {
+  const R = S.reach;
+  const svcParts = id => { const p = id.slice(4).split('/'); return {ns: p[p.length - 3], name: p[p.length - 1]}; };
+  let nodes = (a.nodes || []).filter(n => n.type !== 'group');
+  let edges = (a.edges || []).filter(e => e.from !== e.to && !e.to.startsWith('group:'));
+  const have = new Set(nodes.map(n => n.id));
+  const agentId = (nodes.find(n => n.type === 'agent') || {}).id;
+  for (const e of a.direct || []) {
+    if (have.has(e.to) || !e.to.startsWith('svc:') || e.verdict === 'denied') continue;
+    const p = svcParts(e.to);
+    nodes.push({id: e.to, type: 'service', label: p.ns + '/' + p.name, namespace: p.ns, depth: 1, risk: e.risk, detail: e.why});
+    have.add(e.to);
+    edges.push(e);
+  }
+  const first = nodes.filter(n => n.type === 'service' && (n.depth || 1) === 1 && edges.some(e => e.from === agentId && e.to === n.id));
+  const total = first.length;
+  const view = R.gview || (total > 14 ? 'risky' : 'all');
+  const outgoing = new Set(edges.map(e => e.from));
+  const keep = n => view === 'all' || R.gexpand[n.namespace] || outgoing.has(n.id) || (view === 'risky' && n.risk === 'red' && !/^group:/.test(n.id));
+  const rank = {red: 0, amber: 1, green: 2, grey: 3};
+  const groups = {};
+  for (const n of first) if (!keep(n)) (groups[n.namespace] ||= []).push(n);
+  const folded = new Set(Object.values(groups).flat().map(n => n.id));
+  nodes = nodes.filter(n => !folded.has(n.id));
+  edges = edges.filter(e => !folded.has(e.to));
+  for (const [ns, list] of Object.entries(groups)) {
+    const worst = list.reduce((w, n) => rank[n.risk] < rank[w] ? n.risk : w, 'grey');
+    const id = 'fold:' + ns;
+    nodes.push({id, type: 'group', label: ns, namespace: ns, depth: 1, risk: worst, count: list.length, detail: list.map(n => n.label.split('/').pop()).join(', ')});
+    edges.push({from: agentId, to: id, verdict: 'allowed', risk: worst, why: `${list.length} destinations in ${ns}; click to open the namespace up`});
+  }
+  return {nodes, edges, view, total, shown: total - folded.size, folded: folded.size, groups: Object.keys(groups).length};
+}
+
+// rcGraph draws the model as columns: the agent, its direct destinations,
+// what they reach, then the way out. Lines between adjacent columns run along
+// a short trunk per source ("bus" routing) so a wide fan-out stays readable;
+// a line that skips a column runs along a lane above every box.
+function rcGraph(a, G) {
+  const nodes = G.nodes, ids = new Set(nodes.map(n => n.id));
+  const es = G.edges.filter(e => ids.has(e.from) && ids.has(e.to));
   if (!nodes.length) return '<div class="empty"><strong>No graph for this agent</strong></div>';
-  const ids = new Set(nodes.map(n => n.id));
-  const es = edges.filter(e => ids.has(e.from) && ids.has(e.to));
   const inbound = {};
   es.forEach(e => (inbound[e.to] ||= []).push(e.from));
   const out = new Set(['internet', 'metadata', 'external']);
@@ -826,7 +887,10 @@ function rcGraph(a) {
   const ncol = Math.max(...Object.values(col)) + 1;
   const cols = Array.from({length: ncol}, () => []);
   nodes.forEach(n => cols[col[n.id]].push(n));
-  // Order each column by where its predecessors sit, internet and metadata first.
+  // Chains between two direct destinations stay in the Paths tab: drawing
+  // them would loop lines back across the column.
+  for (let i = es.length - 1; i >= 0; i--) if (col[es[i].from] >= col[es[i].to]) es.splice(i, 1);
+  const rank = {red: 0, amber: 1, green: 2, grey: 3};
   const row = {};
   cols.forEach((list, c) => {
     if (c >= 1) {
@@ -834,53 +898,143 @@ function rcGraph(a) {
         if (n.type === 'internet') return [n, -2e9];
         if (n.type === 'metadata') return [n, -1e9];
         const ps = (inbound[n.id] || []).filter(p => row[p] !== undefined);
-        return [n, ps.length ? ps.reduce((s, p) => s + row[p], 0) / ps.length * 1000 + i : 1e8 + i];
+        const base = ps.length ? ps.reduce((s, p) => s + row[p], 0) / ps.length * 1e6 : 1e12;
+        return [n, base + (rank[n.risk] ?? 3) * 1e4 + (n.type === 'group' ? 5e3 : 0) + i];
       }));
       list.sort((x, y) => bc.get(x) - bc.get(y));
     }
     list.forEach((n, i) => { row[n.id] = i; });
   });
-  const avail = Math.max(880, ($('#main')?.clientWidth || 1160) - 60);
-  const gap = 66, bh = 42, vg = 12, lane = 7;
-  const bw = Math.max(168, Math.min(250, Math.floor((avail - 24 - gap * (ncol - 1)) / ncol)));
+  const bw = 232, bh = 44, gap = 118, vg = 14, lane = 7, sg = 16;
+  // A long first column wraps into a grid inside a frame, with one line from
+  // the agent into the frame. Destinations with onward lines sit in the
+  // rightmost sub-column so their lines leave without crossing a box.
+  const c1 = cols[1] || [];
+  const perCol = 12;
+  const nsub = c1.length > perCol + 2 ? Math.min(5, Math.ceil(c1.length / perCol)) : 1;
+  const grid = nsub > 1;
+  const cell = {};
+  if (grid) {
+    const onward = new Set(es.filter(e => col[e.from] === 1 && col[e.to] > 1).map(e => e.from));
+    const rows = Math.ceil(c1.length / nsub);
+    const srcs = c1.filter(n => onward.has(n.id)), rest = c1.filter(n => !onward.has(n.id));
+    srcs.forEach((n, i) => { cell[n.id] = {sc: nsub - 1, r: i}; });
+    let k = 0;
+    const used = new Set(srcs.map((_, i) => `${nsub - 1}:${i}`));
+    for (let sc = 0; sc < nsub; sc++) for (let r = 0; r < Math.max(rows, srcs.length); r++) {
+      if (k >= rest.length) break;
+      if (used.has(`${sc}:${r}`)) continue;
+      if (sc < nsub - 1 && r >= rows) continue;
+      cell[rest[k++].id] = {sc, r};
+    }
+    c1.forEach(n => { row[n.id] = cell[n.id].r; });
+  }
+  const extra = grid ? (nsub - 1) * (bw + sg) + 28 : 0; // extra width of column 1
   const long = es.filter(e => col[e.to] !== col[e.from] + 1);
-  const top = 18 + long.length * lane;
-  const X = c => 12 + c * (bw + gap), Y = id => top + row[id] * (bh + vg);
-  const W = 24 + ncol * bw + (ncol - 1) * gap, H = top + Math.max(...cols.map(l => l.length)) * (bh + vg) + 8;
+  const top = 18 + long.length * lane + (grid ? 26 : 0);
+  const tall = Math.max(...cols.map((l, c) => c === 1 && grid ? Math.max(...c1.map(n => cell[n.id].r)) + 1 : l.length));
+  const colX = c => 16 + c * (bw + gap) + (c > 1 ? extra : 0) + (c === 1 && grid ? 14 : 0);
+  const nodeX = id => colX(col[id]) + (grid && col[id] === 1 ? cell[id].sc * (bw + sg) : 0);
+  const X = c => colX(c), Y = id => top + row[id] * (bh + vg);
+  const W = 32 + ncol * bw + (ncol - 1) * gap + extra, H = top + tall * (bh + vg) + 14;
   const fit = (s, px) => { const n = Math.max(4, Math.floor((bw - 20) / px)); s = String(s || ''); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
   const byId = new Map(nodes.map(n => [n.id, n]));
   const labelOf = id => byId.get(id)?.label || id;
   const dash = e => e.verdict === 'denied' || e.verdict === 'unknown';
   const risk = r => ['red', 'amber', 'green', 'grey'].includes(r) ? r : 'grey';
+  // One trunk per source, offset so trunks of different sources do not overlap.
+  const srcSlot = {};
+  cols.forEach(list => { let i = 0; for (const n of list) if (es.some(e => e.from === n.id && col[e.to] === col[n.id] + 1)) srcSlot[n.id] = i++; });
   let li = 0;
-  const edgeSvg = es.map(e => {
+  const intoGrid = e => grid && col[e.from] === 0 && col[e.to] === 1;
+  const ordered = [...es].filter(e => !intoGrid(e)).sort((x, y) => (rank[y.risk] ?? 3) - (rank[x.risk] ?? 3)); // red drawn last, on top
+  let frame = '';
+  if (grid) {
+    const agent = nodes.find(n => n.type === 'agent');
+    const into = es.filter(intoGrid);
+    const worst = into.reduce((w, e) => (rank[e.risk] ?? 3) < (rank[w] ?? 3) ? e.risk : w, 'grey');
+    const fx = colX(1) - 14, fy = top - 30, fw = nsub * bw + (nsub - 1) * sg + 28, fh = H - fy - 4;
+    const counts = into.reduce((m, e) => (m[e.risk] = (m[e.risk] || 0) + 1, m), {});
+    const sy = Y(agent.id) + bh / 2;
+    frame = `<g class="rg-frame"><rect x="${fx}" y="${fy}" width="${fw}" height="${fh}" rx="10"/><text x="${fx + 14}" y="${fy + 18}" class="rg-fl">Reaches directly · ${into.length}${counts.red ? ` · ${counts.red} red` : ''}${counts.amber ? ` · ${counts.amber} amber` : ''}${counts.green ? ` · ${counts.green} green` : ''}</text></g>
+      <g class="rg-edge rg-${risk(worst)}"><title>${esc(`${labelOf(agent.id)} reaches ${into.length} destinations directly`)}</title><path class="rg-line rg-trunk" d="M${colX(0) + bw},${sy} H${fx - 3}" marker-end="url(#rga-${risk(worst)})"/></g>`;
+  }
+  const edgeSvg = ordered.map(e => {
     const cs = col[e.from], ct = col[e.to];
-    const sx = X(cs) + bw, sy = Y(e.from) + bh / 2, tx = X(ct) - 2, ty = Y(e.to) + bh / 2;
+    const sx = nodeX(e.from) + bw, sy = Y(e.from) + bh / 2, tx = nodeX(e.to) - 3, ty = Y(e.to) + bh / 2;
     let d;
     if (ct === cs + 1) {
-      const mx = (sx + tx) / 2;
-      d = `M${sx},${sy} C${mx},${sy} ${mx},${ty} ${tx},${ty}`;
+      const bx = sx + 22 + ((srcSlot[e.from] || 0) % 10) * 7;
+      const r = Math.min(8, Math.abs(ty - sy) / 2);
+      d = Math.abs(ty - sy) < 1 ? `M${sx},${sy} H${tx}` : `M${sx},${sy} H${bx - r} Q${bx},${sy} ${bx},${sy + Math.sign(ty - sy) * r} V${ty - Math.sign(ty - sy) * r} Q${bx},${ty} ${bx + r},${ty} H${tx}`;
     } else {
-      const i = li++, off = ((i % 5) - 2) * 4, ly = 8 + i * lane;
-      const g1 = sx + gap / 2 + off, g2 = Math.max(4, X(ct) - gap / 2 + off);
+      const i = li++, ly = 8 + i * lane;
+      const g1 = sx + 12 + (i % 6) * 5, g2 = Math.max(4, nodeX(e.to) - 18 - (i % 6) * 5);
       d = `M${sx},${sy} H${g1} V${ly} H${g2} V${ty} H${tx}`;
     }
     const tip = [`${labelOf(e.from)} → ${labelOf(e.to)}`, `${e.verdict}${e.layer ? ' (' + e.layer + ')' : ''}: ${e.why || ''}`, ...(e.reasons || []), e.via ? 'via ' + e.via : '', e.methods ? 'methods: ' + e.methods.join(', ') : '', e.observed ? `called ${e.observed} times` : ''].filter(Boolean).join('\n');
     return `<g class="rg-edge rg-${risk(e.risk)} ${dash(e) ? 'rg-dash' : ''}"><title>${esc(tip)}</title><path class="rg-hit" d="${d}"/><path class="rg-line" d="${d}" marker-end="url(#rga-${risk(e.risk)})"/></g>`;
   }).join('');
-  // Services read ns/name: put the name on top and the namespace underneath so less is cut off.
   const split = n => n.type === 'service' && n.label.includes('/') ? [n.label.slice(n.label.indexOf('/') + 1), n.label.slice(0, n.label.indexOf('/'))] : [n.label, ''];
-  const title = n => split(n)[0];
-  const sub = n => n.type === 'agent' ? (rcTypes[a.type] || a.type) : n.type === 'group' ? `${n.count} Services · click to list` : n.type === 'internet' ? 'outside the cluster' : n.type === 'metadata' ? 'cloud instance metadata'
+  const title = n => n.type === 'group' ? `${n.label} (${n.count})` : split(n)[0];
+  const sub = n => n.type === 'agent' ? (rcTypes[a.type] || a.type) : n.type === 'group' ? `${n.count} Service${n.count === 1 ? '' : 's'} · click to open up` : n.type === 'internet' ? 'outside the cluster' : n.type === 'metadata' ? 'cloud instance metadata'
     : [...(n.classes || []), split(n)[1]].filter(Boolean).join(' · ') || (n.type === 'external' ? 'external host' : 'service');
-  const nodeSvg = nodes.map((n, i) => {
+  const nodeSvg = nodes.map(n => {
     const click = n.type === 'group' || n.ref || rcSvc(n.id);
-    const tip = [n.label, n.namespace && n.type !== 'group' ? 'namespace ' + n.namespace : '', (n.classes || []).join(', '), n.detail, click ? (n.type === 'group' ? 'Click to list them' : 'Click to open') : ''].filter(Boolean).join('\n');
-    return `<g class="rg-node rg-${risk(n.risk)} rg-t-${esc(n.type)} ${click ? 'rg-click' : ''}" data-rgnode="${i}" transform="translate(${X(col[n.id])},${Y(n.id)})"><title>${esc(tip)}</title>
-      <rect width="${bw}" height="${bh}" rx="7"/><text x="10" y="17" class="rg-l">${esc(fit(title(n), 6.9))}</text><text x="10" y="32" class="rg-s">${esc(fit(sub(n), 6.1))}</text></g>`;
+    const tip = [n.label, n.namespace && n.type !== 'group' ? 'namespace ' + n.namespace : '', (n.classes || []).join(', '), n.detail, click ? (n.type === 'group' ? 'Click to open the namespace up' : 'Click to open') : ''].filter(Boolean).join('\n');
+    return `<g class="rg-node rg-${risk(n.risk)} rg-t-${esc(n.type)} ${click ? 'rg-click' : ''}" data-rgid="${esc(n.id)}" transform="translate(${nodeX(n.id)},${Y(n.id)})"><title>${esc(tip)}</title>
+      <rect width="${bw}" height="${bh}" rx="7"/><text x="11" y="18" class="rg-l">${esc(fit(title(n), 7.1))}</text><text x="11" y="34" class="rg-s">${esc(fit(sub(n), 6.2))}</text></g>`;
   }).join('');
   const marker = r => `<marker id="rga-${r}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="rg-arrow-${r}"/></marker>`;
-  return `<svg class="rg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Blast radius of ${esc(rcName(a))}"><defs>${['red', 'amber', 'green', 'grey'].map(marker).join('')}</defs>${edgeSvg}${nodeSvg}</svg>`;
+  return `<svg class="rg" id="rg-svg" data-w="${W}" data-h="${H}" width="100%" height="100%" role="img" aria-label="Blast radius of ${esc(rcName(a))}"><defs>${['red', 'amber', 'green', 'grey'].map(marker).join('')}</defs><g id="rg-root">${frame}${edgeSvg}${nodeSvg}</g></svg>`;
+}
+
+// Pan and zoom for the graph viewport. The transform is kept per agent and
+// view in S.reach.gz so re-renders keep your place.
+function rcPanZoom(key) {
+  const R = S.reach, vp = $('#rg-vp'), svg = $('#rg-svg'), root = $('#rg-root');
+  if (!vp || !svg || !root) return;
+  const W = +svg.dataset.w, H = +svg.dataset.h;
+  const pct = $('#rg-pct');
+  const apply = () => { const z = R.gz; root.setAttribute('transform', `translate(${z.x},${z.y}) scale(${z.k})`); if (pct) pct.textContent = Math.round(z.k * 100) + '%'; };
+  const fitView = () => {
+    const vw = vp.clientWidth, vh = vp.clientHeight;
+    const k = Math.max(0.2, Math.min(1.25, vw / (W + 20), R.gfull ? vh / (H + 20) : 1.25));
+    R.gz = {key, k, x: Math.max(10, (vw - W * k) / 2), y: H * k < vh ? (vh - H * k) / 2 : 10};
+    apply();
+  };
+  if (!R.gz || R.gz.key !== key) fitView(); else apply();
+  const zoomAt = (f, cx, cy) => {
+    const z = R.gz, k = Math.max(0.15, Math.min(4, z.k * f));
+    z.x = cx - (cx - z.x) * (k / z.k); z.y = cy - (cy - z.y) * (k / z.k); z.k = k; apply();
+  };
+  const centre = () => [vp.clientWidth / 2, vp.clientHeight / 2];
+  $('#rg-in').onclick = () => zoomAt(1.25, ...centre());
+  $('#rg-out').onclick = () => zoomAt(0.8, ...centre());
+  $('#rg-fit').onclick = fitView;
+  vp.addEventListener('wheel', e => {
+    const r = vp.getBoundingClientRect();
+    if (e.ctrlKey || e.metaKey) { e.preventDefault(); zoomAt(Math.exp(-e.deltaY * 0.01), e.clientX - r.left, e.clientY - r.top); }
+    else if (R.gfull) { e.preventDefault(); R.gz.x -= e.deltaX; R.gz.y -= e.deltaY; apply(); }
+  }, {passive: false});
+  let drag = null;
+  vp.onpointerdown = e => { if (e.button !== 0) return; drag = {x: e.clientX, y: e.clientY, ox: R.gz.x, oy: R.gz.y, moved: false}; };
+  vp.onpointermove = e => {
+    if (!drag) return;
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    if (!drag.moved && Math.hypot(dx, dy) < 4) return;
+    if (!drag.moved) { drag.moved = true; vp.setPointerCapture(e.pointerId); vp.classList.add('grabbing'); }
+    R.gz.x = drag.ox + dx; R.gz.y = drag.oy + dy; apply();
+  };
+  vp.onpointerup = e => { if (drag?.moved) { vp.dataset.dragged = '1'; setTimeout(() => delete vp.dataset.dragged, 0); } drag = null; vp.classList.remove('grabbing'); };
+  vp.onkeydown = e => {
+    if (e.key === '+' || e.key === '=') zoomAt(1.25, ...centre());
+    else if (e.key === '-') zoomAt(0.8, ...centre());
+    else if (e.key === '0') fitView();
+    else if (e.key === 'f') $('#rg-full').click();
+    else return;
+    e.preventDefault();
+  };
 }
 
 after.reach = () => {
@@ -912,20 +1066,26 @@ after.reach = () => {
   $('#rc-logs').onclick = () => openLogs(a.kind === 'Pod' ? {pod: a.name, namespace: a.namespace} : {workload: `${a.kind}/${a.name}`, namespace: a.namespace});
   const ob = $('#rc-obj'); if (ob) ob.onclick = () => openObject({cluster: a.ref.cluster, group: a.ref.group, resource: a.ref.resource, namespace: a.ref.namespace, name: a.ref.name});
   const openSvc = (ns, name) => openObject({cluster: a.cluster, group: '', resource: 'services', namespace: ns, name});
-  document.querySelectorAll('[data-rgnode]').forEach(g => g.onclick = () => {
-    const n = a.nodes[+g.dataset.rgnode]; if (!n) return;
-    if (n.type === 'group') {
-      const names = (n.detail || '').split(',').map(s => s.trim()).filter(Boolean);
-      modal(n.label, `<p class="muted" style="margin-bottom:10px;font-size:12px">Allowed, never called and not configured. Each is one more thing a compromised ${esc(a.name)} can talk to.</p>
-        <div class="search-results">${names.map(x => `<button data-rcsvc="${attr({cluster: a.cluster, group: '', resource: 'services', namespace: n.namespace, name: x})}"><span class="badge">Service</span><span class="mono">${esc(n.namespace)}/${esc(x)}</span></button>`).join('')}</div>`);
-      document.querySelectorAll('#modal-root [data-rcsvc]').forEach(b => b.onclick = () => { closeModal(); openObject(JSON.parse(b.dataset.rcsvc)); });
-      return;
-    }
+  const G = rcGraphModel(a);
+  const gkey = a.id + '|' + G.view + '|' + Object.keys(R.gexpand).sort().join(',') + '|' + (R.gfull ? 'full' : '');
+  rcPanZoom(gkey);
+  const keepY = fn => { const y = scrollY; fn(); render().then(() => scrollTo(0, y)); };
+  document.querySelectorAll('[data-rgview]').forEach(b => b.onclick = () => keepY(() => { R.gview = b.dataset.rgview; R.gexpand = {}; }));
+  const col = $('#rg-collapse'); if (col) col.onclick = () => keepY(() => { R.gexpand = {}; });
+  const full = on => keepY(() => { R.gfull = on; document.body.classList.toggle('rg-noscroll', on); });
+  const fb = $('#rg-full'); if (fb) fb.onclick = () => full(!R.gfull);
+  if (R.gfull && fb) { document.onkeydown = e => { if (e.key === 'Escape' && R.gfull) { document.onkeydown = null; full(false); } }; $('#rg-vp').focus(); }
+  const vp = $('#rg-vp');
+  document.querySelectorAll('[data-rgid]').forEach(g => g.onclick = () => {
+    if (vp?.dataset.dragged) return;
+    const n = G.nodes.find(x => x.id === g.dataset.rgid); if (!n) return;
+    if (n.type === 'group') { keepY(() => { R.gexpand[n.namespace] = true; }); return; }
     if (n.ref) { openObject({cluster: n.ref.cluster, group: n.ref.group, resource: n.ref.resource, namespace: n.ref.namespace, name: n.ref.name}); return; }
-    const s = rcSvc(n.id); if (s) openSvc(s.namespace, s.name);
+    const sv = rcSvc(n.id); if (sv) openSvc(sv.namespace, sv.name);
   });
   document.querySelectorAll('#main [data-rcsvc]').forEach(b => b.onclick = () => openObject(JSON.parse(b.dataset.rcsvc)));
-  document.querySelectorAll('[data-rcfix]').forEach(d => d.ontoggle = () => { R.fixOpen[+d.dataset.rcfix] = d.open; });
+  document.querySelectorAll('[data-rcfopen]').forEach(b => b.onclick = () => { const i = +b.dataset.rcfopen; R.fixOpen[i] = !R.fixOpen[i]; const y = scrollY; render().then(() => scrollTo(0, y)); });
+  document.querySelectorAll('[data-rctab]').forEach(b => b.onclick = () => { R.dtab = b.dataset.rctab; const y = scrollY; render().then(() => scrollTo(0, y)); });
   document.querySelectorAll('[data-rccopy]').forEach(b => b.onclick = () => { const f = a.findings[+b.dataset.rccopy]; navigator.clipboard.writeText(f.fix).then(() => toast('Fix copied'), () => toast('Clipboard unavailable')); });
   document.querySelectorAll('[data-rcd]').forEach(b => b.onclick = () => { R.dchip = b.dataset.rcd; const y = scrollY; render().then(() => scrollTo(0, y)); });
   const dq = $('#rc-dq');
