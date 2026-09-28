@@ -1,10 +1,10 @@
 ---
-title: Navigator
+title: "Resources: Keyboard (Navigator)"
 weight: 30
 description: A keyboard-first, k9s-style view of the snapshot or live mirror in the browser, with describe, YAML, events and logs in place.
 ---
 
-The Navigator works like k9s, in the page. You pick a resource type with `:`, filter with `/`, move with the arrow keys or `j`/`k`, and press Enter to describe the selected object. Describe, YAML, events and logs open in place of the table, and `Esc` takes you back, as in k9s.
+The Navigator is the **Keyboard** tab of [Resources](/desk/resources/), next to **Browse**. It works like k9s, in the page. You pick a resource type with `:`, filter with `/`, move with the arrow keys or `j`/`k`, and press Enter to describe the selected object. Describe, YAML, events and logs open in place of the table, and `Esc` takes you back, as in k9s.
 
 ![Navigator](/images/navigator.png)
 

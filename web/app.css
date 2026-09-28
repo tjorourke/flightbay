@@ -467,3 +467,6 @@ tr[data-nvrow]{cursor:pointer}
 .rv-cat input{margin-top:3px}
 .rv-cat span{display:flex;flex-direction:column;gap:1px}
 .rv-bulk{gap:6px;margin:0 0 10px 8px}.rv-bulk button{padding:5px 10px;font-size:12px}
+.res-tabs{margin:-4px 0 16px}
+.res-tabs .pst-tab{text-decoration:none;flex-direction:column;align-items:flex-start;gap:0}
+.res-tabs .pst-tab small{font-weight:400;font-size:11px}

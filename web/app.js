@@ -73,7 +73,8 @@ function openLogs(filters) {
 
 async function render() {
   const seq = ++S.renderSeq;
-  document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('active', a.dataset.view === S.view));
+  const navView = S.view === 'navigator' ? 'resources' : S.view;
+  document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('active', a.dataset.view === navView));
   const views = {navigator, search, overview, scorecard: posture, reach, resources, logs, timeline, findings, compare, proxies, coverage, ...(typeof reviewPage === 'function' ? {review: reviewPage} : {})};
   const fn = views[S.view] || overview;
   $('#crumb').textContent = S.ws ? `Workspace / ${S.ws.case ? 'Case ' + S.ws.case : 'Snapshot'} / ${S.view}` : 'Workspace';
@@ -437,7 +438,7 @@ async function navigator() {
   S.nvTypes = types;
   const have = types.filter(t => t.count > 0);
   let cur = types.find(t => t.resource === N.resource && t.group === N.group) || have.find(t => t.resource === 'pods') || have[0];
-  if (!cur) return head('Navigator', 'Nothing captured yet.');
+  if (!cur) return head('Resources', 'Nothing captured yet.') + resTabs('navigator');
   N.resource = cur.resource; N.group = cur.group; N.cur = cur;
   // "/!text" and "-l" are handled here; everything else goes to the server filter.
   const f = nvFilter(N.q);
@@ -488,7 +489,7 @@ async function navigator() {
       </tbody></table></div>
       <div class="nv-status"><span>${sel ? `${esc(sel.name)}${sel.namespace ? ' · ' + esc(sel.namespace) : ''}${!S.cluster ? ' · ' + esc(sel.cluster) : ''}` : ''}</span><span><b>Enter</b> describe · <b>y</b> yaml · <b>e</b> events · <b>l</b> logs · <b>:</b> command · <b>/</b> filter · <b>?</b> help</span></div>`;
   }
-  return `<div class="nv">${header}<div class="nv-frame" id="nv-frame" tabindex="-1">${cmdline}${help}${body}</div></div>`;
+  return head('Resources', 'Every captured object. Browse with the mouse, or switch to the keyboard view to move through them the way you would in k9s.') + resTabs('navigator') + `<div class="nv">${header}<div class="nv-frame" id="nv-frame" tabindex="-1">${cmdline}${help}${body}</div></div>`;
 }
 
 // nvFilter turns a k9s-style filter into the server query plus a client-side
@@ -1653,6 +1654,14 @@ after.search = () => {
 };
 
 // ---------- resources ----------
+// Resources has two ways in: Browse (mouse, grouped types, drawer) and
+// Keyboard (the k9s-style Navigator). The same objects; the last tab used
+// is where the menu entry opens.
+function resTabs(active) {
+  try { localStorage.setItem('flightbay-res-tab', active); } catch (_) { /* private mode */ }
+  return `<nav class="pst-tabs res-tabs"><a class="pst-tab ${active === 'resources' ? 'on' : ''}" href="#resources" data-restab="resources">Browse<small class="muted">mouse, every type</small></a><a class="pst-tab ${active === 'navigator' ? 'on' : ''}" href="#navigator" data-restab="navigator">Keyboard<small class="muted">k9s-style: : / Enter Esc</small></a></nav>`;
+}
+
 async function resources() {
   const allTypes = await api('api/resources', {cluster: S.cluster});
   const {groups, hidden} = groupKinds(allTypes);
@@ -1676,7 +1685,7 @@ async function resources() {
     truncated: 'This list was truncated: ' + (cur.reason || ''),
     'not-collected': 'No collection record for this type in the bundle.',
   }[cur.state] || '')}</span></div>`;
-  return head('Resources', 'Browse captured objects. Click a row for YAML, relationships, events and logs.', `<button id="res-k9s" title="k9s on this type and namespace, in the terminal">Open in k9s</button><button id="res-term">&gt;_ kubectl get ${esc(cur.resource)}</button>`) + `
+  return head('Resources', 'Every captured object. Browse with the mouse, or switch to the keyboard view to move through them the way you would in k9s.', `<button id="res-k9s" title="k9s on this type and namespace, in the terminal">Open in k9s</button><button id="res-term">&gt;_ kubectl get ${esc(cur.resource)}</button>`) + resTabs('resources') + `
   <div class="resource-layout"><nav class="types" aria-label="Resource types">${groups.map(([area, ts]) => `<h3 style="margin:12px 8px 4px;font-size:10px;letter-spacing:.08em;text-transform:uppercase" class="muted">${esc(area)}</h3>` + ts.map(t => `<button class="${t.resource === cur.resource && t.group === cur.group ? 'active' : ''}" data-type="${attr({g: t.group, r: t.resource})}" title="${esc(t.name)} · ${esc(t.state)}"><span>${kindLabel(t)}</span><span><small>${t.count}</small> <span class="st state-${esc(t.state)}">●</span></span></button>`).join('')).join('')}
     ${hidden ? `<p class="muted" style="font-size:11px;margin:12px 8px">${hidden} types with no captured objects are hidden. <button class="link" id="res-cov">Coverage</button> shows which were excluded or failed.</p>` : ''}</nav>
   <div><div class="toolbar"><select id="res-ns" aria-label="Namespace"><option value="">All namespaces</option>${S.res.nsOptions.map(n => `<option ${n === S.res.ns ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
@@ -2431,6 +2440,9 @@ function boot() {
   applyTheme(document.documentElement.dataset.theme || 'dark');
   $('#theme-toggle').onclick = () => applyTheme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light');
   $('#open-search').onclick = openSearch;
+  // The Resources menu entry opens the tab (Browse or Keyboard) used last.
+  const resLink = document.querySelector('.nav a[data-view="resources"]');
+  if (resLink) resLink.onclick = e => { let t = 'resources'; try { t = localStorage.getItem('flightbay-res-tab') || t; } catch (_) { /* private mode */ } if (t === 'navigator') { e.preventDefault(); nav('navigator'); } };
   $('#cluster').onchange = e => setCluster(e.target.value);
   $('#term-toggle').onclick = () => toggleTerminal();
   $('#term-k9s').onclick = () => openK9s('pods', '');

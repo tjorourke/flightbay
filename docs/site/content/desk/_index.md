@@ -116,7 +116,7 @@ The sidebar has every view:
 | [Review and send](/collect/review/) | Remove namespaces, types, objects and log lines, and export a signed bundle (bundles opened from a file) |
 | [Overview](/desk/overview/) | Where to start: counts, the top findings, clusters and provenance |
 | [Search](/desk/search/) | Every object, by name, label or anything in spec and status |
-| [Navigator](/desk/navigator/) | A keyboard-first, k9s-style browser |
+| [Resources: Keyboard tab](/desk/navigator/) | The keyboard-first, k9s-style view of the same objects |
 | [Resources](/desk/resources/) | Browse objects by type, with YAML, relations, events and logs |
 | [Log explorer](/desk/logs/) | Every log line, with a time axis |
 | [Timeline](/desk/timeline/) | Events, exits, rollouts and error spikes in order |
