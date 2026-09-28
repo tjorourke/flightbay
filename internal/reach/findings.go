@@ -154,7 +154,7 @@ func (e *engine) findings(w *workload, a Agent, reach []pair, all []*workload, d
 	}
 	if a.Counts.Direct > len(needed)+2 && a.Counts.Direct*2 >= total && total > 4 {
 		add("high", fmt.Sprintf("Can reach %d of %d Services", a.Counts.Direct, total),
-			fmt.Sprintf("%s is configured to call %d of them and called %d in the capture. Everything else is reach it does not need, and every one of those services lends it whatever it can reach in turn (%d Services in total).", w.name, len(declSvcs), a.Counts.Observed, a.Counts.Closure),
+			fmt.Sprintf("%s is configured to call %d of them and called %d in the capture. It does not need the rest, and through them it reaches %d Services in total.", w.name, len(declSvcs), a.Counts.Observed, a.Counts.Closure),
 			egressFix)
 	}
 	if a.Counts.NeverUsed > 0 && a.Observed {

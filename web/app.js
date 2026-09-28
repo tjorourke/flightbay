@@ -601,7 +601,7 @@ async function posture() {
   let summary = '';
   if (P.tab === 'summary') {
     if (feature('priorities') && (r.priorities || []).length) {
-      summary = `<section class="panel"><div class="panel-head"><h2>Fix these first</h2><small class="muted">Ranked by severity and how much of it fails. +N is the area score it gives back <span class="ent-pill">Enterprise</span></small></div>
+      summary = `<section class="panel"><div class="panel-head"><h2>Fix these first</h2><small class="muted">By severity and how much of the check fails. +N is what the fix adds to the area score <span class="ent-pill">Enterprise</span></small></div>
         <div>${r.priorities.map(p => firstRow(p, p.rank)).join('')}</div></section>`;
     } else {
       const sevRank = {critical: 0, high: 1, medium: 2, low: 3};
@@ -655,7 +655,7 @@ after.scorecard = () => {
 // ---------- agent reach (Flightbay Enterprise) ----------
 // By agent: what each agent, MCP server and agent gateway can reach on the
 // network, what those destinations can reach for it, and how to close it down.
-const rcIntro = 'What each agent can reach on the network, and what those destinations can reach for it. An agent is only as contained as the weakest thing it can call.';
+const rcIntro = 'What each agent can reach on the network, and what those destinations can reach in turn.';
 const rcTypes = {'kagent-agent': 'kagent agent', 'mcp-server': 'MCP server', agentgateway: 'agentgateway', 'possible-agent': 'possible agent'};
 const rcRadiusCls = {open: 'red', wide: 'amber', narrow: 'blue', contained: 'green'};
 const rcRadiusWhy = {open: 'reaches the internet, or has a critical finding', wide: 'half the cluster or more', narrow: 'more than three Services', contained: 'three Services or fewer'};
@@ -723,8 +723,8 @@ function rcFoundMenu(items, cur, attrName, agent) {
   const known = new Set(rcSources.map(x => x[0]));
   const extra = [...new Set(all.flat())].filter(k => !rcFoundLabel[k] && !known.has(k) && k !== 'policy');
   return `<div class="rc-fmenu"><button class="chip ${cur && cur !== 'any' ? 'on' : ''}" data-fmenu>Found by: ${esc(label)} ▾</button>
-    <div class="rc-fpop" hidden><div class="rc-fhead">What says it is reachable</div>${kinds.filter(([k]) => k === 'any' || n(k)).map(([k, name, sub]) => row(k, name, sub, n(k))).join('')}
-      <div class="rc-fhead">Flow sources <small class="muted">what saw it</small></div>${[...rcSources, ...extra.map(k => [k, k, ''])].map(([k, name, how]) => row(k, k, how, n(k), Object.assign(rcSrcState(k, agent), {text: `${name} · ${rcSrcState(k, agent).text}`}))).join('')}</div></div>`;
+    <div class="rc-fpop" hidden><div class="rc-fhead">Found by</div>${kinds.filter(([k]) => k === 'any' || n(k)).map(([k, name, sub]) => row(k, name, sub, n(k))).join('')}
+      <div class="rc-fhead">Flow sources</div>${[...rcSources, ...extra.map(k => [k, k, ''])].map(([k, name, how]) => row(k, k, how, n(k), Object.assign(rcSrcState(k, agent), {text: `${name} · ${rcSrcState(k, agent).text}`}))).join('')}</div></div>`;
 }
 const rcOrigin = f => f.origin === 'bundle' ? `flow file ${f.file || ''}, in the bundle` : f.origin === 'reviewer' ? `flow file ${f.file || ''}, added when opened (not signed)` : 'captured logs';
 // rcLogQuery is a Logs search that finds the lines behind a flow record, for
@@ -793,7 +793,7 @@ function rcEvidence(x, external, agent) {
     <div><h4>Configured in</h4>${decl}</div>
     <div><h4>Flow sources</h4>${rcSources.map(([k]) => { const saw = ((external ? x.sources : x.observedBy) || []).includes(k), st = rcSrcState(k, agent); return `<div class="rc-srow">${saw ? `<span class="rc-src rc-src-${k}">${k}</span> <span class="green">saw it</span>` : `<span class="rc-src rc-src-off">${k}</span> <span class="${st.cls === 'green' ? 'amber' : 'muted'}">${st.cls === 'green' ? 'covers this agent, did not see it' : st.text}</span>`}</div>`; }).join('')}${x.ip && external ? `<div class="rc-small muted">address ${esc(x.ip)}${(x.sources || []).includes('coredns') ? ', named by its DNS lookup' : ''}</div>` : ''}</div></div>
     ${rcConfigLinks(x, external)}
-    ${ev.length ? `<h4 class="mt">Flow records <small class="muted">${ev.length}${ev.length >= 20 ? ', the largest 20' : ''} · counts are per source and never added across sources</small></h4>
+    ${ev.length ? `<h4 class="mt">Flow records <small class="muted">${ev.length}${ev.length >= 20 ? ', the largest 20' : ''} · counts are per source, not summed</small></h4>
       <div class="table-scroll"><table class="rc-evt"><thead><tr><th>Source</th><th>From</th><th>Count</th><th>Request</th><th>Caller as logged</th><th>Destination as logged</th><th>Route</th><th>Verdict</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`
       : `<p class="muted mt">${seen ? 'Seen, but the records were merged away.' : none}</p>`}</div>`;
 }
@@ -851,7 +851,7 @@ async function reach() {
     <td><div class="row" style="gap:5px">${sev(c.critical, 'critical')}${sev(c.high, 'high')}${!c.critical && !c.high ? '<span class="muted">none</span>' : ''}</div></td>
     <td class="rc-sum">${esc(a.summary)}</td></tr>`; }).join('');
   const notes = (rep.notes || []).map(n => `<div class="notice" style="margin-bottom:12px"><span>△</span><div>${esc(rcCap(n))}.</div></div>`).join('');
-  const list = all.length ? `<section class="panel"><div class="panel-head"><h2>${shown.length === all.length ? all.length : `${shown.length} of ${all.length}`} agent${all.length === 1 ? '' : 's'}</h2><small class="muted">Worst first. Click one to see its blast radius.</small></div>
+  const list = all.length ? `<section class="panel"><div class="panel-head"><h2>${shown.length === all.length ? all.length : `${shown.length} of ${all.length}`} agent${all.length === 1 ? '' : 's'}</h2><small class="muted">Sorted by risk. Click one for its blast radius.</small></div>
     <div class="table-scroll" style="max-height:${R.sel ? '38vh' : '66vh'}">${shown.length ? `<table class="rc-list"><thead><tr><th>Agent</th><th>Radius</th><th>Internet</th><th title="Services reachable in one hop, of the Services in the capture">Direct</th><th title="Services reachable in any number of hops">Total</th><th title="Direct destinations it can change data on">Write</th><th>Findings</th><th>Summary</th></tr></thead><tbody>${rows}</tbody></table>`
       : '<div class="empty"><strong>No agents match</strong>Change the filter or the type.</div>'}</div></section>`
     : `<section class="panel"><div class="empty"><strong>No agents found</strong>No kagent agents, MCP servers, agent gateways or workloads that look like agents were captured.</div></section>`;
@@ -877,7 +877,7 @@ function rcDetail(a) {
   const header = `<section class="panel mt" id="rc-detail"><div class="panel-body">
     <div class="row between wrap" style="align-items:flex-start"><div class="row wrap"><h2 class="mono" style="font-size:17px">${esc(rcName(a))}</h2>${rcTypePill(a.type)}<span class="tag">${esc(a.kind)}</span>${(R.list?.clusters || []).length > 1 ? `<span class="tag">${esc(a.cluster)}</span>` : ''}</div>
       <div class="row wrap">${a.ref ? `<button id="rc-obj">Open ${esc(a.kind)}</button>` : ''}<button id="rc-logs">Logs from this agent</button><button id="rc-term">&gt;_ fbreach in terminal</button><button class="ghost" id="rc-close" title="Back to the list" aria-label="Close">✕</button></div></div>
-    <p class="rc-summary">${esc(a.summary)}</p><p class="muted" style="font-size:12px;margin-top:4px">Why it is listed: ${esc(a.why)}${a.observed ? ` · Observed by ${esc(rcSrcList(a.observedBy))}` : ' · No flow logs cover this agent, so what it actually calls is unknown'}</p>
+    <p class="rc-summary">${esc(a.summary)}</p><p class="muted" style="font-size:12px;margin-top:4px">Detected: ${esc(a.why)}${a.observed ? ` · Observed by ${esc(rcSrcList(a.observedBy))}` : ' · No flow logs cover this agent, so what it actually calls is unknown'}</p>
     <div class="rc-tiles">${tiles}</div></div></section>`;
   const G = rcGraphModel(a);
   const vbtn = (v, label, hint) => `<button class="chip ${G.view === v ? 'on' : ''}" data-rgview="${v}" title="${esc(hint)}">${label}</button>`;
@@ -893,7 +893,7 @@ function rcDetail(a) {
   const paths = (a.paths || []).map(p => `<div class="rc-path"><span class="rc-kind ${kindCls[p.kind] || ''}">${esc(p.kind)}</span>
     <div class="rc-chain">${p.hops.map(h => `<span class="rc-hop ${h === 'internet' || h === '169.254.169.254' ? 'net' : ''}">${esc(h)}</span>`).join('<span class="rc-arrow">→</span>')}</div>
     <small class="muted rc-why">${esc(p.why)}</small></div>`).join('');
-  const pathsPanel = `<section class="panel mt"><div class="panel-head"><h2>Paths that matter</h2><small class="muted">Chains from the agent to the internet, cloud metadata, fetchers and stores</small></div>
+  const pathsPanel = `<section class="panel mt"><div class="panel-head"><h2>Paths</h2><small class="muted">From the agent to the internet, cloud metadata, fetchers and stores</small></div>
     ${paths || '<div class="empty"><strong>No path to the internet or cloud metadata</strong>Nothing this agent can reach leads out of the cluster.</div>'}</section>`;
   // Findings: one line each; open one for the affected list and the fix.
   const itemTable = f => {
@@ -910,15 +910,15 @@ function rcDetail(a) {
     return `<div class="rc-finding ${open ? 'open' : ''}"><button class="rc-fhead" data-rcfopen="${i}">
       <span class="pst-sev pst-sev-${esc(f.severity)}">${esc(f.severity)}</span><strong>${esc(f.title)}</strong>
       ${n ? `<span class="tag">${n} affected</span>` : ''}<span style="flex:1"></span>${f.fix ? '<small class="muted">fix included</small>' : ''}<span class="muted">${open ? '▾' : '▸'}</span></button>
-      ${open ? `<div class="rc-fbody"><p>${esc(f.detail)}</p>${itemTable(f)}${(f.advice || []).length ? `<h3 class="mt">Beyond the YAML</h3><ul class="rc-advice">${f.advice.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+      ${open ? `<div class="rc-fbody"><p>${esc(f.detail)}</p>${itemTable(f)}${(f.advice || []).length ? `<h3 class="mt">Other steps</h3><ul class="rc-advice">${f.advice.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
         ${f.fix ? `<div class="row between mt"><h3>How to fix</h3><div class="row"><button data-rccopy="${i}">Copy YAML</button>${f.source ? `<a href="${esc(f.source)}" target="_blank" rel="noopener">Read the guide ↗</a>` : ''}</div></div><pre class="code mt">${esc(f.fix)}</pre>`
           : f.source ? `<p class="mt"><a href="${esc(f.source)}" target="_blank" rel="noopener">Read the guide ↗</a></p>` : ''}</div>` : ''}</div>`;
   }).join('');
   const findingsPanel = `<section class="panel"><div class="panel-head"><h2>Findings</h2><small class="muted">${c.critical || 0} critical · ${c.high || 0} high · ${(a.findings || []).length} in all · open one for what it affects and the fix</small></div>
-    ${findings || '<div class="empty"><strong>Nothing to lock down</strong>No findings for this agent.</div>'}</section>`;
+    ${findings || '<div class="empty"><strong>No findings</strong></div>'}</section>`;
   const yes = (b, good) => b ? `<span class="${good ? 'green' : 'amber'}">yes</span>` : `<span class="${good ? 'amber' : 'green'}">no</span>`;
   const lst = (xs, cls, none) => (xs || []).length ? xs.map(x => `<div class="${cls || ''}">${esc(x)}</div>`).join('') : `<span class="muted">${none || 'none'}</span>`;
-  const identity = `<section class="panel"><div class="panel-head"><h2>Identity</h2><small class="muted">What it carries without anyone deciding to give it</small></div><div class="panel-body">
+  const identity = `<section class="panel"><div class="panel-head"><h2>Identity</h2><small class="muted">Service account, token, RBAC, Secrets and host access</small></div><div class="panel-body">
     <dl class="metadata rc-id"><dt>Service account</dt><dd class="mono">${esc(id.serviceAccount || '—')}${id.principal ? `<br><small class="muted">${esc(id.principal)}</small>` : ''}</dd>
       <dt>In mesh</dt><dd>${yes(id.inMesh, true)}</dd>
       <dt>Token mounted</dt><dd>${yes(id.tokenMounted, false)}</dd>
@@ -942,7 +942,7 @@ function rcDetail(a) {
   const counts = Object.fromEntries(['all', 'risky', 'used', 'never'].map(k => [k, direct.filter(e => chipOk(e, k)).length]));
   const dchip = (k, label) => `<button class="chip ${R.dchip === k ? 'on' : ''}" data-rcd="${k}">${label} <small>${counts[k]}</small></button>`;
   const cl = a.cluster;
-  const destTable = `<section class="panel mt"><div class="panel-head"><h2>Destinations</h2><small class="muted">Every Service it can reach in one hop, riskiest first${a.observed ? ` · calls seen by ${esc(rcSrcList(a.observedBy))}` : ''}. Hosts outside the cluster are on the External tab</small></div><div class="panel-body" style="padding-bottom:0">
+  const destTable = `<section class="panel mt"><div class="panel-head"><h2>Destinations</h2><small class="muted">Services it can reach in one hop, sorted by risk${a.observed ? ` · calls seen by ${esc(rcSrcList(a.observedBy))}` : ''}. Hosts outside the cluster are on the External tab</small></div><div class="panel-body" style="padding-bottom:0">
     <div class="toolbar"><div class="row wrap">${dchip('all', 'All')}${dchip('risky', 'Risky')}${dchip('used', 'Used')}${dchip('never', 'Never used')}${rcFoundMenu(direct, R.dfound || 'any', 'data-rcdf', a)}</div>
       <input id="rc-dq" placeholder="Filter destinations" value="${esc(R.dq)}" autocomplete="off" spellcheck="false" style="min-width:240px"></div>
 </div>
@@ -974,7 +974,7 @@ function rcDetail(a) {
   const eObs = x => x.observed || x.lookups
     ? `${x.observed ? num(x.observed) : ''}${(x.methods || []).length ? ` <span class="mono ${x.writeSeen ? 'red' : 'muted'}">${esc(x.methods.join(', '))}</span>` : ''}${x.lookups ? `<div class="rc-small muted">${num(x.lookups)} DNS lookup${x.lookups === 1 ? '' : 's'}</div>` : ''}${(x.tools || []).length ? `<div class="rc-tools">tools ${x.tools.map(t => `<span class="mono">${esc(t)}</span>`).join(', ')}</div>` : ''}<div class="rc-srcs">${rcSrcs(x.sources)}</div>`
     : '<span class="muted">not seen</span>';
-  const extTable = `<section class="panel mt"><div class="panel-head"><h2>External</h2><small class="muted">Every host outside the cluster it is configured for, was seen calling, or can reach through a gateway. A registry out there lends its reach just like one inside.</small></div><div class="panel-body" style="padding-bottom:0">
+  const extTable = `<section class="panel mt"><div class="panel-head"><h2>External</h2><small class="muted">Hosts outside the cluster it is configured for, was seen calling, or can reach through a gateway</small></div><div class="panel-body" style="padding-bottom:0">
     <div class="toolbar"><div class="row wrap">${echips.map(([k, label]) => `<button class="chip ${R.echip === k ? 'on' : ''}" data-rce="${k}">${label} <small>${ext.filter(x => eChipOk(x, k)).length}</small></button>`).join('')}${rcFoundMenu(ext, R.efound || 'any', 'data-rcef', a)}</div></div>
 </div>
     <div class="table-scroll" style="max-height:62vh">${erows.length ? `<table class="rc-ext"><thead><tr><th>Host</th><th>What it is</th><th>How it's reached</th><th>Credential</th><th>Observed</th><th>Configured in</th><th>Found by</th><th>Risk</th></tr></thead><tbody>
@@ -1802,7 +1802,7 @@ async function timeline() {
     <div><h3>${esc(i.title)}</h3><p>${esc(i.detail || '')}</p><div class="row" style="margin-top:4px">${(S.ws?.clusters || []).length > 1 ? `<span class="tag">${esc(i.cluster)}</span>` : ''}${i.namespace ? `<button class="tag link" data-tns="${esc(i.namespace)}">${esc(i.namespace)}</button>` : ''}<small>${esc(tlKinds.find(k => k[0] === i.kind)?.[1] || i.kind)}</small></div></div>
     <div class="row">${i.object ? `<button data-tobj="${n}">Inspect →</button>` : ''}<button data-tlog="${n}" title="${i.logQuery ? esc(i.logQuery) : 'Logs two minutes either side'}">${i.logQuery ? 'Logs →' : 'Logs around →'}</button></div></div>`;
   }).join('');
-  return head('Timeline', 'What happened, in order: Kubernetes events, container exits, rollouts and error-log spikes on one UTC axis. Use it to see what changed just before things broke.') + `
+  return head('Timeline', 'Kubernetes events, container exits, rollouts and error-log spikes on one UTC axis.') + `
     <div class="toolbar"><div class="row wrap">${tlKinds.map(([k, t]) => `<button class="chip ${T.hideKinds.includes(k) ? '' : 'on'}" data-tkind="${k}">${t} <small>${count(k)}</small></button>`).join('')}</div>
       <div class="row"><select id="tl-sev"><option value="">All severities</option>${['critical', 'warning', 'info'].map(v => `<option ${T.sev === v ? 'selected' : ''}>${v}</option>`).join('')}</select>
       <select id="tl-ns"><option value="">All namespaces</option>${namespaces.map(v => `<option ${T.ns === v ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select>
@@ -1854,7 +1854,7 @@ async function findings() {
   const all = await api('api/findings', {cluster: S.cluster});
   const fs = all.filter(f => !S.findingSev || f.severity === S.findingSev);
   const prov = all.some(f => f.provisional);
-  return head('Findings', 'Signals to investigate, each linked to its evidence. They are not a root-cause verdict.', `<select id="sev"><option value="">All severities</option>${['critical', 'warning', 'info'].map(s => `<option ${S.findingSev === s ? 'selected' : ''}>${s}</option>`).join('')}</select>`) +
+  return head('Findings', 'Things to look at, each linked to its evidence. None of them is a root cause on its own.', `<select id="sev"><option value="">All severities</option>${['critical', 'warning', 'info'].map(s => `<option ${S.findingSev === s ? 'selected' : ''}>${s}</option>`).join('')}</select>`) +
     (prov ? '<div class="notice info" style="margin-bottom:14px">These findings are provisional: the bundle has not finished loading or failed verification. Rules that depend on something being absent wait for complete coverage.</div>' : '') +
     `<section class="panel"><div class="panel-head"><h2>${fs.length} findings</h2><small>Deterministic rules</small></div>${fs.map(findingRow).join('') || '<div class="empty"><strong>No findings in this selection</strong></div>'}</section>`;
 }
@@ -1908,7 +1908,7 @@ function baselineSection(b) {
   </div></section>`;
 }
 
-const cmpIntro = "See what changed between two captures of the same cluster: objects added, removed or changed, image upgrades, and findings that appeared or went away. It is the quickest way to answer \"what changed since it last worked?\"";
+const cmpIntro = "See what changed between two captures of the same cluster: objects added, removed or changed, image upgrades, and findings that appeared or went away.";
 
 function candidateRows(cands, cur) {
   return cands.map((c, i) => `<tr class="${c.current ? 'sel' : ''}"><td class="mono" style="white-space:normal;word-break:break-all" title="${esc(c.path)}">${esc(c.name)}${c.encrypted && c.unreadable ? ' <span class="badge amber">encrypted</span>' : ''}</td>
@@ -2063,7 +2063,7 @@ async function proxies() {
       const sm = p.summary; const q = S.px.q.toLowerCase();
       body = `<div class="stats">${Object.entries(sm.counts || {}).map(([k, v]) => `<div class="stat"><div class="eyebrow">${esc(k)}</div><div class="value ${k === 'stale' && v ? 'red' : ''}">${num(v)}</div></div>`).join('')}</div>
         ${(sm.notes || []).map(n => `<div class="notice info mt">${esc(n)}</div>`).join('')}
-        ${sm.certs?.length ? `<section class="panel mt"><div class="panel-head"><h2>Certificates</h2><small>Measured at snapshot time · workload certificates are short-lived by design</small></div><div class="table-scroll" style="max-height:34vh"><table><thead><tr><th>Identity</th><th>Type</th><th>State</th><th>Expires</th><th>Left</th></tr></thead><tbody>
+        ${sm.certs?.length ? `<section class="panel mt"><div class="panel-head"><h2>Certificates</h2><small>At snapshot time. Workload certificates are short-lived.</small></div><div class="table-scroll" style="max-height:34vh"><table><thead><tr><th>Identity</th><th>Type</th><th>State</th><th>Expires</th><th>Left</th></tr></thead><tbody>
           ${sm.certs.map(c => `<tr><td class="mono">${esc(c.identity)}</td><td>${c.root ? 'root' : 'workload'}</td><td>${esc(c.state || '')}</td><td>${fmtDateTime(c.notAfter)}</td><td>${certCell(c)}</td></tr>`).join('')}</tbody></table></div></section>` : ''}
         ${(sm.tables || []).map(t => pxTable(t, q)).join('')}`;
     }

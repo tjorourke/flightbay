@@ -663,9 +663,9 @@ func (e *engine) agent(w *workload, all []*workload, obs map[string]*observed, c
 		sv := it.sv
 		if e.internetOf(it.w) == Allowed {
 			kind := "service"
-			why := "if it can be made to fetch or forward for the agent, or is compromised through it"
+			why := "reaches the internet itself, so the agent can too if it can make it fetch or forward"
 			if sv != nil && has(sv.classes, "fetcher") {
-				kind, why = "fetcher", "it fetches or proxies URLs, so an SSRF or a proxy feature lends its internet access to the agent (the Hugging Face path)"
+				kind, why = "fetcher", "it fetches or proxies URLs, so an SSRF or proxy feature there gives the agent internet access (as in the Hugging Face incident)"
 			}
 			internetVia = append(internetVia, Path{Hops: append(append([]string{}, it.chain...), "internet"), Target: "internet", Kind: kind, Why: why})
 		}

@@ -1450,7 +1450,7 @@ func externalPaths(w *workload, a Agent) []Path {
 		switch {
 		case x.Fetcher:
 			out = append(out, Path{Hops: append(hops, x.Host, "internet"), Target: "internet", Kind: "registry",
-				Why: x.Host + " is " + article(x.Product) + " outside the cluster that fetches from the internet on request (remote repositories, URL import, proxying), so an SSRF there lends the agent its reach"})
+				Why: x.Host + " is " + article(x.Product) + " outside the cluster that fetches from the internet on request (remote repositories, URL import, proxying), so an SSRF there gives the agent whatever that host can reach"})
 		case x.Class == "exfil":
 			out = append(out, Path{Hops: append(hops, x.Host), Target: x.Host, Kind: "exfil", Why: x.Product + ": whatever the agent sends there, anyone can read"})
 		}
@@ -1541,7 +1541,7 @@ func (e *engine) externalFindings(w *workload, a Agent) []Finding {
 		for _, x := range fetch {
 			items = append(items, item(x))
 		}
-		detail := fmt.Sprintf("%s can call %s, %s outside the cluster. A registry like this fetches from the internet on request (remote repositories, URL import, proxying), so an SSRF or a remote repository there lends the agent its reach, however tightly the agent's own egress is locked down. In the OpenAI and Hugging Face incident the agents used exactly this: the registry accepted PUT, then MKCOL over WebDAV, and fetched for them.", w.name, first.Host, article(first.Product))
+		detail := fmt.Sprintf("%s can call %s, %s outside the cluster. A registry like this fetches from the internet on request (remote repositories, URL import, proxying), so an SSRF or a remote repository there gives the agent internet access even when its own egress is locked down. The agents in the OpenAI and Hugging Face incident did this: the registry accepted PUT, then MKCOL over WebDAV, and fetched for them.", w.name, first.Host, article(first.Product))
 		if first.WriteSeen {
 			detail += " Writes were seen in the capture: " + strings.Join(first.Methods, ", ") + "."
 		}

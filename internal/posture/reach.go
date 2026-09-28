@@ -61,7 +61,7 @@ func reachChecks(ws *store.Workspace) []Check {
 			}
 		})
 	mk("agentic.agent-transitive-fetcher", "Isolation", "critical", "Agents cannot borrow internet access through a registry or proxy",
-		"A service the agent may call that fetches URLs (a package registry, proxy or scraper) lends it that reach through any SSRF or proxy feature. This is how the OpenAI agents reached Hugging Face.",
+		"A service the agent may call that fetches URLs (a package registry, proxy or scraper) gives it internet access through any SSRF or proxy feature. The OpenAI agents reached Hugging Face this way.",
 		"# at the registry's waypoint: allow the agent GET and HEAD only\nspec:\n  targetRefs: [{kind: Service, group: \"\", name: <registry>}]\n  action: ALLOW\n  rules:\n  - from: [{source: {principals: [\"<td>/ns/<ns>/sa/<agent>\"]}}]\n    to: [{operation: {methods: [GET, HEAD]}}]\n# and give the registry its own egress allowlist",
 		func(c *Check) {
 			for _, a := range agents {
@@ -105,7 +105,7 @@ func reachChecks(ws *store.Workspace) []Check {
 			}
 		})
 	mk("agentic.agent-least-reach", "Isolation", "medium", "Agents reach only what they use",
-		"Every destination an agent may call lends it whatever that destination can reach. Allow what it is configured for and actually calls.",
+		"An agent can reach whatever its destinations can reach. Allow only what it is configured for and actually calls.",
 		"# default-deny egress for the agent namespace, then one rule per destination it uses",
 		func(c *Check) {
 			for _, a := range agents {

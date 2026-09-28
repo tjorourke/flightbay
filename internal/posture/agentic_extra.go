@@ -462,7 +462,7 @@ func (x *xctx) defs() []xdef {
 			"backend:\n  ai:\n    promptGuard:\n      streaming: Enabled\n      response:\n      - regex: {action: Mask, builtins: [Ssn, CreditCard]}",
 			kbBase + "agentic-pii-guardrail-kind/"}, x.guardStreaming},
 		{spec{"agentic.enforcement-fails-closed", "Guardrails", "high", "Guardrails and external auth fail closed",
-			"FailOpen means the control disappears exactly when its service is down or overloaded, which is when an attacker will try.",
+			"FailOpen turns the control off whenever its service is down or overloaded.",
 			"traffic:\n  extAuth:\n    failureMode: FailClosed\nbackend:\n  mcp:\n    guardrails:\n      processors:\n      - remote: {backendRef: {...}, failureMode: FailClosed}",
 			kbBase + "agentic-external-guardrail-kind/"}, x.failsClosed},
 		{spec{"agentic.mcp-guardrails-cover-tool-calls", "Guardrails", "medium", "MCP guardrails inspect tools/call",
