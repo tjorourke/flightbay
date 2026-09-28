@@ -134,4 +134,4 @@ A reviewed bundle can be reviewed again. The new ledger keeps the earlier one un
 
 ## Command reference
 
-See [`flightbay review`](/reference/cli-flightbay/#flightbay-review) and the review options of [`flightbay-desk open`](/reference/cli-flightbay-desk/#flightbay-desk-open).
+See [`flightbay ui`](/reference/cli-flightbay/#flightbay-ui) and the options of [`flightbay-desk open`](/reference/cli-flightbay-desk/#flightbay-desk-open), which `flightbay ui` passes through. [`flightbay review`](/reference/cli-flightbay/#flightbay-review) is the plan-file form without the UI.
