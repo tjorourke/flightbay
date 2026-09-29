@@ -56,6 +56,9 @@ type tool struct {
 	InputSchema map[string]any `json:"inputSchema"`
 	Annotations map[string]any `json:"annotations,omitempty"`
 	call        func(s *Server, args map[string]any) (string, error)
+	// links picks resources out of a result for the client to follow
+	// (resource_link content items), such as a finding's object.
+	links func(result string) []resource
 }
 
 func obj(props map[string]any, required ...string) map[string]any {
@@ -103,13 +106,71 @@ func tools() []tool {
 				if json.Unmarshal([]byte(body), &fs) != nil {
 					return body, nil
 				}
-				var out []map[string]any
+				out := []map[string]any{}
 				for _, f := range fs {
 					if f["severity"] == arg(a, "severity") {
 						out = append(out, f)
 					}
 				}
 				b, _ := json.MarshalIndent(out, "", " ")
+				return string(b), nil
+			},
+			links: findingLinks},
+		{Name: "timeline", Title: "Timeline",
+			Description: "Events, container exits, rollouts and error spikes in time order, each with its object and a log query for the moment it happened. Use it to find what failed first and whether a change came before it.",
+			InputSchema: obj(map[string]any{"cluster": str("cluster; omit for all"), "kind": str("event, termination, rollout or error-spike; omit for all"), "since": str("RFC 3339 time; only items at or after it")}),
+			call: func(s *Server, a map[string]any) (string, error) {
+				body, err := s.get("/api/timeline", url.Values{"cluster": {arg(a, "cluster")}})
+				if err != nil || (arg(a, "kind") == "" && arg(a, "since") == "") {
+					return body, err
+				}
+				var items []map[string]any
+				if json.Unmarshal([]byte(body), &items) != nil {
+					return body, nil
+				}
+				keep := []map[string]any{}
+				for _, it := range items {
+					t, _ := it["time"].(string)
+					if (arg(a, "kind") == "" || it["kind"] == arg(a, "kind")) && (arg(a, "since") == "" || t >= arg(a, "since")) {
+						keep = append(keep, it)
+					}
+				}
+				b, _ := json.MarshalIndent(keep, "", " ")
+				return string(b), nil
+			}},
+		{Name: "coverage", Title: "Coverage",
+			Description: "What each collection produced and its state (complete, failed, excluded by the customer, truncated, removed or trimmed in review) with the reason, plus the collection log and the redaction report. Check it before saying something does not exist: a type or log stream that was not collected says nothing either way.",
+			InputSchema: obj(map[string]any{"cluster": str("cluster; omit for all"), "state": str("only collections in this state, e.g. failed or excluded"), "type": str("resource, events, logs, diagnostic or flows")}),
+			call: func(s *Server, a map[string]any) (string, error) {
+				body, err := s.get("/api/coverage", nil)
+				if err != nil || (arg(a, "cluster") == "" && arg(a, "state") == "" && arg(a, "type") == "") {
+					return body, err
+				}
+				var c map[string]any
+				if json.Unmarshal([]byte(body), &c) != nil {
+					return body, nil
+				}
+				keep := []any{}
+				cov, _ := c["coverage"].([]any)
+				for _, x := range cov {
+					m, _ := x.(map[string]any)
+					if (arg(a, "cluster") == "" || m["cluster"] == arg(a, "cluster")) && (arg(a, "state") == "" || m["state"] == arg(a, "state")) && (arg(a, "type") == "" || m["type"] == arg(a, "type")) {
+						keep = append(keep, x)
+					}
+				}
+				c["coverage"] = keep
+				// A filtered call keeps only the log entries that did not
+				// succeed; the full log is thousands of "ok" lines.
+				var notOK []any
+				log, _ := c["collectionLog"].([]any)
+				for _, l := range log {
+					m, _ := l.(map[string]any)
+					if r, _ := m["result"].(string); !strings.HasPrefix(r, "ok") && (arg(a, "cluster") == "" || m["cluster"] == arg(a, "cluster")) {
+						notOK = append(notOK, l)
+					}
+				}
+				c["collectionLog"] = notOK
+				b, _ := json.MarshalIndent(c, "", " ")
 				return string(b), nil
 			}},
 		{Name: "search_logs", Title: "Search logs",
@@ -270,7 +331,8 @@ func tools() []tool {
 				}
 				b, _ := json.MarshalIndent(d, "", " ")
 				return string(b), nil
-			}},
+			},
+			links: objectLinks},
 		{Name: "proxy_config", Title: "Proxy and control-plane dumps",
 			Description: "Captured Envoy, ztunnel and agentgateway config dumps and istiod debug output. With no pod, lists what was captured. With a pod, returns a summary (workloads, services, listeners, routes, clusters, policies, certificates, xDS sync state). With file, returns that captured file (e.g. config_dump.json, syncz.json).",
 			InputSchema: obj(map[string]any{"pod": str("pod name or prefix"), "namespace": str("namespace"), "cluster": str("cluster"), "file": str("captured file name")}),
@@ -296,14 +358,34 @@ Reply with:
 - Suggested next steps for the customer.
 Do not invent data that is not in the snapshot.`
 
+// get fetches a desk API path and returns it as indented JSON text.
 func (s *Server) get(path string, q url.Values) (string, error) {
+	b, err := s.getRaw(path, q)
+	if err != nil {
+		return "", err
+	}
+	var pretty bytes.Buffer
+	if json.Indent(&pretty, b, "", " ") == nil {
+		b = pretty.Bytes()
+	}
+	return string(b), nil
+}
+
+// getText fetches a desk API path and returns the body as it came.
+func (s *Server) getText(path string, q url.Values) (string, error) {
+	b, err := s.getRaw(path, q)
+	return string(b), err
+}
+
+// getRaw fetches a desk API path.
+func (s *Server) getRaw(path string, q url.Values) ([]byte, error) {
 	u := strings.TrimRight(s.BaseURL, "/") + path
 	if len(q) > 0 {
 		u += "?" + q.Encode()
 	}
 	req, err := http.NewRequest(http.MethodGet, u, nil)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+s.Token)
 	c := s.HTTP
@@ -312,21 +394,17 @@ func (s *Server) get(path string, q url.Values) (string, error) {
 	}
 	resp, err := c.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("cannot reach flightbay-desk at %s (is a workspace open?): %w", s.BaseURL, err)
+		return nil, fmt.Errorf("cannot reach flightbay-desk at %s (is a workspace open?): %w", s.BaseURL, err)
 	}
 	defer resp.Body.Close()
 	b, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("flightbay-desk %s: %s", resp.Status, strings.TrimSpace(string(b)))
+		return nil, fmt.Errorf("flightbay-desk %s: %s", resp.Status, strings.TrimSpace(string(b)))
 	}
-	var pretty bytes.Buffer
-	if json.Indent(&pretty, b, "", " ") == nil {
-		b = pretty.Bytes()
-	}
-	return string(b), nil
+	return b, nil
 }
 
 func (s *Server) proxyConfig(a map[string]any) (string, error) {
@@ -381,9 +459,9 @@ func (s *Server) handle(req request) (any, *rpcError) {
 		}
 		return map[string]any{
 			"protocolVersion": v,
-			"capabilities":    map[string]any{"tools": map[string]any{}, "prompts": map[string]any{}},
+			"capabilities":    map[string]any{"tools": map[string]any{}, "prompts": map[string]any{}, "resources": map[string]any{}, "completions": map[string]any{}},
 			"serverInfo":      map[string]any{"name": "flightbay", "title": "Solo flightbay", "version": s.Version},
-			"instructions":    "Read-only access to an offline Flightbay snapshot of Kubernetes clusters. Start with workspace_summary, then list_findings. Use the triage prompt for a guided investigation.",
+			"instructions":    "Read-only access to an offline Flightbay snapshot of Kubernetes clusters. Start with workspace_summary, then list_findings. Use the triage prompt for a guided investigation. Objects, log streams, proxy dumps, findings and Scorecard checks are also flightbay:// resources you can read or attach.",
 		}, nil
 	case "ping":
 		return map[string]any{}, nil
@@ -403,15 +481,95 @@ func (s *Server) handle(req request) (any, *rpcError) {
 				if err != nil {
 					return map[string]any{"content": []any{map[string]any{"type": "text", "text": err.Error()}}, "isError": true}, nil
 				}
-				return map[string]any{"content": []any{map[string]any{"type": "text", "text": clip(text)}}}, nil
+				content := []any{map[string]any{"type": "text", "text": clip(text)}}
+				if t.links != nil {
+					for _, l := range t.links(text) {
+						content = append(content, map[string]any{"type": "resource_link", "uri": l.URI, "name": l.Name, "title": l.Title, "description": l.Description, "mimeType": l.MimeType})
+					}
+				}
+				return map[string]any{"content": content}, nil
 			}
 		}
 		return nil, &rpcError{Code: -32602, Message: "unknown tool " + p.Name}
 	case "prompts/list":
-		return map[string]any{"prompts": []any{map[string]any{"name": "triage", "title": "Triage this snapshot",
-			"description": "Guided root-cause investigation that cites evidence from findings, objects, logs and proxy dumps."}}}, nil
+		return map[string]any{"prompts": prompts()}, nil
 	case "prompts/get":
-		return map[string]any{"description": "Triage this snapshot", "messages": []any{map[string]any{"role": "user", "content": map[string]any{"type": "text", "text": triagePrompt}}}}, nil
+		var p struct {
+			Name      string            `json:"name"`
+			Arguments map[string]string `json:"arguments"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, &rpcError{Code: -32602, Message: "invalid params"}
+		}
+		if p.Name == "" {
+			p.Name = "triage" // older clients asked for the only prompt without naming it
+		}
+		res, err := s.getPrompt(p.Name, p.Arguments)
+		if err != nil {
+			return nil, &rpcError{Code: -32602, Message: err.Error()}
+		}
+		return res, nil
+	case "resources/list":
+		var p struct {
+			Cursor string `json:"cursor"`
+		}
+		_ = json.Unmarshal(req.Params, &p)
+		res, err := s.listResources(p.Cursor)
+		if err != nil {
+			return nil, &rpcError{Code: -32603, Message: err.Error()}
+		}
+		return res, nil
+	case "resources/templates/list":
+		return map[string]any{"resourceTemplates": templates}, nil
+	case "resources/read":
+		var p struct {
+			URI string `json:"uri"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil || p.URI == "" {
+			return nil, &rpcError{Code: -32602, Message: "invalid params: uri is required"}
+		}
+		c, err := s.readResource(p.URI)
+		if err != nil {
+			return nil, &rpcError{Code: -32002, Message: err.Error()}
+		}
+		return map[string]any{"contents": []any{c}}, nil
+	case "completion/complete":
+		var p struct {
+			Ref struct {
+				Type string `json:"type"`
+				URI  string `json:"uri"`
+				Name string `json:"name"`
+			} `json:"ref"`
+			Argument struct {
+				Name  string `json:"name"`
+				Value string `json:"value"`
+			} `json:"argument"`
+			Context struct {
+				Arguments map[string]string `json:"arguments"`
+			} `json:"context"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, &rpcError{Code: -32602, Message: "invalid params"}
+		}
+		var vals []string
+		var err error
+		switch p.Ref.Type {
+		case "ref/resource":
+			vals, err = s.complete(p.Ref.URI, p.Argument.Name, p.Argument.Value, p.Context.Arguments)
+		case "ref/prompt":
+			vals, err = s.completePrompt(p.Argument.Name, p.Argument.Value, p.Context.Arguments)
+		}
+		if err != nil {
+			return nil, &rpcError{Code: -32603, Message: err.Error()}
+		}
+		total := len(vals)
+		if len(vals) > 100 {
+			vals = vals[:100]
+		}
+		if vals == nil {
+			vals = []string{}
+		}
+		return map[string]any{"completion": map[string]any{"values": vals, "total": total, "hasMore": total > len(vals)}}, nil
 	default:
 		return nil, &rpcError{Code: -32601, Message: "method not found: " + req.Method}
 	}
