@@ -352,8 +352,57 @@ function findingRow(f) {
     <p>${esc(f.detail || '')}</p><div class="row wrap mt" style="margin-top:6px"><span class="tag">${esc(f.cluster)}</span><small>${esc(f.rule)}</small>${f.provisional ? '<small class="blue">provisional</small>' : ''}</div></div></div>`;
 }
 
+const ovIcon = {
+  clusters: '<path d="m12 3 9 5-9 5-9-5z"/><path d="m3 13 9 5 9-5"/>',
+  objects: '<path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5M12 13v8"/>',
+  logs: '<path d="M3 5h18M3 10h18M3 15h12M3 20h8"/>',
+  findings: '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>',
+};
+const ovTile = k => `<span class="stat-tile"><svg viewBox="0 0 24 24" aria-hidden="true">${ovIcon[k]}</svg></span>`;
+const ovEmpty = t => `<div class="ov-empty"><span>${esc(t)}</span></div>`;
+
+// Horizontal bars; each row carries a data-ov attribute the page wires to a filter.
+function ovBars(rows, cls = r => '') {
+  const max = Math.max(1, ...rows.map(r => r.n));
+  return `<div class="ov-bars">${rows.map(r => `<button class="ov-bar" data-ov="${attr(r.go)}" title="${esc(r.label)}: ${num(r.n)}"><span>${esc(r.label)}</span><span class="t"><i class="${cls(r)}" style="width:${Math.max(2, Math.round(r.n / max * 100))}%"></i></span><b>${num(r.n)}</b></button>`).join('')}</div>`;
+}
+
+// Log volume as an area over the capture window, errors drawn on top.
+function ovLogPlot(L) {
+  const h = L?.histogram || [];
+  if (!h.length || !L.total) return ovEmpty(L?.loading ? 'Logs still loading' : 'No log lines');
+  const errs = L.errors || [], W = 400, H = 130, n = h.length;
+  const max = Math.max(1, ...h.map(b => b.count));
+  const pts = list => list.map((b, i) => `${(i / Math.max(1, n - 1) * W).toFixed(1)},${(H - 6 - (b?.count || 0) / max * (H - 16)).toFixed(1)}`);
+  const all = pts(h), err = pts(errs.length === n ? errs : []);
+  const span = new Date(h[n - 1].start) - new Date(h[0].start);
+  return `<svg class="ov-plot" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-label="Log lines over time">
+    <defs><linearGradient id="ov-ga" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#3ecf8e" stop-opacity=".35"/><stop offset="1" stop-color="#3ecf8e" stop-opacity="0"/></linearGradient></defs>
+    <g stroke="var(--line)" stroke-width="1" vector-effect="non-scaling-stroke"><line x1="0" y1="${H * .25}" x2="${W}" y2="${H * .25}"/><line x1="0" y1="${H * .6}" x2="${W}" y2="${H * .6}"/></g>
+    <path d="M0,${H} L${all.join(' L')} L${W},${H}Z" fill="url(#ov-ga)"/>
+    <path d="M${all.join(' L')}" fill="none" stroke="#3ecf8e" stroke-width="2" vector-effect="non-scaling-stroke"/>
+    ${err.length && L.errorTotal ? `<path d="M${err.join(' L')}" fill="none" stroke="var(--red)" stroke-width="1.5" stroke-dasharray="3 3" vector-effect="non-scaling-stroke"/>` : ''}
+  </svg><div class="ov-axis"><span>${esc(fmtAxis(h[0].start, span))}</span><span>${esc(fmtAxis(h[n - 1].start, span))}</span></div>
+  <div class="ov-legend"><span><i style="background:#3ecf8e"></i>${num(L.total)} lines</span>${L.errorTotal ? `<span><i style="background:var(--red)"></i>${num(L.errorTotal)} errors</span>` : ''}</div>`;
+}
+
+function ovCharts(C) {
+  if (!C) return '';
+  const rules = (C.rules || []).slice(0, 5).map(r => ({label: r.rule, n: r.count, sev: r.severity, go: {findings: r.rule}}));
+  const rs = (C.restarts || []).slice(0, 5).map(r => ({label: r.namespace, n: r.restarts, go: {logs: r.namespace}}));
+  const restartTotal = (C.restarts || []).reduce((a, r) => a + r.restarts, 0);
+  return `<div class="ov-charts">
+    <section class="ov-chart v"><h3>Findings by rule</h3><div class="note">${num((C.rules || []).reduce((a, r) => a + r.count, 0))} findings across ${num((C.rules || []).length)} rules</div>
+      ${rules.length ? ovBars(rules, r => r.sev) : ovEmpty('No findings')}</section>
+    <section class="ov-chart g"><h3>Log volume</h3><div class="note">Lines over the capture window</div>${ovLogPlot(C.logs)}</section>
+    <section class="ov-chart m"><h3>Restarts by namespace</h3><div class="note">${num(restartTotal)} container restarts in ${num((C.restarts || []).length)} namespaces</div>
+      ${rs.length ? ovBars(rs) : ovEmpty('No restarts')}</section>
+  </div>`;
+}
+
 async function overview() {
-  const w = S.ws = await api('api/workspace');
+  const [w, charts] = await Promise.all([api('api/workspace'), api('api/overview/charts', {cluster: S.cluster}).catch(() => null)]);
+  S.ws = w;
   const clusters = (w.clusters || []).filter(c => !S.cluster || c.name === S.cluster);
   const tot = k => clusters.reduce((a, c) => a + (c[k] || 0), 0);
   const pol = w.policy || {};
@@ -361,11 +410,12 @@ async function overview() {
   return head(w.case ? `Case ${w.case}` : 'Snapshot', `${(w.contexts || []).join(', ')} · ${declaredText(w) || 'captured ' + fmtDateTime(w.snapshot)}`,
     `<button id="go-coverage">Coverage &amp; redactions</button><button class="primary" id="go-findings">Investigate findings →</button>`) + `
   <div class="stats">
-    <div class="stat"><div class="eyebrow">Clusters</div><div class="value">${clusters.length}<small>${esc(clusters.map(c => c.version).filter(Boolean)[0] || '')}</small></div><p>${tot('nodes')} nodes captured · ${tot('namespaces')} namespaces</p></div>
-    <div class="stat"><div class="eyebrow">Objects</div><div class="value">${num(tot('objects'))}</div><p>${num(tot('pods'))} pods · ${num(tot('podsRunning'))} running</p></div>
-    <div class="stat"><div class="eyebrow">Log lines</div><div class="value">${num(st.logLines)}</div><p>${st.phase === 'complete' ? 'all streams loaded' : 'still loading'}</p></div>
-    <div class="stat"><div class="eyebrow">Findings</div><div class="value amber">${w.findings.critical + w.findings.warning}<small>${w.findings.critical} critical</small></div><p>${w.findings.info} informational</p></div>
+    <div class="stat">${ovTile('clusters')}<div><div class="eyebrow">Clusters</div><div class="value">${clusters.length}<small>${esc(clusters.map(c => c.version).filter(Boolean)[0] || '')}</small></div><p>${tot('nodes')} nodes captured · ${tot('namespaces')} namespaces</p></div></div>
+    <div class="stat">${ovTile('objects')}<div><div class="eyebrow">Objects</div><div class="value">${num(tot('objects'))}</div><p>${num(tot('pods'))} pods · ${num(tot('podsRunning'))} running</p></div></div>
+    <div class="stat">${ovTile('logs')}<div><div class="eyebrow">Log lines</div><div class="value">${num(st.logLines)}</div><p>${st.phase === 'complete' ? 'all streams loaded' : 'still loading'}</p></div></div>
+    <div class="stat${w.findings.critical + w.findings.warning ? ' alert' : ''}">${ovTile('findings')}<div><div class="eyebrow">Findings</div><div class="value amber">${w.findings.critical + w.findings.warning}<small>${w.findings.critical} critical</small></div><p>${w.findings.info} informational</p></div></div>
   </div>
+  ${ovCharts(charts)}
   <div class="grid2"><div>
     <section class="panel"><div class="panel-head"><h2>Start here</h2><small>${w.state.phase === 'complete' ? 'Prioritised findings' : 'Provisional until the import is verified'}</small></div>
       ${(w.topFindings || []).filter(f => !S.cluster || f.cluster === S.cluster).map(findingRow).join('') || '<div class="empty"><strong>No warnings or critical findings</strong>Browse resources or search the logs.</div>'}
@@ -389,6 +439,11 @@ after.overview = () => {
   $('#go-coverage').onclick = $('#go-coverage2').onclick = () => nav('coverage');
   document.querySelectorAll('[data-cluster]').forEach(b => b.onclick = () => { setCluster(b.dataset.cluster); nav('resources'); });
   wireFindings();
+  document.querySelectorAll('[data-ov]').forEach(b => b.onclick = () => {
+    const go = JSON.parse(b.dataset.ov);
+    if (go.findings) { S.findingsRule = go.findings; nav('findings'); }
+    else if (go.logs) openLogs({namespace: go.logs});
+  });
 };
 
 function wireFindings() {
@@ -2129,13 +2184,13 @@ after.timeline = () => {
 // ---------- findings ----------
 async function findings() {
   const all = await api('api/findings', {cluster: S.cluster});
-  const fs = all.filter(f => !S.findingSev || f.severity === S.findingSev);
+  const fs = all.filter(f => (!S.findingSev || f.severity === S.findingSev) && (!S.findingsRule || f.rule === S.findingsRule));
   const prov = all.some(f => f.provisional);
   return head('Findings', 'Things to look at, each linked to its evidence. None of them is a root cause on its own.', `<select id="sev"><option value="">All severities</option>${['critical', 'warning', 'info'].map(s => `<option ${S.findingSev === s ? 'selected' : ''}>${s}</option>`).join('')}</select>`) +
     (prov ? '<div class="notice info" style="margin-bottom:14px">These findings are provisional: the bundle has not finished loading or failed verification. Rules that depend on something being absent wait for complete coverage.</div>' : '') +
-    `<section class="panel"><div class="panel-head"><h2>${fs.length} findings</h2><small>Deterministic rules</small></div>${fs.map(findingRow).join('') || '<div class="empty"><strong>No findings in this selection</strong></div>'}</section>`;
+    `<section class="panel"><div class="panel-head"><h2>${fs.length} findings</h2>${S.findingsRule ? `<button class="chip" id="clear-rule" title="Show every rule">rule: ${esc(S.findingsRule)} ×</button>` : '<small>Deterministic rules</small>'}</div>${fs.map(findingRow).join('') || '<div class="empty"><strong>No findings in this selection</strong></div>'}</section>`;
 }
-after.findings = () => { $('#sev').onchange = e => { S.findingSev = e.target.value; render(); }; wireFindings(); };
+after.findings = () => { $('#sev').onchange = e => { S.findingSev = e.target.value; render(); }; const cr = $('#clear-rule'); if (cr) cr.onclick = () => { S.findingsRule = ''; render(); }; wireFindings(); };
 
 function openFinding(f) {
   modal(f.title, `<div class="row wrap"><span class="badge ${f.severity === 'critical' ? 'red' : f.severity === 'warning' ? 'amber' : 'blue'}">${esc(f.severity)}</span><span class="tag">${esc(f.rule)}</span><span class="tag">${esc(f.cluster)}</span>${f.provisional ? '<span class="badge blue">provisional</span>' : ''}</div>
@@ -2452,7 +2507,7 @@ function ensureTerminal() {
   if (S.term) return S.term;
   if (!window.Terminal) { toast('Terminal assets failed to load'); return null; }
   const term = new window.Terminal({fontSize: 12, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', cursorBlink: true, scrollback: 5000,
-    theme: {background: '#080b14', foreground: '#c9d3e3', cursor: '#20b7f3', selectionBackground: '#1e3a5c'}});
+    theme: {background: '#0a0910', foreground: '#d6d3e2', cursor: '#a78bfa', selectionBackground: '#3a2f7a'}});
   const fit = new window.FitAddon.FitAddon();
   term.loadAddon(fit);
   term.open($('#term-body'));

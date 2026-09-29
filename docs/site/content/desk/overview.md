@@ -19,6 +19,9 @@ The Overview is the landing page. It answers the questions you have in the first
 | Objects | Total objects, pods and running pods |
 | Log lines | How many, and whether every stream has loaded |
 | Findings | Critical and warning findings, and how many informational ones |
+| Findings by rule | The five rules with the most findings, coloured by their worst severity. Click a bar to open [Findings](/desk/findings/) filtered to that rule. |
+| Log volume | Log lines across the capture window, with the error lines drawn as a dashed red line on top, and the totals of each |
+| Restarts by namespace | Container restarts summed from pod status, for the five namespaces with the most. Click a bar to open the [Log explorer](/desk/logs/) on that namespace. |
 | Start here | The highest-priority findings. Marked provisional until the import is verified. Click one for its evidence. |
 | Not collected in this bundle | Categories the policy asked for but could not collect, with the reason (for example, diagnostics without port-forward) |
 | Clusters | One card per cluster: version, pods, objects, namespaces, finding count and any collection gaps or truncations. Click a name to browse its resources. |

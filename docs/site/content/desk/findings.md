@@ -12,6 +12,8 @@ They are signals, not a verdict. A finding tells you where to look; it does not 
 
 ![Findings](/images/findings.png)
 
+Filter by severity with the menu at the top. Clicking a bar in **Findings by rule** on the [Overview](/desk/overview/) opens this page filtered to that rule; the rule shows as a chip in the panel header, and clicking the chip clears it.
+
 ## The rules
 
 | Rule | Severity | Fires when |

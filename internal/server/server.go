@@ -276,6 +276,7 @@ func (s *Server) Handler() http.Handler {
 		})
 	}
 	api("/api/workspace", s.workspace)
+	api("/api/overview/charts", s.overviewCharts)
 	api("/api/state/stream", s.stateStream)
 	api("/api/resources", s.resources)
 	api("/api/objects", s.objects)
