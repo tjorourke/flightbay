@@ -61,7 +61,7 @@ The API listens on `127.0.0.1` over TLS with a certificate made for this session
 
 ## The helpers
 
-Each helper is a small script in the workspace's `bin/` that runs `flightbay-desk <command>` against this workspace. You can run the long form from any terminal: it finds the desk through `FLIGHTBAY_URL` and `FLIGHTBAY_TOKEN`, or through `~/.flightbay/current.json`, which records the most recently opened desk.
+Each helper is a small script in the workspace's `bin/` that runs `flightbay-desk <command>` against this workspace. You can run the long form from any terminal: it finds the desk through `FLIGHTBAY_URL` and `FLIGHTBAY_TOKEN`, or through `~/.flightbay/desks/`, the registry of open desks, using the most recently opened one that still answers.
 
 | Helper | Long form | Does |
 |---|---|---|

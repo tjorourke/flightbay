@@ -214,14 +214,10 @@ verified bundle at any moment.`,
 			if err := srv.Prepare(); err != nil {
 				return err
 			}
-			info := deskInfo{URL: base, Token: srv.Token, Kubeconfig: srv.KubeconfigPath(), WorkDir: workdir, Bundle: "live:" + kctx, PID: os.Getpid()}
-			b, _ := json.MarshalIndent(info, "", "  ")
-			_ = os.WriteFile(filepath.Join(workdir, "desk.json"), b, 0o600)
-			if err := os.MkdirAll(home(), 0o700); err == nil {
-				err = os.WriteFile(filepath.Join(home(), "current.json"), b, 0o600)
-				if err != nil {
-					fmt.Fprintf(errOut, "warning: could not record the open workspace for helpers: %v\n", err)
-				}
+			unregister, err := registerDesk(deskInfo{URL: base, Token: srv.Token, Kubeconfig: srv.KubeconfigPath(), WorkDir: workdir, Bundle: "live:" + kctx, PID: os.Getpid()})
+			defer unregister()
+			if err != nil {
+				fmt.Fprintf(errOut, "warning: could not record the open workspace for helpers: %v\n", err)
 			}
 			url := base + "/?token=" + srv.Token
 			fmt.Fprintf(errOut, "\nFlightbay desk is mirroring %s live.\n  UI:          %s\n  kubectl:     export KUBECONFIG=%s   (context %s@live, read-only, on %s)\n  Shell:       flightbay-desk shell   (kubectl, k9s, stern, fbq, fbsearch, fbsql, fbfind, fbpc, fbflows)\n  Press Ctrl+C to stop; nothing is kept unless you use Save as bundle or --keep.\n\n",

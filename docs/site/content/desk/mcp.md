@@ -12,7 +12,7 @@ Use it when you want an assistant to do the legwork on a case: gather the eviden
 
 ## Connecting an agent
 
-Open the bundle first, then point your agent at `flightbay-desk mcp`. It speaks MCP over stdin and stdout, and finds the open desk through `~/.flightbay/current.json` (or `FLIGHTBAY_URL` and `FLIGHTBAY_TOKEN`).
+Open the bundle, then point your agent at `flightbay-desk mcp`. It speaks MCP over stdin and stdout. It looks for the open desks on every call, through the registry in `~/.flightbay/desks/`, so the agent can be started before the bundle is opened, and it follows a desk that is closed and opened again without restarting the agent. `FLIGHTBAY_URL` and `FLIGHTBAY_TOKEN` pin it to one desk instead.
 
 Claude Code:
 
@@ -31,7 +31,11 @@ opencode, in `opencode.json`:
 }
 ```
 
-Any other MCP client works the same way: the command is `flightbay-desk mcp` with no arguments. The server always talks to the most recently opened desk.
+Any other MCP client works the same way: the command is `flightbay-desk mcp` with no arguments. The tools read the most recently opened desk that is still running. With more than one desk open, the `workspaces` tool lists them and switches between them.
+
+### The agent only reads the snapshot
+
+A bundle is usually captured in a customer's environment, and the clusters in it are not reachable from your machine. The server tells the agent so when it connects: answer from the tools and resources only, and never run `kubectl`, a cloud CLI or anything else against a cluster, or call the desk's HTTP API, in their place. When no desk is open, or the desk has closed, every tool returns an error that says the same thing and asks the agent to have you open the bundle, rather than looking for another way in. The desk token is handled by the server; you never sign in on the agent's behalf.
 
 ### Over HTTP
 
@@ -43,6 +47,7 @@ Every tool is read-only and marked as such.
 
 | Tool | Arguments | Returns |
 |---|---|---|
+| `workspaces` | `use` | The desks open on this machine, most recently opened first, and which one the other tools read. `use` (a list number, bundle file name or live context) switches desk. Only offered by `flightbay-desk mcp`, not by a desk's `/mcp`, which always reads its own workspace. |
 | `workspace_summary` | none | Case, clusters, capture time, the collection policy (what the customer allowed), import and verification state, and finding counts. Agents are told to call this first. |
 | `list_findings` | `cluster`, `severity` | [Findings](/desk/findings/) with evidence, a log query and a next step. Links each finding and the object it is about as resources. |
 | `timeline` | `cluster`, `kind` (`event`, `termination`, `rollout`, `error-spike`), `since` (RFC 3339) | The [Timeline](/desk/timeline/): events, container exits, rollouts and error spikes in order, each with its object and a log query |

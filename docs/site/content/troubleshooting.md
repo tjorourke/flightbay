@@ -140,7 +140,11 @@ Open the exact `UI:` address the desk printed, token included. Each desk makes a
 
 ### Helpers say "no open workspace found"
 
-`fbq`, `fbsql`, `flightbay-desk shell` and `flightbay-desk mcp` find the desk through `~/.flightbay/current.json`, which is written when a desk opens. Open a bundle first, and make sure `FLIGHTBAY_HOME` is the same in both terminals. Inside the desk's own terminal, `FLIGHTBAY_URL` and `FLIGHTBAY_TOKEN` are set for you.
+`fbq`, `fbsql`, `flightbay-desk shell` and `flightbay-desk mcp` find the desk through `~/.flightbay/desks/`, where every open desk records itself until it closes. They skip desks that no longer answer. Open a bundle first, and make sure `FLIGHTBAY_HOME` is the same in both terminals. Inside the desk's own terminal, `FLIGHTBAY_URL` and `FLIGHTBAY_TOKEN` are set for you.
+
+### An agent says it needs to sign in, or reaches for kubectl
+
+An agent connected to `flightbay-desk mcp` never needs a sign-in: the server passes the desk token itself. If a tool reports that no desk is open or that the desk did not accept the token, open the bundle (`flightbay ui BUNDLE`) and ask again; the server finds the new desk on the next call. Desks from builds before the registry only wrote `~/.flightbay/current.json`, and a desk that exited left it behind, so update `flightbay-desk` if an agent keeps pointing at a desk that has closed.
 
 ### k9s shows odd state or writes to your k9s config
 

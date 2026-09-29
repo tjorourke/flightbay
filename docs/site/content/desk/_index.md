@@ -107,7 +107,7 @@ Each open bundle gets its own directory:
 | `bashrc` | The terminal's rc file: `k` for `kubectl`, completion. |
 | `desk.json` | URL, token, kubeconfig path and PID of this desk. |
 
-`~/.flightbay/current.json` records the most recently opened desk, which is how `flightbay-desk shell`, the helpers and `flightbay-desk mcp` find it from any terminal. `FLIGHTBAY_HOME` moves `~/.flightbay` elsewhere.
+Every open desk records itself in `~/.flightbay/desks/PID.json` and removes the entry when it closes, which is how `flightbay-desk shell`, the helpers and `flightbay-desk mcp` find it from any terminal. They use the most recently opened desk that still answers. `~/.flightbay/current.json` also names the most recently opened desk, for older helpers. `FLIGHTBAY_HOME` moves `~/.flightbay` elsewhere.
 
 ## Finding your way round
 

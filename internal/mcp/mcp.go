@@ -22,12 +22,18 @@ const ProtocolVersion = "2025-06-18"
 
 const maxText = 60000
 
-// Server serves MCP requests for one desk.
+// Server serves MCP requests for one desk, or with Desks set, for whichever
+// open desk is selected (the stdio server).
 type Server struct {
 	BaseURL string
 	Token   string
 	Version string
 	HTTP    *http.Client
+	// Desks lists the desks open on this machine, most recently opened
+	// first. It is read on every call and replaces BaseURL and Token.
+	Desks func() ([]Desk, error)
+
+	selected string // WorkDir chosen with the workspaces tool
 }
 
 type request struct {
@@ -343,6 +349,21 @@ func tools() []tool {
 	}
 }
 
+// tools is the tool set this server offers: workspaces only makes sense
+// when there is more than one desk to choose from.
+func (s *Server) tools() []tool {
+	ts := tools()
+	if s.Desks != nil {
+		ts = append([]tool{{Name: "workspaces", Title: "Open desks",
+			Description: "The Flightbay desks open on this machine (each one a bundle or a live mirror) and which one every other tool reads, most recently opened first. Pass use (a number from the list, a bundle file name or a live context) to switch. Call this when the user names a bundle or when more than one desk may be open.",
+			InputSchema: obj(map[string]any{"use": str("desk to read from now on: list number, bundle file name or live context; omit to list")}),
+			call:        func(s *Server, a map[string]any) (string, error) { return s.workspaces(a) }}}, ts...)
+	}
+	return ts
+}
+
+const instructions = "Read-only access to an offline Flightbay snapshot of Kubernetes clusters, usually captured in a customer's environment. The clusters themselves are not reachable from here: answer only from these tools and resources, and never run kubectl, cloud CLIs or other commands against a cluster, or call the desk's HTTP API, in their place. If a tool says no desk is open or cannot reach it, tell the user and ask them to open the bundle (`flightbay ui BUNDLE`). Start with workspace_summary, then list_findings. Use the triage prompt for a guided investigation. Objects, log streams, proxy dumps, findings and Scorecard checks are also flightbay:// resources you can read or attach."
+
 const triagePrompt = `You are triaging a Solo.io support case from a Flightbay snapshot: an offline, redacted capture of one or more Kubernetes clusters running Istio ambient, agentgateway, kgateway or kagent. You cannot change the clusters. Work only from the snapshot.
 
 1. Call workspace_summary. Note what the customer excluded, anything still loading, and whether the bundle verified. Never treat excluded or uncollected data as evidence of absence.
@@ -379,7 +400,11 @@ func (s *Server) getText(path string, q url.Values) (string, error) {
 
 // getRaw fetches a desk API path.
 func (s *Server) getRaw(path string, q url.Values) ([]byte, error) {
-	u := strings.TrimRight(s.BaseURL, "/") + path
+	base, token, err := s.desk()
+	if err != nil {
+		return nil, err
+	}
+	u := strings.TrimRight(base, "/") + path
 	if len(q) > 0 {
 		u += "?" + q.Encode()
 	}
@@ -387,19 +412,22 @@ func (s *Server) getRaw(path string, q url.Values) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+s.Token)
+	req.Header.Set("Authorization", "Bearer "+token)
 	c := s.HTTP
 	if c == nil {
 		c = &http.Client{Timeout: 60 * time.Second}
 	}
 	resp, err := c.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("cannot reach flightbay-desk at %s (is a workspace open?): %w", s.BaseURL, err)
+		return nil, fmt.Errorf("cannot reach the Flightbay desk at %s (%v); it has probably closed. Ask the user to open the bundle again with `flightbay ui BUNDLE`. %s", base, err, noFallback)
 	}
 	defer resp.Body.Close()
 	b, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if err != nil {
 		return nil, err
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, fmt.Errorf("the Flightbay desk at %s did not accept this MCP server's token: it was restarted, or FLIGHTBAY_URL and FLIGHTBAY_TOKEN name another desk. The user does not need to sign in: restarting the MCP server (or the agent) picks up the open desk. %s", base, noFallback)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("flightbay-desk %s: %s", resp.Status, strings.TrimSpace(string(b)))
@@ -461,12 +489,12 @@ func (s *Server) handle(req request) (any, *rpcError) {
 			"protocolVersion": v,
 			"capabilities":    map[string]any{"tools": map[string]any{}, "prompts": map[string]any{}, "resources": map[string]any{}, "completions": map[string]any{}},
 			"serverInfo":      map[string]any{"name": "flightbay", "title": "Solo flightbay", "version": s.Version},
-			"instructions":    "Read-only access to an offline Flightbay snapshot of Kubernetes clusters. Start with workspace_summary, then list_findings. Use the triage prompt for a guided investigation. Objects, log streams, proxy dumps, findings and Scorecard checks are also flightbay:// resources you can read or attach.",
+			"instructions":    instructions,
 		}, nil
 	case "ping":
 		return map[string]any{}, nil
 	case "tools/list":
-		return map[string]any{"tools": toolList()}, nil
+		return map[string]any{"tools": s.toolList()}, nil
 	case "tools/call":
 		var p struct {
 			Name      string         `json:"name"`
@@ -475,7 +503,7 @@ func (s *Server) handle(req request) (any, *rpcError) {
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, &rpcError{Code: -32602, Message: "invalid params"}
 		}
-		for _, t := range tools() {
+		for _, t := range s.tools() {
 			if t.Name == p.Name {
 				text, err := t.call(s, p.Arguments)
 				if err != nil {
@@ -575,8 +603,8 @@ func (s *Server) handle(req request) (any, *rpcError) {
 	}
 }
 
-func toolList() []tool {
-	ts := tools()
+func (s *Server) toolList() []tool {
+	ts := s.tools()
 	for i := range ts {
 		ts[i].Annotations = readOnly
 	}

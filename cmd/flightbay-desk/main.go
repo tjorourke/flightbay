@@ -8,7 +8,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/tjorourke/flightbay/internal/features"
@@ -346,13 +345,10 @@ func openCmd() *cobra.Command {
 				}
 				fmt.Fprintf(cmd.ErrOrStderr(), "Added %d %s flow records (%d flows) from %s to %s; marked as added by the reviewer, not part of the signed bundle.\n", res.Events, res.Format, res.Flows, ff.Path, cluster)
 			}
-			info := deskInfo{URL: base, Token: srv.Token, Kubeconfig: srv.KubeconfigPath(), WorkDir: workdir, Bundle: path, PID: os.Getpid()}
-			b, _ := json.MarshalIndent(info, "", "  ")
-			_ = os.WriteFile(filepath.Join(workdir, "desk.json"), b, 0o600)
-			// Helpers (fbq, fbpc, flightbay-desk shell) find the workspace through this.
-			if err := os.MkdirAll(home(), 0o700); err == nil {
-				err = os.WriteFile(filepath.Join(home(), "current.json"), b, 0o600)
-			}
+			// Helpers (fbq, fbpc, flightbay-desk shell) and the MCP server find
+			// the workspace through this.
+			unregister, err := registerDesk(deskInfo{URL: base, Token: srv.Token, Kubeconfig: srv.KubeconfigPath(), WorkDir: workdir, Bundle: path, PID: os.Getpid()})
+			defer unregister()
 			if err != nil {
 				fmt.Fprintf(errOut, "warning: could not record the open workspace for helpers: %v\n", err)
 			}
@@ -444,13 +440,13 @@ func resolveBundle(p string) (string, error) {
 	return best, nil
 }
 
+// currentDesk is the most recently opened desk that is still answering.
 func currentDesk() (deskInfo, error) {
-	var d deskInfo
-	b, err := os.ReadFile(filepath.Join(home(), "current.json"))
-	if err != nil {
-		return d, fmt.Errorf("no open workspace found; run flightbay-desk open first")
+	ds := openDesks()
+	if len(ds) == 0 {
+		return deskInfo{}, fmt.Errorf("no open workspace found; run flightbay-desk open first")
 	}
-	return d, json.Unmarshal(b, &d)
+	return ds[0].deskInfo, nil
 }
 
 func deskEnv() (string, string, error) {
@@ -664,21 +660,28 @@ func mcpCmd() *cobra.Command {
 		Use:   "mcp",
 		Short: "Serve the open workspace to AI agents over MCP (stdio), read-only",
 		Long: `Serves the open workspace as a Model Context Protocol server on stdin/stdout.
-Tools: workspace_summary, list_findings, best_practices, agent_reach, agent_activity, traffic_map,
+Tools: workspaces, workspace_summary, list_findings, best_practices, agent_reach, agent_activity, traffic_map,
 explain_connection, search_logs, log_context, search_objects, run_sql, list_resource_types,
 list_objects, get_object, proxy_config, compare_baseline. Prompt: triage. best_practices
 priorities, agent_reach, agent_activity, traffic_map and explain_connection need Flightbay Enterprise.
 
-The server only talks to the local desk. Snapshot data reaches a model only if the
+The server finds the open desks on every call (~/.flightbay/desks), so it can start before
+the bundle is opened; workspaces switches between them when several are open. It tells the
+agent that the snapshot's clusters are not reachable, so it answers from the snapshot only.
+
+The server only talks to local desks. Snapshot data reaches a model only if the
 agent you connect is configured to use one.`,
 		Example: `  claude mcp add flightbay -- flightbay-desk mcp
   opencode: "mcp": {"flightbay": {"type": "local", "command": ["flightbay-desk", "mcp"]}}`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			u, t, err := deskEnv()
-			if err != nil {
-				return err
+			// FLIGHTBAY_URL and FLIGHTBAY_TOKEN pin one desk (the desk's own
+			// shell sets them). Otherwise the server looks for the open desks on
+			// every call, so it can start before the bundle is opened and
+			// follows a desk that is closed and opened again.
+			s := &mcp.Server{Version: version, Desks: mcpDesks}
+			if u, t := os.Getenv("FLIGHTBAY_URL"), os.Getenv("FLIGHTBAY_TOKEN"); u != "" && t != "" {
+				s = &mcp.Server{BaseURL: u, Token: t, Version: version}
 			}
-			s := &mcp.Server{BaseURL: u, Token: t, Version: version}
 			return s.Serve(cmd.InOrStdin(), cmd.OutOrStdout())
 		},
 	}

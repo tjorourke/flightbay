@@ -230,12 +230,16 @@ Examples:
 ## flightbay-desk mcp
 
 Serves the open workspace as a Model Context Protocol server on stdin/stdout.
-Tools: workspace_summary, list_findings, best_practices, agent_reach, agent_activity, traffic_map,
+Tools: workspaces, workspace_summary, list_findings, best_practices, agent_reach, agent_activity, traffic_map,
 explain_connection, search_logs, log_context, search_objects, run_sql, list_resource_types,
 list_objects, get_object, proxy_config, compare_baseline. Prompt: triage. best_practices
 priorities, agent_reach, agent_activity, traffic_map and explain_connection need Flightbay Enterprise.
 
-The server only talks to the local desk. Snapshot data reaches a model only if the
+The server finds the open desks on every call (~/.flightbay/desks), so it can start before
+the bundle is opened; workspaces switches between them when several are open. It tells the
+agent that the snapshot's clusters are not reachable, so it answers from the snapshot only.
+
+The server only talks to local desks. Snapshot data reaches a model only if the
 agent you connect is configured to use one.
 
 ```text
