@@ -4,6 +4,9 @@
 version: 2
 project_name: flightbay
 
+env:
+  - TAP_GITHUB_TOKEN={{ if index .Env "TAP_GITHUB_TOKEN" }}{{ .Env.TAP_GITHUB_TOKEN }}{{ end }}
+
 before:
   hooks:
     - go mod tidy
@@ -52,14 +55,17 @@ signs:
 homebrew_casks:
   - name: flightbay
     ids: [flightbay]
-    repository: {owner: tjorourke, name: homebrew-tap}
+    # Published only when TAP_GITHUB_TOKEN (a token that can push to the tap) is set.
+    repository: {owner: tjorourke, name: homebrew-tap, token: "{{ .Env.TAP_GITHUB_TOKEN }}"}
+    skip_upload: '{{ if .Env.TAP_GITHUB_TOKEN }}false{{ else }}true{{ end }}'
     homepage: https://github.com/tjorourke/flightbay
     description: Capture an offline, redacted snapshot of Kubernetes clusters
 
 krews:
   - name: flightbay
     ids: [flightbay]
-    repository: {owner: tjorourke, name: krew-index}
+    repository: {owner: tjorourke, name: krew-index, token: "{{ .Env.TAP_GITHUB_TOKEN }}"}
+    skip_upload: '{{ if .Env.TAP_GITHUB_TOKEN }}false{{ else }}true{{ end }}'
     homepage: https://github.com/tjorourke/flightbay
     short_description: Capture a redacted, offline Kubernetes snapshot
     description: |
