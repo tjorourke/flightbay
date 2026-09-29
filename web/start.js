@@ -10,7 +10,7 @@ const when = t => (!t || t.startsWith('0001')) ? '' : new Date(t).toISOString().
 const cap = s => String(s || '').charAt(0).toUpperCase() + String(s || '').slice(1);
 const list = v => String(v || '').split(/[,\n]/).map(s => s.trim()).filter(Boolean);
 
-const ST = {card: '', info: null, contexts: null, files: [], home: '', lastAction: null};
+const ST = {accessSeq: 0, card: '', info: null, contexts: null, files: [], home: '', lastAction: null};
 
 async function call(path, body) {
   const opt = {credentials: 'same-origin', headers: {Accept: 'application/json'}};
@@ -123,11 +123,40 @@ async function loadContexts() {
     status('#lv-status', j.current ? '' : 'The kubeconfig has no current context; pick one.');
     sel.innerHTML = j.contexts.map(c => `<option value="${esc(c.name)}"${c.name === j.current ? ' selected' : ''}>${esc(c.name)}${c.name === j.current ? ' (current)' : ''}</option>`).join('');
     showServer();
+    checkAccess();
   } catch (e) {
     sel.innerHTML = '';
     status('#lv-status', e.message, 'red');
   }
   updateCLI();
+}
+
+// checkAccess turns the live options on, or off with the reason, from what
+// the context's credentials are allowed (a SelfSubjectAccessReview each).
+async function checkAccess() {
+  const f = liveForm();
+  const seq = ++ST.accessSeq;
+  if (!f.context) return;
+  for (const [id, why] of [['#lv-cluster', '#lv-cluster-why'], ['#lv-solo', '#lv-solo-why']]) { $(id).checked = true; $(why).textContent = ''; }
+  try {
+    const a = await call('/api/start/live-access', f);
+    if (seq !== ST.accessSeq) return;
+    $('#lv-cluster').checked = a.clusterScoped;
+    $('#lv-cluster-why').textContent = a.clusterScopedWhy ? 'Off: ' + a.clusterScopedWhy + '.' : '';
+    $('#lv-solo').checked = a.soloDiagnostics;
+    $('#lv-solo-why').textContent = a.soloDiagnosticsWhy ? 'Off: ' + a.soloDiagnosticsWhy + '.' : '';
+  } catch (e) {
+    // Unreachable or no access review allowed: leave both on; live mode
+    // records anything it is refused.
+  }
+  optionsSummary();
+  updateCLI();
+}
+
+function optionsSummary() {
+  const on = [$('#lv-cluster').checked && 'cluster-scoped objects', $('#lv-solo').checked && 'Solo diagnostics'].filter(Boolean);
+  $('#lv-options-sum').textContent = on.length === 2 ? 'Options: everything these credentials can read' :
+    on.length ? 'Options: ' + on[0] + ' on, ' + (on[0].startsWith('cluster') ? 'Solo diagnostics' : 'cluster-scoped objects') + ' off' : 'Options: namespaced objects and logs only';
 }
 
 function showServer() {
@@ -335,7 +364,9 @@ async function boot() {
   for (const b of document.querySelectorAll('.start-card')) b.onclick = () => openCard(b.dataset.card);
   $('#lv-reload').onclick = () => loadContexts();
   $('#lv-kubeconfig').onchange = () => loadContexts();
-  $('#lv-context').onchange = () => { showServer(); $('#lv-plan').innerHTML = ''; updateCLI(); };
+  $('#lv-context').onchange = () => { showServer(); $('#lv-plan').innerHTML = ''; updateCLI(); checkAccess(); };
+  $('#lv-ns').onchange = () => checkAccess();
+  for (const id of ['#lv-cluster', '#lv-solo']) $(id).addEventListener('change', optionsSummary);
   $('#lv-preview').onclick = previewLive;
   $('#lv-start').onclick = startLive;
   $('#fl-open').onclick = () => openFile($('#fl-path').value.trim(), false);

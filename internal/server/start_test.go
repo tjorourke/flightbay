@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -403,5 +404,30 @@ func TestIsGitURL(t *testing.T) {
 		if IsGitURL(s) != want {
 			t.Errorf("IsGitURL(%q) = %v", s, !want)
 		}
+	}
+}
+
+func TestStartLiveAccess(t *testing.T) {
+	e := newStart(t)
+	kc := writeKubeconfig(t, "https://127.0.0.1:1")
+	body := `{"kubeconfig":"` + kc + `","context":"fake","namespaces":"shop"}`
+	if resp, _ := e.do(t, "POST", "/api/start/live-access", body, true); resp.StatusCode != 501 {
+		t.Errorf("without a checker: %d", resp.StatusCode)
+	}
+	var got LiveRequest
+	e.s.LiveAccess = func(_ context.Context, r LiveRequest) (LiveAccess, error) {
+		got = r
+		return LiveAccess{ClusterScoped: true, SoloDiagnostics: false, SoloDiagnosticsWhy: "cannot port-forward"}, nil
+	}
+	resp, b := e.do(t, "POST", "/api/start/live-access", body, true)
+	var a LiveAccess
+	if resp.StatusCode != 200 || json.Unmarshal(b, &a) != nil || !a.ClusterScoped || a.SoloDiagnostics || a.SoloDiagnosticsWhy == "" {
+		t.Fatalf("access: %d %s", resp.StatusCode, b)
+	}
+	if got.Context != "fake" || got.Namespaces != "shop" {
+		t.Errorf("the checker gets the form: %+v", got)
+	}
+	if resp, _ := e.do(t, "POST", "/api/start/live-access", body, false); resp.StatusCode != 401 {
+		t.Errorf("needs the token: %d", resp.StatusCode)
 	}
 }

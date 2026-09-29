@@ -6,6 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	authorizationv1 "k8s.io/api/authorization/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
 	"net"
 	"net/http"
 	"os"
@@ -148,7 +152,7 @@ func runStart(cmd *cobra.Command, o startOptions) error {
 	base := "http://" + addr
 	token := deskToken()
 	desk, _ := os.Executable()
-	ss := &server.StartServer{Token: token, WorkDir: o.workdir, Identities: ids, Version: version, LivePlan: livePlan}
+	ss := &server.StartServer{Token: token, WorkDir: o.workdir, Identities: ids, Version: version, LivePlan: livePlan, LiveAccess: liveAccess}
 	hs := &http.Server{Handler: ss.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -304,4 +308,66 @@ func livePlan(ctx context.Context, r server.LiveRequest) (json.RawMessage, error
 		return nil, fmt.Errorf("unexpected dry-run output: %s", strings.TrimSpace(errb.String()))
 	}
 	return json.RawMessage(b), nil
+}
+
+// liveAccess asks the API server (SelfSubjectAccessReview) what the context's
+// credentials allow: listing cluster-scoped objects, and port-forwarding to
+// pods in the namespaces in scope, which Solo diagnostics need.
+func liveAccess(ctx context.Context, r server.LiveRequest) (server.LiveAccess, error) {
+	rules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if r.Kubeconfig != "" {
+		rules.ExplicitPath = r.Kubeconfig
+	}
+	cfg, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, &clientcmd.ConfigOverrides{CurrentContext: r.Context}).ClientConfig()
+	if err != nil {
+		return server.LiveAccess{}, err
+	}
+	cfg.Timeout = 10 * time.Second
+	cs, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return server.LiveAccess{}, err
+	}
+	can := func(verb, group, resource, sub, ns string) (bool, error) {
+		rv, err := cs.AuthorizationV1().SelfSubjectAccessReviews().Create(ctx, &authorizationv1.SelfSubjectAccessReview{
+			Spec: authorizationv1.SelfSubjectAccessReviewSpec{ResourceAttributes: &authorizationv1.ResourceAttributes{
+				Verb: verb, Group: group, Resource: resource, Subresource: sub, Namespace: ns}}}, metav1.CreateOptions{})
+		if err != nil {
+			return false, err
+		}
+		return rv.Status.Allowed, nil
+	}
+	var a server.LiveAccess
+	nodes, err := can("list", "", "nodes", "", "")
+	if err != nil {
+		return a, err
+	}
+	roles, err := can("list", "rbac.authorization.k8s.io", "clusterroles", "", "")
+	if err != nil {
+		return a, err
+	}
+	a.ClusterScoped = nodes && roles
+	if !a.ClusterScoped {
+		a.ClusterScopedWhy = "these credentials cannot list nodes and ClusterRoles, so only namespaced objects are read"
+	}
+	// Port-forward in the first namespace named, or anywhere when none are.
+	ns := ""
+	for _, n := range strings.Split(r.Namespaces, ",") {
+		if n = strings.TrimSpace(n); n != "" && !strings.ContainsAny(n, "*?[") {
+			ns = n
+			break
+		}
+	}
+	pf, err := can("create", "", "pods", "portforward", ns)
+	if err != nil {
+		return a, err
+	}
+	a.SoloDiagnostics = pf
+	if !pf {
+		where := "in the namespaces in scope"
+		if ns != "" {
+			where = "in " + ns
+		}
+		a.SoloDiagnostics, a.SoloDiagnosticsWhy = false, "these credentials cannot port-forward to pods "+where+", which proxy and control-plane diagnostics need"
+	}
+	return a, nil
 }

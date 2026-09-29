@@ -50,6 +50,10 @@ type StartServer struct {
 	// LivePlan returns the dry-run plan and RBAC for a live request,
 	// as flightbay-desk live --dry-run --json prints it.
 	LivePlan func(ctx context.Context, req LiveRequest) (json.RawMessage, error)
+	// LiveAccess asks the cluster whether the context's credentials can read
+	// cluster-scoped objects and port-forward, so the start page can turn
+	// those options on by default and off, with the reason, when they cannot.
+	LiveAccess func(ctx context.Context, req LiveRequest) (LiveAccess, error)
 	// Launch hands over to the desk for an action. It is called after the
 	// response has been sent and does not return on success.
 	Launch func(a StartAction) error
@@ -66,6 +70,15 @@ type LiveRequest struct {
 	ExcludeNamespaces string `json:"excludeNamespaces,omitempty"` // comma separated, globs allowed
 	ClusterScoped     bool   `json:"clusterScoped,omitempty"`     // --cluster-scoped
 	SoloDiagnostics   bool   `json:"soloDiagnostics,omitempty"`   // --solo-diagnostics
+}
+
+// LiveAccess is what the context's credentials allow of the live options.
+// A reason is set when the option is not allowed.
+type LiveAccess struct {
+	ClusterScoped      bool   `json:"clusterScoped"`
+	ClusterScopedWhy   string `json:"clusterScopedWhy,omitempty"`
+	SoloDiagnostics    bool   `json:"soloDiagnostics"`
+	SoloDiagnosticsWhy string `json:"soloDiagnosticsWhy,omitempty"`
 }
 
 // ScanRequest is the Repo card's form.
@@ -182,6 +195,7 @@ func (s *StartServer) Handler() http.Handler {
 	api("/api/start/recent", false, s.recent)
 	api("/api/start/live-plan", true, s.livePlan)
 	api("/api/start/live", true, s.live)
+	api("/api/start/live-access", true, s.liveAccess)
 	api("/api/start/upload", true, s.upload)
 	api("/api/start/open", true, s.open)
 	api("/api/start/scan", true, s.scan)
@@ -313,6 +327,25 @@ func (s *StartServer) livePlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"request": req, "plan": plan})
+}
+
+func (s *StartServer) liveAccess(w http.ResponseWriter, r *http.Request) {
+	req, ok := s.readLive(w, r)
+	if !ok {
+		return
+	}
+	if s.LiveAccess == nil {
+		jerr(w, 501, "this start page cannot check access")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	a, err := s.LiveAccess(ctx, *req)
+	if err != nil {
+		jerr(w, 502, fmt.Sprintf("%s: %v", req.Context, err))
+		return
+	}
+	writeJSON(w, 200, a)
 }
 
 func (s *StartServer) live(w http.ResponseWriter, r *http.Request) {

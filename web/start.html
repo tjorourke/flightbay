@@ -57,10 +57,14 @@
           <input id="lv-exns" placeholder="e.g. kube-system" spellcheck="false">
         </label>
       </div>
-      <div class="start-checks">
-        <label><input type="checkbox" id="lv-cluster"> Include cluster-scoped objects <small class="muted">(nodes, namespaces, CRDs, ClusterRoles)</small></label>
-        <label><input type="checkbox" id="lv-solo"> Solo diagnostics <small class="muted">(proxy dumps, control-plane debug and metrics; needs port-forward)</small></label>
-      </div>
+      <details class="start-checks" id="lv-options">
+        <summary id="lv-options-sum">Options: everything these credentials can read</summary>
+        <label><input type="checkbox" id="lv-cluster" checked> Cluster-scoped objects <small class="muted">(nodes, namespaces, CRDs, ClusterRoles)</small></label>
+        <small class="amber" id="lv-cluster-why" style="display:block;margin:-2px 0 4px 26px"></small>
+        <label><input type="checkbox" id="lv-solo" checked> Solo diagnostics <small class="muted">(proxy dumps, control-plane debug and metrics, through port-forward)</small></label>
+        <small class="amber" id="lv-solo-why" style="display:block;margin:-2px 0 4px 26px"></small>
+        <small class="muted">Both are on unless the context's credentials cannot use them, which is checked when you pick a context.</small>
+      </details>
       <div class="row wrap start-actions">
         <button id="lv-preview">Preview</button>
         <button class="primary" id="lv-start">Start live</button>
