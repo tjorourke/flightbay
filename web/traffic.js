@@ -57,7 +57,7 @@ function fbGraph({left, right, far = [], edges, heads, sel}) {
   L.sort((a, b) => bary(a, ri, 'from') - bary(b, ri, 'from') || a.label.localeCompare(b.label));
   const lrow = new Map(L.map((n, i) => [n.id, i])), rrow = new Map(R.map((n, i) => [n.id, i]));
   const ri2 = new Map(R.map((n, i) => [n.id, i]));
-  F.sort((a, b) => bary(a, ri2, 'to') - bary(b, ri2, 'to') || a.label.localeCompare(b.label));
+  F.sort((a, b) => bary(a, ri2, 'to') - bary(b, ri2, 'to') || (a.order ?? 1) - (b.order ?? 1) || a.label.localeCompare(b.label));
   const frow = new Map(F.map((n, i) => [n.id, i]));
   const rows = Math.max(L.length, R.length, F.length, 1);
   const lOff = (rows - L.length) * (bh + vg) / 2, rOff = (rows - R.length) * (bh + vg) / 2, fOff = (rows - F.length) * (bh + vg) / 2;
@@ -470,9 +470,15 @@ function tfSelPanel(d, a, nodes, callers, targets) {
   if (T.sel.startsWith('svct:')) {
     const [svc, tool] = T.sel.slice(5).split('|');
     const es = (a.edges || []).filter(e => e.service === svc && (t => t && (t.kind === 'tool' ? t.label : actTargetLabel(t)) === tool)(targets.get(e.to)));
-    return `<section class="panel mt"><div class="panel-head"><h2><span class="mono">${esc(tool)}</span> through ${esc(nodes.get(svc)?.label || svc)}</h2><button class="ghost" id="act-selx" aria-label="Close">✕</button></div>
+    const srvs = [...new Set((a.edges || []).filter(e => e.service === svc).map(e => targets.get(e.to)).filter(x => x?.kind === 'tool').map(x => x.server))];
+    const info = (a.tools || []).find(t => t.name === tool && srvs.includes(t.server));
+    const guarded = info && (a.tools || []).some(t => t.server === info.server && (t.allowedFor || []).length);
+    const may = !info ? '' : guarded ? ((info.allowedFor || []).length ? `Allowed for <span class="mono">${esc(info.allowedFor.join(', '))}</span> by ${esc((info.policies || []).map(p => p.namespace + '/' + p.name).join(', '))}.` : 'The allowlist on this server gives it to no one.') : `No allowlist on ${esc(info.server)}: every caller may call it.`;
+    return `<section class="panel mt"><div class="panel-head"><h2><span class="mono">${esc(tool)}</span> through ${esc(nodes.get(svc)?.label || (p => p[p.length - 3] + '/' + p[p.length - 1])(svc.slice(4).split('/')))}</h2><button class="ghost" id="act-selx" aria-label="Close">✕</button></div>
+      <div class="panel-body" style="padding-bottom:0"><p class="rc-small" style="margin:0">${may}${(info?.configuredOn || []).length ? ` In the configuration of <span class="mono">${esc(info.configuredOn.join(', '))}</span>.` : ''}${info?.description ? `<br><span class="muted">${esc(info.description)}</span>` : ''}</p></div>
+      ${es.length ? `
       <div class="table-scroll" style="max-height:44vh"><table><thead><tr><th>Caller</th><th>Calls</th><th>Refused</th><th>Failed</th><th>Last seen</th><th></th></tr></thead><tbody>
-      ${es.sort((x, y) => y.requests - x.requests).map(e => { const c = callers.get(e.from); return `<tr><td>${esc(c?.label || e.from)}</td><td class="mono">${num(e.requests)}</td><td class="mono ${e.denied ? 'amber' : ''}">${num(e.denied)}</td><td class="mono">${num(e.errors)}</td><td class="rc-small">${fbTime(e.last)}</td><td>${c && (c.agentType || c.agentic) ? `<button class="ghost" data-tffollow="${esc(c.id)}">Every tool it may call</button>` : ''}</td></tr>`; }).join('')}</tbody></table></div></section>`;
+      ${es.sort((x, y) => y.requests - x.requests).map(e => { const c = callers.get(e.from); return `<tr><td>${esc(c?.label || e.from)}</td><td class="mono">${num(e.requests)}</td><td class="mono ${e.denied ? 'amber' : ''}">${num(e.denied)}</td><td class="mono">${num(e.errors)}</td><td class="rc-small">${fbTime(e.last)}</td><td>${c && (c.agentType || c.agentic) ? `<button class="ghost" data-tffollow="${esc(c.id)}">Every tool it may call</button>` : ''}</td></tr>`; }).join('')}</tbody></table></div>` : '<div class="empty" style="padding:18px"><strong>Not called in this capture</strong></div>'}</section>`;
   }
   if (T.sel.startsWith('acc:') && T.focus) {
     const srv = T.sel.slice(4, T.sel.lastIndexOf('/'));
@@ -580,23 +586,65 @@ function tfMap(d, a, netE, gwE0, nodes, callers, targets, layer) {
   const maxC = Math.max(1, ...netE.map(e => e.connections)), maxR = Math.max(1, ...gwE.map(e => e.requests));
   const ge = netE.map(e => ({id: e.id, from: e.from, to: e.to, risk: e.risk, dash: e.denied > 0 || e.verdict === 'denied', w: 1.2 + 3 * Math.log(1 + e.connections) / Math.log(1 + maxC),
     tip: `${nodes.get(e.from)?.label} → ${nodes.get(e.to)?.label}\n${num(e.connections)} connections, ${e.tls}${e.denied ? `, ${num(e.denied)} refused` : ''}${e.via ? `\nvia ${e.via}` : ''}\npolicy: ${e.verdict}${e.layer ? ' (' + e.layer + ')' : ''}\n${e.why}\nClick for the checks`}));
-  // The overview with both layers: a Tools column behind each Service.
-  const far = [];
+  // The overview with both layers: a Tools column behind each Service,
+  // with every tool of the MCP servers behind it, called or not, coloured
+  // by what the captured allowlists say about it.
+  const far = [], svcSum = new Map();
+  const tview = T.tools || 'both'; // called, allowed or both
+  const showTool = (called, allowed) => tview === 'both' || (tview === 'called' ? called : allowed);
   if (both && !acc.length) {
-    const per = new Map(); // svc|tool -> {calls, callers, refused}
+    const per = new Map(); // svc|tool -> calls through it by the callers drawn
     for (const x of onSvc.values()) for (const [tool, n] of x.tools) {
       const k = x.to + '|' + tool;
-      const y = per.get(k) || {svc: x.to, tool, calls: 0, callers: new Set(), outside: false};
-      y.calls += n; y.callers.add(x.from); y.outside ||= x.outside; per.set(k, y);
+      const y = per.get(k) || {calls: 0, callers: new Set()};
+      y.calls += n; y.callers.add(x.from); per.set(k, y);
     }
     const maxT = Math.max(1, ...[...per.values()].map(y => y.calls));
-    const tgt = new Map((a.targets || []).map(x => [(x.kind === 'tool' ? x.label : actTargetLabel(x)), x]));
-    for (const y of per.values()) {
-      const id = 'svct:' + y.svc + '|' + y.tool, t = tgt.get(y.tool);
-      const cl = [...y.callers].map(c => callers.get(c)?.label || c);
-      far.push({id, label: y.tool, sub: `via ${lastPartJS(svcLabel(y.svc))} · ${fbPlural(y.calls, 'call')} · ${fbPlural(cl.length, 'caller')}`, risk: t?.undeclared || y.outside ? 'red' : t?.denied ? 'amber' : 'green', icon: t?.kind === 'model' ? 'sparkles' : 'plug',
-        tip: `${y.tool}${t?.server ? ' on ' + t.server : ''}\n${num(y.calls)} calls through ${svcLabel(y.svc)}\nCalled by ${cl.join(', ')}${t?.description ? '\n' + t.description : ''}\nClick an agent for every tool it may call`});
-      ge.push({id: 'svctl:' + id, from: y.svc, to: id, by: [...y.callers], risk: 'green', cls: 'fb-gw', w: 1.2 + 3 * Math.log(1 + y.calls) / Math.log(1 + maxT), tip: `${svcLabel(y.svc)} → ${y.tool}: ${num(y.calls)} calls by ${cl.join(', ')}`});
+    const whoCache = new Map(), whoOf = c => { if (!whoCache.has(c)) whoCache.set(c, taWho(a, [c])); return whoCache.get(c); };
+    const svcs = [...new Set([...onSvc.values()].map(x => x.to))];
+    for (const svc of svcs) {
+      // The MCP servers behind a Service: the servers its tool calls name.
+      const servers = [...new Set((a.edges || []).filter(e => e.service === svc).map(e => targets.get(e.to)).filter(x => x?.kind === 'tool').map(x => x.server))];
+      const sum = {allowed: 0, called: 0, red: 0};
+      for (const srv of servers) {
+        const infos = (a.tools || []).filter(t => t.server === srv);
+        const guarded = infos.some(t => (t.allowedFor || []).length);
+        const names = new Set([...infos.map(t => t.name), ...[...per.keys()].filter(k => k.startsWith(svc + '|')).map(k => k.slice(svc.length + 1)).filter(n => (a.targets || []).some(x => x.kind === 'tool' && x.server === srv && x.label === n))]);
+        const idle = [];
+        for (const name of names) {
+          const t = infos.find(x => x.name === name) || {name, server: srv};
+          const y = per.get(svc + '|' + name) || {calls: 0, callers: new Set()};
+          const allowed = guarded ? (t.allowedFor || []).length > 0 : true;
+          const refusedBy = guarded && y.calls ? [...y.callers].filter(c => !taAllowed(t, whoOf(c))) : [];
+          const state = y.calls ? (refusedBy.length ? (allowed ? 'called, not allowed for some' : 'called, not allowed') : 'called') : allowed ? 'allowed, not called' : (t.configuredOn || []).length ? 'configured, not allowed' : 'not allowed';
+          if (allowed) sum.allowed++;
+          if (y.calls) sum.called++;
+          if (refusedBy.length) sum.red++;
+          if (!showTool(y.calls > 0, allowed)) continue;
+          if (!y.calls && allowed && !T.fexp['svcf:' + svc + '|' + srv]) { idle.push(t); continue; }
+          const id = 'svct:' + svc + '|' + name;
+          const cl = [...y.callers].map(c => callers.get(c)?.label || c);
+          const risk = refusedBy.length ? 'red' : y.calls ? 'green' : 'grey';
+          const who = guarded ? (t.allowedFor || []).length ? `Allowed for ${t.allowedFor.join(', ')} by ${(t.policies || []).map(p => p.namespace + '/' + p.name).join(', ')}` : 'The allowlist gives it to nobody' : `No allowlist on ${srv}: every caller may call it`;
+          far.push({id, order: y.calls ? 0 : 2, label: name, sub: y.calls ? `${state} · ${fbPlural(y.calls, 'call')} · ${fbPlural(cl.length, 'caller')}` : `${lastPartJS(srv)} · ${state}${allowed && guarded ? ` for ${fbPlural((t.allowedFor || []).length, 'caller')}` : ''}`, risk, icon: 'plug', cls: y.calls ? '' : 'rg-unusednode',
+            tip: `${name} on ${srv}, through ${svcLabel(svc)}\n${state}${y.calls ? `: ${num(y.calls)} calls by ${cl.join(', ')}` : ''}${refusedBy.length ? `\nNot allowed for ${refusedBy.map(c => callers.get(c)?.label || c).join(', ')} by the captured allowlist` : ''}\n${who}${(t.configuredOn || []).length ? `\nIn the configuration of ${t.configuredOn.join(', ')}` : ''}${t.description ? '\n' + t.description : ''}\nClick for its callers and who may call it`});
+          ge.push({id: 'svctl:' + id, from: svc, to: id, by: [...y.callers], risk, dash: !y.calls, cls: y.calls ? 'fb-gw' : 'rg-unused', w: y.calls ? 1.2 + 3 * Math.log(1 + y.calls) / Math.log(1 + maxT) : 1, tip: `${svcLabel(svc)} → ${name}: ${state}`});
+        }
+        // Many unused tools on one server (a kagent server lists them all) fold into one box.
+        if (idle.length > 20) {
+          const id = 'svcf:' + svc + '|' + srv;
+          far.push({id, order: 3, label: `${fbPlural(idle.length, 'more tool')} on ${lastPartJS(srv)}`, sub: 'allowed, not called · click to open up', risk: 'grey', icon: 'folder', cls: 'rg-unusednode', tip: idle.map(t => t.name).join('\n')});
+          ge.push({id: 'svctl:' + id, from: svc, to: id, risk: 'grey', dash: true, cls: 'rg-unused', w: 1, tip: `${idle.length} tools on ${srv} no one drawn here called`});
+        } else for (const t of idle) {
+          const id = 'svct:' + svc + '|' + t.name;
+          far.push({id, order: 2, label: t.name, sub: `${lastPartJS(srv)} · allowed, not called${guarded ? ` for ${fbPlural((t.allowedFor || []).length, 'caller')}` : ''}`, risk: 'grey', icon: 'plug', cls: 'rg-unusednode',
+            tip: `${t.name} on ${srv}\nallowed, not called\n${guarded ? `Allowed for ${(t.allowedFor || []).join(', ')} by ${(t.policies || []).map(p => p.namespace + '/' + p.name).join(', ')}` : `No allowlist on ${srv}: every caller may call it`}${(t.configuredOn || []).length ? `\nIn the configuration of ${t.configuredOn.join(', ')}` : ''}${t.description ? '\n' + t.description : ''}`});
+          ge.push({id: 'svctl:' + id, from: svc, to: id, risk: 'grey', dash: true, cls: 'rg-unused', w: 1, tip: `${svcLabel(svc)} → ${t.name}: allowed, not called`});
+        }
+      }
+      svcSum.set(svc, sum);
+      const n = R.get(svc);
+      if (n && servers.length) { n.sub = `${num(sum.allowed)} allowed · ${num(sum.called)} called${sum.red ? ` · ${num(sum.red)} not allowed` : ''}`; n.tip += `\nTools on ${servers.join(', ')}: ${fbPlural(sum.allowed, 'tool')} allowed, ${num(sum.called)} called${sum.red ? `, ${num(sum.red)} called by a caller the allowlist does not allow` : ''}`; if (sum.red) n.risk = 'red'; }
     }
   }
   const maxS = Math.max(1, ...[...onSvc.values()].map(x => x.requests));
@@ -633,7 +681,7 @@ function tfMap(d, a, netE, gwE0, nodes, callers, targets, layer) {
     const maxA = Math.max(1, ...acc.flatMap(x => x.rows.map(r => r.calls)));
     for (const x of acc) {
       const shown = [], idle = [];
-      for (const r of x.rows) (r.calls || !r.allowed || r.configured || x.rows.length <= 16 || T.fexp['acc:' + x.server] ? shown : idle).push(r);
+      for (const r of x.rows) { if (!showTool(r.calls > 0, r.allowed)) continue; (r.calls || !r.allowed || r.configured || x.rows.length <= 16 || T.fexp['acc:' + x.server] ? shown : idle).push(r); }
       for (const r of shown) {
         const id = 'acc:' + x.server + '/' + r.name;
         const st = !r.allowed ? 'called, not allowed' : r.calls ? `allowed, called ×${num(r.calls)}` : 'allowed, not called';
@@ -648,16 +696,18 @@ function tfMap(d, a, netE, gwE0, nodes, callers, targets, layer) {
     }
   }
   const nAcc = acc.reduce((n, x) => n + x.rows.length, 0);
-  const toNote = [nAcc ? `${fbPlural(nAcc, 'tool')} it may call or called` : '', nSvc ? fbPlural(nSvc, 'destination') : '', nCalled ? `${num(nCalled)} tools, models or agents called` : nOnSvc ? `${num(nOnSvc)} tools on them` : '', ghosts ? `${num(ghosts)} allowed, not used` : ''].filter(Boolean).join(' · ');
-  const svg = fbGraph({left, right, far, edges: ge, sel: T.sel, heads: [['server', 'From', fbPlural(left.length, 'source')], ['network', 'To', toNote], ['plug', 'Tools', `${fbPlural(far.length, 'tool')} called through them`]]});
+  const toNote = [nAcc ? `${fbPlural(nAcc, 'tool')} it may call or called` : '', nSvc ? fbPlural(nSvc, 'destination') : '', nCalled ? `${num(nCalled)} tools, models or agents called` : far.length ? 'MCP tools behind them' : nOnSvc ? `${num(nOnSvc)} tools on them` : '', ghosts ? `${num(ghosts)} allowed, not used` : ''].filter(Boolean).join(' · ');
+  const svg = fbGraph({left, right, far, edges: ge, sel: T.sel, heads: [['server', 'From', fbPlural(left.length, 'source')], ['network', 'To', toNote], ['plug', 'Tools', (() => { const t = [...svcSum.values()].reduce((m, x) => ({allowed: m.allowed + x.allowed, called: m.called + x.called}), {allowed: 0, called: 0}); return `${fbPlural(t.allowed, 'tool')} allowed · ${num(t.called)} called`; })()]]});
   const legend = (acc.length ? `<span class="muted">Following ${esc(left.find(n => n.id === T.focus)?.label || '')}: a box for every tool it has access to on ${acc.map(x => esc(x.server)).join(', ')}.</span><span><i class="rc-sw green"></i>allowed, called</span><span><i class="rc-sw dash"></i><span class="muted">faded:</span> allowed, not called</span><span><i class="rc-sw red"></i>called, not allowed by the captured allowlist</span>` : '')
-    + (both && !acc.length ? `<span class="muted">${far.length ? 'Tools: what was called through each Service. ' : ''}Click an agent to see every tool it may call, called or not.</span>` : '')
+    + (both && !acc.length && far.length ? '<span class="muted">Tools behind each Service:</span><span><i class="rc-sw green"></i>called, and allowed for its callers</span><span><i class="rc-sw red"></i>called by a caller the captured allowlist does not allow</span><span><i class="rc-sw grey"></i><span class="muted">faded, dashed:</span> allowed, not called (or configured, not allowed)</span><span class="muted">Click an agent for just the tools it may call.</span>' : '')
+    + (both && !acc.length && !far.length ? '<span class="muted">Click an agent to see every tool it may call, called or not.</span>' : '')
     + (both && !acc.length ? '<span class="muted">Both layers: calls through agentgateway are drawn on the Service they went through; hover a line for its tools. Choose Gateway calls for a box per tool.</span>' : '')
     + (T.focus && T.freach && (!acc.length || T.showGhosts) ? '<span><i class="rc-sw dash"></i><span class="muted">faded Services:</span> allowed by policy, not used</span>' : '')
     + (netE.length ? '<span><i class="rc-sw red"></i>plaintext between mesh workloads</span><span><i class="rc-sw amber"></i>no policy, plaintext from outside the mesh, or logs and policy disagree</span><span><i class="rc-sw green"></i>mutual TLS and policy looks at it</span>' : '')
     + (gwE.length ? '<span><i class="rc-sw red"></i>call outside the agent\'s tool list, to an unlisted tool, or every call refused</span><span><i class="rc-sw amber"></i>call with no identity, or some refused</span>' : '')
     + '<span><i class="rc-sw dash"></i>refused, or policy denies it</span>';
-  return fbGraphPanel('Traffic', T, svg, `<small class="muted">${[netE.length ? fbPlural(netE.length, 'connection edge') : '', gwE0.length ? fbPlural(gwE0.length, 'caller and target pair') : ''].filter(Boolean).join(' · ')}</small>`, legend);
+  const tchips = both || acc.length ? `<span class="rc-layer" title="Which tools to draw">${[['called', 'Called', 'Only tools that were called'], ['allowed', 'Allowed', 'Only tools the captured allowlists allow (all of them on a server with no allowlist), called or not'], ['both', 'Both', 'Everything: called, allowed, and called although not allowed']].map(([k, l, h]) => `<button class="chip ${tview === k ? 'on' : ''}" data-tftools="${k}" title="${esc(h)}">Tools: ${l}</button>`).join('')}</span>` : '';
+  return fbGraphPanel('Traffic', T, svg, `<small class="muted">${[netE.length ? fbPlural(netE.length, 'connection edge') : '', gwE0.length ? fbPlural(gwE0.length, 'caller and target pair') : ''].filter(Boolean).join(' · ')}</small>${tchips}`, legend);
 }
 
 const fnodeLabel = () => S.tf.data?.nodes?.find(n => n.id === S.tf.focus)?.label || S.act.data?.callers?.find(c => c.id === S.tf.focus)?.label || '';
@@ -806,6 +856,8 @@ after.traffic = () => {
   const select = id => {
     if (id.startsWith('ghost:')) { keepY(() => { T.fexp[id.slice(6)] = true; T.gz = null; }); return; }
     if (id.startsWith('accl:')) id = id.slice(5);
+    if (id.startsWith('svctl:svcf:')) id = id.slice(6);
+    if (id.startsWith('svcf:')) { keepY(() => { T.fexp[id] = true; T.gz = null; }); return; }
     if (id.startsWith('accfold:')) { keepY(() => { T.fexp['acc:' + id.slice(8)] = true; T.gz = null; }); return; }
     const cm = new Map((S.act.data?.callers || []).map(c => [c.id, c]));
     const agentish = nodes.get(id)?.agentType || cm.get(id)?.agentType || cm.get(id)?.agentic;
@@ -830,12 +882,13 @@ after.traffic = () => {
       if (T.ex?.key !== e.id) { await tfRunExplain(e.id, from.label, to.kind === 'service' ? to.label : to.label, e.cluster); const w = $('#tf-why'); if (w && T.sel === e.id) { w.innerHTML = tfExplainBody(T.ex); tfWireExplain(); } }
     });
   };
-  fbGraphWire(T, 'tf|' + (T.layer || '') + '|' + Object.entries(A.kinds).filter(([, v]) => v).map(([k]) => k).join(',') + '|' + T.flag + '|' + T.ns + '|' + T.q + '|' + T.focus + '|' + T.agents + '|' + Object.keys(T.fexp).join(',') + '|' + Object.keys(T.texp || {}).join(',') + '|' + (T.showGhosts ? 'g' : '') + (T.gfull ? '|full' : ''), select);
+  fbGraphWire(T, 'tf|' + (T.layer || '') + '|' + Object.entries(A.kinds).filter(([, v]) => v).map(([k]) => k).join(',') + '|' + T.flag + '|' + T.ns + '|' + T.q + '|' + T.focus + '|' + T.agents + '|' + Object.keys(T.fexp).join(',') + '|' + Object.keys(T.texp || {}).join(',') + '|' + (T.showGhosts ? 'g' : '') + '|' + (T.tools || '') + (T.gfull ? '|full' : ''), select);
   document.querySelectorAll('[data-tfsel]').forEach(tr => tr.onclick = ev => { if (!ev.target.closest('[data-tfwhy]')) select(tr.dataset.tfsel); });
   document.querySelectorAll('[data-actsel]').forEach(tr => tr.onclick = () => select(tr.dataset.actsel));
   document.querySelectorAll('[data-tfwhy]').forEach(b => b.onclick = () => select(b.dataset.tfwhy));
   $('#tf-selx')?.addEventListener('click', () => keepY(() => { T.sel = ''; }));
   document.querySelectorAll('[data-tffollow]').forEach(b => b.onclick = () => { T.focus = b.dataset.tffollow; T.sel = T.focus; T.fexp = {}; T.gz = null; render(); });
+  document.querySelectorAll('[data-tftools]').forEach(b => b.onclick = () => keepY(() => { T.tools = b.dataset.tftools; T.gz = null; }));
   $('#tf-ghosts')?.addEventListener('click', () => keepY(() => { T.showGhosts = !T.showGhosts; T.gz = null; }));
   $('#tf-agents')?.addEventListener('click', () => keepY(() => { T.agents = !T.agents; T.gz = null; }));
   $('#tf-unfocus')?.addEventListener('click', () => { T.focus = ''; T.freach = null; T.fexp = {}; T.gz = null; T.sel = ''; history.replaceState(null, '', '#traffic'); T.lastHash = location.hash; render(); });

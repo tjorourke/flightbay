@@ -19,13 +19,21 @@ For one agent at a time (what it may reach, what it used, and the policy that wo
 
 Traffic is part of [Flightbay Enterprise](/enterprise/). Turn it on with `FLIGHTBAY_ENTERPRISE=1 flightbay ui` or `FLIGHTBAY_FEATURES=traffic` (`activity`, the name of the gateway layer's old page, still works).
 
-![Both layers: sources, the Services they reached, and the tools called through each](/images/traffic-map.png)
+![Both layers: every GitHub tool behind kagent/github-mcp, the two called ones red because callers the allowlist does not cover called them](/images/traffic-map.png)
 
 ## Layers
 
 **Both**, **Network** and **Gateway calls** choose what the map draws; clicking the Connections or Gateway calls total does the same. A workload that does both appears once on the left.
 
-With both layers on, the map has three columns: sources, the Services they reached, and **Tools**, every MCP tool (and model) called through each Service, with its calls and callers. Hover an agent to trace it through its Service to the tools it called; hover a tool to see who called it; click a tool for its callers, with a button to see every tool one of them may call.
+With both layers on, the map has three columns: sources, the Services they reached, and **Tools**, every tool of the MCP servers behind each Service, called or not. The Service box counts them (`13 allowed · 2 called · 2 not allowed`), and each tool is coloured by what the captured allowlists say:
+
+| Tool | Means |
+|---|---|
+| green, solid | Called, and allowed for every caller that called it (or the server has no allowlist) |
+| red | Called by a caller the allowlist does not allow (`called, not allowed for some` when others are allowed): the policy is probably newer than the calls |
+| faded, dashed | Allowed, not called; or not allowed at all |
+
+**Tools: Called**, **Tools: Allowed** and **Tools: Both** in the map header choose which to draw; the same switch applies when following one agent. A server with more than 20 unused tools (a kagent server lists all of its own) folds them into one box. Hover an agent to trace it through its Service to the tools it called; hover a tool to see who called it; click a tool for who may call it (the allowlist and the agents configured for it) and who did, with a button to see every tool one of them may call.
 
 The middle column holds Services only. A call through agentgateway is drawn on the Service it went through (the waypoint's Service, or the gateway's), and the box says how many tools were called on it (`kagent/github-mcp · Service · 2 tools called`). Hover the line for the tools and counts, or click the Service for a table of every call through it. When ztunnel also logged the connection, the calls are added to that line; a caller whose connections are not in the capture gets a line of its own. Choose **Gateway calls** for a box per tool, model and agent.
 
