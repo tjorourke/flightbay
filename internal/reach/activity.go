@@ -920,6 +920,7 @@ func (b *actBuilder) finish(inventory bool) {
 		a.Notes = append(a.Notes, "LLM calls were logged without token counts")
 	}
 	a.Findings = append(a.Findings, b.findings()...)
+	a.Findings = append(a.Findings, b.unenforcedLists()...)
 }
 
 // serverOf matches a called tool to a captured MCP server.
@@ -1528,4 +1529,48 @@ func (b *actBuilder) addSvc(c *cluster, server, host string) string {
 		return "svc:" + sv.id
 	}
 	return ""
+}
+
+// unenforcedLists finds agents whose configuration limits the tools of an MCP
+// server that no agentgateway allowlist covers: the list only filters what
+// the model is offered, and nothing on the wire stops a call to the rest.
+func (b *actBuilder) unenforcedLists() []Finding {
+	guarded := map[string]bool{}
+	total := map[string]int{}
+	cfg := map[string]map[string]int{} // server -> agent -> tools configured
+	for _, t := range b.tools {
+		total[t.Server]++
+		if len(t.AllowedFor) > 0 {
+			guarded[t.Server] = true
+		}
+		for _, who := range t.ConfiguredOn {
+			if cfg[t.Server] == nil {
+				cfg[t.Server] = map[string]int{}
+			}
+			cfg[t.Server][who]++
+		}
+	}
+	var items []FindingItem
+	for _, srv := range sortedKeys(cfg) {
+		if guarded[srv] || srv == "(server not known)" {
+			continue
+		}
+		for _, who := range sortedKeys(cfg[srv]) {
+			n := cfg[srv][who]
+			rest := total[srv] - n
+			note := fmt.Sprintf("its configuration lists %d tool(s) on %s; no agentgateway allowlist covers the server, so nothing stops it calling the rest", n, srv)
+			if rest > 0 {
+				note = fmt.Sprintf("its configuration lists %d of the %d tools %s is known to offer; no agentgateway allowlist covers the server, so nothing stops it calling the other %d", n, total[srv], srv, rest)
+			}
+			items = append(items, FindingItem{Target: who, Class: srv, Access: fmt.Sprintf("%d configured", n), Note: note})
+		}
+	}
+	if len(items) == 0 {
+		return nil
+	}
+	return []Finding{{Severity: "high", Title: "An agent's tool list is not enforced",
+		Detail: "These agents are configured to use only some of an MCP server's tools (kagent toolNames or ALLOWED_TOOLS), but no agentgateway allowlist covers that server. The configuration only filters what the model is offered: a prompt injection or a changed agent can call any tool the server has.",
+		Items:  items,
+		Advice: []string{"Put the server behind agentgateway (an agentgateway waypoint on its Service, or a gateway route) and add a backend.mcp.authorization rule that allows each agent's service account only its configured tools. The Lock down tab of the agent on the Agents tab writes one from what it used."},
+		Source: activityGuide, Docs: "https://docs.solo.io/agentgateway/kubernetes/latest/mcp/mcp-access/"}}
 }

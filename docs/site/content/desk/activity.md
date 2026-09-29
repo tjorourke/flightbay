@@ -67,7 +67,7 @@ The **Tools and models** tab of the Traffic page lists, per MCP server, every to
 | Called | agentgateway request logs (`gen_ai.tool.name`) |
 | Listed | kagent `RemoteMCPServer`, `MCPServer` and `ToolServer` status (`discoveredTools`) |
 | Allowed for | agentgateway MCP authorization rules (`backend.mcp.authorization`, OSS and Enterprise): each `\|\|` clause that names tools (`mcp.tool.name in [...]` or `== "..."`), with the caller it names (`source.identity.serviceAccount`, with `source.identity.namespace` when given, or `jwt.sub`). The server is the MCP target of the backend the rule targets, and a tool spelt with the target prefix (`github_list_issues`) counts as the same tool. |
-| Configured on | A declarative kagent Agent's `toolNames`, and an `ALLOWED_TOOLS` variable (a JSON list) on a BYO agent. With several servers in its `MCP_SERVERS_CONFIG`, a tool goes on the one server known to offer it, or under "(server not known)". |
+| Configured on | Not an enforcement: the agent's own list only filters what the model is offered. A declarative kagent Agent's `toolNames`, and an `ALLOWED_TOOLS` variable (a JSON list) on a BYO agent. With several servers in its `MCP_SERVERS_CONFIG`, a tool goes on the one server known to offer it, or under "(server not known)". |
 
 ![GitHub's tools: called, allowed per service account by an allowlist, and configured on an agent](/images/traffic-tools.png)
 

@@ -53,7 +53,10 @@ With both layers on, the map has three columns: sources, the Services they reach
 | green, solid | Called, and allowed for every caller that called it (or the server has no allowlist) |
 | red | Called by a caller the allowlist does not allow (`called, not allowed for some` when others are allowed): the policy is probably newer than the calls |
 | amber | Allowed, and the server was reached through Code Mode (`run_code`), whose logs do not say which tools ran: it may have run there |
+| amber, solid | On a server **no allowlist covers**: in an agent's configuration, but not enforced. The Service box says `no allowlist · N in agents' config`, and the other tools read `not in any config, not blocked` |
 | faded, dashed | Allowed, not called; or not allowed at all |
+
+An agent's own tool list (kagent `toolNames`, or `ALLOWED_TOOLS` on a BYO agent) only filters what the model is offered. It is enforced only where an agentgateway allowlist (`backend.mcp.authorization`) covers the server and the agent's calls go through agentgateway (a gateway route or an agentgateway waypoint). When they do not, the Findings panel has **An agent's tool list is not enforced**, with the agent, the server, how many of its tools the list names, and what to add.
 
 An agent's configured MCP servers are drawn even when the capture has no call to them: a dashed line to the Service its own configuration reaches the server at (`MCP_SERVERS_CONFIG`, or a declarative Agent's RemoteMCPServer), and the tools it is configured for or allowed in the Tools column, kept out of the folded box. So an agent given GitHub and Kubernetes SRE tools shows both, even if it only used GitHub.
 

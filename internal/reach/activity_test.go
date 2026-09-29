@@ -328,3 +328,18 @@ func TestActivityCodeAndSearchModes(t *testing.T) {
 		t.Fatalf("meta-tool calls are tool calls: %+v", a.Totals)
 	}
 }
+
+// A configured tool list on a server no allowlist covers is a finding; the
+// same list on a server with an allowlist is not.
+func TestActivityUnenforcedToolList(t *testing.T) {
+	a := EvaluateActivity(activityWS(t, "Lists", "list_issues", "get_issue"), nil, "")
+	var f *Finding
+	for i := range a.Findings {
+		if a.Findings[i].Title == "An agent's tool list is not enforced" {
+			f = &a.Findings[i]
+		}
+	}
+	if f == nil || len(f.Items) != 1 || f.Items[0].Target != "kagent/triage" || !strings.Contains(f.Items[0].Note, "1 of the 3 tools") {
+		t.Fatalf("triage lists list_issues on a server with no allowlist: %+v", f)
+	}
+}
