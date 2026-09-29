@@ -657,11 +657,36 @@ function tfMap(d, a, netE, gwE0, nodes, callers, targets, layer) {
     }
     const maxT = Math.max(1, ...[...per.values()].map(y => y.calls));
     const whoCache = new Map(), whoOf = c => { if (!whoCache.has(c)) whoCache.set(c, taWho(a, [c])); return whoCache.get(c); };
-    const svcs = [...new Set([...onSvc.values()].map(x => x.to))];
+    // Servers an agent is configured for, or allowlisted on, are drawn too,
+    // even when the capture has no call to them: a dashed line to the
+    // Service they are reached through.
+    const svcServers = new Map(), cfgBy = new Map(); // svc -> servers; tool key -> agent ids configured for it
+    for (const n of left) {
+      const c = callers.get(n.id);
+      if (!(nodes.get(n.id)?.agentType || c?.agentType || c?.agentic)) continue;
+      const who = taWho(a, [n.id]);
+      for (const srv of taServers(a, who)) {
+        const si = (a.servers || []).find(x => x.name === srv);
+        for (const t of (a.tools || []).filter(t => t.server === srv && ((t.configuredOn || []).includes(who.label) || taAllowed(t, who)))) {
+          const k = srv + '/' + t.name; (cfgBy.get(k) || cfgBy.set(k, new Set()).get(k)).add(n.id);
+        }
+        // Its own configuration says which Service it reaches the server at;
+        // without that, only a server with one Service is drawn.
+        const mine = c?.serverServices?.[srv] || ((si?.services || []).length === 1 ? si.services : []);
+        for (const svc of mine) {
+          (svcServers.get(svc) || svcServers.set(svc, new Set()).get(svc)).add(srv);
+          const reached = [...onSvc.values()].some(x => x.from === n.id && x.to === svc) || ge.some(g => g.from === n.id && g.to === svc);
+          if (reached) continue;
+          if (!R.has(svc)) { const node = nodes.has(svc) ? mk(svc) : {id: svc, label: svcLabel(svc), sub: 'Service', risk: 'grey', icon: 'network', tip: svcLabel(svc)}; R.set(svc, node); right.push(node); }
+          ge.push({id: 'cfg|' + n.id + '|' + svc, from: n.id, to: svc, risk: 'grey', dash: true, cls: 'rg-unused', w: 1, tip: `${n.label} → ${svcLabel(svc)}\nConfigured for or allowed tools on ${srv}, and not seen calling it in the capture`});
+        }
+      }
+    }
+    const svcs = [...new Set([...[...onSvc.values()].map(x => x.to), ...svcServers.keys()])];
     for (const svc of svcs) {
       // The MCP servers behind a Service: the servers its tool calls name.
       const svcTargets = (a.edges || []).filter(e => e.service === svc).map(e => targets.get(e.to));
-      const servers = [...new Set(svcTargets.filter(x => x?.kind === 'tool' || x?.kind === 'meta').flatMap(x => x.server.split(',')))];
+      const servers = [...new Set([...svcTargets.filter(x => x?.kind === 'tool' || x?.kind === 'meta').flatMap(x => x.server.split(',')), ...(svcServers.get(svc) || [])])];
       const metas = [...new Set(svcTargets.filter(x => x?.kind === 'meta'))];
       const sum = {allowed: 0, called: 0, red: 0};
       for (const mt of metas) {
@@ -688,14 +713,16 @@ function tfMap(d, a, netE, gwE0, nodes, callers, targets, layer) {
           if (y.calls) sum.called++;
           if (refusedBy.length) sum.red++;
           if (!showTool(y.calls > 0, allowed, (t.configuredOn || []).length > 0)) continue;
-          if (!y.calls && allowed && !codeCalls && !T.fexp['svcf:' + svc + '|' + srv]) { idle.push(t); continue; }
+          const cfgd = cfgBy.get(srv + '/' + name);
+          if (!y.calls && allowed && !codeCalls && !(cfgd && (t.configuredOn || []).length) && !T.fexp['svcf:' + svc + '|' + srv]) { idle.push(t); continue; }
           const id = 'svct:' + svc + '|' + name;
           const cl = [...y.callers].map(c => callers.get(c)?.label || c);
           const risk = refusedBy.length ? 'red' : y.calls ? 'green' : allowed && codeCalls ? 'amber' : 'grey';
           const who = guarded ? (t.allowedFor || []).length ? `Allowed for ${t.allowedFor.join(', ')} by ${(t.policies || []).map(p => p.namespace + '/' + p.name).join(', ')}` : 'The allowlist gives it to nobody' : `No allowlist on ${srv}: every caller may call it`;
-          far.push({id, order: y.calls ? 0 : 2, label: name, sub: y.calls ? `${state} · ${fbPlural(y.calls, 'call')} · ${fbPlural(cl.length, 'caller')}` : `${lastPartJS(srv)} · ${state}${allowed && guarded ? ` for ${fbPlural((t.allowedFor || []).length, 'caller')}` : ''}`, risk, icon: 'plug', cls: y.calls || (allowed && codeCalls) ? '' : 'rg-unusednode',
+          const inCfg = (t.configuredOn || []).length ? ` · in the config of ${t.configuredOn.map(lastPartJS).join(', ')}` : '';
+          far.push({id, order: y.calls ? 0 : inCfg ? 1.5 : 2, label: name, sub: y.calls ? `${state} · ${fbPlural(y.calls, 'call')} · ${fbPlural(cl.length, 'caller')}` : `${lastPartJS(srv)} · ${state}${inCfg || (allowed && guarded ? ` for ${fbPlural((t.allowedFor || []).length, 'caller')}` : '')}`, risk, icon: 'plug', cls: y.calls || (allowed && codeCalls) ? '' : 'rg-unusednode',
             tip: `${name} on ${srv}, through ${svcLabel(svc)}\n${state}${y.calls ? `: ${num(y.calls)} calls by ${cl.join(', ')}` : ''}${refusedBy.length ? `\nNot allowed for ${refusedBy.map(c => callers.get(c)?.label || c).join(', ')} by the captured allowlist` : ''}\n${who}${(t.configuredOn || []).length ? `\nIn the configuration of ${t.configuredOn.join(', ')}` : ''}${t.description ? '\n' + t.description : ''}\nClick for its callers and who may call it`});
-          ge.push({id: 'svctl:' + id, from: svc, to: id, by: [...y.callers], risk, dash: !y.calls, cls: y.calls ? 'fb-gw' : 'rg-unused', w: y.calls ? 1.2 + 3 * Math.log(1 + y.calls) / Math.log(1 + maxT) : 1, tip: `${svcLabel(svc)} → ${name}: ${state}`});
+          ge.push({id: 'svctl:' + id, from: svc, to: id, by: [...new Set([...y.callers, ...(cfgd || [])])], risk, dash: !y.calls, cls: y.calls ? 'fb-gw' : 'rg-unused', w: y.calls ? 1.2 + 3 * Math.log(1 + y.calls) / Math.log(1 + maxT) : 1, tip: `${svcLabel(svc)} → ${name}: ${state}`});
         }
         // Many unused tools on one server (a kagent server lists them all) fold into one box.
         if (idle.length > 20) {

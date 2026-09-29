@@ -79,6 +79,10 @@ type ActCaller struct {
 	Cost      float64  `json:"cost,omitempty"`
 	// Anonymous: no mesh identity and no JWT subject on any of its calls.
 	Anonymous bool `json:"anonymous"`
+	// ServerServices is, for an agent, the Service its own configuration
+	// reaches each MCP server at (MCP_SERVERS_CONFIG, or a declarative
+	// Agent's RemoteMCPServer URL).
+	ServerServices map[string][]string `json:"serverServices,omitempty"`
 	// Agentic: a workload or service account that called MCP tools, models
 	// or agents. It marks agents whose workload is gone or was not captured,
 	// which have no agent type of their own.
@@ -197,6 +201,10 @@ type ServerInfo struct {
 	// the server's tools: run_code (Code Mode) and get_tool (Search).
 	// invoke_tool is logged as the tool it invoked, so it is not here.
 	Meta map[string]int `json:"meta,omitempty"`
+	// Services are the Services (svc:<id>) the server is reached through:
+	// its kagent URL, an agent's MCP_SERVERS_CONFIG URL, or the Service its
+	// calls went through.
+	Services []string `json:"services,omitempty"`
 }
 
 // ToolChanges compares tools and callers with a baseline capture.
@@ -315,7 +323,9 @@ type actBuilder struct {
 	allow    map[string]map[string]bool // caller id -> tools its kagent Agent lists
 	servers  map[string]string          // names a captured MCP server goes by -> its ns/name
 	clusters []*cluster
-	pending  []pendingTool // configured tools whose server is decided once everything is read
+	pending  []pendingTool                  // configured tools whose server is decided once everything is read
+	svcOf    map[string][]string            // server -> the Services it is reached through
+	agentSvc map[string]map[string][]string // agent ns/name -> server -> Services its config points at
 }
 
 // pendingTool is a tool an agent is configured for, with the servers it
@@ -329,7 +339,7 @@ func buildActivity(ws *store.Workspace) Activity {
 	a := Activity{Callers: []ActCaller{}, Targets: []ActTarget{}, Edges: []ActEdge{}, Denials: []ActDenial{}, Tools: []ToolInfo{},
 		Findings: []Finding{}, Gateways: []string{}, Notes: []string{}, Clusters: ws.Clusters(), Coverage: []ActCoverage{}, Servers: []ServerInfo{}}
 	b := &actBuilder{a: &a, callers: map[string]*ActCaller{}, targets: map[string]*ActTarget{}, edges: map[[2]string]*ActEdge{},
-		denials: map[string]*ActDenial{}, tools: map[string]*ToolInfo{}, cov: map[string]*ActCoverage{}, pods: map[string]map[string]bool{}, allow: map[string]map[string]bool{}, servers: map[string]string{}}
+		denials: map[string]*ActDenial{}, tools: map[string]*ToolInfo{}, cov: map[string]*ActCoverage{}, pods: map[string]map[string]bool{}, allow: map[string]map[string]bool{}, servers: map[string]string{}, svcOf: map[string][]string{}, agentSvc: map[string]map[string][]string{}}
 	inventory := false
 	for _, cl := range ws.Clusters() {
 		c := newCluster(ws, cl)
@@ -366,6 +376,7 @@ func (b *actBuilder) inventory(c *cluster) bool {
 					host := strings.TrimPrefix(strings.TrimPrefix(u, "https://"), "http://")
 					host, _, _ = strings.Cut(host, "/")
 					host = stripPort(host)
+					b.addSvc(c, srv, host)
 					b.servers[host] = srv
 					if p := strings.Split(host, "."); len(p) >= 2 {
 						b.servers[key(p[1], p[0])] = srv
@@ -625,6 +636,11 @@ func (b *actBuilder) add(c *cluster, agents map[*workload]string, r store.AgwReq
 			e.Service = "svc:" + sv.id
 		}
 	}
+	if e.Service != "" && (t.Kind == "tool" || t.Kind == "meta") {
+		for _, srv := range strings.Split(t.Server, ",") {
+			b.svcOf[srv] = union(b.svcOf[srv], []string{e.Service})
+		}
+	}
 	e.Requests += r.Count
 	e.InputTokens += r.InputTokens
 	e.OutputTokens += r.OutputTokens
@@ -840,6 +856,11 @@ func (b *actBuilder) finish(inventory bool) {
 	}
 	b.placeConfigured()
 	b.serverSummary()
+	for _, ca := range b.callers {
+		if m := b.agentSvc[ca.Label]; m != nil && (ca.Kind == "workload" || ca.Kind == "identity") {
+			ca.ServerServices = m
+		}
+	}
 	for _, ca := range b.callers {
 		if ca.Anonymous {
 			for _, e := range b.edges {
@@ -1269,6 +1290,12 @@ func (b *actBuilder) configuredTools(c *cluster) {
 			if b.servers[key(ag.Namespace, srv)] != "" {
 				srv = b.servers[key(ag.Namespace, srv)]
 			}
+			if svcs := b.svcOf[srv]; len(svcs) == 1 {
+				if b.agentSvc[who] == nil {
+					b.agentSvc[who] = map[string][]string{}
+				}
+				b.agentSvc[who][srv] = svcs
+			}
 			for _, n := range strList(l(ms["toolNames"])) {
 				ti := b.tool(srv, n)
 				ti.ConfiguredOn = union(ti.ConfiguredOn, []string{who})
@@ -1302,7 +1329,16 @@ func (b *actBuilder) configuredTools(c *cluster) {
 				if json.Unmarshal([]byte(s(em["value"])), &v) == nil {
 					for _, x := range v {
 						if n := s(m(x)["name"]); n != "" {
-							servers = append(servers, resolve(n, s(m(x)["url"])))
+							srv := resolve(n, s(m(x)["url"]))
+							servers = append(servers, srv)
+							h := strings.TrimPrefix(strings.TrimPrefix(s(m(x)["url"]), "https://"), "http://")
+							h, _, _ = strings.Cut(h, "/")
+							if svc := b.addSvc(c, srv, stripPort(h)); svc != "" {
+								if b.agentSvc[who] == nil {
+									b.agentSvc[who] = map[string][]string{}
+								}
+								b.agentSvc[who][srv] = union(b.agentSvc[who][srv], []string{svc})
+							}
 						}
 					}
 				}
@@ -1357,6 +1393,7 @@ func (b *actBuilder) serverSummary() {
 	}
 	for n, si := range by {
 		si.ToolMode = modes[n]
+		si.Services = b.svcOf[n]
 		b.a.Servers = append(b.a.Servers, *si)
 	}
 	sort.Slice(b.a.Servers, func(i, j int) bool {
@@ -1477,4 +1514,18 @@ func (c *cluster) serverModes() map[string]string {
 		}
 	}
 	return out
+}
+
+// addSvc records that server is reached at host, when host names a Service
+// in the capture (name.namespace[.svc...]).
+func (b *actBuilder) addSvc(c *cluster, server, host string) string {
+	p := strings.Split(host, ".")
+	if len(p) < 2 {
+		return ""
+	}
+	if sv := c.svcByKey[key(p[1], p[0])]; sv != nil {
+		b.svcOf[server] = union(b.svcOf[server], []string{"svc:" + sv.id})
+		return "svc:" + sv.id
+	}
+	return ""
 }

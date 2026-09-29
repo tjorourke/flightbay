@@ -55,6 +55,8 @@ With both layers on, the map has three columns: sources, the Services they reach
 | amber | Allowed, and the server was reached through Code Mode (`run_code`), whose logs do not say which tools ran: it may have run there |
 | faded, dashed | Allowed, not called; or not allowed at all |
 
+An agent's configured MCP servers are drawn even when the capture has no call to them: a dashed line to the Service its own configuration reaches the server at (`MCP_SERVERS_CONFIG`, or a declarative Agent's RemoteMCPServer), and the tools it is configured for or allowed in the Tools column, kept out of the folded box. So an agent given GitHub and Kubernetes SRE tools shows both, even if it only used GitHub.
+
 `run_code` and `get_tool`, the meta-tools of agentgateway's Code and Search modes, get boxes of their own beside the real tools. See [Tool modes](/desk/activity/#tool-modes-code-and-search).
 
 **Found by** chooses which to draw (Tools called, allowed or configured); the same choice applies when following one agent. A server with more than 20 unused tools (a kagent server lists all of its own) folds them into one box. Hover an agent to trace it through its Service to the tools it called; hover a tool to see who called it; click a tool for who may call it (the allowlist and the agents configured for it) and who did, with a button to see every tool one of them may call.
