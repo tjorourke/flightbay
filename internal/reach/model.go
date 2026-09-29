@@ -403,12 +403,12 @@ func (c *cluster) buildServices() {
 		sv := &service{obj: o, id: c.name + "/" + o.Namespace + "/svc/" + o.Name, ns: o.Namespace, name: o.Name, selector: strMap(sp["selector"])}
 		for _, p := range l(sp["ports"]) {
 			pm := m(p)
-			port, _ := pm["port"].(float64)
+			port, _ := numOK(pm["port"])
 			tp := fmt.Sprint(pm["targetPort"])
 			if pm["targetPort"] == nil {
 				tp = strconv.Itoa(int(port))
 			}
-			if f, ok := pm["targetPort"].(float64); ok {
+			if f, ok := numOK(pm["targetPort"]); ok {
 				tp = strconv.Itoa(int(f))
 			}
 			sv.ports = append(sv.ports, svcPort{name: s(pm["name"]), port: int(port), target: tp, appProtocol: s(pm["appProtocol"])})

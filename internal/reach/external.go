@@ -886,6 +886,23 @@ func (c *cluster) agwTargets(gw *service) []agwTarget {
 	return out
 }
 
+// numOK reads a number whichever way it was decoded: float64 from a bundle's
+// JSON, int64 from the API clients in live mode. ok is false for anything
+// else, including a named port.
+func numOK(v any) (float64, bool) {
+	switch x := v.(type) {
+	case float64:
+		return x, true
+	case int:
+		return float64(x), true
+	case int64:
+		return float64(x), true
+	case int32:
+		return float64(x), true
+	}
+	return 0, false
+}
+
 func num(v any) float64 {
 	switch x := v.(type) {
 	case float64:

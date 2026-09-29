@@ -355,7 +355,12 @@ func (w *Workspace) mirrorEvents(cluster string, items []map[string]any) {
 			last = str(it["eventTime"])
 		}
 		var count int64
-		if c, ok := it["count"].(float64); ok {
+		switch c := it["count"].(type) { // float64 from a bundle, int64 in live mode
+		case float64:
+			count = int64(c)
+		case int64:
+			count = c
+		case int:
 			count = int64(c)
 		}
 		msg := str(it["message"])

@@ -197,13 +197,13 @@ func mxPDBs(e env, d *store.Object) []*store.Object {
 // given replica count.
 func mxPDBBlocks(p *store.Object, replicas int) bool {
 	sp := m(p.Obj["spec"])
-	if v, ok := sp["minAvailable"].(float64); ok && int(v) >= replicas {
+	if v, ok := num(sp["minAvailable"]); ok && int(v) >= replicas {
 		return true
 	}
 	if s(sp["minAvailable"]) == "100%" {
 		return true
 	}
-	if v, ok := sp["maxUnavailable"].(float64); ok && v == 0 {
+	if v, ok := num(sp["maxUnavailable"]); ok && v == 0 {
 		return true
 	}
 	return s(sp["maxUnavailable"]) == "0%"

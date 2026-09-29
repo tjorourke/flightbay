@@ -66,6 +66,8 @@ func (e env) secretKeys(ns, name string) (keys map[string]int, exists, keysKnown
 			n = int(b)
 		case int:
 			n = b
+		case int64:
+			n = int(b)
 		}
 		keys[s(km["name"])] = n
 	}

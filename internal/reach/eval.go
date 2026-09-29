@@ -139,13 +139,13 @@ func portMatches(rulePorts []any, ports []string) bool {
 	for _, rp := range rulePorts {
 		rpm := m(rp)
 		want := strings.TrimSuffix(strings.TrimSuffix(s(rpm["port"]), ".0"), ".0")
-		if f, ok := rpm["port"].(float64); ok {
+		if f, ok := numOK(rpm["port"]); ok {
 			want = strconv.Itoa(int(f))
 		}
 		if want == "" {
 			return true
 		}
-		end, _ := rpm["endPort"].(float64)
+		end, _ := numOK(rpm["endPort"])
 		for _, p := range ports {
 			if p == want {
 				return true
