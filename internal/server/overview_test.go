@@ -1,6 +1,10 @@
 package server
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/tjorourke/flightbay/internal/store"
+)
 
 func TestOverviewCharts(t *testing.T) {
 	_, srv := newServer(t, false)
@@ -47,5 +51,16 @@ func TestOverviewCharts(t *testing.T) {
 	get(t, srv, "/api/overview/charts?cluster=mesh2", &other)
 	if len(other.Restarts) != 0 {
 		t.Fatalf("mesh2 should have no restarts: %+v", other.Restarts)
+	}
+}
+
+// Live mode decodes built-in types from protobuf, so counts arrive as int64.
+func TestPodRestartsIntTypes(t *testing.T) {
+	o := &store.Object{Obj: map[string]any{"status": map[string]any{
+		"initContainerStatuses": []any{map[string]any{"restartCount": 2}},
+		"containerStatuses":     []any{map[string]any{"restartCount": int64(36)}, map[string]any{"restartCount": float64(4)}},
+	}}}
+	if n := podRestarts(o); n != 42 {
+		t.Fatalf("podRestarts = %d, want 42", n)
 	}
 }

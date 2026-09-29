@@ -100,8 +100,14 @@ func podRestarts(o *store.Object) int {
 		list, _ := st[k].([]any)
 		for _, x := range list {
 			cs, _ := x.(map[string]any)
-			if v, ok := cs["restartCount"].(float64); ok {
+			// JSON decodes numbers as float64; live mode's protobuf path gives int64.
+			switch v := cs["restartCount"].(type) {
+			case float64:
 				n += int(v)
+			case int64:
+				n += int(v)
+			case int:
+				n += v
 			}
 		}
 	}
