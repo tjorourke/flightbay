@@ -187,6 +187,7 @@ type ServerInfo struct {
 	Configured int    `json:"configured"` // tools an agent is configured for
 	Called     int    `json:"called"`
 	HasList    bool   `json:"hasList"` // its own tool list was captured
+	Known      int    `json:"known"`   // tools the capture names for it, from any source
 }
 
 // ToolChanges compares tools and callers with a baseline capture.
@@ -1321,9 +1322,16 @@ func (b *actBuilder) serverSummary() {
 		}
 		return x.Name < y.Name
 	})
+	known := map[string]int{}
+	for _, t := range b.tools {
+		known[t.Server]++
+	}
+	for i := range b.a.Servers {
+		b.a.Servers[i].Known = known[b.a.Servers[i].Name]
+	}
 	for _, si := range b.a.Servers {
 		if si.Called > 0 && !si.HasList {
-			b.a.Notes = append(b.a.Notes, fmt.Sprintf("MCP server %s has no tool list in the capture (only kagent MCP servers report one, and agentgateway does not log tools/list), so its tools are the ones called (%d), allowed by a policy (%d) or configured on an agent (%d)", si.Name, si.Called, si.Allowed, si.Configured))
+			b.a.Notes = append(b.a.Notes, serverNote(si))
 		}
 	}
 }
@@ -1354,4 +1362,13 @@ func (b *actBuilder) placeConfigured() {
 		ti := b.tool(srv, p.name)
 		ti.ConfiguredOn = union(ti.ConfiguredOn, []string{p.who})
 	}
+}
+
+// serverNote says, in plain words, why a server's tool list is incomplete.
+func serverNote(si ServerInfo) string {
+	if si.Name == "code_mode" {
+		return "code_mode is agentgateway's Code Mode: the agent is given one tool, run_code, and the code it sends calls the backend's tools, so the logs show run_code rather than the tools it used"
+	}
+	return fmt.Sprintf("Flightbay cannot see the full list of tools MCP server %s offers: it is not a kagent MCP server (only those report one), and agentgateway does not log the list a server offers. The %d tools shown are the ones seen in the capture (%d called, %d in an allowlist, %d in an agent's configuration); it may offer more",
+		si.Name, si.Known, si.Called, si.Allowed, si.Configured)
 }

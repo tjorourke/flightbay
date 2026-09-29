@@ -255,7 +255,12 @@ function actTools(d, callers, matched, terms) {
   const A = S.act;
   const servers = (d.servers || []).filter(x => x.called || x.allowed || x.configured || x.listed);
   if (!servers.length) return '<section class="panel"><div class="empty"><strong>No MCP tools in this capture</strong>No tool was called through agentgateway, and no server list, allowlist or agent configuration names one.</div></section>';
-  if (!A.srv || (A.srv !== '*' && !servers.some(x => x.name === A.srv))) A.srv = servers[0].name;
+  // Which servers to list: a multi-select, remembered; the first time, the
+  // servers that were called (or the first one).
+  if (!A.srvs) A.srvs = new Set(servers.filter(x => x.called).map(x => x.name).slice(0, 5));
+  for (const n of [...A.srvs]) if (!servers.some(x => x.name === n)) A.srvs.delete(n);
+  if (!A.srvs.size && !A.srvNone) A.srvs.add(servers[0].name);
+  const multi = A.srvs.size > 1;
   const hit = new Set((matched || []).map(e => e.to));
   const called = new Map((d.targets || []).filter(x => x.kind === 'tool').map(x => [x.server + '/' + x.label, x]));
   const onlyTools = (terms || []).every(tm => !tm.key || ['tool', 'server', 'kind'].includes(tm.key));
@@ -268,19 +273,32 @@ function actTools(d, callers, matched, terms) {
     else r = (t.server + ' ' + t.name + ' ' + (t.description || '') + ' ' + (t.allowedFor || []).join(' ') + ' ' + (t.configuredOn || []).join(' ')).toLowerCase().includes(tm.text.toLowerCase());
     return tm.neg ? !r : r;
   });
-  const tools = (d.tools || []).filter(t => (A.srv === '*' || t.server === A.srv) && ok(t)).sort((x, y) => (y.calls - x.calls) || ((y.allowedFor || []).length - (x.allowedFor || []).length) || x.name.localeCompare(y.name));
-  const si = servers.find(x => x.name === A.srv);
+  const tools = (d.tools || []).filter(t => A.srvs.has(t.server) && ok(t)).sort((x, y) => (y.calls - x.calls) || ((y.allowedFor || []).length - (x.allowedFor || []).length) || x.name.localeCompare(y.name));
   const nTools = n => (d.tools || []).filter(t => t.server === n).length;
-  const chip = x => `<button class="chip ${A.srv === x.name ? 'on' : ''}" data-actsrv="${esc(x.name)}" title="${esc(`${nTools(x.name)} tools known: ${x.called} called, ${x.allowed} allowed by a policy, ${x.configured} configured on an agent, ${x.listed} listed by the server`)}">${esc(x.name)} <small>${nTools(x.name)}</small></button>`;
-  const known = si ? (si.hasList ? `${esc(si.name)} lists ${fbPlural(si.listed, 'tool')} (kagent's discovered tools).` : `${esc(si.name)} has no tool list in the capture: only kagent MCP servers report one, and agentgateway does not log tools/list. These are the tools that were called, allowed by an agentgateway allowlist, or configured on an agent; the server may offer more.`) : 'Every server.';
+  const why = x => x.name === 'code_mode' ? "agentgateway's Code Mode: agents get one tool, run_code, whose code calls the backend's tools, so the logs show run_code rather than the tools it used."
+    : x.hasList ? `the server's own list (kagent): ${fbPlural(x.listed, 'tool')}.`
+    : `the full list is not in the capture (it is not a kagent MCP server, and agentgateway does not log the tools a server offers). These ${fbPlural(nTools(x.name), 'tool')} are the ones seen: called, in an allowlist, or in an agent's configuration. It may offer more.`;
+  const picked = servers.filter(x => A.srvs.has(x.name));
+  // One line per server for a few; for more, what kind of list each has.
+  const known = picked.length <= 3 ? picked.map(x => `<div><strong class="mono">${esc(x.name)}</strong>: ${esc(why(x))}</div>`).join('')
+    : (() => { const own = picked.filter(x => x.hasList).length, cm = picked.filter(x => x.name === 'code_mode').length, seen = picked.length - own - cm;
+      return `<div>${fbPlural(picked.length, 'server')}: ${own ? `${num(own)} with their own tool list (kagent)` : ''}${own && seen ? '; ' : ''}${seen ? `${num(seen)} with only the tools seen in the capture (called, in an allowlist or in an agent's configuration; they may offer more)` : ''}${cm ? `; code_mode is agentgateway's Code Mode (agents call run_code, whose code calls the real tools)` : ''}. Hover a server in the list for its counts.</div>`; })();
+  const label = picked.length === servers.length ? 'all' : !picked.length ? 'none' : picked.length === 1 ? picked[0].name : `${picked[0].name} and ${picked.length - 1} more`;
+  const row = x => `<label class="rc-fitem ts-row" data-srvname="${esc(x.name.toLowerCase())}" title="${esc(`${nTools(x.name)} tools: ${x.called} called, ${x.allowed} in an allowlist, ${x.configured} configured on an agent, ${x.listed} listed by the server`)}">
+    <span class="rc-fname"><input type="checkbox" data-srvck="${esc(x.name)}" ${A.srvs.has(x.name) ? 'checked' : ''}> <span class="mono">${esc(x.name)}</span></span><span class="rc-fn">${num(nTools(x.name))}</span>
+    <span class="rc-fsub muted">${x.called ? `${num(x.called)} called` : 'none called'}${x.hasList ? ' · server list' : x.name === 'code_mode' ? ' · Code Mode' : ' · no server list'}</span></label>`;
+  const picker = `<div class="rc-fmenu"><button class="chip on" data-fmenu data-srvmenu>MCP servers: ${esc(label)} <small>${picked.length}/${servers.length}</small> ▾</button>
+    <div class="rc-fpop ts-pop" hidden><input type="search" id="srv-q" placeholder="Find a server" autocomplete="off" spellcheck="false" style="width:100%;margin:2px 0 6px">
+    <div class="row" style="gap:6px;margin-bottom:6px"><button class="ghost" data-srvall="1">Select all</button><button class="ghost" data-srvall="0">Clear</button><small class="muted" style="margin-left:auto">most called first</small></div>
+    <div class="ts-list">${servers.map(row).join('')}</div></div></div>`;
   const yes = (v, cls) => v ? `<span class="${cls || 'green'}">yes</span>` : '<span class="muted">—</span>';
   const list = xs => (xs || []).length ? `<span class="rc-small" title="${esc(xs.join('\n'))}">${esc(xs.slice(0, 3).join(', '))}${xs.length > 3 ? ` <span class="muted">and ${xs.length - 3} more</span>` : ''}</span>` : '<span class="muted">—</span>';
   const calledAs = t => called.get(t.server + '/' + t.name) || (t.calls ? (d.targets || []).find(x => x.kind === 'tool' && x.label === t.name) : null); // kagent servers file calls under their own name
-  const rows = tools.map(t => { const c = calledAs(t); return `<tr><td class="mono">${esc(t.name)}${A.srv === '*' ? `<br><small class="muted">${esc(t.server)}</small>` : ''}</td>
+  const rows = tools.map(t => { const c = calledAs(t); return `<tr><td class="mono">${esc(t.name)}${multi ? `<br><small class="muted">${esc(t.server)}</small>` : ''}</td>
     <td class="mono">${t.calls ? `${num(t.calls)}${c?.denied ? ` <small class="amber">${num(c.denied)} refused</small>` : ''}${c?.errors ? ` <small class="muted">${num(c.errors)} failed</small>` : ''}` : '<span class="muted">not called</span>'}${c?.undeclared ? ' <span class="rc-badge red">not listed by its server</span>' : ''}</td>
     <td>${list(t.callers)}</td><td>${list(t.allowedFor)}</td><td>${list(t.configuredOn)}</td><td>${yes(t.declared)}</td><td class="rc-small muted">${esc(t.description || '')}</td></tr>`; }).join('');
-  return `<section class="panel"><div class="panel-head"><h2>Tools by MCP server</h2><small class="muted">${esc(known)}</small></div>
-    <div class="panel-body" style="padding-bottom:0"><div class="row wrap">${servers.map(chip).join('')}<button class="chip ${A.srv === '*' ? 'on' : ''}" data-actsrv="*">All servers</button></div>${terms?.length && !onlyTools ? '<p class="muted rc-small mt">Keys other than tool: and server: keep the tools with calls that match them.</p>' : ''}</div>
+  return `<section class="panel"><div class="panel-head"><h2>Tools by MCP server</h2><small class="muted">${fbPlural(tools.length, 'tool')} on ${fbPlural(picked.length, 'server')}</small></div>
+    <div class="panel-body" style="padding-bottom:0"><div class="row wrap" style="align-items:flex-start;gap:14px">${picker}<div class="rc-small" style="flex:1;min-width:280px">${known || '<span class="muted">Pick one or more servers.</span>'}</div></div>${terms?.length && !onlyTools ? '<p class="muted rc-small mt">Keys other than tool: and server: keep the tools with calls that match them.</p>' : ''}</div>
     <div class="table-scroll mt" style="max-height:60vh">${rows ? `<table><thead><tr><th>Tool</th><th>Calls</th><th>Called by</th><th title="Who an agentgateway MCP authorization rule allows to call it">Allowed for</th><th title="Agents whose toolNames or ALLOWED_TOOLS name it">Configured on</th><th title="In the server's discovered tool list (kagent)">Listed</th><th>Description</th></tr></thead><tbody>${rows}</tbody></table>` : '<div class="empty"><strong>No tools match</strong></div>'}</div></section>`;
 }
 
@@ -453,10 +471,9 @@ async function trafficPage() {
     ${stat('Refused', num(netRefused + (a.denials || []).length), `${fbPlural(netRefused, 'edge')} by the mesh, ${num(at.denied)} calls by the gateway`, 'data-tftab="refused" title="Open the Refused tab"', netRefused + (at.denied || 0) ? 'amber' : '')}
     ${stat('No identity', num(at.anonymous), 'tool, model or agent calls', 'data-tfq="state:noidentity" title="Show only these"', at.anonymous ? 'red' : '', T.q === 'state:noidentity')}</div>`;
   const cov = (a.coverage || []).length ? `<p class="muted fb-cov">Gateways with request logs: ${a.coverage.map(c => `<span class="mono">${esc(c.gateway)}</span> <small>(${num(c.requests)}${c.waypoint ? ', waypoint' : ''})</small>`).join(' · ')}</p>` : '';
-  const toolNote = n => /has no tool list in the capture/.test(n);
+  const toolNote = n => /cannot see the full list of tools|is agentgateway's Code Mode/.test(n); // shown per server on the Tools tab
   const noteHTML = xs => xs.map(n => `<div class="notice" style="margin-bottom:12px"><span>△</span><div>${esc(rcCap(n))}.</div></div>`).join('');
   const notes = noteHTML([...(d.notes || []), ...(a.notes || []).filter(n => !toolNote(n))]);
-  const toolNotes = noteHTML((a.notes || []).filter(toolNote));
   const rank = {critical: 0, high: 1, medium: 2, low: 3};
   const allFindings = [...(d.findings || []), ...(a.findings || []), ...tfAgentFindings(T.reach)].sort((x, y) => (rank[x.severity] ?? 9) - (rank[y.severity] ?? 9));
   T.findings = allFindings;
@@ -484,7 +501,7 @@ async function trafficPage() {
   else if (T.tab === 'map') body = toolbar + tfFocusBar(fnode, netE, gwE) + tfMap(d, a, netE, gwE, nodes, callers, targets, layer) + sel;
   else if (T.tab === 'edges') body = toolbar + tfEdges(netE, id => nodes.get(id)?.label || id) + sel;
   else if (T.tab === 'calls') body = toolbar + actCalls(gwE, callers, targets) + sel;
-  else if (T.tab === 'tools') body = toolbarPlain + toolNotes + actTools(a, callers, gwAll, terms) + '<div class="mt"></div>' + actModels(a, gwAll, terms);
+  else if (T.tab === 'tools') body = toolbarPlain + actTools(a, callers, gwAll, terms) + '<div class="mt"></div>' + actModels(a, gwAll, terms);
   else if (T.tab === 'refused') {
     const netRef = netAll.filter(e => e.denied > 0);
     body = toolbarPlain + (hasGw ? `<h3 class="mt">Refused by the gateways</h3>${actDenials(a, gwAll, terms)}` : '') + (hasNet ? `<h3 class="mt">Refused by the mesh</h3>${netRef.length ? tfEdges(netRef, id => nodes.get(id)?.label || id) : '<section class="panel"><div class="empty"><strong>No refused connections</strong>ztunnel logged no connection refused by policy.</div></section>'}` : '') + sel;
@@ -898,7 +915,18 @@ after.traffic = () => {
     else if ((c?.users || []).length === 1) words.push('jwt.sub:' + qq(c.users[0]));
     openLogs({q: words.join(' ')});
   });
-  document.querySelectorAll('[data-actsrv]').forEach(b => b.onclick = () => keepY(() => { A.srv = b.dataset.actsrv; }));
+  // The server picker: ticks, Select all and Clear redraw the table and keep
+  // the list open, with what was typed in its search box.
+  const reopen = () => { const y = scrollY; A.srvOpen = true; render().then(() => scrollTo(0, y)); };
+  document.querySelectorAll('[data-srvck]').forEach(b => b.onchange = () => { if (b.checked) A.srvs.add(b.dataset.srvck); else A.srvs.delete(b.dataset.srvck); A.srvNone = !A.srvs.size; reopen(); });
+  document.querySelectorAll('[data-srvall]').forEach(b => b.onclick = () => { const on = b.dataset.srvall === '1'; A.srvs = new Set(on ? (a.servers || []).filter(x => x.called || x.allowed || x.configured || x.listed).map(x => x.name) : []); A.srvNone = !on; reopen(); });
+  const sq = $('#srv-q');
+  if (sq) {
+    const f = () => { const q = sq.value.trim().toLowerCase(); A.srvQ = sq.value; document.querySelectorAll('.ts-row').forEach(r => { r.hidden = !!q && !r.dataset.srvname.includes(q); }); };
+    sq.oninput = f;
+    if (A.srvOpen) { sq.closest('.rc-fpop').hidden = false; sq.value = A.srvQ || ''; f(); sq.focus(); }
+  }
+  A.srvOpen = false;
   document.querySelectorAll('[data-actpol]').forEach(b => b.onclick = () => { const [i, j] = b.dataset.actpol.split(':').map(Number); fbOpenRef(a.denials[i].policies[j].ref); });
   // Selecting an edge fetches its explanation.
   const select = id => {

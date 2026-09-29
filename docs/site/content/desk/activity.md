@@ -71,7 +71,11 @@ The **Tools and models** tab of the Traffic page lists, per MCP server, every to
 
 ![GitHub's tools: called, allowed per service account by an allowlist, and configured on an agent](/images/traffic-tools.png)
 
-A server outside the cluster, such as GitHub's at `api.githubcopilot.com` behind an agentgateway backend, has no list in the capture: only kagent servers report one, and agentgateway does not log `tools/list` responses. For those, the tab says so, and the tools shown are the ones called, allowed or configured. The server may offer more.
+**MCP servers** chooses which servers to list: a searchable list with a tick per server (most called first, with its tool count), and **Select all** and **Clear**. The first time, the servers with calls are ticked. Beside it, a line per server says where its tools come from; with more than three ticked, a summary does.
+
+A server outside the cluster, such as GitHub's at `api.githubcopilot.com` behind an agentgateway backend, has no full list in the capture: it is not a kagent MCP server (only those report one), and agentgateway does not log the tools a server offers. Its tools are the ones seen in the capture: called, in an allowlist, or in an agent's configuration. It may offer more.
+
+`code_mode` is agentgateway's Code Mode: the agent is given one tool, `run_code`, and the code it sends calls the backend's tools, so the logs show `run_code` rather than the tools it used.
 
 kagent reports the tools each MCP server offers in `status.discoveredTools` on `RemoteMCPServer`, `MCPServer` and `ToolServer`. A called tool is checked against a server's list only when the call can be matched to that server, by the server's name, its URL host, or the Service in its URL. The **Tools** tab says for each tool called whether its server lists it: yes, **no**, or unknown when no captured list matches. It also lists the tools servers offer that were never called.
 
