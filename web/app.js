@@ -423,13 +423,13 @@ function ovLogPlot(L) {
   const all = pts(h), err = pts(errs.length === n ? errs : []);
   const span = new Date(h[n - 1].start) - new Date(h[0].start);
   return `<svg class="ov-plot" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-label="Log lines over time">
-    <defs><linearGradient id="ov-ga" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#3ecf8e" stop-opacity=".35"/><stop offset="1" stop-color="#3ecf8e" stop-opacity="0"/></linearGradient></defs>
-    <g stroke="var(--line)" stroke-width="1" vector-effect="non-scaling-stroke"><line x1="0" y1="${H * .25}" x2="${W}" y2="${H * .25}"/><line x1="0" y1="${H * .6}" x2="${W}" y2="${H * .6}"/></g>
+    <defs><linearGradient id="ov-ga" x1="0" x2="0" y1="0" y2="1"><stop offset="0" style="stop-color:var(--chart-ok);stop-opacity:.35"/><stop offset="1" style="stop-color:var(--chart-ok);stop-opacity:0"/></linearGradient></defs>
+    <g style="stroke:var(--line)" stroke-width="1" vector-effect="non-scaling-stroke"><line x1="0" y1="${H * .25}" x2="${W}" y2="${H * .25}"/><line x1="0" y1="${H * .6}" x2="${W}" y2="${H * .6}"/></g>
     <path d="M0,${H} L${all.join(' L')} L${W},${H}Z" fill="url(#ov-ga)"/>
-    <path d="M${all.join(' L')}" fill="none" stroke="#3ecf8e" stroke-width="2" vector-effect="non-scaling-stroke"/>
-    ${err.length && L.errorTotal ? `<path d="M${err.join(' L')}" fill="none" stroke="var(--red)" stroke-width="1.5" stroke-dasharray="3 3" vector-effect="non-scaling-stroke"/>` : ''}
+    <path d="M${all.join(' L')}" fill="none" style="stroke:var(--chart-ok)" stroke-width="2" vector-effect="non-scaling-stroke"/>
+    ${err.length && L.errorTotal ? `<path d="M${err.join(' L')}" fill="none" style="stroke:var(--red)" stroke-width="1.5" stroke-dasharray="3 3" vector-effect="non-scaling-stroke"/>` : ''}
   </svg><div class="ov-axis"><span>${esc(fmtAxis(h[0].start, span))}</span><span>${esc(fmtAxis(h[n - 1].start, span))}</span></div>
-  <div class="ov-legend"><span><i style="background:#3ecf8e"></i>${num(L.total)} lines</span>${L.errorTotal ? `<span><i style="background:var(--red)"></i>${num(L.errorTotal)} errors</span>` : ''}</div>`;
+  <div class="ov-legend"><span><i style="background:var(--chart-ok)"></i>${num(L.total)} lines</span>${L.errorTotal ? `<span><i style="background:var(--red)"></i>${num(L.errorTotal)} errors</span>` : ''}</div>`;
 }
 
 function ovCharts(C) {
@@ -1370,9 +1370,10 @@ function rcGraphModel(a) {
     for (const e of edges) {
       const d = U.get(e.to);
       e.used = usedId(e.to); e.usedDenied = !!d?.mismatch;
-      if (e.from === agentId) e.unused = !e.used && e.to !== 'metadata';
+      // Unused is only known when a flow source covers the agent; otherwise it is unknown, not unused.
+      if (e.from === agentId) e.unused = !!a.observed && !e.used && e.to !== 'metadata';
     }
-    for (const n of nodes) if (n.type !== 'agent' && edges.some(e => e.to === n.id && e.from === agentId)) n.unused = !usedId(n.id) && n.id !== 'metadata';
+    for (const n of nodes) if (n.type !== 'agent' && edges.some(e => e.to === n.id && e.from === agentId)) n.unused = !!a.observed && !usedId(n.id) && n.id !== 'metadata';
     usedN = [...U.values()].filter(d => d.used && d.kind === 'service').length;
     if (layer === 'used') {
       // Only what it was seen using: its direct destinations, and the hosts

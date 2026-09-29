@@ -8,6 +8,8 @@ description: Open a bundle as a local workspace with a web UI, a terminal, SQL a
 
 `flightbay-desk` turns a bundle into a workspace on your machine. You get a web UI, a terminal where `kubectl`, `k9s` and `stern` work against the snapshot, a set of helper commands, read-only SQL, and an MCP server for AI agents. Everything runs locally. Nothing is sent anywhere.
 
+The UI opens in the dark theme, in the style of the Solo Enterprise UI for kagent. The button at the top right switches to the light theme, which follows the agentgateway Enterprise UI, and the choice is remembered in the browser.
+
 ## Opening a bundle
 
 ```bash

@@ -288,6 +288,8 @@ The graph has three layers:
 | Used | Only what the agent was seen using, and the hosts outside the cluster it called |
 | Both | Everything allowed. What it used is drawn solid; what it never used is faded and dashed. A red line is something it used although the captured policy denies it. |
 
+Nothing is faded when no flow source covers the agent. Without flow logs there is no way to tell used from unused, so every box keeps its full colour and the header's **Used** tile reads "no flow logs cover this agent".
+
 ![Both layers: the used namespaces stand out, the rest is faded](/images/reach-layers.png)
 
 ![Used: three Services and one host outside the cluster](/images/reach-used.png)

@@ -642,3 +642,99 @@ tbody tr:hover{background:#1a1722}
 .bars div{background:linear-gradient(180deg,#8a6cff,#5b3fd0)}.bars div.err{background:#c77d0a}.bars div.sel{background:#b9a6ff}
 [data-theme=light] .bars div{background:linear-gradient(180deg,#9b85f5,#6d4ae0)}
 .finding-row button.link{color:var(--text)}.finding-row button.link:hover{color:var(--teal)}
+
+/* ---------- light mode: the agentgateway UI's light theme ----------
+   Dark stays the kagent look above. Light follows the current agentgateway Enterprise UI:
+   #f8f9fb page, white surfaces, #8023c3 primary, a solid primary nav item, 6-8px corners,
+   soft shadows and tinted status badges. */
+:root[data-theme=light]{--bg:#f8f9fb;--panel:#ffffff;--raised:#f3f4f6;--line:#e5e7eb;--line-2:#d1d5db;--text:#151927;--muted:#667085;
+  --teal:#8023c3;--blue:#681aa2;--accent:#8023c3;--accent-bg:#f4e8ff;--accent-line:#e0c6f7;
+  --amber:#b7791f;--red:#b42318;--green:#027a48;--r:8px;
+  --shadow:0 1px 2px rgb(16 24 40 / .035);--shadow-pop:0 6px 14px rgb(16 24 40 / .08)}
+[data-theme=light] body{background:var(--bg)}
+[data-theme=light] ::selection{background:color-mix(in srgb,#8023c3 78%,white);color:#fff}
+
+/* sidebar: white, flat, hairline border */
+[data-theme=light] .sidebar{background:#fff;border-color:var(--line);box-shadow:var(--shadow);border-radius:12px}
+[data-theme=light] .brand-mark{color:#8023c3}
+[data-theme=light] .bundle{background:#f8f9fb;border-color:var(--line);border-radius:8px}
+[data-theme=light] .nav a{border-radius:6px;color:var(--muted);padding:7px 10px}
+[data-theme=light] .nav a:hover{background:var(--raised);color:var(--text)}
+[data-theme=light] .nav a.active{background:#8023c3;border-color:#8023c3;color:#fff;font-weight:500}
+[data-theme=light] .nav a.active:hover{background:#681aa2}
+[data-theme=light] .nav .count{background:#fff7e6;border-color:#f3dcae;color:#b7791f}
+[data-theme=light] .nav a.active .count{background:rgba(255,255,255,.2);border-color:transparent;color:#fff}
+[data-theme=light] .side-bottom{border-top-color:var(--line)}
+
+/* top bar and status strip */
+[data-theme=light] .global-search,[data-theme=light] #cluster,[data-theme=light] #theme-toggle{background:#fff;border-color:var(--line-2);border-radius:6px}
+[data-theme=light] #theme-toggle{border-radius:6px}
+[data-theme=light] .snapshot{background:#fff;border-color:var(--line);border-radius:8px;box-shadow:var(--shadow);color:var(--muted)}
+
+/* controls */
+:where([data-theme=light]) button{border-radius:6px;background:#fff;border-color:var(--line-2);color:var(--text);font-weight:600}
+:where([data-theme=light]) button:hover{background:var(--raised);border-color:var(--line-2)}
+:where([data-theme=light]) button.primary{background:#8023c3;border-color:#8023c3;color:#fff;box-shadow:none}
+:where([data-theme=light]) button.primary:hover{background:#681aa2;border-color:#681aa2}
+:where([data-theme=light]) button.active{background:var(--accent-bg);border-color:var(--accent-line);color:#681aa2}
+:where([data-theme=light]) button.ghost,:where([data-theme=light]) button.link{background:transparent;border-color:transparent}
+:where([data-theme=light]) button.link{color:#8023c3}
+[data-theme=light] input,[data-theme=light] select,[data-theme=light] textarea{background:#fff;border-color:var(--line-2);border-radius:6px}
+[data-theme=light] .badge{border:0;border-radius:5px;background:color-mix(in srgb,#151927 7%,transparent);color:color-mix(in srgb,#151927 85%,transparent);font-weight:650}
+[data-theme=light] .badge.green{background:color-mix(in srgb,#027a48 12%,transparent);color:#027a48}
+[data-theme=light] .badge.amber{background:color-mix(in srgb,#b7791f 14%,transparent);color:#b7791f}
+[data-theme=light] .badge.red{background:color-mix(in srgb,#b42318 11%,transparent);color:#b42318}
+[data-theme=light] .badge.blue{background:#eff8ff;color:#175cd3}
+[data-theme=light] .tag{border-radius:5px;background:color-mix(in srgb,#8023c3 9%,#fff);border-color:color-mix(in srgb,#8023c3 30%,#e5e7eb);color:#8023c3}
+[data-theme=light] .chip{border-radius:5px;background:var(--accent-bg);border-color:var(--accent-line);color:#681aa2}
+[data-theme=light] .toast{border-radius:8px;background:#fff;border-color:var(--line);box-shadow:var(--shadow-pop);color:var(--text)}
+
+/* surfaces */
+[data-theme=light] .panel,[data-theme=light] .histogram,[data-theme=light] .stat,[data-theme=light] .ov-chart,[data-theme=light] .modal,[data-theme=light] .start-card,[data-theme=light] .start-form{border-radius:8px;box-shadow:var(--shadow);border-color:var(--line)}
+[data-theme=light] .panel .stats .stat{box-shadow:none}
+[data-theme=light] .stat-tile{background:#f4e8ff;border-color:#e0c6f7;color:#8023c3;border-radius:8px}
+[data-theme=light] .stat.alert .stat-tile{background:#fff7e6;border-color:#f3dcae;color:#b7791f}
+[data-theme=light] .stat .value.amber{color:#b7791f}
+[data-theme=light] .sev{border-radius:6px}
+[data-theme=light] .sev.warning{background:#fff7e6;border-color:#f3dcae;color:#b7791f}
+[data-theme=light] .sev.critical{background:#fff0ee;border-color:#f6cdc7;color:#b42318}
+[data-theme=light] .sev.info{background:#eff8ff;border-color:#c7e0fb;color:#175cd3}
+[data-theme=light] th{background:color-mix(in srgb,#f3f4f6 55%,#fff);color:var(--muted);font-size:10.5px;font-weight:600;letter-spacing:.05em}
+[data-theme=light] td{border-bottom-color:var(--line)}
+[data-theme=light] tbody tr:hover{background:#f8f9fb}
+[data-theme=light] .tabs button{background:none;border:0;border-radius:0;font-weight:500}
+[data-theme=light] .tabs button.active{color:var(--text);border-bottom:2px solid #8023c3}
+[data-theme=light] .types button{border-radius:6px;background:none;border:0;font-weight:400}
+[data-theme=light] .types button.active{background:var(--accent-bg);color:#681aa2}
+[data-theme=light] .drawer{background:#fff;border-left-color:var(--line);border-radius:0;box-shadow:-8px 0 18px rgb(16 24 40 / .08)}
+[data-theme=light] .notice.info{background:#eff8ff;border-color:#c7e0fb;color:#1d3f73}
+[data-theme=light] .finding-row button.link{color:var(--text)}
+[data-theme=light] .finding-row button.link:hover{color:#8023c3}
+
+/* overview charts: flat white cards with the faintest tint */
+[data-theme=light] .ov-chart.v{background:radial-gradient(90% 90% at 100% 100%,rgba(128,35,195,.07),transparent 60%),#fff}
+[data-theme=light] .ov-chart.g{background:radial-gradient(90% 90% at 100% 100%,rgba(2,122,72,.06),transparent 60%),#fff}
+[data-theme=light] .ov-chart.m{background:radial-gradient(90% 90% at 100% 100%,rgba(192,38,211,.06),transparent 60%),#fff}
+[data-theme=light] .ov-bar .t{background:#f3f4f6}
+[data-theme=light] .ov-bar .t i{background:#8023c3}
+[data-theme=light] .ov-bar .t i.warning{background:#d9921f}[data-theme=light] .ov-bar .t i.critical{background:#d92d20}
+[data-theme=light] .ov-chart.m .ov-bar .t i{background:#c026d3}
+[data-theme=light] .ov-empty span{background:#fff;border-color:var(--line-2)}
+[data-theme=light] .bars div{background:#8023c3;opacity:.85}[data-theme=light] .bars div.err{background:#d9921f}[data-theme=light] .bars div.sel{background:#681aa2;opacity:1}
+:root{--chart-ok:#3ecf8e}
+:root[data-theme=light]{--chart-ok:#12b76a}
+
+/* reach graph contrast on the dark theme: brighter labels, stronger fills, less fading */
+:root:not([data-theme=light]) .rg-node .rg-l{fill:#f4f3f8}
+:root:not([data-theme=light]) .rg-node .rg-s{fill:#b4b1c2}
+:root:not([data-theme=light]) .rg-red rect{fill:color-mix(in srgb,var(--red) 20%,#15131c)}
+:root:not([data-theme=light]) .rg-amber rect{fill:color-mix(in srgb,var(--amber) 17%,#15131c)}
+:root:not([data-theme=light]) .rg-green rect{fill:color-mix(in srgb,var(--green) 17%,#15131c)}
+:root:not([data-theme=light]) .rg-grey rect{fill:#221f2c;stroke:#6e6a80}
+:root:not([data-theme=light]) .rg-frame rect{fill:rgba(255,255,255,.025);stroke:#3a3548}
+:root:not([data-theme=light]) .rg-frame .rg-fl,:root:not([data-theme=light]) .rg-head .rg-hn{fill:#b4b1c2}
+:root:not([data-theme=light]) .rg-head .rg-hbg{fill:#1c1a26;stroke:#312d3d}
+:root:not([data-theme=light]) .rg-nic{opacity:1}
+.rg-node.rg-dim{opacity:.4}
+.rg-node.rg-unusednode{opacity:.7}
+.rg-unused .rg-line{opacity:.5}
