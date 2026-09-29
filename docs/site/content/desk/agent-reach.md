@@ -324,7 +324,7 @@ With the Traffic feature on, the agent list gains **Used** (destinations it was 
 
 ![One agent's tools and MCP sessions](/images/agents-tools.png)
 
-**May call, did not** lists, per server, the tools an allowlist gives the agent's service account or its own configuration names, that it did not call in the capture: candidates to take away.
+**Tools … may call** comes first: per MCP server, every tool the agent has access to (from the agentgateway allowlist for its service account, or every tool the server offers when there is no allowlist), whether it called each one, and whether its own configuration lists it. Tools marked **allowed, not called** are candidates to take away; **called, not allowed** means the captured allowlist would refuse a call the logs show, so the policy is probably newer than the calls. See [What a caller may call](/desk/traffic/#what-a-caller-may-call).
 
 The **Findings** tab adds **From the gateways**: the gateway findings that name this agent, with only its rows.
 
