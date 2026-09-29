@@ -44,29 +44,36 @@ function fbFindingsWire(st, list, key) {
 // left by the average row of what they call, so lines cross as little as a
 // single pass allows. Lines are curves in the gap between the two columns, so
 // they never cross a box.
-function fbGraph({left, right, edges, heads, sel}) {
-  const bw = 250, bh = 42, vg = 10, gap = Math.max(220, Math.min(420, 90 + edges.length * 4)), HB = 52, top = HB + 16;
-  const L = [...left], R = [...right];
+// far, when given, is a third column; its edges run from a right-hand box
+// to a far box, and an edge's by lists the left-hand boxes it stands for,
+// so hovering one of those traces through to the far column.
+function fbGraph({left, right, far = [], edges, heads, sel}) {
+  const bw = 250, bh = 42, vg = 10, gap = Math.max(220, Math.min(420, 90 + edges.length * 4)), gap2 = 200, HB = 52, top = HB + 16;
+  const L = [...left], R = [...right], F = [...far];
   const li = new Map(L.map((n, i) => [n.id, i]));
   const bary = (n, map, key) => { const xs = edges.filter(e => e[key] === n.id).map(e => map.get(e[key === 'to' ? 'from' : 'to'])).filter(x => x !== undefined); return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 1e9; };
   R.sort((a, b) => (a.order ?? 1) - (b.order ?? 1) || bary(a, li, 'to') - bary(b, li, 'to') || a.label.localeCompare(b.label));
   const ri = new Map(R.map((n, i) => [n.id, i]));
   L.sort((a, b) => bary(a, ri, 'from') - bary(b, ri, 'from') || a.label.localeCompare(b.label));
   const lrow = new Map(L.map((n, i) => [n.id, i])), rrow = new Map(R.map((n, i) => [n.id, i]));
-  const rows = Math.max(L.length, R.length, 1);
-  const lOff = (rows - L.length) * (bh + vg) / 2, rOff = (rows - R.length) * (bh + vg) / 2;
-  const X0 = 16, X1 = 16 + bw + gap;
-  const W = X1 + bw + 16, H = top + rows * (bh + vg) + 10;
-  const yL = id => top + lOff + lrow.get(id) * (bh + vg), yR = id => top + rOff + rrow.get(id) * (bh + vg);
+  const ri2 = new Map(R.map((n, i) => [n.id, i]));
+  F.sort((a, b) => bary(a, ri2, 'to') - bary(b, ri2, 'to') || a.label.localeCompare(b.label));
+  const frow = new Map(F.map((n, i) => [n.id, i]));
+  const rows = Math.max(L.length, R.length, F.length, 1);
+  const lOff = (rows - L.length) * (bh + vg) / 2, rOff = (rows - R.length) * (bh + vg) / 2, fOff = (rows - F.length) * (bh + vg) / 2;
+  const X0 = 16, X1 = 16 + bw + gap, X2 = X1 + bw + gap2;
+  const W = (F.length ? X2 : X1) + bw + 16, H = top + rows * (bh + vg) + 10;
+  const yL = id => top + lOff + lrow.get(id) * (bh + vg), yR = id => top + rOff + rrow.get(id) * (bh + vg), yF = id => top + fOff + frow.get(id) * (bh + vg);
   const fit = (s, px) => { const n = Math.max(4, Math.floor((bw - 44) / px)); s = String(s || ''); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
   const risk = r => ['red', 'amber', 'green', 'grey'].includes(r) ? r : 'grey';
   const rank = {grey: 0, green: 1, amber: 2, red: 3};
-  const es = edges.filter(e => lrow.has(e.from) && rrow.has(e.to)).sort((a, b) => rank[risk(a.risk)] - rank[risk(b.risk)]);
+  const es = edges.filter(e => (lrow.has(e.from) && rrow.has(e.to)) || (rrow.has(e.from) && frow.has(e.to))).sort((a, b) => rank[risk(a.risk)] - rank[risk(b.risk)]);
   const edgeSvg = es.map(e => {
-    const sx = X0 + bw, sy = yL(e.from) + bh / 2, tx = X1 - 3, ty = yR(e.to) + bh / 2;
-    const d = `M${sx},${sy} C${sx + gap / 2},${sy} ${tx - gap / 2},${ty} ${tx},${ty}`;
-    const on = sel && (sel === e.id || sel === e.from || sel === e.to);
-    return `<g class="rg-edge rg-${risk(e.risk)} ${e.dash ? 'rg-dash' : ''} ${e.cls || ''} ${on ? 'fb-on' : ''}" data-f="${esc(e.from)}" data-t="${esc(e.to)}" data-fbe="${esc(e.id)}"><title>${esc(e.tip || '')}</title><path class="rg-hit" d="${d}"/><path class="rg-line" d="${d}" style="stroke-width:${e.w || 1.4}" marker-end="url(#fba-${risk(e.risk)})"/></g>`;
+    const second = rrow.has(e.from), g = second ? gap2 : gap;
+    const sx = (second ? X1 : X0) + bw, sy = (second ? yR(e.from) : yL(e.from)) + bh / 2, tx = (second ? X2 : X1) - 3, ty = (second ? yF(e.to) : yR(e.to)) + bh / 2;
+    const d = `M${sx},${sy} C${sx + g / 2},${sy} ${tx - g / 2},${ty} ${tx},${ty}`;
+    const on = sel && (sel === e.id || sel === e.from || sel === e.to || (e.by || []).includes(sel));
+    return `<g class="rg-edge rg-${risk(e.risk)} ${e.dash ? 'rg-dash' : ''} ${e.cls || ''} ${on ? 'fb-on' : ''}" data-f="${esc(e.from)}" data-t="${esc(e.to)}" data-fbe="${esc(e.id)}"${e.by ? ` data-by="${esc(e.by.join(' '))}"` : ''}><title>${esc(e.tip || '')}</title><path class="rg-hit" d="${d}"/><path class="rg-line" d="${d}" style="stroke-width:${e.w || 1.4}" marker-end="url(#fba-${risk(e.risk)})"/></g>`;
   }).join('');
   const node = (n, x, y) => `<g class="rg-node rg-${risk(n.risk)} rg-click ${n.dim ? 'rg-dim' : ''} ${n.cls || ''} ${sel === n.id ? 'rg-sel' : ''}" data-rgid="${esc(n.id)}" transform="translate(${x},${y})"><title>${esc(n.tip || n.label)}</title>
     <rect width="${bw}" height="${bh}" rx="7"/>${rgIcon(n.icon || 'service', bw - 26, (bh - 16) / 2, 16, 'rg-nic')}<text x="11" y="17" class="rg-l">${esc(fit(n.label, 7.1))}</text><text x="11" y="32" class="rg-s">${esc(fit(n.sub || '', 6.2))}</text></g>`;
@@ -75,7 +82,7 @@ function fbGraph({left, right, edges, heads, sel}) {
     <text x="42" y="16" class="rg-hl">${esc(label)}</text><text x="42" y="30" class="rg-hn">${esc(note)}</text></g>`;
   const marker = r => `<marker id="fba-${r}" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="9" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="rg-arrow-${r}"/></marker>`;
   return `<svg class="rg" id="rg-svg" data-w="${W}" data-h="${H}" width="100%" height="100%" role="img"><defs>${['red', 'amber', 'green', 'grey'].map(marker).join('')}</defs><g id="rg-root">
-    ${headSvg(X0, heads[0])}${headSvg(X1, heads[1])}${edgeSvg}${L.map(n => node(n, X0, yL(n.id))).join('')}${R.map(n => node(n, X1, yR(n.id))).join('')}</g></svg>`;
+    ${headSvg(X0, heads[0])}${headSvg(X1, heads[1])}${F.length && heads[2] ? headSvg(X2, heads[2]) : ''}${edgeSvg}${L.map(n => node(n, X0, yL(n.id))).join('')}${R.map(n => node(n, X1, yR(n.id))).join('')}${F.map(n => node(n, X2, yF(n.id))).join('')}</g></svg>`;
 }
 
 function fbGraphPanel(title, st, svg, controls, legend) {
@@ -105,7 +112,15 @@ function fbGraphWire(st, key, onPick) {
     g.onmouseenter = () => {
       clear();
       const id = g.dataset.rgid, near = new Set([id]);
-      rg.querySelectorAll('.rg-edge').forEach(e => { if (e.dataset.f === id || e.dataset.t === id) { e.classList.add('on'); near.add(e.dataset.f); near.add(e.dataset.t); } });
+      const byOf = e => (e.dataset.by || '').split(' ').filter(Boolean);
+      const edges = [...rg.querySelectorAll('.rg-edge')];
+      edges.forEach(e => { if (e.dataset.f === id || e.dataset.t === id) { e.classList.add('on'); near.add(e.dataset.f); near.add(e.dataset.t); } });
+      // A caller lights its tools beyond the Service; a tool lights its callers.
+      edges.forEach(e => {
+        const by = byOf(e);
+        if (by.includes(id)) { e.classList.add('on'); near.add(e.dataset.f); near.add(e.dataset.t); edges.forEach(x => { if (x.dataset.f === id && x.dataset.t === e.dataset.f) x.classList.add('on'); }); }
+        if (e.dataset.t === id) by.forEach(c => { near.add(c); edges.forEach(x => { if (x.dataset.f === c && x.dataset.t === e.dataset.f) x.classList.add('on'); }); });
+      });
       rg.querySelectorAll('[data-rgid]').forEach(x => { if (near.has(x.dataset.rgid)) x.classList.add('on'); });
       rg.classList.add('rg-hl');
     };
@@ -451,6 +466,14 @@ function tfSelPanel(d, a, nodes, callers, targets) {
   // A caller-to-Service line (drawn with both layers on, or a connection that
   // also carried gateway calls): what the caller may call on the MCP servers
   // behind that Service, and the calls themselves.
+  if (T.sel.startsWith('svctl:')) T.sel = T.sel.slice(6);
+  if (T.sel.startsWith('svct:')) {
+    const [svc, tool] = T.sel.slice(5).split('|');
+    const es = (a.edges || []).filter(e => e.service === svc && (t => t && (t.kind === 'tool' ? t.label : actTargetLabel(t)) === tool)(targets.get(e.to)));
+    return `<section class="panel mt"><div class="panel-head"><h2><span class="mono">${esc(tool)}</span> through ${esc(nodes.get(svc)?.label || svc)}</h2><button class="ghost" id="act-selx" aria-label="Close">✕</button></div>
+      <div class="table-scroll" style="max-height:44vh"><table><thead><tr><th>Caller</th><th>Calls</th><th>Refused</th><th>Failed</th><th>Last seen</th><th></th></tr></thead><tbody>
+      ${es.sort((x, y) => y.requests - x.requests).map(e => { const c = callers.get(e.from); return `<tr><td>${esc(c?.label || e.from)}</td><td class="mono">${num(e.requests)}</td><td class="mono ${e.denied ? 'amber' : ''}">${num(e.denied)}</td><td class="mono">${num(e.errors)}</td><td class="rc-small">${fbTime(e.last)}</td><td>${c && (c.agentType || c.agentic) ? `<button class="ghost" data-tffollow="${esc(c.id)}">Every tool it may call</button>` : ''}</td></tr>`; }).join('')}</tbody></table></div></section>`;
+  }
   if (T.sel.startsWith('acc:') && T.focus) {
     const srv = T.sel.slice(4, T.sel.lastIndexOf('/'));
     const who = taWho(a, [T.focus]);
@@ -557,6 +580,25 @@ function tfMap(d, a, netE, gwE0, nodes, callers, targets, layer) {
   const maxC = Math.max(1, ...netE.map(e => e.connections)), maxR = Math.max(1, ...gwE.map(e => e.requests));
   const ge = netE.map(e => ({id: e.id, from: e.from, to: e.to, risk: e.risk, dash: e.denied > 0 || e.verdict === 'denied', w: 1.2 + 3 * Math.log(1 + e.connections) / Math.log(1 + maxC),
     tip: `${nodes.get(e.from)?.label} → ${nodes.get(e.to)?.label}\n${num(e.connections)} connections, ${e.tls}${e.denied ? `, ${num(e.denied)} refused` : ''}${e.via ? `\nvia ${e.via}` : ''}\npolicy: ${e.verdict}${e.layer ? ' (' + e.layer + ')' : ''}\n${e.why}\nClick for the checks`}));
+  // The overview with both layers: a Tools column behind each Service.
+  const far = [];
+  if (both && !acc.length) {
+    const per = new Map(); // svc|tool -> {calls, callers, refused}
+    for (const x of onSvc.values()) for (const [tool, n] of x.tools) {
+      const k = x.to + '|' + tool;
+      const y = per.get(k) || {svc: x.to, tool, calls: 0, callers: new Set(), outside: false};
+      y.calls += n; y.callers.add(x.from); y.outside ||= x.outside; per.set(k, y);
+    }
+    const maxT = Math.max(1, ...[...per.values()].map(y => y.calls));
+    const tgt = new Map((a.targets || []).map(x => [(x.kind === 'tool' ? x.label : actTargetLabel(x)), x]));
+    for (const y of per.values()) {
+      const id = 'svct:' + y.svc + '|' + y.tool, t = tgt.get(y.tool);
+      const cl = [...y.callers].map(c => callers.get(c)?.label || c);
+      far.push({id, label: y.tool, sub: `via ${lastPartJS(svcLabel(y.svc))} · ${fbPlural(y.calls, 'call')} · ${fbPlural(cl.length, 'caller')}`, risk: t?.undeclared || y.outside ? 'red' : t?.denied ? 'amber' : 'green', icon: t?.kind === 'model' ? 'sparkles' : 'plug',
+        tip: `${y.tool}${t?.server ? ' on ' + t.server : ''}\n${num(y.calls)} calls through ${svcLabel(y.svc)}\nCalled by ${cl.join(', ')}${t?.description ? '\n' + t.description : ''}\nClick an agent for every tool it may call`});
+      ge.push({id: 'svctl:' + id, from: y.svc, to: id, by: [...y.callers], risk: 'green', cls: 'fb-gw', w: 1.2 + 3 * Math.log(1 + y.calls) / Math.log(1 + maxT), tip: `${svcLabel(y.svc)} → ${y.tool}: ${num(y.calls)} calls by ${cl.join(', ')}`});
+    }
+  }
   const maxS = Math.max(1, ...[...onSvc.values()].map(x => x.requests));
   for (const x of onSvc.values()) {
     const calls = `Through agentgateway (${[...x.gateways].join(', ')}): ${num(x.requests)} calls${x.denied ? `, ${num(x.denied)} refused` : ''}${x.errors ? `, ${num(x.errors)} failed` : ''}${x.tokens ? `, ${num(x.tokens)} tokens` : ''}${x.tools.size ? '\n' + [...x.tools].map(([k, n]) => `  ${k} ×${n}`).join('\n') : ''}`;
@@ -607,9 +649,9 @@ function tfMap(d, a, netE, gwE0, nodes, callers, targets, layer) {
   }
   const nAcc = acc.reduce((n, x) => n + x.rows.length, 0);
   const toNote = [nAcc ? `${fbPlural(nAcc, 'tool')} it may call or called` : '', nSvc ? fbPlural(nSvc, 'destination') : '', nCalled ? `${num(nCalled)} tools, models or agents called` : nOnSvc ? `${num(nOnSvc)} tools on them` : '', ghosts ? `${num(ghosts)} allowed, not used` : ''].filter(Boolean).join(' · ');
-  const svg = fbGraph({left, right, edges: ge, sel: T.sel, heads: [['server', 'From', fbPlural(left.length, 'source')], ['network', 'To', toNote]]});
+  const svg = fbGraph({left, right, far, edges: ge, sel: T.sel, heads: [['server', 'From', fbPlural(left.length, 'source')], ['network', 'To', toNote], ['plug', 'Tools', `${fbPlural(far.length, 'tool')} called through them`]]});
   const legend = (acc.length ? `<span class="muted">Following ${esc(left.find(n => n.id === T.focus)?.label || '')}: a box for every tool it has access to on ${acc.map(x => esc(x.server)).join(', ')}.</span><span><i class="rc-sw green"></i>allowed, called</span><span><i class="rc-sw dash"></i><span class="muted">faded:</span> allowed, not called</span><span><i class="rc-sw red"></i>called, not allowed by the captured allowlist</span>` : '')
-    + (both && !acc.length ? '<span class="muted">Click an agent to see every tool it may call.</span>' : '')
+    + (both && !acc.length ? `<span class="muted">${far.length ? 'Tools: what was called through each Service. ' : ''}Click an agent to see every tool it may call, called or not.</span>` : '')
     + (both && !acc.length ? '<span class="muted">Both layers: calls through agentgateway are drawn on the Service they went through; hover a line for its tools. Choose Gateway calls for a box per tool.</span>' : '')
     + (T.focus && T.freach && (!acc.length || T.showGhosts) ? '<span><i class="rc-sw dash"></i><span class="muted">faded Services:</span> allowed by policy, not used</span>' : '')
     + (netE.length ? '<span><i class="rc-sw red"></i>plaintext between mesh workloads</span><span><i class="rc-sw amber"></i>no policy, plaintext from outside the mesh, or logs and policy disagree</span><span><i class="rc-sw green"></i>mutual TLS and policy looks at it</span>' : '')
@@ -793,6 +835,7 @@ after.traffic = () => {
   document.querySelectorAll('[data-actsel]').forEach(tr => tr.onclick = () => select(tr.dataset.actsel));
   document.querySelectorAll('[data-tfwhy]').forEach(b => b.onclick = () => select(b.dataset.tfwhy));
   $('#tf-selx')?.addEventListener('click', () => keepY(() => { T.sel = ''; }));
+  document.querySelectorAll('[data-tffollow]').forEach(b => b.onclick = () => { T.focus = b.dataset.tffollow; T.sel = T.focus; T.fexp = {}; T.gz = null; render(); });
   $('#tf-ghosts')?.addEventListener('click', () => keepY(() => { T.showGhosts = !T.showGhosts; T.gz = null; }));
   $('#tf-agents')?.addEventListener('click', () => keepY(() => { T.agents = !T.agents; T.gz = null; }));
   $('#tf-unfocus')?.addEventListener('click', () => { T.focus = ''; T.freach = null; T.fexp = {}; T.gz = null; T.sel = ''; history.replaceState(null, '', '#traffic'); T.lastHash = location.hash; render(); });
