@@ -75,7 +75,25 @@ The **Tools and models** tab of the Traffic page lists, per MCP server, every to
 
 A server outside the cluster, such as GitHub's at `api.githubcopilot.com` behind an agentgateway backend, has no full list in the capture: it is not a kagent MCP server (only those report one), and agentgateway does not log the tools a server offers. Its tools are the ones seen in the capture: called, in an allowlist, or in an agent's configuration. It may offer more.
 
-`code_mode` is agentgateway's Code Mode: the agent is given one tool, `run_code`, and the code it sends calls the backend's tools, so the logs show `run_code` rather than the tools it used.
+## Tool modes: Code and Search
+
+An agentgateway MCP backend can expose its tools four ways (`toolMode`), and what the logs say about which tool ran depends on it:
+
+| Mode | The agent sees | The request log records | The allowlist is checked |
+|---|---|---|---|
+| Standard | the server's tools | the tool called | for each tool |
+| Search | `get_tool` and `invoke_tool` (progressive disclosure) | `get_tool` for a lookup (not which tool it looked up); `invoke_tool` as the tool it invoked | for each tool |
+| Code | one tool, `run_code`: its JavaScript calls the server's tools | `run_code` only, under the target `code_mode` | for each tool the code calls |
+| CodeSearch | `get_tool` and `run_code` | as Search and Code | for each tool the code calls |
+
+So in every mode an agent may call only the tools the allowlist gives it, and Flightbay shows all of them, but in Code mode the logs cannot say which of those the code used. Flightbay handles that this way:
+
+- `run_code` and `get_tool` are **meta-tools**, not the server's tools. Each is put on the server behind its route (the route's agentgateway backend and that backend's MCP targets) instead of a pretend server called `code_mode`, and drawn as its own box: **Code Mode entry point** or **Search mode lookup**, with its calls.
+- On a server reached through `run_code`, every tool the caller is allowed and did not call directly shows as **allowed, may have run in run_code** (amber), not "not called". A tool called directly (Standard or Search mode) shows as called.
+- The Tools and models tab says each server's current `toolMode`. When the calls show Code Mode but the backend is in Standard mode now, it says the calls were made before it changed.
+- An agent's **Tools … may call** table lists its `run_code` and `get_tool` calls first, then every tool it may call, with the same states.
+
+`code_mode` in a raw log line is the target agentgateway gives `run_code`; it is not an MCP server.
 
 kagent reports the tools each MCP server offers in `status.discoveredTools` on `RemoteMCPServer`, `MCPServer` and `ToolServer`. A called tool is checked against a server's list only when the call can be matched to that server, by the server's name, its URL host, or the Service in its URL. The **Tools** tab says for each tool called whether its server lists it: yes, **no**, or unknown when no captured list matches. It also lists the tools servers offer that were never called.
 

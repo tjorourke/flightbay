@@ -5,7 +5,7 @@
 // usage and lock-down tabs. Flightbay Enterprise (feature traffic). Loaded
 // after app.js, which routes #traffic here and #activity to it.
 
-S.act = {tab: 'map', kinds: {tool: true, model: true, agent: true, mcp: true, http: false}, q: '', sel: '', data: null, key: '', gz: null, gfull: false, fopen: {}, showDeclared: false};
+S.act = {tab: 'map', kinds: {meta: true, tool: true, model: true, agent: true, mcp: true, http: false}, q: '', sel: '', data: null, key: '', gz: null, gfull: false, fopen: {}, showDeclared: false};
 S.tf = {tab: 'map', flag: '', ns: '', q: '', sel: '', data: null, key: '', gz: null, gfull: false, fopen: {}, ex: null, exFrom: '', exTo: '', agents: false, focus: '', focusName: '', freach: null, fkey: '', fexp: {}};
 
 const fbKey = () => `${S.state?.revision ?? ''}/${S.state?.logLines ?? ''}`;
@@ -152,12 +152,12 @@ function fbGraphWire(st, key, onPick) {
 }
 
 // ---------- Activity ----------
-const actKinds = {tool: 'Tools', model: 'Models', agent: 'Agents (A2A)', mcp: 'MCP sessions', http: 'Other HTTP routes'};
-const actKindIcon = {tool: 'plug', model: 'sparkles', agent: 'bot', mcp: 'plug', http: 'route'};
+const actKinds = {tool: 'Tools', meta: 'Code and Search mode (run_code, get_tool)', model: 'Models', agent: 'Agents (A2A)', mcp: 'MCP sessions', http: 'Other HTTP routes'};
+const actKindIcon = {tool: 'plug', meta: 'swap', model: 'sparkles', agent: 'bot', mcp: 'plug', http: 'route'};
 const actCallerKind = {identity: 'service account, no workload captured', agentic: 'agent by its calls, no workload captured', workload: 'workload', user: 'JWT subject', outside: 'outside the cluster', address: 'address'};
 const actCallerIcon = {workload: 'server', identity: 'key', user: 'key', outside: 'globe', address: 'network'};
 const actTargetLabel = t => t.kind === 'tool' ? `${t.server}/${t.label}` : t.kind === 'model' ? `${t.provider ? t.provider + '/' : ''}${t.label}` : t.label;
-const actKindName = {tool: 'tool', model: 'model', agent: 'agent', mcp: 'MCP session', http: 'HTTP route'};
+const actKindName = {meta: 'meta-tool', tool: 'tool', model: 'model', agent: 'agent', mcp: 'MCP session', http: 'HTTP route'};
 
 // The Activity filter: free text, or key:value terms matched as a
 // case-insensitive prefix, like the Scorecard's. Every term is matched
@@ -275,9 +275,12 @@ function actTools(d, callers, matched, terms) {
   });
   const tools = (d.tools || []).filter(t => A.srvs.has(t.server) && ok(t)).sort((x, y) => (y.calls - x.calls) || ((y.allowedFor || []).length - (x.allowedFor || []).length) || x.name.localeCompare(y.name));
   const nTools = n => (d.tools || []).filter(t => t.server === n).length;
-  const why = x => x.name === 'code_mode' ? "agentgateway's Code Mode: agents get one tool, run_code, whose code calls the backend's tools, so the logs show run_code rather than the tools it used."
-    : x.hasList ? `the server's own list (kagent): ${fbPlural(x.listed, 'tool')}.`
+  const modeNote = x => (x.meta?.run_code ? ` Reached through Code Mode ${fbPlural(x.meta.run_code, 'time')}: agents call run_code, whose code calls these tools, and the logs do not say which; allowed tools with no direct call may have run there.` : '')
+    + (x.meta?.get_tool ? ` ${fbPlural(x.meta.get_tool, 'get_tool lookup')} (Search mode).` : '')
+    + (x.toolMode && x.toolMode !== 'Standard' ? ` Its backend is in ${x.toolMode} mode now.` : x.meta?.run_code && x.toolMode === 'Standard' ? ' Its backend is in Standard mode now, so those calls were made before it changed.' : '');
+  const why0 = x => x.hasList ? `the server's own list (kagent): ${fbPlural(x.listed, 'tool')}.`
     : `the full list is not in the capture (it is not a kagent MCP server, and agentgateway does not log the tools a server offers). These ${fbPlural(nTools(x.name), 'tool')} are the ones seen: called, in an allowlist, or in an agent's configuration. It may offer more.`;
+  const why = x => why0(x) + modeNote(x);
   const picked = servers.filter(x => A.srvs.has(x.name));
   // One line per server for a few; for more, what kind of list each has.
   const known = picked.length <= 3 ? picked.map(x => `<div><strong class="mono">${esc(x.name)}</strong>: ${esc(why(x))}</div>`).join('')
@@ -286,7 +289,7 @@ function actTools(d, callers, matched, terms) {
   const label = picked.length === servers.length ? 'all' : !picked.length ? 'none' : picked.length === 1 ? picked[0].name : `${picked[0].name} and ${picked.length - 1} more`;
   const row = x => `<label class="rc-fitem ts-row" data-srvname="${esc(x.name.toLowerCase())}" title="${esc(`${nTools(x.name)} tools: ${x.called} called, ${x.allowed} in an allowlist, ${x.configured} configured on an agent, ${x.listed} listed by the server`)}">
     <span class="rc-fname"><input type="checkbox" data-srvck="${esc(x.name)}" ${A.srvs.has(x.name) ? 'checked' : ''}> <span class="mono">${esc(x.name)}</span></span><span class="rc-fn">${num(nTools(x.name))}</span>
-    <span class="rc-fsub muted">${x.called ? `${num(x.called)} called` : 'none called'}${x.hasList ? ' · server list' : x.name === 'code_mode' ? ' · Code Mode' : ' · no server list'}</span></label>`;
+    <span class="rc-fsub muted">${x.called ? `${num(x.called)} called` : 'none called'}${x.meta?.run_code ? ` · run_code ×${num(x.meta.run_code)}` : ''}${x.hasList ? ' · server list' : ' · no server list'}${x.toolMode && x.toolMode !== 'Standard' ? ' · ' + x.toolMode + ' mode' : ''}</span></label>`;
   const picker = `<div class="rc-fmenu"><button class="chip on" data-fmenu data-srvmenu>MCP servers: ${esc(label)} <small>${picked.length}/${servers.length}</small> ▾</button>
     <div class="rc-fpop ts-pop" hidden><input type="search" id="srv-q" placeholder="Find a server" autocomplete="off" spellcheck="false" style="width:100%;margin:2px 0 6px">
     <div class="row" style="gap:6px;margin-bottom:6px"><button class="ghost" data-srvall="1">Select all</button><button class="ghost" data-srvall="0">Clear</button><small class="muted" style="margin-left:auto">most called first</small></div>
@@ -294,8 +297,9 @@ function actTools(d, callers, matched, terms) {
   const yes = (v, cls) => v ? `<span class="${cls || 'green'}">yes</span>` : '<span class="muted">—</span>';
   const list = xs => (xs || []).length ? `<span class="rc-small" title="${esc(xs.join('\n'))}">${esc(xs.slice(0, 3).join(', '))}${xs.length > 3 ? ` <span class="muted">and ${xs.length - 3} more</span>` : ''}</span>` : '<span class="muted">—</span>';
   const calledAs = t => called.get(t.server + '/' + t.name) || (t.calls ? (d.targets || []).find(x => x.kind === 'tool' && x.label === t.name) : null); // kagent servers file calls under their own name
-  const rows = tools.map(t => { const c = calledAs(t); return `<tr><td class="mono">${esc(t.name)}${multi ? `<br><small class="muted">${esc(t.server)}</small>` : ''}</td>
-    <td class="mono">${t.calls ? `${num(t.calls)}${c?.denied ? ` <small class="amber">${num(c.denied)} refused</small>` : ''}${c?.errors ? ` <small class="muted">${num(c.errors)} failed</small>` : ''}` : '<span class="muted">not called</span>'}${c?.undeclared ? ' <span class="rc-badge red">not listed by its server</span>' : ''}</td>
+  const metaRows = picked.flatMap(x => Object.entries(x.meta || {}).map(([k, n]) => `<tr><td class="mono">${esc(k)}${multi ? `<br><small class="muted">${esc(x.name)}</small>` : ''}</td><td class="mono">${num(n)}</td><td colspan="4"><span class="uz-st used">${k === 'run_code' ? 'Code Mode entry point' : 'Search mode lookup'}</span></td><td class="rc-small muted">${k === 'run_code' ? "agentgateway gives Code Mode agents this one tool; the code it runs calls the server's tools, each checked against the allowlist" : 'progressive disclosure: finds a tool and its schema before invoke_tool calls it (invoke_tool is logged as the tool it calls)'}</td></tr>`)).join('');
+  const rows = metaRows + tools.map(t => { const c = calledAs(t); return `<tr><td class="mono">${esc(t.name)}${multi ? `<br><small class="muted">${esc(t.server)}</small>` : ''}</td>
+    <td class="mono">${t.calls ? `${num(t.calls)}${c?.denied ? ` <small class="amber">${num(c.denied)} refused</small>` : ''}${c?.errors ? ` <small class="muted">${num(c.errors)} failed</small>` : ''}` : picked.find(x => x.name === t.server)?.meta?.run_code ? '<span class="amber" title="Its server was reached through Code Mode; the logs do not say which tools run_code used">not called directly · may have run in run_code</span>' : '<span class="muted">not called</span>'}${c?.undeclared ? ' <span class="rc-badge red">not listed by its server</span>' : ''}</td>
     <td>${list(t.callers)}</td><td>${list(t.allowedFor)}</td><td>${list(t.configuredOn)}</td><td>${yes(t.declared)}</td><td class="rc-small muted">${esc(t.description || '')}</td></tr>`; }).join('');
   return `<section class="panel"><div class="panel-head"><h2>Tools by MCP server</h2><small class="muted">${fbPlural(tools.length, 'tool')} on ${fbPlural(picked.length, 'server')}</small></div>
     <div class="panel-body" style="padding-bottom:0"><div class="row wrap" style="align-items:flex-start;gap:14px">${picker}<div class="rc-small" style="flex:1;min-width:280px">${known || '<span class="muted">Pick one or more servers.</span>'}</div></div>${terms?.length && !onlyTools ? '<p class="muted rc-small mt">Keys other than tool: and server: keep the tools with calls that match them.</p>' : ''}</div>
@@ -471,7 +475,7 @@ async function trafficPage() {
     ${stat('Refused', num(netRefused + (a.denials || []).length), `${fbPlural(netRefused, 'edge')} by the mesh, ${num(at.denied)} calls by the gateway`, 'data-tftab="refused" title="Open the Refused tab"', netRefused + (at.denied || 0) ? 'amber' : '')}
     ${stat('No identity', num(at.anonymous), 'tool, model or agent calls', 'data-tfq="state:noidentity" title="Show only these"', at.anonymous ? 'red' : '', T.q === 'state:noidentity')}</div>`;
   const cov = (a.coverage || []).length ? `<p class="muted fb-cov">Gateways with request logs: ${a.coverage.map(c => `<span class="mono">${esc(c.gateway)}</span> <small>(${num(c.requests)}${c.waypoint ? ', waypoint' : ''})</small>`).join(' · ')}</p>` : '';
-  const toolNote = n => /cannot see the full list of tools|is agentgateway's Code Mode/.test(n); // shown per server on the Tools tab
+  const toolNote = n => /cannot see the full list of tools|through Code Mode/.test(n); // shown per server on the Tools tab
   const noteHTML = xs => xs.map(n => `<div class="notice" style="margin-bottom:12px"><span>△</span><div>${esc(rcCap(n))}.</div></div>`).join('');
   const notes = noteHTML([...(d.notes || []), ...(a.notes || []).filter(n => !toolNote(n))]);
   const rank = {critical: 0, high: 1, medium: 2, low: 3};
@@ -656,8 +660,19 @@ function tfMap(d, a, netE, gwE0, nodes, callers, targets, layer) {
     const svcs = [...new Set([...onSvc.values()].map(x => x.to))];
     for (const svc of svcs) {
       // The MCP servers behind a Service: the servers its tool calls name.
-      const servers = [...new Set((a.edges || []).filter(e => e.service === svc).map(e => targets.get(e.to)).filter(x => x?.kind === 'tool').map(x => x.server))];
+      const svcTargets = (a.edges || []).filter(e => e.service === svc).map(e => targets.get(e.to));
+      const servers = [...new Set(svcTargets.filter(x => x?.kind === 'tool' || x?.kind === 'meta').flatMap(x => x.server.split(',')))];
+      const metas = [...new Set(svcTargets.filter(x => x?.kind === 'meta'))];
       const sum = {allowed: 0, called: 0, red: 0};
+      for (const mt of metas) {
+        const y = per.get(svc + '|' + actTargetLabel(mt)) || {calls: 0, callers: new Set()};
+        if (!y.calls) continue;
+        const id = 'svct:' + svc + '|' + actTargetLabel(mt), cl = [...y.callers].map(c => callers.get(c)?.label || c);
+        far.push({id, order: -1, label: mt.label, sub: `${mt.mode === 'Code' ? 'Code Mode' : 'Search lookup'} · ${fbPlural(y.calls, 'call')} · ${fbPlural(cl.length, 'caller')}`, risk: 'green', icon: 'swap',
+          tip: `${mt.label} on ${mt.server}: ${mt.mode === 'Code' ? 'Code Mode gives agents this one tool; the code it runs calls the server\'s tools, and the logs do not say which' : 'Search mode: agents look a tool up before invoke_tool calls it'}\n${num(y.calls)} calls by ${cl.join(', ')}`});
+        ge.push({id: 'svctl:' + id, from: svc, to: id, by: [...y.callers], risk: 'green', cls: 'fb-gw', w: 1.2 + 3 * Math.log(1 + y.calls) / Math.log(1 + maxT), tip: `${svcLabel(svc)} → ${mt.label}: ${num(y.calls)} calls`});
+      }
+      const codeCalls = metas.some(mt => mt.mode === 'Code' && (per.get(svc + '|' + actTargetLabel(mt))?.calls || 0) > 0);
       for (const srv of servers) {
         const infos = (a.tools || []).filter(t => t.server === srv);
         const guarded = infos.some(t => (t.allowedFor || []).length);
@@ -668,17 +683,17 @@ function tfMap(d, a, netE, gwE0, nodes, callers, targets, layer) {
           const y = per.get(svc + '|' + name) || {calls: 0, callers: new Set()};
           const allowed = guarded ? (t.allowedFor || []).length > 0 : true;
           const refusedBy = guarded && y.calls ? [...y.callers].filter(c => !taAllowed(t, whoOf(c))) : [];
-          const state = y.calls ? (refusedBy.length ? (allowed ? 'called, not allowed for some' : 'called, not allowed') : 'called') : allowed ? 'allowed, not called' : (t.configuredOn || []).length ? 'configured, not allowed' : 'not allowed';
+          const state = y.calls ? (refusedBy.length ? (allowed ? 'called, not allowed for some' : 'called, not allowed') : 'called') : allowed && codeCalls ? 'allowed, may have run in run_code' : allowed ? 'allowed, not called' : (t.configuredOn || []).length ? 'configured, not allowed' : 'not allowed';
           if (allowed) sum.allowed++;
           if (y.calls) sum.called++;
           if (refusedBy.length) sum.red++;
           if (!showTool(y.calls > 0, allowed, (t.configuredOn || []).length > 0)) continue;
-          if (!y.calls && allowed && !T.fexp['svcf:' + svc + '|' + srv]) { idle.push(t); continue; }
+          if (!y.calls && allowed && !codeCalls && !T.fexp['svcf:' + svc + '|' + srv]) { idle.push(t); continue; }
           const id = 'svct:' + svc + '|' + name;
           const cl = [...y.callers].map(c => callers.get(c)?.label || c);
-          const risk = refusedBy.length ? 'red' : y.calls ? 'green' : 'grey';
+          const risk = refusedBy.length ? 'red' : y.calls ? 'green' : allowed && codeCalls ? 'amber' : 'grey';
           const who = guarded ? (t.allowedFor || []).length ? `Allowed for ${t.allowedFor.join(', ')} by ${(t.policies || []).map(p => p.namespace + '/' + p.name).join(', ')}` : 'The allowlist gives it to nobody' : `No allowlist on ${srv}: every caller may call it`;
-          far.push({id, order: y.calls ? 0 : 2, label: name, sub: y.calls ? `${state} · ${fbPlural(y.calls, 'call')} · ${fbPlural(cl.length, 'caller')}` : `${lastPartJS(srv)} · ${state}${allowed && guarded ? ` for ${fbPlural((t.allowedFor || []).length, 'caller')}` : ''}`, risk, icon: 'plug', cls: y.calls ? '' : 'rg-unusednode',
+          far.push({id, order: y.calls ? 0 : 2, label: name, sub: y.calls ? `${state} · ${fbPlural(y.calls, 'call')} · ${fbPlural(cl.length, 'caller')}` : `${lastPartJS(srv)} · ${state}${allowed && guarded ? ` for ${fbPlural((t.allowedFor || []).length, 'caller')}` : ''}`, risk, icon: 'plug', cls: y.calls || (allowed && codeCalls) ? '' : 'rg-unusednode',
             tip: `${name} on ${srv}, through ${svcLabel(svc)}\n${state}${y.calls ? `: ${num(y.calls)} calls by ${cl.join(', ')}` : ''}${refusedBy.length ? `\nNot allowed for ${refusedBy.map(c => callers.get(c)?.label || c).join(', ')} by the captured allowlist` : ''}\n${who}${(t.configuredOn || []).length ? `\nIn the configuration of ${t.configuredOn.join(', ')}` : ''}${t.description ? '\n' + t.description : ''}\nClick for its callers and who may call it`});
           ge.push({id: 'svctl:' + id, from: svc, to: id, by: [...y.callers], risk, dash: !y.calls, cls: y.calls ? 'fb-gw' : 'rg-unused', w: y.calls ? 1.2 + 3 * Math.log(1 + y.calls) / Math.log(1 + maxT) : 1, tip: `${svcLabel(svc)} → ${name}: ${state}`});
         }
@@ -736,10 +751,15 @@ function tfMap(d, a, netE, gwE0, nodes, callers, targets, layer) {
       for (const r of x.rows) { if (!showTool(r.calls > 0, r.allowed, r.configured)) continue; (r.calls || !r.allowed || r.configured || x.rows.length <= 16 || T.fexp['acc:' + x.server] ? shown : idle).push(r); }
       for (const r of shown) {
         const id = 'acc:' + x.server + '/' + r.name;
-        const st = !r.allowed ? 'called, not allowed' : r.calls ? `allowed, called ×${num(r.calls)}` : 'allowed, not called';
-        right.push({id, order: r.calls || !r.allowed ? 0 : r.configured ? 1.5 + acc.indexOf(x) / 100 : 2 + acc.indexOf(x) / 100, label: r.name, sub: `${lastPartJS(x.server)} · ${st}`, risk: !r.allowed ? 'red' : r.calls ? 'green' : 'grey', icon: 'plug', cls: r.calls || !r.allowed ? '' : 'rg-unusednode',
+        const st = !r.allowed ? 'called, not allowed' : r.calls ? `allowed, called ×${num(r.calls)}` : r.viaCode ? 'allowed, may have run in run_code' : 'allowed, not called';
+        right.push({id, order: r.calls || !r.allowed ? 0 : r.viaCode ? 1 : r.configured ? 1.5 + acc.indexOf(x) / 100 : 2 + acc.indexOf(x) / 100, label: r.name, sub: `${lastPartJS(x.server)} · ${st}`, risk: !r.allowed ? 'red' : r.calls ? 'green' : r.viaCode ? 'amber' : 'grey', icon: 'plug', cls: r.calls || !r.allowed || r.viaCode ? '' : 'rg-unusednode',
           tip: `${r.name} on ${x.server}\n${st}${r.refused ? `, ${num(r.refused)} refused` : ''}${r.configured ? '\nin its own tool list' : ''}${r.description ? '\n' + r.description : ''}\n${x.note}`});
-        ge.push({id: 'accl:' + id, from: T.focus, to: id, risk: !r.allowed ? 'red' : r.calls ? 'green' : 'grey', dash: !r.calls, cls: r.calls ? 'fb-gw' : 'rg-unused', w: r.calls ? 1.2 + 3 * Math.log(1 + r.calls) / Math.log(1 + maxA) : 1, tip: `${st}: ${r.name}`});
+        ge.push({id: 'accl:' + id, from: T.focus, to: id, risk: !r.allowed ? 'red' : r.calls ? 'green' : r.viaCode ? 'amber' : 'grey', dash: !r.calls, cls: r.calls ? 'fb-gw' : 'rg-unused', w: r.calls ? 1.2 + 3 * Math.log(1 + r.calls) / Math.log(1 + maxA) : 1, tip: `${st}: ${r.name}`});
+      }
+      for (const [k, n] of Object.entries(x.meta || {})) {
+        const id = 'accm:' + x.server + '/' + k;
+        right.push({id, order: 0, label: k, sub: `${lastPartJS(x.server)} · ${k === 'run_code' ? 'Code Mode' : 'Search lookup'} ×${num(n)}`, risk: 'green', icon: 'swap', tip: `${k} on ${x.server}: ${num(n)} calls\n${k === 'run_code' ? 'Code Mode: the code it sends calls the tools; the logs do not say which, so the allowed tools in amber may have run' : 'Search mode: looks a tool up before invoke_tool calls it'}`});
+        ge.push({id: 'accl:' + id, from: T.focus, to: id, risk: 'green', cls: 'fb-gw', w: 2, tip: `${k} ×${num(n)}`});
       }
       if (idle.length) {
         right.push({id: 'accfold:' + x.server, order: 2.5 + acc.indexOf(x) / 100, label: `${fbPlural(idle.length, 'more tool')} on ${lastPartJS(x.server)}`, sub: 'allowed, not called · click to open up', risk: 'grey', icon: 'folder', cls: 'rg-unusednode', tip: idle.map(r => r.name).join('\n')});
@@ -751,7 +771,7 @@ function tfMap(d, a, netE, gwE0, nodes, callers, targets, layer) {
   const toNote = [nAcc ? `${fbPlural(nAcc, 'tool')} it may call or called` : '', nSvc ? fbPlural(nSvc, 'destination') : '', nCalled ? `${num(nCalled)} tools, models or agents called` : far.length ? 'MCP tools behind them' : nOnSvc ? `${num(nOnSvc)} tools on them` : '', ghosts ? `${num(ghosts)} allowed, not used` : ''].filter(Boolean).join(' · ');
   const svg = fbGraph({left, right, far, edges: ge, sel: T.sel, heads: [['server', 'From', fbPlural(left.length, 'source')], ['network', 'To', toNote], ['plug', 'Tools', (() => { const t = [...svcSum.values()].reduce((m, x) => ({allowed: m.allowed + x.allowed, called: m.called + x.called}), {allowed: 0, called: 0}); return `${fbPlural(t.allowed, 'tool')} allowed · ${num(t.called)} called`; })()]]});
   const legend = (acc.length ? `<span class="muted">Following ${esc(left.find(n => n.id === T.focus)?.label || '')}: a box for every tool it has access to on ${acc.map(x => esc(x.server)).join(', ')}.</span><span><i class="rc-sw green"></i>allowed, called</span><span><i class="rc-sw dash"></i><span class="muted">faded:</span> allowed, not called</span><span><i class="rc-sw red"></i>called, not allowed by the captured allowlist</span>` : '')
-    + (both && !acc.length && far.length ? '<span class="muted">Tools behind each Service:</span><span><i class="rc-sw green"></i>called, and allowed for its callers</span><span><i class="rc-sw red"></i>called by a caller the captured allowlist does not allow</span><span><i class="rc-sw grey"></i><span class="muted">faded, dashed:</span> allowed, not called (or configured, not allowed)</span><span class="muted">Click a box to keep its lines lit; an agent\'s panel below has Show only its traffic.</span>' : '')
+    + (both && !acc.length && far.length ? '<span class="muted">Tools behind each Service:</span><span><i class="rc-sw green"></i>called, and allowed for its callers</span><span><i class="rc-sw red"></i>called by a caller the captured allowlist does not allow</span><span><i class="rc-sw amber"></i>allowed, may have run inside run_code (Code Mode does not log which tools)</span><span><i class="rc-sw grey"></i><span class="muted">faded, dashed:</span> allowed, not called (or configured, not allowed)</span><span class="muted">Click a box to keep its lines lit; an agent\'s panel below has Show only its traffic.</span>' : '')
     + (both && !acc.length && !far.length ? '<span class="muted">Click a box to keep its lines lit. An agent\'s panel below lists every tool it may call, and Show only its traffic draws them.</span>' : '')
     + (both && !acc.length ? '<span class="muted">Both layers: calls through agentgateway are drawn on the Service they went through; hover a line for its tools. Choose Gateway calls for a box per tool.</span>' : '')
     + (T.focus && T.freach && (!acc.length || T.showGhosts) ? '<span><i class="rc-sw dash"></i><span class="muted">faded Services:</span> allowed by policy, not used</span>' : '')
@@ -1190,12 +1210,19 @@ function toolAccess(act, who, server) {
     const c = calls.get(x.label) || {calls: 0, refused: 0};
     c.calls += e.requests; c.refused += e.denied; calls.set(x.label, c);
   }
+  // Meta-tools the caller used on this server (Code and Search modes).
+  const meta = {};
+  for (const e of act.edges || []) {
+    if (!who.ids.includes(e.from)) continue;
+    const x = (act.targets || []).find(y => y.id === e.to);
+    if (x?.kind === 'meta' && x.server.split(',').includes(server)) meta[x.label] = (meta[x.label] || 0) + e.requests;
+  }
   const names = new Set([...tools.map(t => t.name), ...calls.keys()]);
   const rows = [...names].map(n => {
     const t = tools.find(x => x.name === n) || {name: n};
     const allowed = guarded ? taAllowed(t, who) : true;
     const c = calls.get(n) || {calls: 0, refused: 0};
-    return {name: n, allowed, configured: (t.configuredOn || []).includes(who.label), listed: !!t.declared, calls: c.calls, refused: c.refused, policies: (t.policies || []).map(p => p.namespace + '/' + p.name), description: t.description || ''};
+    return {name: n, allowed, viaCode: allowed && !c.calls && meta.run_code > 0, configured: (t.configuredOn || []).includes(who.label), listed: !!t.declared, calls: c.calls, refused: c.refused, policies: (t.policies || []).map(p => p.namespace + '/' + p.name), description: t.description || ''};
   }).filter(r => r.allowed || r.calls || r.configured);
   rows.sort((x, y) => (y.allowed - x.allowed) || (y.calls - x.calls) || x.name.localeCompare(y.name));
   const policies = [...new Set(tools.flatMap(t => (t.policies || []).map(p => p.namespace + '/' + p.name)))];
@@ -1204,14 +1231,18 @@ function toolAccess(act, who, server) {
   if (guarded) note = n ? `${fbPlural(n, 'tool')}: what the allowlist ${policies.join(', ')} gives ${who.label}.` : `The allowlist ${policies.join(', ')} names no tool for ${who.label}, so it may call none.`;
   else if (si.hasList) note = `No agentgateway allowlist on ${server}, so ${who.label} may call every tool it lists: ${fbPlural(n, 'tool')}.`;
   else note = `No agentgateway allowlist on ${server}, so ${who.label} may call every tool it offers. Its tool list is not in the capture (it is outside the cluster, and agentgateway does not log tools/list), so these ${fbPlural(n, 'tool')} are only the ones known from calls, other allowlists and agent configuration; it may offer more.`;
-  return {server, rows, guarded, allowedN: n, note};
+  if (meta.run_code) note += ` It called run_code ${fbPlural(meta.run_code, 'time')} (Code Mode): agentgateway checks each tool its code calls against the same allowlist, but does not log which, so every allowed tool it did not call directly may have run inside run_code.`;
+  if (meta.get_tool) note += ` It looked tools up with get_tool ${fbPlural(meta.get_tool, 'time')} (Search mode); the logs do not say which.`;
+  return {server, rows, guarded, allowedN: n, note, meta};
 }
 function taTable(acc) {
-  const flag = r => !r.allowed && r.calls ? '<span class="rc-badge red" title="Called, although the captured allowlist does not name it for this caller: the policy may be newer than the calls">called, not allowed</span>'
+  const flag = r => r.viaCode ? '<span class="uz-st tried" title="Code Mode: its run_code calls may have used this tool; the logs do not say">allowed, may have run in run_code</span>' : !r.allowed && r.calls ? '<span class="rc-badge red" title="Called, although the captured allowlist does not name it for this caller: the policy may be newer than the calls">called, not allowed</span>'
     : r.allowed && r.calls ? '<span class="uz-st used">allowed, called</span>' : r.allowed ? '<span class="uz-st unused">allowed, not called</span>' : '<span class="uz-st tried">configured, not allowed</span>';
   const rows = acc.rows.map(r => `<tr><td class="mono">${esc(r.name)}</td><td>${flag(r)}</td><td class="mono">${r.calls ? `${num(r.calls)}${r.refused ? ` <small class="amber">${num(r.refused)} refused</small>` : ''}` : '<span class="muted">—</span>'}</td>
     <td>${r.configured ? '<span class="green">yes</span>' : '<span class="muted">—</span>'}</td><td class="rc-small muted">${esc(r.description)}</td></tr>`).join('');
-  return `<p class="rc-small ${acc.guarded ? '' : 'amber'}" style="margin:0 0 8px">${esc(acc.note)}</p>${rows ? `<div class="table-scroll" style="max-height:50vh"><table><thead><tr><th>Tool</th><th>Access</th><th>Calls</th><th title="In the agent's own toolNames or ALLOWED_TOOLS">In its config</th><th>Description</th></tr></thead><tbody>${rows}</tbody></table></div>` : ''}`;
+  const metaRows = Object.entries(acc.meta || {}).map(([k, n]) => `<tr><td class="mono">${esc(k)}</td><td><span class="uz-st used">${k === 'run_code' ? 'Code Mode entry point' : 'Search mode lookup'}</span></td><td class="mono">${num(n)}</td><td><span class="muted">—</span></td><td class="rc-small muted">${k === 'run_code' ? 'agentgateway gives Code Mode agents this one tool; the code it runs calls the tools below' : 'progressive disclosure: finds a tool and its schema before calling it'}</td></tr>`).join('');
+  const rowsAll = metaRows + rows;
+  return `<p class="rc-small ${acc.guarded ? '' : 'amber'}" style="margin:0 0 8px">${esc(acc.note)}</p>${rowsAll ? `<div class="table-scroll" style="max-height:50vh"><table><thead><tr><th>Tool</th><th>Access</th><th>Calls</th><th title="In the agent's own toolNames or ALLOWED_TOOLS">In its config</th><th>Description</th></tr></thead><tbody>${rowsAll}</tbody></table></div>` : ''}`;
 }
 function taPanel(act, who, servers, title) {
   if (!servers.length) return '';

@@ -19,7 +19,7 @@ For one agent at a time (what it may reach, what it used, and the policy that wo
 
 Traffic is part of [Flightbay Enterprise](/enterprise/). Turn it on with `FLIGHTBAY_ENTERPRISE=1 flightbay ui` or `FLIGHTBAY_FEATURES=traffic` (`activity`, the name of the gateway layer's old page, still works).
 
-![Both layers: every GitHub tool behind kagent/github-mcp, the two called ones red because callers the allowlist does not cover called them](/images/traffic-map.png)
+![Both layers: the GitHub tools behind each Service; behind mcp-demo, run_code and get_tool, and the allowed tools that may have run inside run_code in amber](/images/traffic-map.png)
 
 ## Findings
 
@@ -52,7 +52,10 @@ With both layers on, the map has three columns: sources, the Services they reach
 |---|---|
 | green, solid | Called, and allowed for every caller that called it (or the server has no allowlist) |
 | red | Called by a caller the allowlist does not allow (`called, not allowed for some` when others are allowed): the policy is probably newer than the calls |
+| amber | Allowed, and the server was reached through Code Mode (`run_code`), whose logs do not say which tools ran: it may have run there |
 | faded, dashed | Allowed, not called; or not allowed at all |
+
+`run_code` and `get_tool`, the meta-tools of agentgateway's Code and Search modes, get boxes of their own beside the real tools. See [Tool modes](/desk/activity/#tool-modes-code-and-search).
 
 **Found by** chooses which to draw (Tools called, allowed or configured); the same choice applies when following one agent. A server with more than 20 unused tools (a kagent server lists all of its own) folds them into one box. Hover an agent to trace it through its Service to the tools it called; hover a tool to see who called it; click a tool for who may call it (the allowlist and the agents configured for it) and who did, with a button to see every tool one of them may call.
 

@@ -276,3 +276,55 @@ func TestActivityToolInventory(t *testing.T) {
 		}
 	}
 }
+
+var rRoute = res("gateway.networking.k8s.io", "v1", "httproutes", "HTTPRoute")
+
+// Code and Search modes: run_code and get_tool are meta-tools, attributed to
+// the server behind the route's backend, not listed as the server's tools.
+func TestActivityCodeAndSearchModes(t *testing.T) {
+	ws := activityWS(t, "Lists", "list_issues")
+	for _, r := range []bundle.APIResource{rAgwBe, rRoute} {
+		ws.SetCoverage(bundle.Coverage{ID: "c." + r.Resource, Cluster: "c", Type: bundle.CoverageResource, Group: r.Group, Version: r.Version, Resource: r.Resource, State: bundle.StateComplete})
+	}
+	ws.AddObjects("c", rAgwBe, []map[string]any{o("AgentgatewayBackend", "agentgateway-system", "gh", nil, map[string]any{"spec": map[string]any{
+		"mcp": map[string]any{"toolMode": "Code", "targets": []any{map[string]any{"name": "github"}}}}})}, "be")
+	ws.AddObjects("c", rRoute, []map[string]any{o("HTTPRoute", "agentgateway-system", "gh-route", nil, map[string]any{"spec": map[string]any{
+		"rules": []any{map[string]any{"backendRefs": []any{map[string]any{"group": "agentgateway.dev", "kind": "AgentgatewayBackend", "name": "gh"}}}}}})}, "rt")
+	gw := "gateway=agentgateway-system/mcp listener=http route=agentgateway-system/gh-route src.addr=10.244.1.43:9 src.identity=spiffe://mesh1/ns/kagent/sa/triage http.status=200 protocol=mcp mcp.method.name=tools/call mcp.resource.type=tool "
+	ws.AddLogLines("c", "agentgateway-system", "mcp-1", "agentgateway", "current", []string{
+		agwLine("2026-09-28T19:00:00Z", gw+"mcp.target=code_mode gen_ai.tool.name=run_code"),
+		agwLine("2026-09-28T19:00:01Z", gw+"mcp.target=code_mode gen_ai.tool.name=run_code"),
+		agwLine("2026-09-28T19:00:02Z", gw+"mcp.target=github gen_ai.tool.name=get_tool"),
+	}, "l5")
+	ws.WaitLogs()
+	a := EvaluateActivity(ws, nil, "")
+	var rc, gt *ActTarget
+	for i := range a.Targets {
+		switch a.Targets[i].ID {
+		case "meta:github/run_code":
+			rc = &a.Targets[i]
+		case "meta:github/get_tool":
+			gt = &a.Targets[i]
+		}
+	}
+	if rc == nil || rc.Kind != "meta" || rc.Mode != "Code" || rc.Requests != 2 || gt == nil || gt.Mode != "Search" {
+		t.Fatalf("run_code %+v get_tool %+v", rc, gt)
+	}
+	for _, x := range a.Tools {
+		if x.Name == "run_code" || x.Name == "get_tool" {
+			t.Fatalf("meta-tools are not the server's tools: %+v", x)
+		}
+	}
+	var gh *ServerInfo
+	for i := range a.Servers {
+		if a.Servers[i].Name == "github" {
+			gh = &a.Servers[i]
+		}
+	}
+	if gh == nil || gh.ToolMode != "Code" || gh.Meta["run_code"] != 2 || gh.Meta["get_tool"] != 1 {
+		t.Fatalf("server %+v", gh)
+	}
+	if a.Totals.ToolCalls < 3 {
+		t.Fatalf("meta-tool calls are tool calls: %+v", a.Totals)
+	}
+}

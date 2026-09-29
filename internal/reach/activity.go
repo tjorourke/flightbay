@@ -88,7 +88,8 @@ type ActCaller struct {
 // ActTarget is what was called.
 type ActTarget struct {
 	ID           string   `json:"id"`
-	Kind         string   `json:"kind"` // tool, model, agent, mcp, http
+	Kind         string   `json:"kind"`           // tool, meta (run_code, get_tool), model, agent, mcp, http
+	Mode         string   `json:"mode,omitempty"` // for meta: Code (run_code) or Search (get_tool)
 	Label        string   `json:"label"`
 	Server       string   `json:"server,omitempty"`   // MCP target, or the route that serves it
 	Provider     string   `json:"provider,omitempty"` // LLM provider
@@ -188,6 +189,14 @@ type ServerInfo struct {
 	Called     int    `json:"called"`
 	HasList    bool   `json:"hasList"` // its own tool list was captured
 	Known      int    `json:"known"`   // tools the capture names for it, from any source
+	// ToolMode is how the agentgateway backend exposes the server now:
+	// Standard, Search (get_tool and invoke_tool), Code (run_code) or
+	// CodeSearch (get_tool and run_code). Empty when no backend names it.
+	ToolMode string `json:"toolMode,omitempty"`
+	// Meta counts calls to the meta-tools agentgateway gave agents instead of
+	// the server's tools: run_code (Code Mode) and get_tool (Search).
+	// invoke_tool is logged as the tool it invoked, so it is not here.
+	Meta map[string]int `json:"meta,omitempty"`
 }
 
 // ToolChanges compares tools and callers with a baseline capture.
@@ -555,6 +564,22 @@ func (b *actBuilder) add(c *cluster, agents map[*workload]string, r store.AgwReq
 
 	ca := b.caller(c, agents, f, r.First)
 	tid, tt := target(f)
+	// Code and Search modes give agents meta-tools instead of the server's
+	// tools. run_code is logged under the target "code_mode"; its server is
+	// the one the route's backend names. get_tool is a lookup, unless the
+	// server really has a tool of that name.
+	if tt.Kind == "tool" && (tt.Label == "run_code" || tt.Label == "get_tool") {
+		srv := tt.Server
+		if srvs := c.routeServers(f["route"]); len(srvs) > 0 && (srv == "code_mode" || !has(srvs, srv)) {
+			srv = strings.Join(srvs, ",")
+		}
+		real := b.tools[srv+"/"+tt.Label]
+		if tt.Label == "run_code" || real == nil || (!real.Declared && len(real.AllowedFor) == 0) {
+			mode := map[string]string{"run_code": "Code", "get_tool": "Search"}[tt.Label]
+			tt = ActTarget{Kind: "meta", Mode: mode, Label: tt.Label, Server: srv}
+			tid = "meta:" + srv + "/" + tt.Label
+		}
+	}
 	t := b.targets[tid]
 	if t == nil {
 		tt.ID = tid
@@ -649,6 +674,8 @@ func (b *actBuilder) add(c *cluster, agents map[*workload]string, r store.AgwReq
 		if allowed, ok := b.allow[strings.TrimPrefix(ca.ID, "w:")]; ok && !allowed[t.Label] {
 			e.OutsideAllowlist = true
 		}
+	case "meta":
+		b.a.Totals.ToolCalls += r.Count
 	case "model":
 		b.a.Totals.LLMCalls += r.Count
 	}
@@ -805,7 +832,7 @@ func (b *actBuilder) finish(inventory bool) {
 		return a.Targets[i].ID < a.Targets[j].ID
 	})
 	for _, e := range b.edges {
-		if t := b.targets[e.To]; t != nil && (t.Kind == "tool" || t.Kind == "model" || t.Kind == "agent") {
+		if t := b.targets[e.To]; t != nil && (t.Kind == "tool" || t.Kind == "meta" || t.Kind == "model" || t.Kind == "agent") {
 			if ca := b.callers[e.From]; ca != nil && (ca.Kind == "workload" || ca.Kind == "identity") && e.Requests > e.Denied {
 				ca.Agentic = true
 			}
@@ -1312,7 +1339,24 @@ func (b *actBuilder) serverSummary() {
 			si.Called++
 		}
 	}
-	for _, si := range by {
+	modes := map[string]string{}
+	for _, c := range b.clusters {
+		for k, v := range c.serverModes() {
+			modes[k] = v
+		}
+	}
+	for _, t := range b.targets {
+		if t.Kind != "meta" {
+			continue
+		}
+		si := get(t.Server)
+		if si.Meta == nil {
+			si.Meta = map[string]int{}
+		}
+		si.Meta[t.Label] += t.Requests
+	}
+	for n, si := range by {
+		si.ToolMode = modes[n]
 		b.a.Servers = append(b.a.Servers, *si)
 	}
 	sort.Slice(b.a.Servers, func(i, j int) bool {
@@ -1330,6 +1374,9 @@ func (b *actBuilder) serverSummary() {
 		b.a.Servers[i].Known = known[b.a.Servers[i].Name]
 	}
 	for _, si := range b.a.Servers {
+		if si.Meta["run_code"] > 0 {
+			b.a.Notes = append(b.a.Notes, fmt.Sprintf("Agents reached MCP server %s through Code Mode %d times: agentgateway gave them one tool, run_code, and the code they sent called the server's tools. The logs do not say which tools the code called, so any tool the caller is allowed may have been used", si.Name, si.Meta["run_code"]))
+		}
 		if si.Called > 0 && !si.HasList {
 			b.a.Notes = append(b.a.Notes, serverNote(si))
 		}
@@ -1366,9 +1413,68 @@ func (b *actBuilder) placeConfigured() {
 
 // serverNote says, in plain words, why a server's tool list is incomplete.
 func serverNote(si ServerInfo) string {
-	if si.Name == "code_mode" {
-		return "code_mode is agentgateway's Code Mode: the agent is given one tool, run_code, and the code it sends calls the backend's tools, so the logs show run_code rather than the tools it used"
-	}
 	return fmt.Sprintf("Flightbay cannot see the full list of tools MCP server %s offers: it is not a kagent MCP server (only those report one), and agentgateway does not log the list a server offers. The %d tools shown are the ones seen in the capture (%d called, %d in an allowlist, %d in an agent's configuration); it may offer more",
 		si.Name, si.Known, si.Called, si.Allowed, si.Configured)
+}
+
+// routeServers names the MCP servers behind a route: the targets of the
+// agentgateway backends an HTTPRoute sends to.
+func (c *cluster) routeServers(route string) []string {
+	ns, name, ok := strings.Cut(route, "/")
+	if !ok {
+		return nil
+	}
+	var out []string
+	for _, r := range c.list("gateway.networking.k8s.io", "httproutes") {
+		if r.Namespace != ns || r.Name != name {
+			continue
+		}
+		for _, rule := range l(path(r.Obj, "spec", "rules")) {
+			for _, br := range l(m(rule)["backendRefs"]) {
+				bm := m(br)
+				if !strings.HasSuffix(s(bm["kind"]), "Backend") {
+					continue
+				}
+				bns := first(s(bm["namespace"]), ns)
+				for _, g := range []struct{ group, res string }{{"agentgateway.dev", "agentgatewaybackends"}, {"enterpriseagentgateway.solo.io", "enterpriseagentgatewaybackends"}} {
+					for _, be := range c.list(g.group, g.res) {
+						if be.Namespace == bns && be.Name == s(bm["name"]) {
+							for _, sec := range []string{"mcp", "entMcp"} {
+								for _, t := range l(path(be.Obj, "spec", sec, "targets")) {
+									if n := s(m(t)["name"]); n != "" {
+										out = union(out, []string{n})
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return out
+}
+
+// serverModes maps each MCP target name to its backend's tool mode.
+func (c *cluster) serverModes() map[string]string {
+	out := map[string]string{}
+	for _, g := range []struct{ group, res string }{{"agentgateway.dev", "agentgatewaybackends"}, {"enterpriseagentgateway.solo.io", "enterpriseagentgatewaybackends"}} {
+		for _, be := range c.list(g.group, g.res) {
+			for _, sec := range []string{"mcp", "entMcp"} {
+				mcp := m(path(be.Obj, "spec", sec))
+				if mcp == nil {
+					continue
+				}
+				mode := first(s(mcp["toolMode"]), "Standard")
+				for _, t := range l(mcp["targets"]) {
+					if n := s(m(t)["name"]); n != "" {
+						if prev, ok := out[n]; !ok || prev == "Standard" {
+							out[n] = mode
+						}
+					}
+				}
+			}
+		}
+	}
+	return out
 }
