@@ -1,16 +1,16 @@
 ---
-title: Agents
-weight: 90
+title: Agents tab
+weight: 96
 description: For every agent, MCP server and agent gateway, what it can reach on the network, what those destinations can reach for it, and the YAML to lock each path down.
 ---
 
-# Agents
+# Agents tab
 
-The Agents page is one place per agent: what it can reach (Agent reach, below), what it actually used and called, and the policy that would lock it down to that. For the whole cluster's traffic, agents or not, see [Traffic](/desk/traffic/).
+The **Agents** tab of the [Traffic](/desk/traffic/) page is one place per agent: what it can reach (Agent reach, below), what it actually used and called, and the policy that would lock it down to that. It was a page of its own; `#reach` and `#reach?agent=ns/name` links now open the tab, and `#traffic?tab=agents&agent=ns/name` opens one agent. Every agent's findings are also on the Traffic page's Findings panel, grouped across agents.
 
 Agent reach works out, for every AI agent in a snapshot, everything it can reach on the network and everything those destinations can reach on its behalf. That is the agent's real blast radius, and it is usually far wider than anyone expects.
 
-The Agents page is part of [Flightbay Enterprise](/enterprise/). Turn it on with `FLIGHTBAY_ENTERPRISE=1 flightbay ui` or `FLIGHTBAY_FEATURES=reach`. With the Traffic feature on as well (`FLIGHTBAY_ENTERPRISE=1` turns on both), it also shows what each agent used and called.
+The Agents tab is part of [Flightbay Enterprise](/enterprise/). Turn it on with `FLIGHTBAY_ENTERPRISE=1 flightbay ui` or `FLIGHTBAY_FEATURES=reach`; with only `reach` on, the Traffic page shows just this tab. With the Traffic feature on as well (`FLIGHTBAY_ENTERPRISE=1` turns on both), it also shows what each agent used and called.
 
 ![Every agent, worst first](/images/reach-list.png)
 

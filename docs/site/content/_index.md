@@ -60,7 +60,7 @@ flightbay ui .                              # open the newest capture here in yo
 | What happened, in order | [Timeline](/desk/timeline/) |
 | Rules that point at likely problems | [Findings](/desk/findings/) |
 | Solo best practices, scored | [Scorecard](/desk/scorecard/) and the [list of checks](/desk/scorecard-checks/) |
-| What each agent can reach, used and called | [Agents](/desk/agent-reach/) |
+| What each agent can reach, used and called | [Traffic: Agents tab](/desk/agent-reach/) |
 | Every connection and gateway call, and why one was denied | [Traffic](/desk/traffic/) |
 | What changed between two captures | [Compare](/desk/compare/) |
 | Envoy, ztunnel, agentgateway and istiod as captured | [Proxy configs](/desk/proxy-configs/) |

@@ -15,15 +15,36 @@ The Traffic page shows what happened on the cluster, in two layers on one map:
 
 The **Why?** explainer takes one source and one destination and shows every check on the way, in order, with the policy each one read. The verdicts come from the same evaluator as the [Agents](/desk/agent-reach/) page, so the map, the explainer and each agent's reach always agree.
 
-For one agent at a time (what it may reach, what it used, and the policy that would lock it down to that), use the Agents page. The Traffic page is for the whole cluster, agents or not.
+For one agent at a time (what it may reach, what it used, and the policy that would lock it down to that), open the **Agents** tab, or click an agent's name in a finding. See [Agents tab](/desk/agent-reach/).
 
 Traffic is part of [Flightbay Enterprise](/enterprise/). Turn it on with `FLIGHTBAY_ENTERPRISE=1 flightbay ui` or `FLIGHTBAY_FEATURES=traffic` (`activity`, the name of the gateway layer's old page, still works).
 
 ![Both layers: every GitHub tool behind kagent/github-mcp, the two called ones red because callers the allowlist does not cover called them](/images/traffic-map.png)
 
+## Findings
+
+The Findings panel has the network's findings (plaintext, traffic no policy looks at), the gateways' (calls with no identity, refusals, tools outside an agent's list) and every agent's reach findings, grouped so each is listed once with the agents it applies to (`Reaches the internet directly · 7 agents`). Click an agent's name in a finding to open it on the Agents tab, where its fix is. The five most serious show first; **Show all** lists the rest.
+
+![Totals, the grouped findings, and the tabs](/images/traffic-findings.png)
+
+## Found by
+
+**Found by** above the map chooses what it draws, by where it comes from, with a count for each:
+
+| Choice | Draws |
+|---|---|
+| Any | Everything: connections, gateway calls, and every tool behind each Service |
+| ztunnel connections | The network layer only |
+| agentgateway calls | The gateway layer only: a box per tool, model and agent called |
+| Tools called | Services with only the tools that were called behind them |
+| Tools allowed | Only the tools an allowlist allows (every tool of a server without one), called or not |
+| Tools configured | Only the tools named in an agent's `toolNames` or `ALLOWED_TOOLS` |
+
+The menu also lists the other flow sources in the capture (Hubble, VPC flow logs and so on), which each agent's reach uses on the Agents tab. The Connections and Gateway calls totals set it too.
+
 ## Layers
 
-**Both**, **Network** and **Gateway calls** choose what the map draws; clicking the Connections or Gateway calls total does the same. A workload that does both appears once on the left.
+**Found by** (above) chooses the layer: ztunnel connections, agentgateway calls, or both. A workload that does both appears once on the left.
 
 With both layers on, the map has three columns: sources, the Services they reached, and **Tools**, every tool of the MCP servers behind each Service, called or not. The Service box counts them (`13 allowed · 2 called · 2 not allowed`), and each tool is coloured by what the captured allowlists say:
 
@@ -33,7 +54,7 @@ With both layers on, the map has three columns: sources, the Services they reach
 | red | Called by a caller the allowlist does not allow (`called, not allowed for some` when others are allowed): the policy is probably newer than the calls |
 | faded, dashed | Allowed, not called; or not allowed at all |
 
-**Tools: Called**, **Tools: Allowed** and **Tools: Both** in the map header choose which to draw; the same switch applies when following one agent. A server with more than 20 unused tools (a kagent server lists all of its own) folds them into one box. Hover an agent to trace it through its Service to the tools it called; hover a tool to see who called it; click a tool for who may call it (the allowlist and the agents configured for it) and who did, with a button to see every tool one of them may call.
+**Found by** chooses which to draw (Tools called, allowed or configured); the same choice applies when following one agent. A server with more than 20 unused tools (a kagent server lists all of its own) folds them into one box. Hover an agent to trace it through its Service to the tools it called; hover a tool to see who called it; click a tool for who may call it (the allowlist and the agents configured for it) and who did, with a button to see every tool one of them may call.
 
 The middle column holds Services only. A call through agentgateway is drawn on the Service it went through (the waypoint's Service, or the gateway's), and the box says how many tools were called on it (`kagent/github-mcp · Service · 2 tools called`). Hover the line for the tools and counts, or click the Service for a table of every call through it. When ztunnel also logged the connection, the calls are added to that line; a caller whose connections are not in the capture gets a line of its own. Choose **Gateway calls** for a box per tool, model and agent.
 
@@ -124,6 +145,7 @@ A Service with no pods whose waypoint answers for it (an agentgateway waypoint i
 | Map | Sources on the left, destinations and what was called on the right. Box colour is green in the mesh, amber not in the mesh, grey outside the capture. For connections, line colour is red for plaintext in the mesh, amber for no policy, plaintext from outside the mesh or disagreement, green for mutual TLS with a policy looking at it. For gateway calls, red is a call outside an agent's tool list, to a tool its server does not list, or with every call refused; amber is no identity or some refusals. Dashed lines have refusals. Hover a box to trace its lines; click a box or a line for its detail underneath. |
 | Connections | The network layer as a table, with a **Why?** button per row |
 | Calls | The gateway layer as a table: caller, target, calls, refusals, failures, tokens, gateway |
+| Agents | Every agent, MCP server and agent gateway, worst first; click one for its reach, what it did, its tools, the lock-down and its findings. See [Agents tab](/desk/agent-reach/). |
 | Tools and models | Every tool the capture names, per MCP server: how often it was called and by whom, who an agentgateway allowlist allows to call it, which agents are configured for it, and whether the server lists it. Then tokens and cost per model and per caller. See [Gateway calls](/desk/activity/#tool-lists). |
 | Refused | Refused gateway calls, with the agentgateway policies that produce each reason, and connections refused by the mesh |
 | Tool changes | With a baseline loaded: tools added, removed or whose description changed |

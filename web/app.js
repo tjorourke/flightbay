@@ -57,7 +57,7 @@ function parseHash() {
   if (view === 'posture' || view === 'bestpractices') { location.replace('#scorecard' + (query ? '?' + query : '')); }
   if ((view === 'scorecard' || view === 'posture') && p.has('tab')) S.pst.tab = p.get('tab');
   if (view === 'resources' && p.has('resource')) { S.res.resource = p.get('resource'); S.res.group = p.get('group') || ''; }
-  if (view === 'reach') S.reach.sel = p.get('agent') || '';
+  if (view === 'reach') { location.replace('#traffic?tab=agents' + (p.get('agent') ? '&agent=' + encodeURIComponent(p.get('agent')).replace(/%2F/gi, '/') : '')); S.view = 'traffic'; return; }
   // Activity is now the gateway layer of Traffic; keep old links working.
   if (view === 'activity') { location.replace('#traffic?layer=gateway' + (p.get('caller') ? '&caller=' + encodeURIComponent(p.get('caller')) : '')); S.view = 'traffic'; return; }
   S.view = view === 'posture' || view === 'bestpractices' ? 'scorecard' : view;
@@ -140,7 +140,7 @@ function morphKids(cur, next) {
 
 // Each view links to its page in the built-in documentation.
 const docPages = {overview: 'desk/overview/', search: 'desk/search/', navigator: 'desk/navigator/', resources: 'desk/resources/', logs: 'desk/logs/', timeline: 'desk/timeline/',
-  findings: 'desk/findings/', scorecard: 'desk/scorecard/', reach: 'desk/agent-reach/', traffic: 'desk/traffic/', compare: 'desk/compare/', proxies: 'desk/proxy-configs/', coverage: 'desk/coverage/', review: 'collect/review/'};
+  findings: 'desk/findings/', scorecard: 'desk/scorecard/', traffic: 'desk/traffic/', compare: 'desk/compare/', proxies: 'desk/proxy-configs/', coverage: 'desk/coverage/', review: 'collect/review/'};
 function head(title, sub, actions = '') {
   const doc = docPages[S.view];
   const help = doc ? `<a class="help-link" href="/docs/${doc}" target="_blank" rel="noopener" title="How to use ${esc(title)}">? Docs</a>` : '';
@@ -384,8 +384,8 @@ async function loadWorkspace() {
   const nf = $('#nav-findings');
   const n = (w.findings?.critical || 0) + (w.findings?.warning || 0);
   nf.textContent = n; nf.classList.toggle('hidden', !n);
-  document.querySelector('.nav a[data-view="reach"]')?.classList.toggle('hidden', !feature('reach'));
-  document.querySelector('.nav a[data-view="traffic"]')?.classList.toggle('hidden', !feature('traffic'));
+  document.querySelector('.nav a[data-view="reach"]')?.classList.add('hidden');
+  document.querySelector('.nav a[data-view="traffic"]')?.classList.toggle('hidden', !feature('traffic') && !feature('reach'));
   if (w.terminal) $('#terminal').classList.remove('hidden');
   if (!S.state) { S.state = w.state; renderImportStatus(); }
   if (typeof onWorkspace === 'function') onWorkspace(w);
@@ -923,7 +923,7 @@ async function posture() {
       summary = `<section class="panel"><div class="panel-head"><h2>Most serious problems</h2><small class="muted">Critical and high severity checks that fail or warn</small></div>
         <div>${worst.map((p, i) => firstRow(p, i + 1)).join('') || '<div class="empty"><strong>No critical or high problems</strong>Open an area tab to see the rest.</div>'}</div></section>`;
     }
-    if (feature('reach')) summary += `<p class="pst-reach-link"><a href="#reach">See each agent's network reach →</a></p>`;
+    if (feature('reach')) summary += `<p class="pst-reach-link"><a href="#traffic?tab=agents">See each agent's network reach →</a></p>`;
   }
   let lastArea = '';
   const rows = checks.map(c => { const h = !P.area && c.area !== lastArea ? `<div class="tl-day">${esc((r.areas.find(a => a.area === c.area) || {}).title || c.area)}</div>` : ''; lastArea = c.area; return h + row(c); }).join('');
@@ -1134,12 +1134,15 @@ function rcMatch(a, terms) {
   });
 }
 
-async function reach() {
+// The agents list and one agent's detail. They are the Agents tab of the
+// Traffic page; #reach links open that tab.
+async function reach() { return reachBody(); }
+async function reachBody() {
   const R = S.reach;
   if (!feature('reach')) {
-    return head('Agents', esc(rcIntro)) + `<section class="panel"><div class="empty"><strong>Agents is a Flightbay Enterprise feature</strong>
+    return `<section class="panel"><div class="empty"><strong>Agents is a Flightbay Enterprise feature</strong>
       It shows, agent by agent, what each agent, MCP server and agent gateway can reach on the network and how wide the blast radius is.<br>
-      Turn it on by starting the desk with <code>FLIGHTBAY_ENTERPRISE=1 flightbay ui</code>.</div></section>`;
+      Turn it on by starting the desk with <code>FLIGHTBAY_ENTERPRISE=1 flightbay ui</code> or <code>FLIGHTBAY_FEATURES=reach</code>.</div></section>`;
   }
   const rev = S.state?.revision;
   if (!R.list || R.listRev !== rev) { R.list = await api('api/reach'); R.listRev = rev; R.flowSrc = (await api('api/flows', {limit: 1}).catch(() => ({}))).bySource || {}; }
@@ -1179,8 +1182,8 @@ async function reach() {
     <div class="table-scroll" style="max-height:${R.sel ? '38vh' : '66vh'}">${shown.length ? `<table class="rc-list"><thead><tr><th>Agent</th><th>Radius</th><th>Internet</th><th title="Services reachable in one hop, of the Services in the capture">Direct</th><th title="Services reachable in any number of hops">Total</th><th title="Direct destinations it can change data on">Write</th><th title="Destinations it was seen using, of those it may reach directly">Used</th>${R.act ? '<th title="Calls through agentgateway">Gateway calls</th>' + (gwTok ? '<th title="LLM tokens through agentgateway">Tokens</th>' : '') : ''}<th>Findings</th><th>Summary</th></tr></thead><tbody>${rows}</tbody></table>`
       : '<div class="empty"><strong>No agents match</strong>Change the filter or the type.</div>'}</div></section>`
     : `<section class="panel"><div class="empty"><strong>No agents found</strong>No kagent agents, MCP servers, agent gateways or workloads that look like agents were captured.</div></section>`;
-  return head('Agents', `${esc(rcIntro)} <span class="ent-pill">Enterprise</span>`, `<button id="rc-term-all">&gt;_ fbreach in terminal</button>`) + notes + `
-    <div class="toolbar"><div class="row wrap">${chips}</div>
+  return notes + `
+    <div class="toolbar"><div class="row wrap">${chips}<button id="rc-term-all" class="ghost">&gt;_ fbreach in terminal</button></div>
       <input id="rc-q" placeholder="Filter. Try type: ns: radius: internet: or text" value="${esc(R.q)}" style="min-width:320px" autocomplete="off" spellcheck="false"></div>
     ${list}${detail}`;
 }
@@ -1673,7 +1676,7 @@ after.reach = () => {
     const n = tr.dataset.rcagent;
     R.scroll = true;
     if (R.sel === n) { render(); return; }
-    location.hash = 'reach?agent=' + encodeURIComponent(n).replace(/%2F/gi, '/');
+    location.hash = 'traffic?tab=agents&agent=' + encodeURIComponent(n).replace(/%2F/gi, '/');
   });
   document.querySelectorAll('[data-rctype]').forEach(b => b.onclick = () => { R.type = R.type === b.dataset.rctype ? '' : b.dataset.rctype; render(); });
   const q = $('#rc-q');
@@ -1689,7 +1692,7 @@ after.reach = () => {
   const a = R.detail;
   if (!R.sel || !a || a.error) return;
   if (R.scroll) { R.scroll = false; $('#rc-detail')?.scrollIntoView({block: 'start', behavior: 'smooth'}); }
-  $('#rc-close').onclick = () => { location.hash = 'reach'; };
+  $('#rc-close').onclick = () => { location.hash = 'traffic?tab=agents'; };
   $('#rc-term').onclick = () => termRun('fbreach ' + rcName(a));
   $('#rc-logs').onclick = () => openLogs(a.kind === 'Pod' ? {pod: a.name, namespace: a.namespace} : {workload: `${a.kind}/${a.name}`, namespace: a.namespace});
   const ob = $('#rc-obj'); if (ob) ob.onclick = () => openObject({cluster: a.ref.cluster, group: a.ref.group, resource: a.ref.resource, namespace: a.ref.namespace, name: a.ref.name});
@@ -2536,7 +2539,7 @@ function closeModal() { $('#modal-root').innerHTML = ''; }
 
 function openSearch() {
   modal('Jump to an object or view', `<input id="gs" style="width:100%" placeholder="Any object: name, label, image, hostname. Try kind: ns: label:" autocomplete="off"><div id="gs-res" class="search-results"></div>`);
-  const views = ['navigator', 'search', 'overview', 'scorecard', ...(feature('reach') ? ['reach'] : []), ...(feature('traffic') ? ['traffic'] : []), 'resources', 'logs', 'timeline', 'findings', 'compare', 'proxies', 'coverage'];
+  const views = ['navigator', 'search', 'overview', 'scorecard', ...(feature('traffic') || feature('reach') ? ['traffic'] : []), 'resources', 'logs', 'timeline', 'findings', 'compare', 'proxies', 'coverage'];
   let hits = [], sel = 0;
   const draw = () => {
     $('#gs-res').innerHTML = hits.map((h, i) => `<button class="${i === sel ? 'sel' : ''}" data-i="${i}">${h.all ? `<span class="green">⌕</span> Search everything for “${esc(h.all)}”<small>Search page</small>` : h.view ? `<span class="green">↗</span> ${esc(h.view)}<small>view</small>` : `<span class="badge">${esc(h.kind)}</span>${esc(h.namespace ? h.namespace + '/' : '')}${esc(h.name)}${h.snippet ? ` <span class="muted mono" style="font-size:10px">…${esc(h.snippet.slice(0, 70))}…</span>` : ''}<small>${esc(h.cluster)}</small>`}</button>`).join('');

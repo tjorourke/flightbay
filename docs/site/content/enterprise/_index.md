@@ -11,7 +11,7 @@ The collector and the desk work fully without Enterprise. Flightbay Enterprise a
 | Feature | Name | Adds |
 |---|---|---|
 | Priorities | `priorities` | The Scorecard's priority view: severity tags coloured by weight, a ranked **Fix these first** list, and the points each fix gives back. `fbscore --top N`. `priorities` in the MCP `best_practices` tool. See [Scorecard](/desk/scorecard/). |
-| Agent reach | `reach` | The **Agents** page, `fbreach`, the MCP `agent_reach` tool, and five agentic Scorecard checks built on it. See [Agent reach](/desk/agent-reach/). |
+| Agent reach | `reach` | The **Agents** tab of the Traffic page, `fbreach`, the MCP `agent_reach` tool, and five agentic Scorecard checks built on it. See [Agent reach](/desk/agent-reach/). |
 | Traffic | `traffic` | The **Traffic** page: ztunnel connections (mTLS, waypoints, policy verdicts) and agentgateway calls (tools, models, tokens, refusals, tool changes) on one map, and the **Why?** explainer. On the Agents page, what each agent used and called, and the lock-down built from it. `fbtraffic`, `fbactivity`, `fbexplain`, the MCP `traffic_map`, `agent_activity` and `explain_connection` tools. `activity` still works as a name for it. See [Traffic](/desk/traffic/). |
 
 The collector has no Enterprise features. A customer never needs Enterprise to capture a bundle.

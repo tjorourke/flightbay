@@ -17,9 +17,10 @@ const fbTok = n => n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e4 ? Math.round
 const fbOpenRef = r => openObject({cluster: r.cluster, group: r.group, resource: r.resource, namespace: r.namespace, name: r.name});
 
 // ---------- findings (the same look as Agent reach) ----------
-function fbFindings(list, st, key) {
+function fbFindings(list, st, key, limit) {
   if (!(list || []).length) return '<div class="empty"><strong>No findings</strong></div>';
-  return list.map((f, i) => {
+  const more = limit && !st.fall && list.length > limit ? list.length - limit : 0;
+  return list.slice(0, more ? limit : list.length).map((f, i) => {
     const open = !!st.fopen[i];
     const its = f.items || [];
     const hasCls = its.some(x => x.class), hasAcc = its.some(x => x.access), hasNote = its.some(x => x.note);
@@ -27,13 +28,14 @@ function fbFindings(list, st, key) {
       ${its.map(x => `<tr><td class="mono">${esc(x.target)}</td>${hasCls ? `<td>${esc(x.class || '')}</td>` : ''}${hasAcc ? `<td class="mono">${esc(x.access || '')}</td>` : ''}${hasNote ? `<td class="muted rc-small">${esc(x.note || '')}</td>` : ''}</tr>`).join('')}</tbody></table></div>` : '';
     return `<div class="rc-finding ${open ? 'open' : ''}"><button class="rc-fhead" data-fbf="${key}:${i}">
       <span class="pst-sev pst-sev-${esc(f.severity)}">${esc(f.severity)}</span><strong>${esc(f.title)}</strong>
-      ${its.length ? `<span class="tag">${its.length} affected</span>` : ''}<span style="flex:1"></span>${f.fix ? '<small class="muted">fix included</small>' : ''}<span class="muted">${open ? '▾' : '▸'}</span></button>
+      ${its.length ? `<span class="tag">${f.unit ? fbPlural(its.length, f.unit) : its.length + ' affected'}</span>` : ''}<span style="flex:1"></span>${f.fix ? '<small class="muted">fix included</small>' : ''}<span class="muted">${open ? '▾' : '▸'}</span></button>
       ${open ? `<div class="rc-fbody"><p>${esc(f.detail)}</p>${items}${(f.advice || []).length ? `<h3 class="mt">What to do</h3><ul class="rc-advice">${f.advice.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
         ${f.fix ? `<div class="row between mt"><h3>How to fix</h3><div class="row"><button data-fbcopy="${key}:${i}">Copy YAML</button>${guideLinks(f.source, f.docs)}</div></div><pre class="code mt">${esc(f.fix)}</pre>`
           : f.source || f.docs ? `<p class="mt row">${guideLinks(f.source, f.docs)}</p>` : ''}</div>` : ''}</div>`;
-  }).join('');
+  }).join('') + (more ? `<div style="padding:10px 16px"><button class="ghost" data-fball="${key}">Show all ${list.length}</button></div>` : limit && st.fall && list.length > limit ? `<div style="padding:10px 16px"><button class="ghost" data-fball="${key}">Show the ${limit} most serious</button></div>` : '');
 }
 function fbFindingsWire(st, list, key) {
+  document.querySelectorAll(`[data-fball="${key}"]`).forEach(b => b.onclick = () => { st.fall = !st.fall; const y = scrollY; render().then(() => scrollTo(0, y)); });
   document.querySelectorAll(`[data-fbf^="${key}:"]`).forEach(b => b.onclick = () => { const i = +b.dataset.fbf.split(':')[1]; st.fopen[i] = !st.fopen[i]; const y = scrollY; render().then(() => scrollTo(0, y)); });
   document.querySelectorAll(`[data-fbcopy^="${key}:"]`).forEach(b => b.onclick = () => { const f = list[+b.dataset.fbcopy.split(':')[1]]; navigator.clipboard.writeText(f.fix).then(() => toast('YAML copied'), () => toast('Clipboard unavailable')); });
 }
@@ -212,7 +214,7 @@ function actSel(d, callers, targets) {
   const c = callers.get(A.sel), x = targets.get(A.sel);
   if (c) {
     const es = (d.edges || []).filter(e => e.from === c.id);
-    const links = `${c.agentType && feature('reach') ? `<a class="btn" href="#reach?agent=${encodeURIComponent(c.label)}">Open on Agents</a>` : ''}${S.tf.focus !== c.id ? `<button id="tf-focusc" data-id="${esc(c.id)}">Show only its traffic</button>` : ''}`;
+    const links = `${c.agentType && feature('reach') ? `<a class="btn" href="#traffic?tab=agents&agent=${encodeURIComponent(c.label)}">Open agent</a>` : ''}${S.tf.focus !== c.id ? `<button id="tf-focusc" data-id="${esc(c.id)}">Show only its traffic</button>` : ''}`;
     return `<section class="panel mt" id="act-detail"><div class="panel-head"><h2>${esc(c.label)}</h2><div class="row">${links}${c.ref ? '<button id="act-obj">Open object</button>' : ''}${close}</div></div><div class="panel-body">
       <dl class="metadata"><dt>Kind</dt><dd>${esc(c.agentType ? (rcTypes[c.agentType] || c.agentType) + ' (workload)' : actCallerKind[c.kind] || c.kind)}</dd>${c.identity ? `<dt>Mesh identity</dt><dd class="mono">${esc(c.identity)}</dd>` : ''}${(c.users || []).length ? `<dt>JWT subjects</dt><dd class="mono">${esc(c.users.join(', '))}</dd>` : ''}${(c.addresses || []).length ? `<dt>Addresses</dt><dd class="mono">${esc(c.addresses.join(', '))}</dd>` : ''}
       <dt>Calls</dt><dd>${num(c.requests)} · ${num(c.denied)} refused · ${num(c.errors)} failed${c.tokens ? ` · ${num(c.tokens)} tokens` : ''}</dd>${c.anonymous ? '<dt>Identity</dt><dd class="red">none on any call: no mesh identity and no JWT subject</dd>' : ''}</dl></div>${edgeRows(es)}</section>`;
@@ -399,6 +401,8 @@ function tfMatch(e, terms, nodes) {
 
 function tfFromHash(p) {
   if (p.get('from') && p.get('to')) { S.tf.exFrom = p.get('from'); S.tf.exTo = p.get('to'); S.tf.tab = 'explain'; S.tf.ex = null; }
+  if (p.get('tab') === 'agents') { S.tf.tab = 'agents'; S.reach.sel = p.get('agent') || ''; S.reach.scroll = !!p.get('agent'); return; }
+  if (p.get('tab')) S.tf.tab = p.get('tab');
   if (p.get('agent')) { S.tf.focusName = p.get('agent'); S.tf.focus = ''; S.tf.tab = 'map'; S.tf.sel = ''; S.tf.gz = null; }
   if (p.get('layer')) S.tf.layer = p.get('layer');
   if (p.get('caller')) { S.tf.q = 'caller:' + p.get('caller'); S.tf.tab = 'map'; }
@@ -406,14 +410,18 @@ function tfFromHash(p) {
 
 async function trafficPage() {
   const T = S.tf, A = S.act;
-  if (!feature('traffic')) return fbEntOff('Traffic', 'It shows every connection ztunnel logged and every call through agentgateway, with mutual TLS, waypoints, policy verdicts, tools, models and tokens, and explains why any connection was allowed or denied.', 'traffic');
+  if (!feature('traffic') && !feature('reach')) return fbEntOff('Traffic', 'It shows every connection ztunnel logged and every call through agentgateway, with mutual TLS, waypoints, policy verdicts, tools, models and tokens, and explains why any connection was allowed or denied.', 'traffic');
   // #traffic?from=..&to=.. opens the explainer, ?agent= follows one agent,
   // ?layer= and ?caller= come from the old Activity links. app.js may parse
   // the hash before this file has loaded, so read it here as well.
   if (T.lastHash !== location.hash) { T.lastHash = location.hash; tfFromHash(new URLSearchParams(location.hash.split('?')[1] || '')); }
+  const hasTraffic = feature('traffic');
+  if (!hasTraffic) T.tab = 'agents';
   if (!T.data || T.key !== fbKey()) {
-    const [d, a] = await Promise.all([api('api/traffic'), api('api/activity').catch(() => null)]);
-    T.data = d; A.data = a; T.key = A.key = fbKey();
+    const [d, a, r] = await Promise.all([hasTraffic ? api('api/traffic') : Promise.resolve({nodes: [], edges: [], findings: [], notes: [], totals: {}, namespaces: []}), hasTraffic ? api('api/activity').catch(() => null) : null,
+      feature('reach') ? api('api/reach').catch(() => null) : null]);
+    T.data = d; A.data = a; T.reach = r; T.key = A.key = fbKey();
+    if (feature('reach') && !S.reach.flowSrc) S.reach.flowSrc = (await api('api/flows', {limit: 1}).catch(() => ({}))).bySource || {};
   }
   const d = T.data, a = A.data || tfNoAct, t = d.totals || {}, at = a.totals || {};
   const nodes = new Map((d.nodes || []).map(n => [n.id, n]));
@@ -445,15 +453,19 @@ async function trafficPage() {
     ${stat('Refused', num(netRefused + (a.denials || []).length), `${fbPlural(netRefused, 'edge')} by the mesh, ${num(at.denied)} calls by the gateway`, 'data-tftab="refused" title="Open the Refused tab"', netRefused + (at.denied || 0) ? 'amber' : '')}
     ${stat('No identity', num(at.anonymous), 'tool, model or agent calls', 'data-tfq="state:noidentity" title="Show only these"', at.anonymous ? 'red' : '', T.q === 'state:noidentity')}</div>`;
   const cov = (a.coverage || []).length ? `<p class="muted fb-cov">Gateways with request logs: ${a.coverage.map(c => `<span class="mono">${esc(c.gateway)}</span> <small>(${num(c.requests)}${c.waypoint ? ', waypoint' : ''})</small>`).join(' · ')}</p>` : '';
-  const notes = [...(d.notes || []), ...(a.notes || [])].map(n => `<div class="notice" style="margin-bottom:12px"><span>△</span><div>${esc(rcCap(n))}.</div></div>`).join('');
+  const toolNote = n => /has no tool list in the capture/.test(n);
+  const noteHTML = xs => xs.map(n => `<div class="notice" style="margin-bottom:12px"><span>△</span><div>${esc(rcCap(n))}.</div></div>`).join('');
+  const notes = noteHTML([...(d.notes || []), ...(a.notes || []).filter(n => !toolNote(n))]);
+  const toolNotes = noteHTML((a.notes || []).filter(toolNote));
   const rank = {critical: 0, high: 1, medium: 2, low: 3};
-  const allFindings = [...(d.findings || []), ...(a.findings || [])].sort((x, y) => (rank[x.severity] ?? 9) - (rank[y.severity] ?? 9));
+  const allFindings = [...(d.findings || []), ...(a.findings || []), ...tfAgentFindings(T.reach)].sort((x, y) => (rank[x.severity] ?? 9) - (rank[y.severity] ?? 9));
   T.findings = allFindings;
-  const findings = `<section class="panel"><div class="panel-head"><h2>Findings</h2><small class="muted">${fbPlural(allFindings.length, 'finding')} from the network and the gateways</small></div>${fbFindings(allFindings, T, 'tf')}</section>`;
+  const findings = `<section class="panel"><div class="panel-head"><h2>Findings</h2><small class="muted">${fbPlural(allFindings.length, 'finding')} from the network, the gateways and each agent's reach</small></div>${fbFindings(allFindings, T, 'tf', 5)}</section>`;
   const tab = (id, label, n, cls) => `<button class="pst-tab ${T.tab === id ? 'on' : ''}" data-tftab="${id}">${esc(label)}${n ? `<span class="pst-tab-n ${cls || ''}">${num(n)}</span>` : ''}</button>`;
   const ch = a.changes, nChanges = ch ? (ch.added || []).length + (ch.removed || []).length + (ch.described || []).length : 0;
   const nTools = (a.targets || []).filter(x => x.kind === 'tool' || x.kind === 'model').length;
-  const tabs = `<nav class="pst-tabs">${tab('map', 'Map')}${hasNet ? tab('edges', 'Connections', netE.length) : ''}${hasGw ? tab('calls', 'Calls', gwE.length) : ''}${hasGw ? tab('tools', 'Tools and models', nTools) : ''}${tab('refused', 'Refused', netRefused + (a.denials || []).length, 'amber')}${hasGw ? tab('changes', 'Tool changes', nChanges, (ch?.described || []).length ? 'red' : '') : ''}${tab('explain', 'Why? Explain a connection')}</nav>`;
+  const nAg = (T.reach?.agents || []).length;
+  const tabs = `<nav class="pst-tabs">${hasTraffic ? tab('map', 'Map') : ''}${feature('reach') ? tab('agents', 'Agents', nAg) : ''}${hasNet ? tab('edges', 'Connections', netE.length) : ''}${hasGw ? tab('calls', 'Calls', gwE.length) : ''}${hasGw ? tab('tools', 'Tools and models', nTools) : ''}${hasTraffic ? tab('refused', 'Refused', netRefused + (a.denials || []).length, 'amber') : ''}${hasGw ? tab('changes', 'Tool changes', nChanges, (ch?.described || []).length ? 'red' : '') : ''}${hasTraffic ? tab('explain', 'Why? Explain a connection') : ''}</nav>`;
   const nsOpts = `<select id="tf-ns"><option value="">All namespaces</option>${(d.namespaces || []).map(n => `<option ${T.ns === n ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>`;
   const lchips = hasNet && hasGw ? `<span class="rc-layer" style="margin:0 6px 0 0;padding:0 8px 0 0;border-left:0;border-right:1px solid var(--line)">${Object.entries(tfLayerName).map(([k, l]) => `<button class="chip ${layer === k ? 'on' : ''}" data-tflayer="${k}">${l}</button>`).join('')}</span>` : '';
   const nAgents = [...(d.edges || []), ...(a.edges || [])].filter(e => isAgent(e.from)).length;
@@ -462,15 +474,17 @@ async function trafficPage() {
   const kindCount = k => (a.edges || []).filter(e => targets.get(e.to)?.kind === k).length;
   const kchips = layer === 'network' || typedKind ? '' : Object.entries(actKinds).filter(([k]) => kindCount(k)).map(([k, l]) => `<button class="chip ${A.kinds[k] ? 'on' : ''}" data-actkind="${k}" title="Gateway calls to ${esc(l.toLowerCase())}">${esc(l)} <small>${kindCount(k)}</small></button>`).join('');
   const input = `<input id="tf-q" placeholder="Filter. Try from: to: tool: server: flag: state: layer: or text" value="${esc(T.q)}" style="min-width:340px" autocomplete="off" spellcheck="false">`;
-  const toolbar = `<div class="toolbar"><div class="row wrap">${lchips}${achip}${fchips}${kchips}</div><div class="row">${nsOpts}${input}</div></div>`;
+  const toolbar = `<div class="toolbar"><div class="row wrap">${tfFoundMenu(d, a, hasNet, hasGw)}${achip}${fchips}${kchips}</div><div class="row">${nsOpts}${input}</div></div>`;
+  void lchips;
   const toolbarPlain = `<div class="toolbar">${input}</div>`;
   const sel = tfSelPanel(d, a, nodes, callers, targets);
   let body;
+  if (T.tab === 'agents') return head('Traffic', `${esc(tfIntro)} <span class="ent-pill">Enterprise</span>`, '<button id="tf-term">&gt;_ fbtraffic in terminal</button>') + notes + stats + cov + findings + tabs + await reachBody();
   if (!hasNet && !hasGw && T.tab !== 'explain') body = '<section class="panel"><div class="empty"><strong>No traffic in this capture</strong>The page is read from ztunnel access logs (istio-system) and agentgateway request logs (gateways and waypoints). Collect those pods\' logs to fill it. You can still explain any pair on the Why? tab from the captured policy.</div></section>';
   else if (T.tab === 'map') body = toolbar + tfFocusBar(fnode, netE, gwE) + tfMap(d, a, netE, gwE, nodes, callers, targets, layer) + sel;
   else if (T.tab === 'edges') body = toolbar + tfEdges(netE, id => nodes.get(id)?.label || id) + sel;
   else if (T.tab === 'calls') body = toolbar + actCalls(gwE, callers, targets) + sel;
-  else if (T.tab === 'tools') body = toolbarPlain + actTools(a, callers, gwAll, terms) + '<div class="mt"></div>' + actModels(a, gwAll, terms);
+  else if (T.tab === 'tools') body = toolbarPlain + toolNotes + actTools(a, callers, gwAll, terms) + '<div class="mt"></div>' + actModels(a, gwAll, terms);
   else if (T.tab === 'refused') {
     const netRef = netAll.filter(e => e.denied > 0);
     body = toolbarPlain + (hasGw ? `<h3 class="mt">Refused by the gateways</h3>${actDenials(a, gwAll, terms)}` : '') + (hasNet ? `<h3 class="mt">Refused by the mesh</h3>${netRef.length ? tfEdges(netRef, id => nodes.get(id)?.label || id) : '<section class="panel"><div class="empty"><strong>No refused connections</strong>ztunnel logged no connection refused by policy.</div></section>'}` : '') + sel;
@@ -612,7 +626,7 @@ function tfMap(d, a, netE, gwE0, nodes, callers, targets, layer) {
   // by what the captured allowlists say about it.
   const far = [], svcSum = new Map();
   const tview = T.tools || 'both'; // called, allowed or both
-  const showTool = (called, allowed) => tview === 'both' || (tview === 'called' ? called : allowed);
+  const showTool = (called, allowed, configured) => tview === 'both' || (tview === 'called' ? called : tview === 'configured' ? configured : allowed);
   if (both && !acc.length) {
     const per = new Map(); // svc|tool -> calls through it by the callers drawn
     for (const x of onSvc.values()) for (const [tool, n] of x.tools) {
@@ -641,7 +655,7 @@ function tfMap(d, a, netE, gwE0, nodes, callers, targets, layer) {
           if (allowed) sum.allowed++;
           if (y.calls) sum.called++;
           if (refusedBy.length) sum.red++;
-          if (!showTool(y.calls > 0, allowed)) continue;
+          if (!showTool(y.calls > 0, allowed, (t.configuredOn || []).length > 0)) continue;
           if (!y.calls && allowed && !T.fexp['svcf:' + svc + '|' + srv]) { idle.push(t); continue; }
           const id = 'svct:' + svc + '|' + name;
           const cl = [...y.callers].map(c => callers.get(c)?.label || c);
@@ -702,7 +716,7 @@ function tfMap(d, a, netE, gwE0, nodes, callers, targets, layer) {
     const maxA = Math.max(1, ...acc.flatMap(x => x.rows.map(r => r.calls)));
     for (const x of acc) {
       const shown = [], idle = [];
-      for (const r of x.rows) { if (!showTool(r.calls > 0, r.allowed)) continue; (r.calls || !r.allowed || r.configured || x.rows.length <= 16 || T.fexp['acc:' + x.server] ? shown : idle).push(r); }
+      for (const r of x.rows) { if (!showTool(r.calls > 0, r.allowed, r.configured)) continue; (r.calls || !r.allowed || r.configured || x.rows.length <= 16 || T.fexp['acc:' + x.server] ? shown : idle).push(r); }
       for (const r of shown) {
         const id = 'acc:' + x.server + '/' + r.name;
         const st = !r.allowed ? 'called, not allowed' : r.calls ? `allowed, called ×${num(r.calls)}` : 'allowed, not called';
@@ -727,7 +741,7 @@ function tfMap(d, a, netE, gwE0, nodes, callers, targets, layer) {
     + (netE.length ? '<span><i class="rc-sw red"></i>plaintext between mesh workloads</span><span><i class="rc-sw amber"></i>no policy, plaintext from outside the mesh, or logs and policy disagree</span><span><i class="rc-sw green"></i>mutual TLS and policy looks at it</span>' : '')
     + (gwE.length ? '<span><i class="rc-sw red"></i>call outside the agent\'s tool list, to an unlisted tool, or every call refused</span><span><i class="rc-sw amber"></i>call with no identity, or some refused</span>' : '')
     + '<span><i class="rc-sw dash"></i>refused, or policy denies it</span>';
-  const tchips = both || acc.length ? `<span class="rc-layer" title="Which tools to draw">${[['called', 'Called', 'Only tools that were called'], ['allowed', 'Allowed', 'Only tools the captured allowlists allow (all of them on a server with no allowlist), called or not'], ['both', 'Both', 'Everything: called, allowed, and called although not allowed']].map(([k, l, h]) => `<button class="chip ${tview === k ? 'on' : ''}" data-tftools="${k}" title="${esc(h)}">Tools: ${l}</button>`).join('')}</span>` : '';
+  const tchips = '';
   return fbGraphPanel('Traffic', T, svg, `<small class="muted">${[netE.length ? fbPlural(netE.length, 'connection edge') : '', gwE0.length ? fbPlural(gwE0.length, 'caller and target pair') : ''].filter(Boolean).join(' · ')}</small>${tchips}`, legend);
 }
 
@@ -747,7 +761,7 @@ function tfFocusBar(fnode, netE, gwE) {
   const calls = gwE.reduce((n, e) => n + e.requests, 0);
   return `<div class="tf-focus"><strong class="mono">${esc(fnode.label)}</strong><span>${fbPlural(new Set(netE.map(e => e.to)).size, 'destination')} used${calls ? `, ${num(calls)} calls through agentgateway to ${fbPlural(new Set(gwE.map(e => e.to)).size, 'target')}` : ''}${T.freach ? `, ${num(un.length)} more Services allowed by policy and not used` : ''}.</span>
     ${T.freach ? '' : `<span class="muted">${feature('reach') ? 'Not an agent on the Agents page, so what else it may reach is not drawn.' : 'Turn on Agent reach to see what else it may reach.'}</span>`}
-    <span style="flex:1"></span>${T.freach && (gwE.length || T.showGhosts) ? `<button id="tf-ghosts">${T.showGhosts ? 'Hide' : 'Show'} Services it may reach and did not use</button>` : ''}${T.freach ? `<a class="btn" href="#reach?agent=${encodeURIComponent(fnode.label)}">Open on Agents</a>` : ''}<button class="ghost" id="tf-unfocus">Show everything</button></div>`;
+    <span style="flex:1"></span>${T.freach && (gwE.length || T.showGhosts) ? `<button id="tf-ghosts">${T.showGhosts ? 'Hide' : 'Show'} Services it may reach and did not use</button>` : ''}${T.freach ? `<a class="btn" href="#traffic?tab=agents&agent=${encodeURIComponent(fnode.label)}">Open agent</a>` : ''}<button class="ghost" id="tf-unfocus">Show everything</button></div>`;
 }
 
 function tfEdges(edges, lab) {
@@ -767,7 +781,7 @@ function tfEdgePanel(d, nodes) {
   if (n) {
     const es = (d.edges || []).filter(e => e.from === n.id || e.to === n.id);
     const src = n.kind === 'workload' || n.kind === 'waypoint';
-    return `<section class="panel mt" id="tf-detail"><div class="panel-head"><h2>${esc(n.label)}</h2><div class="row">${src && T.focus !== n.id && !(S.act.data?.callers || []).some(c => c.id === n.id) ? '<button id="tf-focus">Show only its traffic</button>' : ''}${n.agentType && feature('reach') && !(S.act.data?.callers || []).some(c => c.id === n.id) ? `<a class="btn" href="#reach?agent=${encodeURIComponent(n.label)}">Open on Agents</a>` : ''}${n.ref ? '<button id="tf-obj">Open object</button>' : ''}<button class="ghost" id="tf-selx" aria-label="Close">✕</button></div></div>
+    return `<section class="panel mt" id="tf-detail"><div class="panel-head"><h2>${esc(n.label)}</h2><div class="row">${src && T.focus !== n.id && !(S.act.data?.callers || []).some(c => c.id === n.id) ? '<button id="tf-focus">Show only its traffic</button>' : ''}${n.agentType && feature('reach') && !(S.act.data?.callers || []).some(c => c.id === n.id) ? `<a class="btn" href="#traffic?tab=agents&agent=${encodeURIComponent(n.label)}">Open agent</a>` : ''}${n.ref ? '<button id="tf-obj">Open object</button>' : ''}<button class="ghost" id="tf-selx" aria-label="Close">✕</button></div></div>
       <div class="panel-body"><p class="muted">${esc([n.kind, n.inMesh ? 'in the mesh' : 'not in the mesh', n.waypoint ? 'waypoint ' + n.waypoint : ''].filter(Boolean).join(' · '))}. ${fbPlural(es.length, 'edge')}; click one for its checks.</p></div>
       ${tfEdges(es, id => nodes.get(id)?.label || id)}</section>`;
   }
@@ -830,12 +844,25 @@ async function tfRunExplain(key, from, to, cluster) {
 after.traffic = () => {
   const T = S.tf, d = T.data, A = S.act, a = A.data || tfNoAct;
   $('#tf-term')?.addEventListener('click', () => termRun('fbtraffic'));
-  if (!feature('traffic') || !d) return;
+  if ((!feature('traffic') && !feature('reach')) || !d) return;
   const keepY = fn => { const y = scrollY; fn(); render().then(() => scrollTo(0, y)); };
   const nodes = new Map((d.nodes || []).map(n => [n.id, n]));
   fbFindingsWire(T, T.findings || [], 'tf');
+  // Found by: the menu, and what each choice draws.
+  document.querySelectorAll('[data-fmenu]').forEach(b => b.onclick = ev => {
+    ev.stopPropagation();
+    const pop = b.nextElementSibling, open = pop.hidden;
+    document.querySelectorAll('.rc-fpop').forEach(p => { p.hidden = true; });
+    pop.hidden = !open;
+  });
+  document.querySelectorAll('.rc-fpop').forEach(p => p.onclick = ev => ev.stopPropagation());
+  if (!window.tfFmenuClose) { window.tfFmenuClose = true; document.addEventListener('click', () => document.querySelectorAll('.rc-fpop').forEach(p => { p.hidden = true; })); }
+  document.querySelectorAll('[data-tffound]').forEach(b => b.onclick = () => keepY(() => { T.found = b.dataset.tffound; [T.layer, T.tools] = tfFoundSet[T.found]; T.flag = ''; T.gz = null; if (T.tab === 'explain' || T.tab === 'agents') T.tab = 'map'; }));
+  // Agent findings open the agent.
+  document.querySelectorAll('.rc-finding .rc-items td.mono').forEach(td => { const n = td.textContent.trim(); if ((T.reach?.agents || []).some(x => x.namespace + '/' + x.name === n)) { td.innerHTML = `<a href="#traffic?tab=agents&agent=${encodeURIComponent(n).replace(/%2F/gi, '/')}">${esc(n)}</a>`; } });
+  if (T.tab === 'agents') { document.querySelectorAll('[data-tftab]').forEach(b => b.onclick = () => { T.tab = b.dataset.tftab; history.replaceState(null, '', '#traffic'); T.lastHash = location.hash; render(); }); after.reach(); return; }
   document.querySelectorAll('[data-tftab]').forEach(b => b.onclick = () => { T.tab = b.dataset.tftab; render(); });
-  document.querySelectorAll('[data-tflayer]').forEach(b => b.onclick = () => keepY(() => { T.layer = T.layer === b.dataset.tflayer && b.classList.contains('stat') ? 'both' : b.dataset.tflayer; T.flag = ''; T.gz = null; if (T.tab === 'explain') T.tab = 'map'; }));
+  document.querySelectorAll('[data-tflayer]').forEach(b => b.onclick = () => keepY(() => { T.layer = T.layer === b.dataset.tflayer && b.classList.contains('stat') ? 'both' : b.dataset.tflayer; T.found = T.layer === 'network' ? 'ztunnel' : T.layer === 'gateway' ? 'agentgateway' : 'any'; T.tools = tfFoundSet[T.found][1]; T.flag = ''; T.gz = null; if (T.tab === 'explain') T.tab = 'map'; }));
   document.querySelectorAll('[data-tfflag]').forEach(b => b.onclick = () => keepY(() => { T.flag = T.flag === b.dataset.tfflag ? '' : b.dataset.tfflag; T.gz = null; if (T.tab === 'explain') T.tab = 'map'; }));
   document.querySelectorAll('[data-tfq]').forEach(b => b.onclick = () => keepY(() => { T.q = T.q === b.dataset.tfq ? '' : b.dataset.tfq; T.gz = null; if (T.tab === 'explain') T.tab = 'map'; }));
   document.querySelectorAll('[data-actkind]').forEach(b => b.onclick = () => keepY(() => { A.kinds[b.dataset.actkind] = !A.kinds[b.dataset.actkind]; T.gz = null; }));
@@ -1162,4 +1189,59 @@ function taPanel(act, who, servers, title) {
   if (!servers.length) return '';
   return `<section class="panel mt"><div class="panel-head"><h2>${esc(title)}</h2><small class="muted">from the captured agentgateway allowlists, the agent's configuration and its calls</small></div><div class="panel-body">
     ${servers.map(srv => { const acc = toolAccess(act, who, srv); return `<h3 style="margin:${servers.length > 1 ? '14px' : '0'} 0 6px"><span class="mono">${esc(srv)}</span> <small class="muted">${acc.guarded ? fbPlural(acc.allowedN, 'tool') + ' allowed' : 'no allowlist'}</small></h3>${taTable(acc)}`; }).join('')}</div></section>`;
+}
+
+
+// ---------- Traffic: Found by ----------
+// One menu for where what the map draws comes from, like the one on an
+// agent's graph: ztunnel connections, agentgateway calls, and for tools,
+// whether they were called, are allowed by an allowlist, or are configured
+// on an agent. It sets the layer and the tools view.
+const tfFoundKinds = [
+  ['any', 'Any', 'everything: connections, gateway calls, and every tool'],
+  ['ztunnel', 'ztunnel connections', 'the network layer: every connection ztunnel logged'],
+  ['agentgateway', 'agentgateway calls', 'the gateway layer: a box per tool, model and agent called'],
+  ['called', 'Tools called', 'tools that were called, behind the Service they went through'],
+  ['allowed', 'Tools allowed', 'tools an allowlist allows (every tool of a server without one), called or not'],
+  ['configured', 'Tools configured', "tools named in an agent's toolNames or ALLOWED_TOOLS"],
+];
+const tfFoundSet = {any: ['both', 'both'], ztunnel: ['network', 'both'], agentgateway: ['gateway', 'called'], called: ['both', 'called'], allowed: ['both', 'allowed'], configured: ['both', 'configured']};
+function tfFoundMenu(d, a, hasNet, hasGw) {
+  const T = S.tf, cur = T.found || 'any';
+  const tools = a.tools || [];
+  const guarded = new Set(tools.filter(t => (t.allowedFor || []).length).map(t => t.server));
+  const n = {any: (d.edges || []).length + (a.edges || []).length, ztunnel: (d.edges || []).length, agentgateway: (a.edges || []).length,
+    called: tools.filter(t => t.calls).length, allowed: tools.filter(t => guarded.has(t.server) ? (t.allowedFor || []).length : t.declared || t.calls).length, configured: tools.filter(t => (t.configuredOn || []).length).length};
+  const ok = k => k === 'any' || (k === 'ztunnel' ? hasNet : k === 'agentgateway' ? hasGw : hasGw || tools.length) && n[k];
+  const label = (tfFoundKinds.find(k => k[0] === cur) || [cur, cur])[1];
+  const row = ([k, name, sub]) => `<button class="rc-fitem ${cur === k ? 'on' : ''}" data-tffound="${k}" ${ok(k) ? '' : 'disabled'}><span class="rc-fname">${esc(name)}</span><span class="rc-fn">${num(n[k])}</span><span class="rc-fsub muted">${esc(sub)}</span></button>`;
+  const flows = Object.entries(S.reach.flowSrc || {}).filter(([k]) => !['ztunnel', 'agentgateway'].includes(k));
+  return `<div class="rc-fmenu"><button class="chip ${cur !== 'any' ? 'on' : ''}" data-fmenu>Found by: ${esc(label)} ▾</button>
+    <div class="rc-fpop" hidden><div class="rc-fhead">Traffic</div>${tfFoundKinds.slice(0, 3).map(row).join('')}<div class="rc-fhead">Tools</div>${tfFoundKinds.slice(3).map(row).join('')}
+    ${flows.length ? `<div class="rc-fhead">Other flow sources</div>${flows.map(([k, v]) => `<div class="rc-fitem" style="cursor:default"><span class="rc-fname">${esc(k)}</span><span class="rc-fn">${num(v.flows ?? v)}</span><span class="rc-fsub muted">used by each agent's reach on the Agents tab, not drawn here</span></div>`).join('')}` : ''}</div></div>`;
+}
+
+// Every agent's reach findings, grouped by title so each is listed once with
+// the agents it applies to. The fix YAML is per agent, on the Agents tab.
+function tfAgentFindings(rep) {
+  if (!rep) return [];
+  const by = new Map();
+  // Titles carry counts ("Can reach 57 of 58 Services"); group without them.
+  const plain = t => { const x = t.replace(/\b(\d+) of \1 /g, 'every ').replace(/\b\d+ of \d+ /g, 'most ').replace(/\b\d+ /g, '').replace(/\(s\)/g, 's'); return x.charAt(0).toUpperCase() + x.slice(1); };
+  const rank = {critical: 0, high: 1, medium: 2, low: 3};
+  for (const ag of rep.agents || []) for (const f of ag.findings || []) {
+    const k = plain(f.title);
+    let g = by.get(k);
+    if (g && (rank[f.severity] ?? 9) < (rank[g.severity] ?? 9)) g.severity = f.severity;
+    if (!g) { g = {severity: f.severity, title: k, detail: String(f.detail || '').split(ag.name).join('the agent'), items: [], source: f.source, docs: f.docs, advice: ['Open an agent (click its name) for what the finding affects for it and the YAML that fixes it.'], agentFinding: true}; by.set(k, g); }
+    g.items.push({target: ag.namespace + '/' + ag.name, class: rcTypes[ag.type] || ag.type, note: f.title});
+  }
+  // "every" and "most" of the Services are one finding.
+  const merged = new Map();
+  for (const g of by.values()) {
+    const k = g.title.replace(/^Can reach (every|most) /, 'Can reach most or all ');
+    const x = merged.get(k);
+    if (x) { x.items.push(...g.items); if ((rank[g.severity] ?? 9) < (rank[x.severity] ?? 9)) x.severity = g.severity; } else merged.set(k, {...g, title: k, unit: 'agent'});
+  }
+  return [...merged.values()];
 }
