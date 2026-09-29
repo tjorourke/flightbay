@@ -287,7 +287,16 @@ func (e *engine) egressPolicy(w *workload, needed []*service, hosts map[string]b
 	b.WriteString("  policyTypes: [Egress]\n  egress:\n  - to:   # cluster DNS\n    - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}\n      podSelector: {matchLabels: {k8s-app: kube-dns}}\n    ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]\n")
 	seen := map[string]bool{}
 	for _, sv := range needed {
-		if seen[sv.id] || len(sv.selector) == 0 {
+		if seen[sv.id] {
+			continue
+		}
+		if len(sv.selector) == 0 {
+			// No pods of its own: a waypoint that answers for it is all the
+			// agent's HBONE goes to.
+			if wpName, wpNS := sv.waypoint, first(sv.waypointNS, sv.ns); sv.waypoint != "" && w.inMesh && !w.sidecar && !seen["waypoint:"+wpNS+"/"+wpName] {
+				seen[sv.id], seen["waypoint:"+wpNS+"/"+wpName] = true, true
+				fmt.Fprintf(&b, "  - to:   # waypoint %s/%s, which answers for %s\n    - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: %s}}\n      podSelector: {matchLabels: {gateway.networking.k8s.io/gateway-name: %s}}\n    ports: [{port: 15008}]\n", wpNS, wpName, svcLabel(sv), wpNS, yamlStr(wpName))
+			}
 			continue
 		}
 		seen[sv.id] = true

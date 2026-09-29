@@ -290,6 +290,7 @@ func (s *Server) Handler() http.Handler {
 	api("/api/logs/fields", s.logFields)
 	api("/api/posture", s.posture)
 	api("/api/reach", s.reach)
+	api("/api/reach/usage", s.reachUsage)
 	api("/api/activity", s.activity)
 	api("/api/traffic", s.traffic)
 	api("/api/explain", s.explain)

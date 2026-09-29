@@ -1049,6 +1049,7 @@ async function reach() {
     const key = R.sel + '\u0000' + rev;
     if (R.detailKey !== key) {
       R.detail = await api('api/reach', {agent: R.sel}).catch(e => ({error: e.message}));
+      R.usage = R.detail.error ? null : await api('api/reach/usage', {agent: R.sel}).catch(() => null);
       R.detailKey = key; R.fixOpen = {}; R.gexpand = {}; R.gz = null;
     }
     detail = R.detail.error ? `<div class="notice bad mt">${esc(R.detail.error)}</div>` : rcDetail(R.detail);
@@ -1091,15 +1092,16 @@ function rcDetail(a) {
   ].join('');
   const header = `<section class="panel mt" id="rc-detail"><div class="panel-body">
     <div class="row between wrap" style="align-items:flex-start"><div class="row wrap"><h2 class="mono" style="font-size:17px">${esc(rcName(a))}</h2>${rcTypePill(a.type)}<span class="tag">${esc(a.kind)}</span>${(R.list?.clusters || []).length > 1 ? `<span class="tag">${esc(a.cluster)}</span>` : ''}</div>
-      <div class="row wrap">${a.ref ? `<button id="rc-obj">Open ${esc(a.kind)}</button>` : ''}<button id="rc-logs">Logs from this agent</button><button id="rc-term">&gt;_ fbreach in terminal</button><button class="ghost" id="rc-close" title="Back to the list" aria-label="Close">✕</button></div></div>
+      <div class="row wrap">${a.ref ? `<button id="rc-obj">Open ${esc(a.kind)}</button>` : ''}<button id="rc-logs">Logs from this agent</button>${feature('traffic') ? `<a class="btn" href="#traffic?agent=${encodeURIComponent(rcName(a))}">Traffic map</a>` : ''}${feature('activity') ? `<a class="btn" href="#activity?caller=${encodeURIComponent(rcName(a))}">Activity</a>` : ''}<button id="rc-term">&gt;_ fbreach in terminal</button><button class="ghost" id="rc-close" title="Back to the list" aria-label="Close">✕</button></div></div>
     <p class="rc-summary">${esc(a.summary)}</p><p class="muted" style="font-size:12px;margin-top:4px">Detected: ${esc(a.why)}${a.observed ? ` · Observed by ${esc(rcSrcList(a.observedBy))}` : ' · No flow logs cover this agent, so what it actually calls is unknown'}</p>
     <div class="rc-tiles">${tiles}</div></div></section>`;
   const G = rcGraphModel(a);
   const vbtn = (v, label, hint) => `<button class="chip ${G.view === v ? 'on' : ''}" data-rgview="${v}" title="${esc(hint)}">${label}</button>`;
   const graph = `<section class="panel mt rc-gpanel ${R.gfull ? 'full' : ''}" id="rc-gpanel"><div class="panel-head rc-ghead"><div class="row wrap"><h2>Blast radius</h2>
       ${vbtn('risky', 'Risky', 'Red destinations and anything leading out of the cluster; the rest folded by namespace')}${vbtn('byns', 'By namespace', 'One box per namespace; click one to open it up')}${vbtn('all', 'Everything', 'Every destination as its own box')}
+      ${R.usage ? `<span class="rc-layer">${[['allowed', 'Allowed', 'What policy allows, as before'], ['used', 'Used', 'Only what it was seen using'], ['both', 'Both', 'Everything allowed, with what it used drawn solid and the rest faded']].map(([k, l, h]) => `<button class="chip ${(R.glayer || 'both') === k ? 'on' : ''}" data-rglayer="${k}" title="${esc(h)}">${l}</button>`).join('')}</span>` : ''}
       ${rcFoundMenu([...(a.direct || []).map(e => ({found: rcFound(e, false)})), ...(a.external || []).filter(x => x.reachedVia !== 'node').map(x => ({found: rcFound(x, true)}))], R.gfound || 'any', 'data-rggf', a)}
-      ${Object.keys(R.gexpand).length ? '<button class="ghost" id="rg-collapse">Fold namespaces</button>' : ''}<small class="muted">${G.folded ? `${G.shown} of ${G.total} shown one by one, ${G.folded} folded into ${G.groups} namespace${G.groups === 1 ? '' : 's'}` : `all ${G.total} destinations`}</small></div>
+      ${Object.keys(R.gexpand).length ? '<button class="ghost" id="rg-collapse">Fold namespaces</button>' : ''}<small class="muted">${G.layer === 'used' ? `${G.usedN} used of the ${G.total} it may reach` : G.folded ? `${G.shown} of ${G.total} shown one by one, ${G.folded} folded into ${G.groups} namespace${G.groups === 1 ? '' : 's'}` : `all ${G.total} destinations`}</small></div>
       <div class="row rc-zoom"><button id="rg-out" title="Zoom out (-)">−</button><span id="rg-pct" class="mono muted">100%</span><button id="rg-in" title="Zoom in (+)">+</button><button id="rg-fit" title="Fit (0)">Fit</button><button id="rg-full" title="${R.gfull ? 'Exit full screen (Esc)' : 'Full screen (f)'}">${R.gfull ? '⤡ Exit' : '⤢ Full screen'}</button></div></div>
     <div class="rg-vp" id="rg-vp" tabindex="0">${rcGraph(a, G)}</div>
     ${rcGraphSel(a, G)}
@@ -1200,12 +1202,13 @@ function rcDetail(a) {
         <td class="rc-found"><button class="rc-evbtn" data-rcev="${esc('ext:' + x.host)}" title="Show the evidence">${rcFoundChips(x.found)}<span class="muted">${open ? '▾' : '▸'}</span></button></td>
         <td class="rc-riskcell">${rcRisk(x.risk)}<div class="rc-small muted">${esc(x.why)}</div></td></tr>${open ? `<tr class="rc-ev"><td colspan="8">${rcEvidence(x, true, a)}</td></tr>` : ''}`; }).join('')}
     </tbody></table>` : `<div class="empty"><strong>${ext.length ? 'No hosts match' : 'No external destinations'}</strong>${ext.length ? 'Choose another filter above.' : 'Nothing in its configuration, its gateways or the flow logs points outside the cluster.'}</div>`}</div></section>`;
-  const tabs = [['graph', 'Blast radius', ''], ['findings', 'Findings', (a.findings || []).length], ['paths', 'Paths', (a.paths || []).length], ['dest', 'Destinations', direct.length], ['external', 'External', ext.filter(x => x.reachedVia !== 'node').length], ['identity', 'Identity', '']];
+  const U = R.usage;
+  const tabs = [['graph', 'Blast radius', ''], ...(U ? [['usage', 'What it does', U.totals.used], ['lockdown', 'Lock down', '']] : []), ['findings', 'Findings', (a.findings || []).length], ['paths', 'Paths', (a.paths || []).length], ['dest', 'Destinations', direct.length], ['external', 'External', ext.filter(x => x.reachedVia !== 'node').length], ['identity', 'Identity', '']];
   const tab = R.dtab || 'graph';
   const crit = (c.critical || 0) + (c.high || 0);
   const tabRed = k => (k === 'findings' && crit) || (k === 'external' && ext.some(x => x.risk === 'red'));
   const tabBar = `<nav class="pst-tabs rc-tabs">${tabs.map(([k, label, n]) => `<button class="pst-tab ${tab === k ? 'on' : ''}" data-rctab="${k}">${label}${n !== '' && n ? `<span class="pst-tab-n ${tabRed(k) ? 'red' : ''}">${n}</span>` : ''}</button>`).join('')}</nav>`;
-  const body = {graph: graph + pathsPanel, findings: `<div class="mt">${findingsPanel}</div>`, paths: pathsPanel, dest: destTable, external: extTable, identity: `<div class="mt">${identity}</div>`}[tab] || graph;
+  const body = {graph: graph + pathsPanel, usage: U && typeof rcUsageTab === 'function' ? rcUsageTab(a, U) : '', lockdown: U && typeof rcLockTab === 'function' ? rcLockTab(a, U) : '', findings: `<div class="mt">${findingsPanel}</div>`, paths: pathsPanel, dest: destTable, external: extTable, identity: `<div class="mt">${identity}</div>`}[tab] || graph;
   return header + tabBar + body;
 }
 
@@ -1237,8 +1240,10 @@ function rcGraphModel(a) {
   const direct = {n: directSvc.length, counts: directSvc.reduce((m, e) => (m[e.risk] = (m[e.risk] || 0) + 1, m), {})};
   const total = Math.max(first.length, directSvc.length);
   const view = R.gview || (total > 14 ? 'risky' : 'all');
+  const layer = R.usage ? (R.glayer || 'both') : 'allowed';
+  const UD = new Map((R.usage?.destinations || []).map(d => [d.to, d]));
   const outgoing = new Set(edges.map(e => e.from));
-  const keep = n => view === 'all' || R.gexpand[n.namespace] || outgoing.has(n.id) || (view === 'risky' && n.risk === 'red' && !/^group:/.test(n.id));
+  const keep = n => view === 'all' || layer === 'used' || R.gexpand[n.namespace] || outgoing.has(n.id) || (view === 'risky' && n.risk === 'red' && !/^group:/.test(n.id));
   const rank = {red: 0, amber: 1, green: 2, grey: 3};
   const groups = {};
   for (const n of first) if (!keep(n)) (groups[n.namespace] ||= []).push(n);
@@ -1251,7 +1256,33 @@ function rcGraphModel(a) {
     nodes.push({id, type: 'group', label: ns, namespace: ns, depth: 1, risk: worst, count: list.length, members: list.map(n => n.id), detail: list.map(n => n.label.split('/').pop()).join(', ')});
     edges.push({from: agentId, to: id, verdict: 'allowed', risk: worst, why: `${list.length} destinations in ${ns}; click to open the namespace up`});
   }
-  return {nodes, edges, view, total, direct, shown: total - folded.size, folded: folded.size, groups: Object.keys(groups).length};
+  let usedN = 0;
+  if (layer !== 'allowed') {
+    const U = UD;
+    const directOut = [...U.values()].some(d => d.used && d.kind === 'external' && (d.via === 'direct' || !d.via));
+    const usedId = id => {
+      if (id.startsWith('fold:')) { const g = nodes.find(n => n.id === id); return (g?.members || []).some(m => U.get(m)?.used); }
+      if (id === 'internet') return directOut;
+      return !!U.get(id)?.used;
+    };
+    for (const e of edges) {
+      const d = U.get(e.to);
+      e.used = usedId(e.to); e.usedDenied = !!d?.mismatch;
+      if (e.from === agentId) e.unused = !e.used && e.to !== 'metadata';
+    }
+    for (const n of nodes) if (n.type !== 'agent' && edges.some(e => e.to === n.id && e.from === agentId)) n.unused = !usedId(n.id) && n.id !== 'metadata';
+    usedN = [...U.values()].filter(d => d.used && d.kind === 'service').length;
+    if (layer === 'used') {
+      // Only what it was seen using: its direct destinations, and the hosts
+      // outside the cluster it called, through whatever led there.
+      const keepE = edges.filter(e => e.used);
+      const reach = new Set([agentId]);
+      for (let changed = true; changed;) { changed = false; for (const e of keepE) if (reach.has(e.from) && !reach.has(e.to)) { reach.add(e.to); changed = true; } }
+      nodes = nodes.filter(n => reach.has(n.id));
+      edges = keepE.filter(e => reach.has(e.from) && reach.has(e.to));
+    }
+  }
+  return {nodes, edges, view, total, direct, layer, usedN, shown: total - folded.size, folded: folded.size, groups: Object.keys(groups).length};
 }
 
 // Line icons for the graph (24x24, stroked), drawn as nested SVGs.
@@ -1314,7 +1345,8 @@ function rcGraphSel(a, G) {
   if (!s) return '';
   const sv = rcSvc(n.id);
   return `<div class="rc-gsel"><div class="row between wrap"><div class="row wrap"><strong class="mono">${esc(n.label)}</strong>${rcFoundChips(rcFound(s.x, s.external))}</div>
-    <div class="row">${sv ? `<button data-rgopen="${esc(n.id)}">Open Service</button>` : ''}<button class="ghost" id="rg-selx" title="Close">✕</button></div></div>${rcEvidence(s.x, s.external, a)}</div>`;
+    <div class="row">${sv && feature('traffic') ? `<a class="btn" href="#traffic?from=${encodeURIComponent(rcName(a))}&to=${encodeURIComponent(sv.namespace + '/' + sv.name)}" title="Every check between the agent and this Service">Why?</a>` : ''}${sv ? `<button data-rgopen="${esc(n.id)}">Open Service</button>` : ''}<button class="ghost" id="rg-selx" title="Close">✕</button></div></div>
+    ${typeof rcUseDetail === 'function' ? rcUseDetail(n.id) : ''}${rcEvidence(s.x, s.external, a)}</div>`;
 }
 
 // rcGraph draws the model as columns: the agent, its direct destinations,
@@ -1433,7 +1465,8 @@ function rcGraph(a, G) {
       d = `M${sx},${sy} H${g1} V${ly} H${g2} V${ty} H${tx}`;
     }
     const tip = [`${labelOf(e.from)} → ${labelOf(e.to)}`, `${e.verdict}${e.layer ? ' (' + e.layer + ')' : ''}: ${e.why || ''}`, ...(e.reasons || []), e.via ? 'via ' + e.via : '', e.methods ? 'methods: ' + e.methods.join(', ') : '', e.observed ? `called ${e.observed} times${(e.observedBy || []).length ? ' (seen by ' + e.observedBy.join(', ') + ')' : ''}` : '', (e.tools || []).length ? 'tools: ' + e.tools.join(', ') : ''].filter(Boolean).join('\n');
-    return `<g class="rg-edge rg-${risk(e.risk)} ${dash(e) ? 'rg-dash' : ''}" data-f="${esc(e.from)}" data-t="${esc(e.to)}"><title>${esc(tip)}</title><path class="rg-hit" d="${d}"/><path class="rg-line" d="${d}" marker-end="url(#rga-${risk(e.risk)})"/></g>`;
+    const useTip = typeof rcUseTip === 'function' && e.from === nodes.find(n => n.type === 'agent')?.id ? rcUseTip(e.to) : '';
+    return `<g class="rg-edge rg-${risk(e.usedDenied ? 'red' : e.risk)} ${dash(e) || e.unused ? 'rg-dash' : ''} ${e.unused ? 'rg-unused' : ''}" data-f="${esc(e.from)}" data-t="${esc(e.to)}"><title>${esc(tip + (useTip ? '\n' + useTip : ''))}</title><path class="rg-hit" d="${d}"/><path class="rg-line" d="${d}" marker-end="url(#rga-${risk(e.usedDenied ? 'red' : e.risk)})"/></g>`;
   }).join('');
   const split = n => n.type === 'service' && n.label.includes('/') ? [n.label.slice(n.label.indexOf('/') + 1), n.label.slice(0, n.label.indexOf('/'))] : [n.label, ''];
   const title = n => n.type === 'group' ? `${n.label} (${n.count})` : n.type === 'agent' ? n.label.split('/').pop() : split(n)[0];
@@ -1452,7 +1485,7 @@ function rcGraph(a, G) {
     const tip = [n.label, n.namespace && n.type !== 'group' ? 'namespace ' + n.namespace : '', (n.classes || []).join(', '), n.detail, viaOf(n).length ? `Reached through ${viaOf(n).join(', ')}` : '', n.alsoDirect ? `Also reachable directly (${n.alsoDirect})` : '', foundOf(n) ? `Found by ${foundOf(n)} (evidence on the ${n.type === 'external' ? 'External' : 'Destinations'} tab)` : '', click ? (n.type === 'group' ? 'Click to open the namespace up' : 'Click to open') : ''].filter(Boolean).join('\n');
     const fk = rgFoundOf(a, G, n), seen = fk.some(k => !rcFoundLabel[k] && k !== 'policy');
     const dim = !rgMatch(a, G, n, S.reach.gfound), sel = S.reach.gsel === n.id;
-    return `<g class="rg-node rg-${risk(n.risk)} rg-t-${esc(n.type)} ${click ? 'rg-click' : ''} ${dim ? 'rg-dim' : ''} ${sel ? 'rg-sel' : ''}" data-rgid="${esc(n.id)}"${grid && col[n.id] === 1 ? ' data-grid="1"' : ''} transform="translate(${nodeX(n.id)},${Y(n.id)})"><title>${esc(tip)}</title>
+    return `<g class="rg-node rg-${risk(n.risk)} rg-t-${esc(n.type)} ${click ? 'rg-click' : ''} ${dim ? 'rg-dim' : ''} ${n.unused ? 'rg-unusednode' : ''} ${sel ? 'rg-sel' : ''}" data-rgid="${esc(n.id)}"${grid && col[n.id] === 1 ? ' data-grid="1"' : ''} transform="translate(${nodeX(n.id)},${Y(n.id)})"><title>${esc(tip)}</title>
       <rect width="${bw}" height="${bh}" rx="7"/>${rgIcon(rgNodeIcon(n), bw - 27, (bh - 16) / 2, 16, 'rg-nic')}${seen ? `<g><title>${esc('seen in traffic by ' + fk.filter(k => !rcFoundLabel[k]).join(', '))}</title>${rgIcon('eye', bw - 48, (bh - 14) / 2, 14, 'rg-eye')}</g>` : ''}<text x="11" y="18" class="rg-l">${esc(fit(title(n), 7.1))}</text><text x="11" y="34" class="rg-s">${esc(fit(sub(n), 6.2))}</text></g>`;
   }).join('');
   const heads = cols.map((list, c) => {
@@ -1462,7 +1495,7 @@ function rcGraph(a, G) {
     const viaGW = ins.length && ins.every(e => /^agentgateway route|^HTTP proxy/.test(e.via || ''));
     let icon, label, note;
     if (c === 0) [icon, label, note] = ['bot', 'Agent', rcTypes[a.type] || a.type];
-    else if (c === 1) [icon, label, note] = ['network', 'Reaches directly', `${G.direct?.n ?? list.length} Services, one hop`];
+    else if (c === 1) [icon, label, note] = G.layer === 'used' ? ['network', 'Used directly', `${G.usedN} of ${G.direct?.n ?? list.length} Services it may reach`] : ['network', 'Reaches directly', `${G.direct?.n ?? list.length} Services, one hop${G.layer === 'both' ? `, ${G.usedN} used` : ''}`];
     else if (list.some(n => n.type === 'external')) [icon, label, note] = ['cloud', 'Hosts outside the cluster', `${list.length} host${list.length === 1 ? '' : 's'} by name`];
     else if (list.some(n => n.type === 'internet' || n.type === 'metadata')) [icon, label, note] = ['globe', 'Ways out', 'the internet and cloud metadata'];
     else [icon, label, note] = viaGW ? ['router', 'Through a gateway', `${svcs.length} Service${svcs.length === 1 ? '' : 's'} behind a gateway`] : ['route', `Hop ${c}`, `${svcs.length} Service${svcs.length === 1 ? '' : 's'}, one hop further`];
@@ -1553,10 +1586,12 @@ after.reach = () => {
   const ob = $('#rc-obj'); if (ob) ob.onclick = () => openObject({cluster: a.ref.cluster, group: a.ref.group, resource: a.ref.resource, namespace: a.ref.namespace, name: a.ref.name});
   const openSvc = (ns, name) => openObject({cluster: a.cluster, group: '', resource: 'services', namespace: ns, name});
   const G = rcGraphModel(a);
-  const gkey = a.id + '|' + G.view + '|' + Object.keys(R.gexpand).sort().join(',') + '|' + (R.gfull ? 'full' : '');
+  const gkey = a.id + '|' + G.view + '|' + (G.layer || '') + '|' + Object.keys(R.gexpand).sort().join(',') + '|' + (R.gfull ? 'full' : '');
   rcPanZoom(gkey);
   const keepY = fn => { const y = scrollY; fn(); render().then(() => scrollTo(0, y)); };
   document.querySelectorAll('[data-rgview]').forEach(b => b.onclick = () => keepY(() => { R.gview = b.dataset.rgview; R.gexpand = {}; }));
+  document.querySelectorAll('[data-rglayer]').forEach(b => b.onclick = () => keepY(() => { R.glayer = b.dataset.rglayer; R.gz = null; }));
+  if (typeof rcUsageWire === 'function') rcUsageWire(a);
   const col = $('#rg-collapse'); if (col) col.onclick = () => keepY(() => { R.gexpand = {}; });
   document.querySelectorAll('[data-fmenu]').forEach(b => b.onclick = ev => {
     ev.stopPropagation();

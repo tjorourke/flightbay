@@ -102,3 +102,45 @@ func (s *Server) explain(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, x)
 }
+
+// reachUsage serves one agent's reach next to what it used, its timeline and
+// the lock-down proposal (Flightbay Enterprise, with reach).
+//
+//	/api/reach/usage?agent=ns/name
+func (s *Server) reachUsage(w http.ResponseWriter, r *http.Request) {
+	if !features.Enabled(features.Reach) {
+		jerr(w, 403, "agent reach is a Flightbay Enterprise feature; start the desk with FLIGHTBAY_ENTERPRISE=1")
+		return
+	}
+	id := r.URL.Query().Get("agent")
+	rep := s.reachReport()
+	var agent *reach.Agent
+	for i, a := range rep.Agents {
+		if a.ID == id || a.Namespace+"/"+a.Name == id || a.Name == id {
+			agent = &rep.Agents[i]
+			break
+		}
+	}
+	if agent == nil {
+		jerr(w, 404, "no agent "+id)
+		return
+	}
+	var tr *reach.Traffic
+	var act *reach.Activity
+	if features.Enabled(features.Traffic) {
+		t := s.trafficReport()
+		tr = &t
+	}
+	if features.Enabled(features.Activity) {
+		a := s.activityReport()
+		act = &a
+	}
+	u := reach.AgentUsage(s.WS, *agent, tr, act)
+	if tr == nil {
+		u.Notes = append(u.Notes, "the traffic map feature is off, so ztunnel connections are only counted through the flows")
+	}
+	if act == nil {
+		u.Notes = append(u.Notes, "the activity feature is off, so tool calls, models and tokens are not shown")
+	}
+	writeJSON(w, 200, u)
+}

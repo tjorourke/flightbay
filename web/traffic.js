@@ -5,7 +5,7 @@
 // #activity and #traffic here.
 
 S.act = {tab: 'map', kinds: {tool: true, model: true, agent: true, mcp: true, http: false}, q: '', sel: '', data: null, key: '', gz: null, gfull: false, fopen: {}, showDeclared: false};
-S.tf = {tab: 'map', flag: '', ns: '', q: '', sel: '', data: null, key: '', gz: null, gfull: false, fopen: {}, ex: null, exFrom: '', exTo: ''};
+S.tf = {tab: 'map', flag: '', ns: '', q: '', sel: '', data: null, key: '', gz: null, gfull: false, fopen: {}, ex: null, exFrom: '', exTo: '', agents: false, focus: '', focusName: '', freach: null, fkey: '', fexp: {}};
 
 const fbKey = () => `${S.state?.revision ?? ''}/${S.state?.logLines ?? ''}`;
 const fbPlural = (n, one, many) => `${num(n)} ${n === 1 ? one : (many || one + 's')}`;
@@ -65,9 +65,9 @@ function fbGraph({left, right, edges, heads, sel}) {
     const sx = X0 + bw, sy = yL(e.from) + bh / 2, tx = X1 - 3, ty = yR(e.to) + bh / 2;
     const d = `M${sx},${sy} C${sx + gap / 2},${sy} ${tx - gap / 2},${ty} ${tx},${ty}`;
     const on = sel && (sel === e.id || sel === e.from || sel === e.to);
-    return `<g class="rg-edge rg-${risk(e.risk)} ${e.dash ? 'rg-dash' : ''} ${on ? 'fb-on' : ''}" data-f="${esc(e.from)}" data-t="${esc(e.to)}" data-fbe="${esc(e.id)}"><title>${esc(e.tip || '')}</title><path class="rg-hit" d="${d}"/><path class="rg-line" d="${d}" style="stroke-width:${e.w || 1.4}" marker-end="url(#fba-${risk(e.risk)})"/></g>`;
+    return `<g class="rg-edge rg-${risk(e.risk)} ${e.dash ? 'rg-dash' : ''} ${e.cls || ''} ${on ? 'fb-on' : ''}" data-f="${esc(e.from)}" data-t="${esc(e.to)}" data-fbe="${esc(e.id)}"><title>${esc(e.tip || '')}</title><path class="rg-hit" d="${d}"/><path class="rg-line" d="${d}" style="stroke-width:${e.w || 1.4}" marker-end="url(#fba-${risk(e.risk)})"/></g>`;
   }).join('');
-  const node = (n, x, y) => `<g class="rg-node rg-${risk(n.risk)} rg-click ${n.dim ? 'rg-dim' : ''} ${sel === n.id ? 'rg-sel' : ''}" data-rgid="${esc(n.id)}" transform="translate(${x},${y})"><title>${esc(n.tip || n.label)}</title>
+  const node = (n, x, y) => `<g class="rg-node rg-${risk(n.risk)} rg-click ${n.dim ? 'rg-dim' : ''} ${n.cls || ''} ${sel === n.id ? 'rg-sel' : ''}" data-rgid="${esc(n.id)}" transform="translate(${x},${y})"><title>${esc(n.tip || n.label)}</title>
     <rect width="${bw}" height="${bh}" rx="7"/>${rgIcon(n.icon || 'service', bw - 26, (bh - 16) / 2, 16, 'rg-nic')}<text x="11" y="17" class="rg-l">${esc(fit(n.label, 7.1))}</text><text x="11" y="32" class="rg-s">${esc(fit(n.sub || '', 6.2))}</text></g>`;
   const headSvg = (x, [icon, label, note]) => `<g class="rg-head" transform="translate(${x},8)"><rect class="rg-hbg" width="${bw}" height="${HB - 14}" rx="8"/>
     <circle class="rg-hdot" cx="20" cy="${(HB - 14) / 2}" r="13"/>${rgIcon(icon, 11, (HB - 14) / 2 - 9, 18, 'rg-hic')}
@@ -132,6 +132,11 @@ async function activityPage() {
   if (!feature('activity')) return fbEntOff('Activity', 'It shows who called which MCP tool, model or agent through agentgateway, what was refused, and what it cost in tokens.', 'activity');
   if (!A.data || A.key !== fbKey()) { A.data = await api('api/activity'); A.key = fbKey(); }
   const d = A.data, t = d.totals || {};
+  if (A.lastHash !== location.hash) {
+    A.lastHash = location.hash;
+    const want = new URLSearchParams(location.hash.split('?')[1] || '').get('caller');
+    if (want) { const c = (d.callers || []).find(x => x.label === want); if (c) { A.sel = c.id; A.tab = 'map'; } else toast(`${want} made no calls through agentgateway in this capture`); }
+  }
   const callers = new Map((d.callers || []).map(c => [c.id, c])), targets = new Map((d.targets || []).map(x => [x.id, x]));
   const terms = qTerms(A.q);
   const textOk = (...xs) => terms.every(tm => { const ok = xs.join(' ').toLowerCase().includes((tm.text ?? `${tm.key}:${tm.val}`).toLowerCase()); return tm.neg ? !ok : ok; });
@@ -190,7 +195,8 @@ function actSel(d, callers, targets) {
   const c = callers.get(A.sel), x = targets.get(A.sel);
   if (c) {
     const es = (d.edges || []).filter(e => e.from === c.id);
-    return `<section class="panel mt" id="act-detail"><div class="panel-head"><h2>${esc(c.label)}</h2><div class="row">${c.ref ? '<button id="act-obj">Open object</button>' : ''}${close}</div></div><div class="panel-body">
+    const links = c.kind === 'workload' ? `${c.agentType && feature('reach') ? `<a class="btn" href="#reach?agent=${encodeURIComponent(c.label)}">Agent reach</a>` : ''}${feature('traffic') ? `<a class="btn" href="#traffic?agent=${encodeURIComponent(c.label)}">Traffic map</a>` : ''}` : '';
+    return `<section class="panel mt" id="act-detail"><div class="panel-head"><h2>${esc(c.label)}</h2><div class="row">${links}${c.ref ? '<button id="act-obj">Open object</button>' : ''}${close}</div></div><div class="panel-body">
       <dl class="metadata"><dt>Kind</dt><dd>${esc(c.agentType ? (rcTypes[c.agentType] || c.agentType) + ' (' + c.kind + ')' : c.kind)}</dd>${c.identity ? `<dt>Mesh identity</dt><dd class="mono">${esc(c.identity)}</dd>` : ''}${(c.users || []).length ? `<dt>JWT subjects</dt><dd class="mono">${esc(c.users.join(', '))}</dd>` : ''}${(c.addresses || []).length ? `<dt>Addresses</dt><dd class="mono">${esc(c.addresses.join(', '))}</dd>` : ''}
       <dt>Calls</dt><dd>${num(c.requests)} · ${num(c.denied)} refused · ${num(c.errors)} failed${c.tokens ? ` · ${num(c.tokens)} tokens` : ''}</dd>${c.anonymous ? '<dt>Identity</dt><dd class="red">none on any call: no mesh identity and no JWT subject</dd>' : ''}</dl></div>${edgeRows(es)}</section>`;
   }
@@ -256,7 +262,8 @@ function actDenials(d) {
     <h3 class="mt">Policies at this gateway</h3>${(x.policies || []).length ? `<div class="table-scroll rc-items"><table><thead><tr><th></th><th>Policy</th><th>Attached to</th><th>Sets</th></tr></thead><tbody>
       ${x.policies.map((p, j) => `<tr><td>${p.matches ? '<span class="rc-badge amber" title="It has a section that produces this refusal">likely</span>' : ''}</td><td><button class="link mono" data-actpol="${i}:${j}">${esc(p.ref.kind)} ${esc(p.ref.namespace)}/${esc(p.ref.name)}</button></td><td class="mono rc-small">${esc(p.target)}</td><td class="mono rc-small">${esc((p.sections || []).join(', '))}</td></tr>`).join('')}</tbody></table></div>`
       : '<p class="muted">No agentgateway policy in the capture is attached to this route, gateway or Service. The refusal may come from a policy on the listener or the GatewayClass, or one the customer excluded.</p>'}
-    ${x.look ? `<p class="mt"><strong>Next:</strong> ${esc(x.look)}</p>` : ''}</div></section>`).join('');
+    ${x.look ? `<p class="mt"><strong>Next:</strong> ${esc(x.look)}</p>` : ''}
+    ${feature('traffic') && x.from.startsWith('w:') && /waypoint/.test(x.gateway) && x.route ? `<p class="mt"><a class="btn" href="#traffic?from=${encodeURIComponent(x.caller)}&to=${encodeURIComponent(x.route)}">Why? The mesh checks between ${esc(x.caller)} and ${esc(x.route)}</a> <small class="muted">NetworkPolicy, mTLS and Istio authorization; the agentgateway policy above is checked after them</small></p>` : ''}</div></section>`).join('');
 }
 
 function actChanges(d) {
@@ -311,6 +318,7 @@ const tfVerdictCls = {allowed: '', denied: 'green', unknown: 'amber'};
 
 function tfFromHash(p) {
   if (p.get('from') && p.get('to')) { S.tf.exFrom = p.get('from'); S.tf.exTo = p.get('to'); S.tf.tab = 'explain'; S.tf.ex = null; }
+  if (p.get('agent')) { S.tf.focusName = p.get('agent'); S.tf.focus = ''; S.tf.tab = 'map'; S.tf.sel = ''; S.tf.gz = null; }
 }
 
 async function trafficPage() {
@@ -324,7 +332,14 @@ async function trafficPage() {
   const nodes = new Map((d.nodes || []).map(n => [n.id, n]));
   const lab = id => nodes.get(id)?.label || id;
   const terms = qTerms(T.q);
-  const edges = (d.edges || []).filter(e => (!T.flag || (e.flags || []).includes(T.flag)) && (!T.ns || nodes.get(e.from)?.namespace === T.ns || nodes.get(e.to)?.namespace === T.ns) &&
+  if (T.focusName) {
+    const n = (d.nodes || []).find(x => (x.kind === 'workload' || x.kind === 'waypoint') && x.label === T.focusName);
+    if (n) T.focus = n.id; else toast(`${T.focusName} made no connections in the captured ztunnel logs`);
+    T.focusName = '';
+  }
+  const fnode = T.focus ? nodes.get(T.focus) : null;
+  if (fnode && feature('reach') && T.fkey !== T.focus + '|' + T.key) { T.freach = await api('api/reach', {agent: fnode.label}).catch(() => null); T.fkey = T.focus + '|' + T.key; }
+  const edges = (d.edges || []).filter(e => (!T.focus || e.from === T.focus) && (!T.agents || nodes.get(e.from)?.agentType) && (!T.flag || (e.flags || []).includes(T.flag)) && (!T.ns || nodes.get(e.from)?.namespace === T.ns || nodes.get(e.to)?.namespace === T.ns) &&
     terms.every(tm => { const ok = [lab(e.from), lab(e.to), e.via, e.why, e.verdict, e.tls].join(' ').toLowerCase().includes((tm.text ?? `${tm.key}:${tm.val}`).toLowerCase()); return tm.neg ? !ok : ok; }));
   const stat = (label, value, sub, flag, cls = '') => `<div class="stat ${flag !== undefined ? 'fb-statbtn' : ''} ${flag && T.flag === flag ? 'on' : ''}" ${flag !== undefined ? `data-tfflag="${flag}" title="Show only these"` : ''}><div class="eyebrow">${label}</div><div class="value ${cls}">${value}</div><p>${sub}</p></div>`;
   const stats = `<div class="stats fb-stats">${stat('Edges', num(t.edges), `${num(t.connections)} connections logged`, '')}
@@ -338,11 +353,12 @@ async function trafficPage() {
   const tab = (id, label, n) => `<button class="pst-tab ${T.tab === id ? 'on' : ''}" data-tftab="${id}">${esc(label)}${n !== undefined ? `<span class="pst-tab-n">${num(n)}</span>` : ''}</button>`;
   const tabs = `<nav class="pst-tabs">${tab('map', 'Map')}${tab('edges', 'Edges', edges.length)}${tab('explain', 'Why? Explain a connection')}</nav>`;
   const nsOpts = `<select id="tf-ns"><option value="">All namespaces</option>${(d.namespaces || []).map(n => `<option ${T.ns === n ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>`;
-  const fchips = `<button class="chip ${!T.flag ? 'on' : ''}" data-tfflag="">All</button>` + Object.entries(tfFlags).map(([k, [l]]) => { const n = (d.edges || []).filter(e => (e.flags || []).includes(k)).length; return n ? `<button class="chip ${T.flag === k ? 'on' : ''}" data-tfflag="${k}">${esc(l)} <small>${n}</small></button>` : ''; }).join('');
+  const nAgents = (d.edges || []).filter(e => nodes.get(e.from)?.agentType).length;
+  const fchips = (nAgents ? `<button class="chip ${T.agents ? 'on' : ''}" id="tf-agents" title="Only connections made by agents, MCP servers and agent gateways">Agents only <small>${nAgents}</small></button>` : '') + `<button class="chip ${!T.flag ? 'on' : ''}" data-tfflag="">All</button>` + Object.entries(tfFlags).map(([k, [l]]) => { const n = (d.edges || []).filter(e => (e.flags || []).includes(k)).length; return n ? `<button class="chip ${T.flag === k ? 'on' : ''}" data-tfflag="${k}">${esc(l)} <small>${n}</small></button>` : ''; }).join('');
   const toolbar = `<div class="toolbar"><div class="row wrap">${fchips}</div><div class="row">${nsOpts}<input id="tf-q" placeholder="Filter workloads, Services, waypoints" value="${esc(T.q)}" style="min-width:240px" autocomplete="off" spellcheck="false"></div></div>`;
   let body;
   if (!d.captured) body = '<section class="panel"><div class="empty"><strong>No ztunnel access logs in this capture</strong>The traffic map is read from ztunnel access logs. Collect the istio-system ztunnel pods\' logs to fill it. You can still explain any pair on the Why? tab from the captured policy.</div></section>';
-  else if (T.tab === 'map') body = toolbar + tfMap(d, edges, nodes) + tfEdgePanel(d, nodes);
+  else if (T.tab === 'map') body = toolbar + tfFocusBar(fnode, edges) + tfMap(d, edges, nodes) + tfEdgePanel(d, nodes);
   else if (T.tab === 'edges') body = toolbar + tfEdges(edges, lab) + tfEdgePanel(d, nodes);
   if (T.tab === 'explain') body = tfExplainTab(d);
   return head('Traffic map', `${esc(tfIntro)} <span class="ent-pill">Enterprise</span>`, '<button id="tf-term">&gt;_ fbtraffic in terminal</button>') + notes + stats + findings + tabs + body;
@@ -359,9 +375,46 @@ function tfMap(d, edges, nodes) {
   const maxC = Math.max(1, ...edges.map(e => e.connections));
   const ge = edges.map(e => ({id: e.id, from: e.from, to: e.to, risk: e.risk, dash: e.denied > 0 || e.verdict === 'denied', w: 1.2 + 3 * Math.log(1 + e.connections) / Math.log(1 + maxC),
     tip: `${nodes.get(e.from)?.label} → ${nodes.get(e.to)?.label}\n${num(e.connections)} connections, ${e.tls}${e.denied ? `, ${num(e.denied)} refused` : ''}${e.via ? `\nvia ${e.via}` : ''}\npolicy: ${e.verdict}${e.layer ? ' (' + e.layer + ')' : ''}\n${e.why}\nClick for the checks`}));
-  const svg = fbGraph({left, right, edges: ge, sel: T.sel, heads: [['server', 'From', `${fbPlural(left.length, 'workload')}`], ['network', 'To', `${fbPlural(right.length, 'destination')}`]]});
-  const legend = '<span><i class="rc-sw red"></i>plaintext between mesh workloads</span><span><i class="rc-sw amber"></i>no policy, plaintext from outside the mesh, or logs and policy disagree</span><span><i class="rc-sw green"></i>mutual TLS and policy looks at it</span><span><i class="rc-sw dash"></i>refused, or policy denies it</span><span class="muted">Box colour: green in the mesh, amber not in the mesh, grey outside the capture</span>';
+  let ghosts = 0;
+  const usedN = right.length;
+  if (T.focus && T.freach) {
+    const used = new Set(edges.map(e => e.to));
+    const byNs = {};
+    for (const e of tfUnused(edges)) { const p = e.to.slice(4).split('/'); (byNs[p[p.length - 3]] ||= []).push({id: e.to, label: p[p.length - 3] + '/' + p[p.length - 1], e}); }
+    for (const [ns, list] of Object.entries(byNs).sort()) {
+      ghosts += list.length;
+      if (T.fexp[ns] || list.length === 1) {
+        for (const g of list) {
+          right.push({id: g.id, label: g.label, sub: 'allowed, not used', risk: 'grey', icon: 'network', cls: 'rg-unusednode', tip: `${g.label}\nPolicy allows ${fnodeLabel()} to reach it (${g.e.verdict}${g.e.layer ? ', ' + g.e.layer : ''}), and it made no connection to it in the capture.\nClick for the checks`});
+          ge.push({id: 'ghost>' + g.id, from: T.focus, to: g.id, risk: 'grey', dash: true, cls: 'rg-unused', w: 1, tip: `allowed, not used: ${g.label}`});
+        }
+      } else {
+        right.push({id: 'ghost:' + ns, label: `${ns} (${list.length})`, sub: 'allowed, not used · click to open up', risk: 'grey', icon: 'folder', cls: 'rg-unusednode', tip: list.map(g => g.label).join('\n')});
+        ge.push({id: 'ghost>ns:' + ns, from: T.focus, to: 'ghost:' + ns, risk: 'grey', dash: true, cls: 'rg-unused', w: 1, tip: `${list.length} Services in ${ns} it may reach and did not`});
+      }
+    }
+  }
+  const svg = fbGraph({left, right, edges: ge, sel: T.sel, heads: [['server', 'From', `${fbPlural(left.length, 'workload')}`], ['network', 'To', ghosts ? `${num(usedN)} used, ${num(ghosts)} allowed but not` : fbPlural(usedN, 'destination')]]});
+  const legend = (T.focus && T.freach ? '<span><i class="rc-sw dash"></i><span class="muted">faded:</span> allowed by policy, not used</span>' : '') + '<span><i class="rc-sw red"></i>plaintext between mesh workloads</span><span><i class="rc-sw amber"></i>no policy, plaintext from outside the mesh, or logs and policy disagree</span><span><i class="rc-sw green"></i>mutual TLS and policy looks at it</span><span><i class="rc-sw dash"></i>refused, or policy denies it</span><span class="muted">Box colour: green in the mesh, amber not in the mesh, grey outside the capture</span>';
   return fbGraphPanel('Connections', T, svg, `<small class="muted">${fbPlural(edges.length, 'edge')}</small>`, legend);
+}
+
+const fnodeLabel = () => S.tf.data?.nodes?.find(n => n.id === S.tf.focus)?.label || '';
+// The focused agent's reach destinations it made no connection to.
+function tfUnused(edges) {
+  const T = S.tf;
+  if (!T.focus || !T.freach) return [];
+  const used = new Set(edges.map(e => e.to));
+  return (T.freach.direct || []).filter(e => e.to.startsWith('svc:') && e.verdict !== 'denied' && !used.has(e.to));
+}
+
+function tfFocusBar(fnode, edges) {
+  const T = S.tf;
+  if (!fnode) return '';
+  const un = tfUnused(edges);
+  return `<div class="tf-focus"><strong class="mono">${esc(fnode.label)}</strong><span>${fbPlural(new Set(edges.map(e => e.to)).size, 'destination')} used${T.freach ? `, ${num(un.length)} more allowed by policy and not used` : ''}.</span>
+    ${T.freach ? '' : `<span class="muted">${feature('reach') ? 'Not an agent in Agent reach, so what else it may reach is not drawn.' : 'Turn on Agent reach to see what else it may reach.'}</span>`}
+    <span style="flex:1"></span>${T.freach ? `<a class="btn" href="#reach?agent=${encodeURIComponent(fnode.label)}">Agent reach</a>` : ''}${feature('activity') && fnode.agentType ? `<a class="btn" href="#activity?caller=${encodeURIComponent(fnode.label)}">Activity</a>` : ''}<button class="ghost" id="tf-unfocus">Show everything</button></div>`;
 }
 
 function tfEdges(edges, lab) {
@@ -380,7 +433,8 @@ function tfEdgePanel(d, nodes) {
   const n = nodes.get(T.sel);
   if (n) {
     const es = (d.edges || []).filter(e => e.from === n.id || e.to === n.id);
-    return `<section class="panel mt" id="tf-detail"><div class="panel-head"><h2>${esc(n.label)}</h2><div class="row">${n.ref ? '<button id="tf-obj">Open object</button>' : ''}<button class="ghost" id="tf-selx" aria-label="Close">✕</button></div></div>
+    const src = n.kind === 'workload' || n.kind === 'waypoint';
+    return `<section class="panel mt" id="tf-detail"><div class="panel-head"><h2>${esc(n.label)}</h2><div class="row">${src && T.focus !== n.id ? '<button id="tf-focus">Show only its connections</button>' : ''}${n.agentType && feature('reach') ? `<a class="btn" href="#reach?agent=${encodeURIComponent(n.label)}">Agent reach</a>` : ''}${n.ref ? '<button id="tf-obj">Open object</button>' : ''}<button class="ghost" id="tf-selx" aria-label="Close">✕</button></div></div>
       <div class="panel-body"><p class="muted">${esc([n.kind, n.inMesh ? 'in the mesh' : 'not in the mesh', n.waypoint ? 'waypoint ' + n.waypoint : ''].filter(Boolean).join(' · '))}. ${fbPlural(es.length, 'edge')}; click one for its checks.</p></div>
       ${tfEdges(es, id => nodes.get(id)?.label || id)}</section>`;
   }
@@ -454,6 +508,13 @@ after.traffic = () => {
   if (q) { let t; q.oninput = e => { clearTimeout(t); t = setTimeout(() => { const c = e.target.selectionStart, v = e.target.value; T.q = v; T.gz = null; render().then(() => refocus('#tf-q', c, v)); }, 250); }; }
   // Selecting an edge fetches its explanation.
   const select = id => {
+    if (id.startsWith('ghost:')) { keepY(() => { T.fexp[id.slice(6)] = true; T.gz = null; }); return; }
+    if (id.startsWith('ghost>')) id = id.slice(6);
+    if (id.startsWith('ns:')) { keepY(() => { T.fexp[id.slice(3)] = true; T.gz = null; }); return; }
+    if (T.focus && !nodes.has(id) && id.startsWith('svc:')) {
+      const p = id.slice(4).split('/');
+      T.exFrom = fnodeLabel(); T.exTo = p[p.length - 3] + '/' + p[p.length - 1]; T.tab = 'explain'; T.ex = null; render(); return;
+    }
     T.sel = T.sel === id ? '' : id;
     const e = (d.edges || []).find(x => x.id === T.sel);
     const y = scrollY;
@@ -466,10 +527,13 @@ after.traffic = () => {
       if (T.ex?.key !== e.id) { await tfRunExplain(e.id, from.label, to.kind === 'service' ? to.label : to.label, e.cluster); const w = $('#tf-why'); if (w && T.sel === e.id) { w.innerHTML = tfExplainBody(T.ex); tfWireExplain(); } }
     });
   };
-  fbGraphWire(T, 'tf|' + T.flag + '|' + T.ns + '|' + T.q + '|' + T.key + (T.gfull ? '|full' : ''), select);
+  fbGraphWire(T, 'tf|' + T.flag + '|' + T.ns + '|' + T.q + '|' + T.key + '|' + T.focus + '|' + T.agents + '|' + Object.keys(T.fexp).join(',') + (T.gfull ? '|full' : ''), select);
   document.querySelectorAll('[data-tfsel]').forEach(tr => tr.onclick = ev => { if (!ev.target.closest('[data-tfwhy]')) select(tr.dataset.tfsel); });
   document.querySelectorAll('[data-tfwhy]').forEach(b => b.onclick = () => select(b.dataset.tfwhy));
   $('#tf-selx')?.addEventListener('click', () => keepY(() => { T.sel = ''; }));
+  $('#tf-agents')?.addEventListener('click', () => keepY(() => { T.agents = !T.agents; T.gz = null; }));
+  $('#tf-unfocus')?.addEventListener('click', () => { T.focus = ''; T.freach = null; T.fexp = {}; T.gz = null; T.sel = ''; history.replaceState(null, '', '#traffic'); T.lastHash = location.hash; render(); });
+  $('#tf-focus')?.addEventListener('click', () => { T.focus = T.sel; T.sel = ''; T.fexp = {}; T.gz = null; render(); });
   const sn = nodes.get(T.sel), se = (d.edges || []).find(x => x.id === T.sel);
   $('#tf-obj')?.addEventListener('click', () => { const r = sn?.ref || nodes.get(se?.to)?.ref; if (r) fbOpenRef(r); });
   // An edge selected before this render (a live refresh, a tab switch) gets its explanation back.
@@ -497,5 +561,117 @@ function tfWireExplain() {
     const s = b.dataset.tfsug;
     if (T.ex.error.startsWith('no workload')) T.exFrom = s; else T.exTo = s;
     T.tab = 'explain'; T.ex = null; render();
+  });
+}
+
+// ---------- Agent reach: what it does, and lock down ----------
+// These read S.reach.usage (/api/reach/usage), fetched with the agent.
+const uzDest = id => (S.reach.usage?.destinations || []).find(d => d.to === id);
+const uzState = d => d.mismatch ? ['mismatch', 'used, policy denies'] : d.used && !d.verdict ? ['mismatch', 'used, not in reach'] : d.used ? ['used', 'used'] : d.tried ? ['tried', 'tried, refused'] : ['unused', 'allowed, not used'];
+const uzTLS = t => t === 'mtls' ? 'mTLS' : t || '';
+
+// A line's tooltip: what the agent did over it.
+function rcUseTip(id) {
+  const d = uzDest(id);
+  if (!d) return '';
+  const bits = [d.used ? 'Used:' : d.tried ? 'Tried, every attempt refused:' : 'Allowed, not used in the capture'];
+  if (d.connections) bits.push(`${num(d.connections)} connections${d.tls ? ' (' + uzTLS(d.tls) + ')' : ''}${d.refused ? `, ${num(d.refused)} refused` : ''}`);
+  if (d.calls) bits.push(`${num(d.calls)} calls through agentgateway${d.callsRefused ? `, ${num(d.callsRefused)} refused` : ''}`);
+  if ((d.tools || []).length) bits.push('tools: ' + d.tools.map(t => t.name + (t.calls ? ' ×' + t.calls : '')).join(', '));
+  if (d.tokens) bits.push(`${num(d.tokens)} tokens`);
+  if (d.mismatch) bits.push('The captured policy denies this, yet it was used');
+  return bits.join('\n');
+}
+
+// Under a selected box: the same, as a small table.
+function rcUseDetail(id) {
+  const d = uzDest(id);
+  if (!d) return '';
+  const [cls, label] = uzState(d);
+  return `<div class="row wrap mt" style="gap:14px;font-size:12px"><span class="uz-st ${cls}">${esc(label)}</span>
+    ${d.connections ? `<span>${num(d.connections)} connections${d.tls ? ` · ${esc(uzTLS(d.tls))}` : ''}${d.refused ? ` · <span class="amber">${num(d.refused)} refused</span>` : ''}</span>` : ''}
+    ${d.calls ? `<span>${num(d.calls)} calls${d.callsRefused ? ` · <span class="amber">${num(d.callsRefused)} refused</span>` : ''}${d.callsFailed ? ` · ${num(d.callsFailed)} failed` : ''}</span>` : ''}
+    ${(d.tools || []).length ? `<span>tools <span class="mono">${esc(d.tools.map(t => t.name + (t.calls ? ' ×' + t.calls : '')).join(', '))}</span></span>` : ''}
+    ${d.tokens ? `<span>${num(d.tokens)} tokens</span>` : ''}${d.last && !String(d.last).startsWith('0001') ? `<span class="muted">last ${fbTime(d.last)}</span>` : ''}</div>`;
+}
+
+// The timeline: connections, gateway calls and refusals in lanes, with a
+// marker where something was first seen.
+function uzTimeline(tl) {
+  const bs = tl.buckets || [];
+  if (!bs.length) return '<div class="empty"><strong>No activity in the logs</strong>No ztunnel connection or agentgateway request from this agent was captured.</div>';
+  const W = 1000, L = 128, top = 22, lh = 38, gap = 12, n = bs.length, bw = (W - L - 8) / n;
+  const lanes = [['Connections', b => b.connections, 'uz-c'], ['Gateway calls', b => b.requests, 'uz-r'], ['Tool and LLM calls', b => b.toolCalls + b.llmCalls, 'uz-t'], ['Refused', b => b.refused, 'uz-x'], ['Failed', b => b.errors, 'uz-e']]
+    .filter(([, f]) => bs.some(b => f(b) > 0));
+  if (!lanes.length) return '<div class="empty"><strong>No activity in the logs</strong></div>';
+  const H = top + lanes.length * (lh + gap) + 20;
+  const t0 = new Date(tl.from).getTime(), t1 = new Date(tl.to).getTime(), span = Math.max(1, t1 - t0);
+  const x = t => L + (t - t0) / span * (W - L - 8);
+  const lane = ([name, f, cls], i) => {
+    const y0 = top + i * (lh + gap), max = Math.max(1, ...bs.map(f));
+    return `<text class="uz-lane" x="0" y="${y0 + lh / 2 + 4}">${esc(name)}</text><text class="uz-axis" x="${L - 8}" y="${y0 + 9}" text-anchor="end">${num(max)}</text>
+      <line class="uz-grid" x1="${L}" x2="${W - 8}" y1="${y0 + lh}" y2="${y0 + lh}"/>
+      ${bs.map((b, j) => { const v = f(b); if (!v) return ''; const h = Math.max(2, v / max * lh); return `<rect class="${cls}" x="${(L + j * bw + 0.5).toFixed(1)}" y="${(y0 + lh - h).toFixed(1)}" width="${Math.max(1, bw - 1).toFixed(1)}" height="${h.toFixed(1)}" rx="1"/>`; }).join('')}`;
+  };
+  const hits = bs.map((b, j) => `<rect class="uz-hit" x="${(L + j * bw).toFixed(1)}" y="${top - 4}" width="${bw.toFixed(1)}" height="${H - top - 16}"><title>${esc(`${fbTime(b.start)} (${tl.stepSeconds}s)\n${num(b.connections)} connections · ${num(b.requests)} gateway calls · ${num(b.toolCalls)} tool, ${num(b.llmCalls)} LLM\n${num(b.refused)} refused · ${num(b.errors)} failed${b.tokens ? ` · ${num(b.tokens)} tokens` : ''}`)}</title></rect>`).join('');
+  const evs = (tl.events || []).map(e => { const xx = x(new Date(e.at).getTime()).toFixed(1); return `<g><title>${esc(`${fbTime(e.at)} first ${e.kind}: ${e.what} (${num(e.count)} in all)`)}</title><line class="uz-ev" x1="${xx}" x2="${xx}" y1="6" y2="${top - 4}"/><circle class="uz-evd" cx="${xx}" cy="6" r="3"/></g>`; }).join('');
+  const axis = `<text class="uz-axis" x="${L}" y="${H - 4}">${esc(fbTime(tl.from))}</text><text class="uz-axis" x="${W - 8}" y="${H - 4}" text-anchor="end">${esc(fbTime(tl.to))}</text>`;
+  return `<svg class="uz-tl" viewBox="0 0 ${W} ${H}" role="img" aria-label="Activity over time">${lanes.map(lane).join('')}${hits}${evs}${axis}</svg>`;
+}
+
+function rcUsageTab(a, U) {
+  const R = S.reach, f = R.uzf || 'all', t = U.totals;
+  const ds = (U.destinations || []).filter(d => f === 'all' || (f === 'used' ? d.used : f === 'unused' ? !d.used && !d.tried && d.allowed : f === 'refused' ? d.tried || d.refused || d.callsRefused : f === 'odd' ? d.mismatch || (d.used && !d.verdict) : true));
+  const chip = (k, l, n) => `<button class="chip ${f === k ? 'on' : ''}" data-uzf="${k}">${l} <small>${num(n)}</small></button>`;
+  const notes = (U.notes || []).map(n => `<div class="notice" style="margin-top:12px"><span>△</span><div>${esc(rcCap(n))}.</div></div>`).join('');
+  const why = d => d.to.startsWith('svc:') && feature('traffic') ? `<a class="btn" style="padding:3px 8px;font-size:12px" href="#traffic?from=${encodeURIComponent(rcName(a))}&to=${encodeURIComponent(d.label)}">Why?</a>` : '';
+  const rows = ds.map(d => { const [cls, label] = uzState(d); return `<tr><td><span class="uz-st ${cls}">${esc(label)}</span></td><td class="mono rc-dst">${esc(d.label)}${d.via ? `<br><small class="muted">via ${esc(d.via)}</small>` : ''}</td>
+    <td class="${d.verdict === 'denied' ? 'green' : d.verdict === 'unknown' ? 'amber' : ''}">${esc(d.verdict || '—')}</td>
+    <td class="mono rc-small">${d.connections ? `${num(d.connections)}${d.tls ? ` <span class="${d.tls === 'mtls' ? 'green' : 'amber'}">${esc(uzTLS(d.tls))}</span>` : ''}${d.refused ? ` <span class="amber">· ${num(d.refused)} refused</span>` : ''}` : d.observed ? `<span class="muted">${num(d.observed)} in flows</span>` : '—'}</td>
+    <td class="mono rc-small">${d.calls ? `${num(d.calls)}${d.callsRefused ? ` <span class="amber">· ${num(d.callsRefused)} refused</span>` : ''}${d.callsFailed ? ` · ${num(d.callsFailed)} failed` : ''}` : '—'}</td>
+    <td class="rc-small">${(d.tools || []).map(x => `<span class="mono">${esc(x.name)}${x.calls ? ` ×${x.calls}` : ''}</span>`).join(', ')}${(d.models || []).map(m => `<div class="mono">${esc(m.name)} · ${num(m.tokens)} tokens</div>`).join('')}</td>
+    <td class="rc-small">${d.last && !String(d.last).startsWith('0001') ? fbTime(d.last) : ''}</td><td>${why(d)}</td></tr>`; }).join('');
+  return `<section class="panel mt"><div class="panel-head"><h2>Over time</h2><small class="muted">${esc(fbTime(U.timeline.from))} to ${esc(fbTime(U.timeline.to))}${U.timeline.stepSeconds ? ` · one bar per ${U.timeline.stepSeconds}s` : ''} · markers show the first time a destination, tool, model or refusal was seen · from ${esc((U.sources || []).join(', ') || 'no source')}</small></div>
+    <div class="panel-body">${uzTimeline(U.timeline)}${notes}</div>
+    ${(U.timeline.events || []).length ? `<div class="table-scroll" style="max-height:28vh;border-top:1px solid var(--line)"><table><thead><tr><th>First seen</th><th>What</th><th></th><th>In all</th></tr></thead><tbody>${U.timeline.events.map(e => `<tr><td class="rc-small">${fbTime(e.at)}</td><td>${esc(e.kind)}</td><td class="mono">${esc(e.what)}</td><td class="mono">${num(e.count)}</td></tr>`).join('')}</tbody></table></div>` : ''}</section>
+  <section class="panel mt"><div class="panel-head"><h2>Allowed and used</h2><small class="muted">${num(t.allowed)} allowed · ${num(t.used)} used · ${num(t.unused)} allowed and not used (the Never used tile leaves out the ones it is configured to call)${t.tried ? ` · ${num(t.tried)} tried and refused` : ''}${t.mismatch + t.unexpected ? ` · <span class="red">${num(t.mismatch + t.unexpected)} used although policy denies it or reach does not know it</span>` : ''}</small></div>
+    <div class="panel-body" style="padding-bottom:0"><div class="toolbar"><div class="row wrap">${chip('all', 'All', (U.destinations || []).length)}${chip('used', 'Used', t.used + t.mismatch + t.unexpected)}${chip('unused', 'Allowed, not used', t.unused)}${chip('refused', 'Refused', (U.destinations || []).filter(d => d.tried || d.refused || d.callsRefused).length)}${t.mismatch + t.unexpected ? chip('odd', 'Policy disagrees', t.mismatch + t.unexpected) : ''}</div>
+    ${t.unused ? `<button data-rctab="lockdown">Lock down to what it uses →</button>` : ''}</div></div>
+    <div class="table-scroll" style="max-height:56vh">${rows ? `<table><thead><tr><th>State</th><th>Destination</th><th>Policy</th><th>Connections</th><th>Gateway calls</th><th>Tools and models</th><th>Last seen</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : '<div class="empty"><strong>Nothing matches</strong></div>'}</div></section>`;
+}
+
+function rcLockTab(a, U) {
+  const L = U.lockdown || {};
+  if (!L.fix) return `<section class="panel mt"><div class="empty"><strong>Nothing to build a policy from</strong>${esc(rcCap((L.notes || [])[0] || 'no traffic from this agent was captured'))}.</div></section>`;
+  const b = {...(L.before || {})}, af = {...(L.after || {})};
+  b.ch = (b.critical || 0) + (b.high || 0); af.ch = (af.critical || 0) + (af.high || 0);
+  const cmp = (label, k, better) => { const x = b[k], y = af[k]; const cls = x === y ? '' : better(x, y) ? 'green' : 'red'; return `<div><div class="eyebrow">${label}</div><div class="ld-v">${esc(String(x ?? '—'))}<span class="arrow">→</span><span class="${cls}">${esc(L.evaluated ? String(y ?? '—') : '?')}</span></div></div>`; };
+  const less = (x, y) => y < x;
+  const radRank = {contained: 0, narrow: 1, wide: 2, open: 3};
+  const list = xs => xs.length ? `<ul class="ld-list">${xs.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '<p class="muted">none</p>';
+  const R = S.reach;
+  return `<section class="panel mt"><div class="panel-head"><h2>Lock down to what it uses</h2><small class="muted">An egress policy that allows only what ${esc(a.name)} was seen using, and tool allowlists for the MCP servers it called. Flightbay only proposes it; nothing is applied.</small></div><div class="panel-body">
+    <h3>If you apply it${L.evaluated ? '' : ' <small class="muted">(not re-evaluated)</small>'}</h3>
+    <div class="ld-cmp">${cmp('Radius', 'radius', (x, y) => (radRank[y] ?? 9) < (radRank[x] ?? 9))}${cmp('Internet', 'internet', (x, y) => y === 'denied' && x !== 'denied')}${cmp('Direct', 'direct', less)}${cmp('Total', 'closure', less)}${cmp('Write', 'write', less)}${cmp('Critical + high', 'ch', less)}</div>
+    <p class="muted rc-small">Worked out by running Agent reach again with the proposal in place of the agent's egress policies. Total counts what the kept destinations can reach in turn, so it only drops once they are locked down as well.</p>
+    ${(L.cut || []).length ? `<div class="notice bad mt"><div><strong>This would cut off destinations it uses:</strong> ${esc(L.cut.join(', '))}</div></div>` : L.evaluated ? `<div class="notice info mt"><div>Every Service it used stays reachable: ${esc((L.stillUsed || []).join(', ') || 'none')}.</div></div>` : ''}
+    ${(L.breaks || []).map(x => `<div class="notice mt"><span>△</span><div>${esc(x)}</div></div>`).join('')}
+    ${(L.notes || []).map(x => `<div class="notice mt"><span>△</span><div>${esc(rcCap(x))}</div></div>`).join('')}
+    <div class="grid2 rc-grid mt"><div><h3>Keeps</h3>${list(L.keeps || [])}</div><div><h3>Removes <small class="muted">${num((L.removes || []).length)} allowed today, never used</small></h3>${(L.removes || []).length > 12 && !R.ldAll ? list(L.removes.slice(0, 12)) + `<button class="ghost" id="ld-all">Show all ${num(L.removes.length)}</button>` : list(L.removes || [])}</div></div>
+    <div class="row between mt"><h3>The policy</h3><div class="row"><button id="ld-copy">Copy YAML</button><button id="ld-dl">Download</button></div></div>
+    <pre class="code mt">${esc(L.fix)}</pre>
+    <p class="muted rc-small mt">Built from the capture's log window only. Something the agent does rarely (a nightly job, a fallback model) may not be in it. Apply in a test namespace first, or watch refusals on the Traffic map after applying.</p></div></section>`;
+}
+
+function rcUsageWire(a) {
+  const R = S.reach, U = R.usage;
+  if (!U) return;
+  const keepY = fn => { const y = scrollY; fn(); render().then(() => scrollTo(0, y)); };
+  document.querySelectorAll('[data-uzf]').forEach(b => b.onclick = () => keepY(() => { R.uzf = b.dataset.uzf; }));
+  $('#ld-all')?.addEventListener('click', () => keepY(() => { R.ldAll = true; }));
+  $('#ld-copy')?.addEventListener('click', () => navigator.clipboard.writeText(U.lockdown.fix).then(() => toast('YAML copied'), () => toast('Clipboard unavailable')));
+  $('#ld-dl')?.addEventListener('click', () => {
+    const url = URL.createObjectURL(new Blob([U.lockdown.fix + '\n'], {type: 'application/yaml'}));
+    const l = document.createElement('a'); l.href = url; l.download = `${a.namespace}-${a.name}-lockdown.yaml`; l.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
   });
 }

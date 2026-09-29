@@ -9,7 +9,7 @@ import (
 
 // ztLine is a ztunnel access log line (upstream text format).
 func ztLine(src, srcID, dstSvc, dstPod, dstNS, dstAddr, extra string) string {
-	l := "2026-09-28T11:06:10.074538Z\tinfo\taccess\tconnection complete\tsrc.workload=\"" + src + "\" src.namespace=\"agents\""
+	l := "2026-09-28T11:06:10.074538Z 2026-09-28T11:06:10.074538Z\tinfo\taccess\tconnection complete\tsrc.workload=\"" + src + "\" src.namespace=\"agents\""
 	if srcID != "" {
 		l += " src.identity=\"" + srcID + "\""
 	}

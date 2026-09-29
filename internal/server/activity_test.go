@@ -44,3 +44,25 @@ func TestActivityTrafficExplainEndpoints(t *testing.T) {
 		t.Fatalf("explain without to: %d", code)
 	}
 }
+
+func TestReachUsageEndpoint(t *testing.T) {
+	s, srv := newServer(t, false)
+	defer features.Set(nil)
+	features.Set(map[string]bool{})
+	if code := get(t, srv, "/api/reach/usage?agent=payments/demo-agent", &map[string]any{}); code != 403 {
+		t.Fatalf("without Enterprise: %d", code)
+	}
+	features.Set(map[string]bool{features.Reach: true, features.Traffic: true, features.Activity: true})
+	s.WS.AddObjects("mesh1", podsRes, []map[string]any{{"kind": "Pod", "metadata": md("payments", "demo-agent", "pa", map[string]any{"app": "demo-agent"}),
+		"spec": map[string]any{"containers": []any{map[string]any{"name": "a", "image": "demo-agent:1"}}}, "status": map[string]any{"phase": "Running"}}}, "c")
+	var u struct {
+		Agent    string
+		Lockdown struct{ Notes []string }
+	}
+	if code := get(t, srv, "/api/reach/usage?agent=payments/demo-agent", &u); code != 200 || u.Agent != "payments/demo-agent" || len(u.Lockdown.Notes) == 0 {
+		t.Fatalf("usage %d %+v", code, u)
+	}
+	if code := get(t, srv, "/api/reach/usage?agent=nobody", &map[string]any{}); code != 404 {
+		t.Fatalf("unknown agent: %d", code)
+	}
+}
