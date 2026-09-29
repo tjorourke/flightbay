@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"golang.org/x/sync/errgroup"
 	"sort"
 	"strings"
 
@@ -175,8 +176,8 @@ func (c *Collector) refAllowed(r resRef) bool {
 // collectDiagnostics reads proxy dumps, control-plane debug output and
 // metrics from the Solo components among the selected pods.
 func (c *Collector) collectDiagnostics(ctx context.Context, cluster string, cl Clients, pods []podInfo, kinds map[string]string) error {
-	pl := c.Policy.Plan()
 	summary := map[string]*SummaryComponent{}
+	var work []diagJob
 	for _, p := range pods {
 		comps := detect(p)
 		if len(comps) == 0 {
@@ -190,65 +191,24 @@ func (c *Collector) collectDiagnostics(ctx context.Context, cluster string, cl C
 			}
 			summary[key].Pods = append(summary[key].Pods, p.ns+"/"+p.name)
 		}
-		if cl.Forward == nil || !p.running {
-			for _, comp := range comps {
-				reason := "pod is not running"
-				if cl.Forward == nil {
-					reason = "port-forward is not available"
-				}
-				for _, ep := range comp.endpoints {
-					if pl.Selected(ep.cat) {
-						_ = c.diagCoverage(cluster, p, comp, ep, bundle.StateFailed, reason, "", 0)
-					}
-				}
-			}
-			continue
+		work = append(work, diagJob{p, comps})
+	}
+	// Pods are read diagWorkers at a time: each is a port-forward through the
+	// API server to its kubelet, and a proxy dump can be tens of MB, so a
+	// cluster with a ztunnel on every node would otherwise take one node at a time.
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(c.diagWorkers())
+	for _, j := range work {
+		if gctx.Err() != nil {
+			break
 		}
-		var ports []int
-		seen := map[int]bool{}
-		for _, comp := range comps {
-			for _, ep := range comp.endpoints {
-				if pl.Selected(ep.cat) && !seen[ep.port] {
-					seen[ep.port] = true
-					ports = append(ports, ep.port)
-				}
-			}
-		}
-		if len(ports) == 0 {
-			continue
-		}
-		sort.Ints(ports)
-		c.progress("%s: diagnostics from %s/%s", cluster, p.ns, p.name)
-		sess, err := cl.Forward.Open(ctx, p.ns, p.name, ports)
-		if err != nil {
-			c.record(LogEntry{Cluster: cluster, Operation: "port-forward", Target: p.name, Namespace: p.ns, Result: "failed", Error: err.Error()})
-			for _, comp := range comps {
-				for _, ep := range comp.endpoints {
-					if pl.Selected(ep.cat) {
-						_ = c.diagCoverage(cluster, p, comp, ep, bundle.StateFailed, "port-forward failed: "+err.Error(), "", 0)
-					}
-				}
-			}
-			continue
-		}
-		for _, comp := range comps {
-			dir := bundle.SoloPath(cluster, comp.kind, p.ns, p.name, "")
-			_ = c.Writer.AddJSON(dir+"meta.json", DiagMeta{Component: comp.name, Container: comp.container, Image: p.images[comp.container], Version: imageTag(p.images[comp.container]), Node: p.node})
-			for _, ep := range comp.endpoints {
-				if err := ctx.Err(); err != nil {
-					sess.Close()
-					return err
-				}
-				if !pl.Selected(ep.cat) {
-					continue
-				}
-				if err := c.collectEndpoint(ctx, cluster, sess, p, comp, ep, kinds); err != nil {
-					sess.Close()
-					return err
-				}
-			}
-		}
-		sess.Close()
+		g.Go(func() error { return c.diagPod(gctx, cluster, cl, j.p, j.comps, kinds) })
+	}
+	if err := g.Wait(); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if len(summary) > 0 {
 		var s SoloSummary
@@ -266,6 +226,79 @@ func (c *Collector) collectDiagnostics(ctx context.Context, cluster string, cl C
 			return err
 		}
 	}
+	return nil
+}
+
+type diagJob struct {
+	p     podInfo
+	comps []component
+}
+
+// diagWorkers is how many pods' diagnostics are read at once.
+func (c *Collector) diagWorkers() int { return min(4, c.listWorkers()) }
+
+// diagPod reads one pod's diagnostic endpoints through one port-forward.
+func (c *Collector) diagPod(ctx context.Context, cluster string, cl Clients, p podInfo, comps []component, kinds map[string]string) error {
+	pl := c.Policy.Plan()
+	if cl.Forward == nil || !p.running {
+		for _, comp := range comps {
+			reason := "pod is not running"
+			if cl.Forward == nil {
+				reason = "port-forward is not available"
+			}
+			for _, ep := range comp.endpoints {
+				if pl.Selected(ep.cat) {
+					_ = c.diagCoverage(cluster, p, comp, ep, bundle.StateFailed, reason, "", 0)
+				}
+			}
+		}
+		return nil
+	}
+	var ports []int
+	seen := map[int]bool{}
+	for _, comp := range comps {
+		for _, ep := range comp.endpoints {
+			if pl.Selected(ep.cat) && !seen[ep.port] {
+				seen[ep.port] = true
+				ports = append(ports, ep.port)
+			}
+		}
+	}
+	if len(ports) == 0 {
+		return nil
+	}
+	sort.Ints(ports)
+	c.progress("%s: diagnostics from %s/%s", cluster, p.ns, p.name)
+	sess, err := cl.Forward.Open(ctx, p.ns, p.name, ports)
+	if err != nil {
+		c.record(LogEntry{Cluster: cluster, Operation: "port-forward", Target: p.name, Namespace: p.ns, Result: "failed", Error: err.Error()})
+		for _, comp := range comps {
+			for _, ep := range comp.endpoints {
+				if pl.Selected(ep.cat) {
+					_ = c.diagCoverage(cluster, p, comp, ep, bundle.StateFailed, "port-forward failed: "+err.Error(), "", 0)
+				}
+			}
+		}
+		return nil
+	}
+	for _, comp := range comps {
+		dir := bundle.SoloPath(cluster, comp.kind, p.ns, p.name, "")
+		_ = c.Writer.AddJSON(dir+"meta.json", DiagMeta{Component: comp.name, Container: comp.container, Image: p.images[comp.container], Version: imageTag(p.images[comp.container]), Node: p.node})
+		for _, ep := range comp.endpoints {
+			if err := ctx.Err(); err != nil {
+				sess.Close()
+				return err
+			}
+			if !pl.Selected(ep.cat) {
+				continue
+			}
+			if err := c.collectEndpoint(ctx, cluster, sess, p, comp, ep, kinds); err != nil {
+				sess.Close()
+				return err
+			}
+		}
+	}
+	sess.Close()
 	return nil
 }
 

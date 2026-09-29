@@ -16,6 +16,7 @@ A capture reads every selected object type and every selected log stream once. O
 | List and get requests in flight | 4 (`--concurrency`) | Bounds the heavy lists running at once against the API server and etcd |
 | List and get request rate | 50 a second, burst 100 (`--qps`, `--burst`) | The same client-side limit kubectl uses |
 | Log streams in flight | 8 (`--log-concurrency`) | Bounds the load on the kubelets |
+| Solo diagnostics in flight | 4 pods at a time (at most `--concurrency`) | Each is a port-forward through the API server to a kubelet, and a proxy dump can be tens of MB |
 | Log request rate | 50 a second (`--log-qps`) | Limited separately, because a log request is proxied to a kubelet rather than served from etcd or the watch cache |
 | Only reads | always | Get, list and pod logs, plus port-forward only with `--solo-diagnostics` |
 
@@ -68,4 +69,6 @@ A synthetic cluster of 1,000 pods and 4 million log lines, with the same client-
 
 ## Opening a big bundle
 
-The desk parses log chunks on up to 8 workers, each committing about 25,000 rows at a time to its database. About 4.3 million log lines load in 6 seconds on an 18-core laptop, and search is interactive while the rest arrives. Uncommitted rows are bounded by the worker count, not the bundle size, so a larger bundle takes longer, not more memory for loading. Objects are kept in memory as well as in the database, because the Scorecard, Agent reach and the snapshot API read them; 200,000 objects use about 600 MiB.
+The desk parses log chunks on up to 8 workers, each committing about 25,000 rows at a time to its database. About 4.3 million log lines load in 6 seconds on an 18-core laptop, and search is interactive while the rest arrives. Uncommitted rows are bounded by the worker count, not the bundle size, so a larger bundle takes longer, not more memory for loading. Findings are worked out once for each state of the workspace and shared by the Overview, Findings and the workspace summary; the repeated-error rule alone reads up to 200,000 error lines, which took about 2 seconds on every page load of a 4 million line bundle. While a bundle is still loading, findings are refreshed every few seconds rather than on every chunk.
+
+Objects are kept in memory as well as in the database, because the Scorecard, Agent reach and the snapshot API read them; 200,000 objects use about 600 MiB.

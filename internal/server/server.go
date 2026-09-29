@@ -102,6 +102,7 @@ type Server struct {
 	mu     sync.Mutex
 	base   baselineState
 	reachC reachCache
+	findC  findingsCache
 	actC   actCache
 	trafC  trafCache
 	descC  describeCache
@@ -369,7 +370,7 @@ func (s *Server) workspace(w http.ResponseWriter, r *http.Request) {
 	if m := s.WS.Manifest(); m != nil {
 		out["captureEnd"], out["complete"], out["collectionErrors"] = m.CaptureEnd, m.Complete, m.Errors
 	}
-	findings := analyze.Run(s.WS)
+	findings := s.findingsList()
 	fc := map[string]int{"critical": 0, "warning": 0, "info": 0, "total": len(findings)}
 	perCluster := map[string]int{}
 	for _, f := range findings {
@@ -623,7 +624,7 @@ func (s *Server) logContext(w http.ResponseWriter, r *http.Request) {
 func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
 	c := r.URL.Query().Get("cluster")
 	out := []analyze.Finding{}
-	for _, f := range analyze.Run(s.WS) {
+	for _, f := range s.findingsList() {
 		if c == "" || f.Cluster == c {
 			out = append(out, f)
 		}
