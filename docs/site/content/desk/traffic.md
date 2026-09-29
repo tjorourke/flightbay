@@ -19,13 +19,13 @@ For one agent at a time (what it may reach, what it used, and the policy that wo
 
 Traffic is part of [Flightbay Enterprise](/enterprise/). Turn it on with `FLIGHTBAY_ENTERPRISE=1 flightbay ui` or `FLIGHTBAY_FEATURES=traffic` (`activity`, the name of the gateway layer's old page, still works).
 
-![Both layers: Services the network layer drew, and MCP servers whose tools are folded until opened](/images/traffic-map.png)
+![Agents only, both layers: every agent that called GitHub tools, drawn on the Service the calls went through](/images/traffic-map.png)
 
 ## Layers
 
-**Both**, **Network** and **Gateway calls** choose what the map draws; clicking the Connections or Gateway calls total does the same. With both layers on, lines to Services are ztunnel connections and lines to tools, models and agents are calls through agentgateway. A workload that does both appears once on the left.
+**Both**, **Network** and **Gateway calls** choose what the map draws; clicking the Connections or Gateway calls total does the same. A workload that does both appears once on the left.
 
-With both layers on, the tools of each MCP server fold into one box (`github · 3 tools`) so the Services stay readable. Click it to open it up. The Gateway calls layer shows every tool on its own.
+With both layers on, the right-hand column holds Services only. A call through agentgateway is drawn on the Service it went through (the waypoint's Service, or the gateway's), and the box says how many tools were called on it (`kagent/github-mcp · Service · 2 tools called`). Hover the line for the tools and counts, or click the Service for a table of every call through it. When ztunnel also logged the connection, the calls are added to that line; a caller whose connections are not in the capture gets a line of its own. Choose **Gateway calls** for a box per tool, model and agent.
 
 ![The gateway layer: callers and the tools, models and agents they called](/images/activity-map.png)
 
@@ -97,7 +97,7 @@ A Service with no pods whose waypoint answers for it (an agentgateway waypoint i
 | Map | Sources on the left, destinations and what was called on the right. Box colour is green in the mesh, amber not in the mesh, grey outside the capture. For connections, line colour is red for plaintext in the mesh, amber for no policy, plaintext from outside the mesh or disagreement, green for mutual TLS with a policy looking at it. For gateway calls, red is a call outside an agent's tool list, to a tool its server does not list, or with every call refused; amber is no identity or some refusals. Dashed lines have refusals. Hover a box to trace its lines; click a box or a line for its detail underneath. |
 | Connections | The network layer as a table, with a **Why?** button per row |
 | Calls | The gateway layer as a table: caller, target, calls, refusals, failures, tokens, gateway |
-| Tools and models | Every tool called and whether its server lists it, the tools servers offer that no one called, and tokens and cost per model and per caller |
+| Tools and models | Every tool the capture names, per MCP server: how often it was called and by whom, who an agentgateway allowlist allows to call it, which agents are configured for it, and whether the server lists it. Then tokens and cost per model and per caller. See [Gateway calls](/desk/activity/#tool-lists). |
 | Refused | Refused gateway calls, with the agentgateway policies that produce each reason, and connections refused by the mesh |
 | Tool changes | With a baseline loaded: tools added, removed or whose description changed |
 | Why? | The explainer for any workload and Service |
@@ -123,7 +123,7 @@ The filter box takes free text or `key:value` terms, with suggestions from the c
 
 ## Following one agent
 
-**Agents only** keeps the traffic of agents, MCP servers and agent gateways. Click a workload and **Show only its traffic**, or open `#traffic?agent=kagent/tom-demo` (the **Traffic** button on the [Agents](/desk/agent-reach/) page does this), to follow one: its connections and its gateway calls.
+**Agents only** keeps the traffic of agents, MCP servers and agent gateways, and of service accounts that called MCP tools, models or agents through agentgateway. Those are agents whose workload is gone or was not captured: they show as `agent by its calls, no workload captured`. Click a workload and **Show only its traffic**, or open `#traffic?agent=kagent/tom-demo` (the **Traffic** button on the [Agents](/desk/agent-reach/) page does this), to follow one: its connections and its gateway calls.
 
 For an agent, the map then also draws what policy allows it to reach and it did not use, faded and dashed and folded by namespace. Click a namespace to open it up, and a Service to explain why it is allowed. The bar above the map counts both, and links to the agent on the Agents page.
 

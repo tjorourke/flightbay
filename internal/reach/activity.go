@@ -1,8 +1,10 @@
 package reach
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -24,6 +26,7 @@ type Activity struct {
 	Edges    []ActEdge     `json:"edges"`
 	Denials  []ActDenial   `json:"denials"`
 	Tools    []ToolInfo    `json:"tools"`
+	Servers  []ServerInfo  `json:"servers"`
 	Findings []Finding     `json:"findings"`
 	Changes  *ToolChanges  `json:"changes,omitempty"`
 	Totals   ActTotals     `json:"totals"`
@@ -76,6 +79,10 @@ type ActCaller struct {
 	Cost      float64  `json:"cost,omitempty"`
 	// Anonymous: no mesh identity and no JWT subject on any of its calls.
 	Anonymous bool `json:"anonymous"`
+	// Agentic: a workload or service account that called MCP tools, models
+	// or agents. It marks agents whose workload is gone or was not captured,
+	// which have no agent type of their own.
+	Agentic bool `json:"agentic,omitempty"`
 }
 
 // ActTarget is what was called.
@@ -106,6 +113,7 @@ type ActTarget struct {
 type ActEdge struct {
 	From         string         `json:"from"`
 	To           string         `json:"to"`
+	Service      string         `json:"service,omitempty"` // svc:<id> the calls went through: the waypoint's Service, or the gateway's
 	Requests     int            `json:"requests"`
 	Denied       int            `json:"denied"`
 	Errors       int            `json:"errors"`
@@ -162,6 +170,23 @@ type ToolInfo struct {
 	Calls       int      `json:"calls"`
 	Callers     []string `json:"callers,omitempty"`
 	Ref         *Ref     `json:"ref,omitempty"`
+	// AllowedFor lists who an agentgateway MCP authorization rule allows to
+	// call it ("kagent/demo", "jwt alice", "any caller"), with the policy.
+	AllowedFor []string `json:"allowedFor,omitempty"`
+	Policies   []Ref    `json:"policies,omitempty"`
+	// ConfiguredOn lists the agents whose configuration names it (a kagent
+	// Agent's toolNames, or an ALLOWED_TOOLS variable).
+	ConfiguredOn []string `json:"configuredOn,omitempty"`
+}
+
+// ServerInfo says what the capture knows about one MCP server's tools.
+type ServerInfo struct {
+	Name       string `json:"name"`
+	Listed     int    `json:"listed"`     // tools in its discovered list (kagent)
+	Allowed    int    `json:"allowed"`    // tools an allowlist names
+	Configured int    `json:"configured"` // tools an agent is configured for
+	Called     int    `json:"called"`
+	HasList    bool   `json:"hasList"` // its own tool list was captured
 }
 
 // ToolChanges compares tools and callers with a baseline capture.
@@ -269,21 +294,30 @@ func sortFindings(fs []Finding) {
 }
 
 type actBuilder struct {
-	a       *Activity
-	callers map[string]*ActCaller
-	targets map[string]*ActTarget
-	edges   map[[2]string]*ActEdge
-	denials map[string]*ActDenial
-	tools   map[string]*ToolInfo // server/name
-	cov     map[string]*ActCoverage
-	pods    map[string]map[string]bool
-	allow   map[string]map[string]bool // caller id -> tools its kagent Agent lists
-	servers map[string]string          // names a captured MCP server goes by -> its ns/name
+	a        *Activity
+	callers  map[string]*ActCaller
+	targets  map[string]*ActTarget
+	edges    map[[2]string]*ActEdge
+	denials  map[string]*ActDenial
+	tools    map[string]*ToolInfo // server/name
+	cov      map[string]*ActCoverage
+	pods     map[string]map[string]bool
+	allow    map[string]map[string]bool // caller id -> tools its kagent Agent lists
+	servers  map[string]string          // names a captured MCP server goes by -> its ns/name
+	clusters []*cluster
+	pending  []pendingTool // configured tools whose server is decided once everything is read
+}
+
+// pendingTool is a tool an agent is configured for, with the servers it
+// could be on (the agent's MCP_SERVERS_CONFIG).
+type pendingTool struct {
+	who, name  string
+	candidates []string
 }
 
 func buildActivity(ws *store.Workspace) Activity {
 	a := Activity{Callers: []ActCaller{}, Targets: []ActTarget{}, Edges: []ActEdge{}, Denials: []ActDenial{}, Tools: []ToolInfo{},
-		Findings: []Finding{}, Gateways: []string{}, Notes: []string{}, Clusters: ws.Clusters(), Coverage: []ActCoverage{}}
+		Findings: []Finding{}, Gateways: []string{}, Notes: []string{}, Clusters: ws.Clusters(), Coverage: []ActCoverage{}, Servers: []ServerInfo{}}
 	b := &actBuilder{a: &a, callers: map[string]*ActCaller{}, targets: map[string]*ActTarget{}, edges: map[[2]string]*ActEdge{},
 		denials: map[string]*ActDenial{}, tools: map[string]*ToolInfo{}, cov: map[string]*ActCoverage{}, pods: map[string]map[string]bool{}, allow: map[string]map[string]bool{}, servers: map[string]string{}}
 	inventory := false
@@ -297,6 +331,9 @@ func buildActivity(ws *store.Workspace) Activity {
 			inventory = true
 		}
 		b.allowlists(c)
+		b.policyTools(c)
+		b.configuredTools(c)
+		b.clusters = append(b.clusters, c)
 		for _, r := range ws.AgentgatewayRequests(cl) {
 			b.add(c, agents, r)
 		}
@@ -557,6 +594,11 @@ func (b *actBuilder) add(c *cluster, agents map[*workload]string, r store.AgwReq
 		e = &ActEdge{From: ca.ID, To: tid, Reasons: map[string]int{}, Statuses: map[string]int{}, Gateways: []string{}}
 		b.edges[[2]string{ca.ID, tid}] = e
 	}
+	if e.Service == "" {
+		if sv := c.serviceOfCall(ActTarget{Routes: nonEmpty(f["route"]), Gateways: nonEmpty(f["gateway"])}); sv != nil {
+			e.Service = "svc:" + sv.id
+		}
+	}
 	e.Requests += r.Count
 	e.InputTokens += r.InputTokens
 	e.OutputTokens += r.OutputTokens
@@ -590,7 +632,17 @@ func (b *actBuilder) add(c *cluster, agents map[*workload]string, r store.AgwReq
 	switch t.Kind {
 	case "tool":
 		b.a.Totals.ToolCalls += r.Count
-		ti := b.tool(t.Server, t.Label)
+		// A call to a kagent server is logged under its MCP target name; file
+		// it with the server's own tool list when the name, route or host
+		// matches one.
+		srv := t.Server
+		for _, k := range []string{t.Server, f["route"], lastPart(f["route"])} {
+			if x := b.servers[k]; k != "" && x != "" {
+				srv = x
+				break
+			}
+		}
+		ti := b.tool(srv, t.Label)
 		ti.Calls += r.Count
 		ti.Callers = union(ti.Callers, []string{ca.Label})
 		if allowed, ok := b.allow[strings.TrimPrefix(ca.ID, "w:")]; ok && !allowed[t.Label] {
@@ -751,6 +803,15 @@ func (b *actBuilder) finish(inventory bool) {
 		}
 		return a.Targets[i].ID < a.Targets[j].ID
 	})
+	for _, e := range b.edges {
+		if t := b.targets[e.To]; t != nil && (t.Kind == "tool" || t.Kind == "model" || t.Kind == "agent") {
+			if ca := b.callers[e.From]; ca != nil && (ca.Kind == "workload" || ca.Kind == "identity") && e.Requests > e.Denied {
+				ca.Agentic = true
+			}
+		}
+	}
+	b.placeConfigured()
+	b.serverSummary()
 	for _, ca := range b.callers {
 		if ca.Anonymous {
 			for _, e := range b.edges {
@@ -1048,4 +1109,249 @@ func first(v ...string) string {
 		}
 	}
 	return ""
+}
+
+func nonEmpty(xs ...string) []string {
+	var out []string
+	for _, x := range xs {
+		if x != "" {
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+var (
+	reSA     = regexp.MustCompile(`serviceAccount\s*==\s*"([^"]+)"`)
+	reNS     = regexp.MustCompile(`identity\.namespace\s*==\s*"([^"]+)"`)
+	reJWT    = regexp.MustCompile(`jwt\.sub\s*==\s*"([^"]+)"`)
+	reToolIn = regexp.MustCompile(`mcp\.tool\.name\s+in\s*\[([^\]]*)\]`)
+	reToolEq = regexp.MustCompile(`mcp\.tool\.name\s*==\s*"([^"]+)"`)
+	reQuoted = regexp.MustCompile(`"([^"]+)"`)
+)
+
+// policyTools reads the tools agentgateway MCP authorization rules allow,
+// and for whom. A rule is a CEL expression; each || clause that names tools
+// (mcp.tool.name in [...] or == "...") is read with the caller it names
+// (a service account, a JWT subject, or nobody in particular).
+func (b *actBuilder) policyTools(c *cluster) {
+	for _, g := range []struct{ group, res string }{{"agentgateway.dev", "agentgatewaypolicies"}, {"enterpriseagentgateway.solo.io", "enterpriseagentgatewaypolicies"}} {
+		for _, p := range c.list(g.group, g.res) {
+			az := m(path(p.Obj, "spec", "backend", "mcp", "authorization"))
+			if az == nil || strings.EqualFold(s(az["action"]), "Deny") {
+				continue
+			}
+			servers := c.policyServers(p)
+			for _, expr := range strList(l(path(az, "policy", "matchExpressions"))) {
+				for _, clause := range strings.Split(expr, "||") {
+					var tools []string
+					for _, mm := range reToolIn.FindAllStringSubmatch(clause, -1) {
+						for _, q := range reQuoted.FindAllStringSubmatch(mm[1], -1) {
+							tools = append(tools, q[1])
+						}
+					}
+					for _, mm := range reToolEq.FindAllStringSubmatch(clause, -1) {
+						tools = append(tools, mm[1])
+					}
+					if len(tools) == 0 {
+						continue
+					}
+					who := "any caller"
+					if mm := reSA.FindStringSubmatch(clause); mm != nil {
+						who = mm[1]
+						if ns := reNS.FindStringSubmatch(clause); ns != nil {
+							who = ns[1] + "/" + mm[1]
+						} else {
+							who = "service account " + mm[1]
+						}
+					} else if mm := reJWT.FindStringSubmatch(clause); mm != nil {
+						who = "JWT subject " + mm[1]
+					}
+					for _, srv := range servers {
+						for _, t := range tools {
+							// Multiplexed MCP prefixes tools with the target; a rule
+							// often names both spellings.
+							t = strings.TrimPrefix(t, srv+"_")
+							ti := b.tool(srv, t)
+							ti.AllowedFor = union(ti.AllowedFor, []string{who})
+							if !hasRef(ti.Policies, p) {
+								ti.Policies = append(ti.Policies, *refOf(p))
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+func hasRef(rs []Ref, o *store.Object) bool {
+	for _, r := range rs {
+		if r.Namespace == o.Namespace && r.Name == o.Name && r.Kind == o.Kind {
+			return true
+		}
+	}
+	return false
+}
+
+// policyServers names the MCP servers a policy applies to, the way calls
+// name them (the backend's MCP target names), falling back to the object
+// it targets.
+func (c *cluster) policyServers(p *store.Object) []string {
+	var out []string
+	for _, tr := range l(path(p.Obj, "spec", "targetRefs")) {
+		kind, name := s(m(tr)["kind"]), s(m(tr)["name"])
+		found := false
+		if strings.HasSuffix(kind, "Backend") {
+			for _, g := range []struct{ group, res string }{{"agentgateway.dev", "agentgatewaybackends"}, {"enterpriseagentgateway.solo.io", "enterpriseagentgatewaybackends"}} {
+				for _, be := range c.list(g.group, g.res) {
+					if be.Namespace != p.Namespace || be.Name != name {
+						continue
+					}
+					for _, sec := range []string{"mcp", "entMcp"} {
+						for _, t := range l(path(be.Obj, "spec", sec, "targets")) {
+							if n := s(m(t)["name"]); n != "" {
+								out = union(out, []string{n})
+								found = true
+							}
+						}
+					}
+				}
+			}
+		}
+		if !found && name != "" {
+			out = union(out, []string{name})
+		}
+	}
+	return out
+}
+
+// configuredTools reads the tools agents are configured for: a declarative
+// kagent Agent's toolNames, and an ALLOWED_TOOLS variable (a JSON list) on a
+// BYO agent, against the servers in its MCP_SERVERS_CONFIG.
+func (b *actBuilder) configuredTools(c *cluster) {
+	for _, ag := range c.list("kagent.dev", "agents") {
+		who := ag.Namespace + "/" + ag.Name
+		for _, t := range l(path(ag.Obj, "spec", "declarative", "tools")) {
+			ms := m(m(t)["mcpServer"])
+			if ms == nil {
+				continue
+			}
+			srv := s(ms["name"])
+			if b.servers[key(ag.Namespace, srv)] != "" {
+				srv = b.servers[key(ag.Namespace, srv)]
+			}
+			for _, n := range strList(l(ms["toolNames"])) {
+				ti := b.tool(srv, n)
+				ti.ConfiguredOn = union(ti.ConfiguredOn, []string{who})
+			}
+		}
+		var tools, servers []string
+		resolve := func(name, url string) string {
+			host := strings.TrimPrefix(strings.TrimPrefix(url, "https://"), "http://")
+			host, _, _ = strings.Cut(host, "/")
+			host = stripPort(host)
+			keys := []string{host}
+			if p := strings.Split(host, "."); len(p) >= 2 {
+				keys = append(keys, key(p[1], p[0]))
+			}
+			for _, k := range keys {
+				if srv := b.servers[k]; srv != "" {
+					return srv // a kagent server with a tool list
+				}
+			}
+			return name // the name calls through agentgateway use
+		}
+		for _, e := range l(path(ag.Obj, "spec", "byo", "deployment", "env")) {
+			em := m(e)
+			var v []any
+			switch s(em["name"]) {
+			case "ALLOWED_TOOLS":
+				if json.Unmarshal([]byte(s(em["value"])), &v) == nil {
+					tools = strList(v)
+				}
+			case "MCP_SERVERS_CONFIG":
+				if json.Unmarshal([]byte(s(em["value"])), &v) == nil {
+					for _, x := range v {
+						if n := s(m(x)["name"]); n != "" {
+							servers = append(servers, resolve(n, s(m(x)["url"])))
+						}
+					}
+				}
+			}
+		}
+		for _, n := range tools {
+			b.pending = append(b.pending, pendingTool{who: who, name: n, candidates: servers})
+		}
+	}
+}
+
+// serverSummary counts, per MCP server, what the capture knows of its tools.
+func (b *actBuilder) serverSummary() {
+	by := map[string]*ServerInfo{}
+	get := func(n string) *ServerInfo {
+		if by[n] == nil {
+			by[n] = &ServerInfo{Name: n}
+		}
+		return by[n]
+	}
+	for _, t := range b.tools {
+		si := get(t.Server)
+		if t.Declared {
+			si.Listed++
+			si.HasList = true
+		}
+		if len(t.AllowedFor) > 0 {
+			si.Allowed++
+		}
+		if len(t.ConfiguredOn) > 0 {
+			si.Configured++
+		}
+		if t.Calls > 0 {
+			si.Called++
+		}
+	}
+	for _, si := range by {
+		b.a.Servers = append(b.a.Servers, *si)
+	}
+	sort.Slice(b.a.Servers, func(i, j int) bool {
+		x, y := b.a.Servers[i], b.a.Servers[j]
+		if x.Called != y.Called {
+			return x.Called > y.Called
+		}
+		return x.Name < y.Name
+	})
+	for _, si := range b.a.Servers {
+		if si.Called > 0 && !si.HasList {
+			b.a.Notes = append(b.a.Notes, fmt.Sprintf("MCP server %s has no tool list in the capture (only kagent MCP servers report one, and agentgateway does not log tools/list), so its tools are the ones called (%d), allowed by a policy (%d) or configured on an agent (%d)", si.Name, si.Called, si.Allowed, si.Configured))
+		}
+	}
+}
+
+// placeConfigured puts each configured tool on a server: the only candidate
+// server, or the one candidate known to offer it (listed, allowed by a
+// policy, or called). Otherwise it stays under "(server not known)".
+func (b *actBuilder) placeConfigured() {
+	known := func(srv, name string) bool {
+		t := b.tools[srv+"/"+name]
+		return t != nil && (t.Declared || len(t.AllowedFor) > 0 || t.Calls > 0)
+	}
+	for _, p := range b.pending {
+		srv := "(server not known)"
+		if len(p.candidates) == 1 {
+			srv = p.candidates[0]
+		} else {
+			var hits []string
+			for _, c := range p.candidates {
+				if known(c, p.name) {
+					hits = append(hits, c)
+				}
+			}
+			if len(hits) == 1 {
+				srv = hits[0]
+			}
+		}
+		ti := b.tool(srv, p.name)
+		ti.ConfiguredOn = union(ti.ConfiguredOn, []string{p.who})
+	}
 }

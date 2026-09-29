@@ -217,3 +217,62 @@ func TestActivityIdentityBeatsAddress(t *testing.T) {
 		t.Fatal("the identity caller is missing")
 	}
 }
+
+var rAgwBe = res("agentgateway.dev", "v1alpha1", "agentgatewaybackends", "AgentgatewayBackend")
+
+// The tools of a server with no list of its own come from the allowlists
+// that name them, and from the agents configured for them.
+func TestActivityToolInventory(t *testing.T) {
+	ws := activityWS(t, "Lists", "list_issues")
+	ws.SetCoverage(bundle.Coverage{ID: "c.be", Cluster: "c", Type: bundle.CoverageResource, Group: rAgwBe.Group, Version: rAgwBe.Version, Resource: rAgwBe.Resource, State: bundle.StateComplete})
+	ws.AddObjects("c", rAgwBe, []map[string]any{o("AgentgatewayBackend", "kagent", "gh", nil, map[string]any{"spec": map[string]any{
+		"mcp": map[string]any{"targets": []any{map[string]any{"name": "copilot", "static": map[string]any{"host": "api.githubcopilot.com"}}}}}})}, "be")
+	ws.AddObjects("c", rAgwPol, []map[string]any{o("AgentgatewayPolicy", "kagent", "gh-per-agent", nil, map[string]any{"spec": map[string]any{
+		"targetRefs": []any{map[string]any{"kind": "AgentgatewayBackend", "name": "gh"}},
+		"backend": map[string]any{"mcp": map[string]any{"authorization": map[string]any{"action": "Allow", "policy": map[string]any{"matchExpressions": []any{
+			`(source.identity.serviceAccount == "triage" && mcp.tool.name in ["get_issue", "copilot_get_issue", "search_code"]) || (jwt.sub == "alice" && mcp.tool.name == "get_issue")`}}}}}}})}, "pol2")
+	ws.AddObjects("c", rKAgent, []map[string]any{o("Agent", "kagent", "byo", nil, map[string]any{"spec": map[string]any{"byo": map[string]any{"deployment": map[string]any{"env": []any{
+		map[string]any{"name": "MCP_SERVERS_CONFIG", "value": `[{"name":"copilot","url":"https://api.githubcopilot.com/mcp/"},{"name":"k8s","url":"http://k8s-tools.kagent:8084/mcp"}]`},
+		map[string]any{"name": "ALLOWED_TOOLS", "value": `["search_code", "mystery_tool"]`}}}}}})}, "byo")
+	a := EvaluateActivity(ws, nil, "")
+	tool := func(server, name string) *ToolInfo {
+		for i := range a.Tools {
+			if a.Tools[i].Server == server && a.Tools[i].Name == name {
+				return &a.Tools[i]
+			}
+		}
+		return nil
+	}
+	gi := tool("copilot", "get_issue")
+	if gi == nil || strings.Join(gi.AllowedFor, ",") != "JWT subject alice,service account triage" || len(gi.Policies) != 1 {
+		t.Fatalf("get_issue is allowed for triage (the copilot_ spelling folded in) and for alice: %+v", gi)
+	}
+	if sc := tool("copilot", "search_code"); sc == nil || strings.Join(sc.ConfiguredOn, ",") != "kagent/byo" {
+		t.Fatalf("search_code is configured on the BYO agent and placed on copilot, the one server known to offer it: %+v", sc)
+	}
+	if mt := tool("(server not known)", "mystery_tool"); mt == nil {
+		t.Fatalf("a configured tool no server is known to offer stays unplaced: %+v", a.Tools)
+	}
+	var cop *ServerInfo
+	for i := range a.Servers {
+		if a.Servers[i].Name == "copilot" {
+			cop = &a.Servers[i]
+		}
+	}
+	if cop == nil || cop.HasList || cop.Allowed != 2 {
+		t.Fatalf("server summary %+v", a.Servers)
+	}
+	for _, c := range a.Callers {
+		if c.Label == "kagent/triage" && !c.Agentic {
+			t.Fatalf("triage called tools, so it is agentic: %+v", c)
+		}
+		if c.Kind == "outside" && c.Agentic {
+			t.Fatalf("a caller outside the cluster is never marked an agent: %+v", c)
+		}
+	}
+	for _, e := range a.Edges {
+		if strings.HasPrefix(e.To, "tool:github/") && e.Service != "svc:c/kagent/svc/github-mcp" {
+			t.Fatalf("calls through the waypoint went through the github-mcp Service: %+v", e)
+		}
+	}
+}

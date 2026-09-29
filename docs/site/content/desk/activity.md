@@ -60,6 +60,19 @@ The **Refused** tab groups refusals by caller, target, gateway, route and reason
 
 ## Tool lists
 
+The **Tools and models** tab of the Traffic page lists, per MCP server, every tool the capture names, from four places:
+
+| Source | Read from |
+|---|---|
+| Called | agentgateway request logs (`gen_ai.tool.name`) |
+| Listed | kagent `RemoteMCPServer`, `MCPServer` and `ToolServer` status (`discoveredTools`) |
+| Allowed for | agentgateway MCP authorization rules (`backend.mcp.authorization`, OSS and Enterprise): each `\|\|` clause that names tools (`mcp.tool.name in [...]` or `== "..."`), with the caller it names (`source.identity.serviceAccount`, with `source.identity.namespace` when given, or `jwt.sub`). The server is the MCP target of the backend the rule targets, and a tool spelt with the target prefix (`github_list_issues`) counts as the same tool. |
+| Configured on | A declarative kagent Agent's `toolNames`, and an `ALLOWED_TOOLS` variable (a JSON list) on a BYO agent. With several servers in its `MCP_SERVERS_CONFIG`, a tool goes on the one server known to offer it, or under "(server not known)". |
+
+![GitHub's tools: called, allowed per service account by an allowlist, and configured on an agent](/images/traffic-tools.png)
+
+A server outside the cluster, such as GitHub's at `api.githubcopilot.com` behind an agentgateway backend, has no list in the capture: only kagent servers report one, and agentgateway does not log `tools/list` responses. For those, the tab says so, and the tools shown are the ones called, allowed or configured. The server may offer more.
+
 kagent reports the tools each MCP server offers in `status.discoveredTools` on `RemoteMCPServer`, `MCPServer` and `ToolServer`. A called tool is checked against a server's list only when the call can be matched to that server, by the server's name, its URL host, or the Service in its URL. The **Tools** tab says for each tool called whether its server lists it: yes, **no**, or unknown when no captured list matches. It also lists the tools servers offer that were never called.
 
 A declarative kagent `Agent` names the tools it may use (`toolNames`). A call from that agent to a tool outside the list is flagged. The list only filters what the model is offered; it is not enforced on the wire.

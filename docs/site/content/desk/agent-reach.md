@@ -324,6 +324,8 @@ With the Traffic feature on, the agent list gains **Used** (destinations it was 
 
 ![One agent's tools and MCP sessions](/images/agents-tools.png)
 
+**May call, did not** lists, per server, the tools an allowlist gives the agent's service account or its own configuration names, that it did not call in the capture: candidates to take away.
+
 The **Findings** tab adds **From the gateways**: the gateway findings that name this agent, with only its rows.
 
 ### Lock down to what it uses

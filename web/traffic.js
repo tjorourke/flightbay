@@ -116,7 +116,7 @@ function fbGraphWire(st, key, onPick) {
 // ---------- Activity ----------
 const actKinds = {tool: 'Tools', model: 'Models', agent: 'Agents (A2A)', mcp: 'MCP sessions', http: 'Other HTTP routes'};
 const actKindIcon = {tool: 'plug', model: 'sparkles', agent: 'bot', mcp: 'plug', http: 'route'};
-const actCallerKind = {identity: 'service account, no workload captured', workload: 'workload', user: 'JWT subject', outside: 'outside the cluster', address: 'address'};
+const actCallerKind = {identity: 'service account, no workload captured', agentic: 'agent by its calls, no workload captured', workload: 'workload', user: 'JWT subject', outside: 'outside the cluster', address: 'address'};
 const actCallerIcon = {workload: 'server', identity: 'key', user: 'key', outside: 'globe', address: 'network'};
 const actTargetLabel = t => t.kind === 'tool' ? `${t.server}/${t.label}` : t.kind === 'model' ? `${t.provider ? t.provider + '/' : ''}${t.label}` : t.label;
 const actKindName = {tool: 'tool', model: 'model', agent: 'agent', mcp: 'MCP session', http: 'HTTP route'};
@@ -209,30 +209,41 @@ function actCalls(edges, callers, targets) {
     </tbody></table></div></section>`;
 }
 
+// Every tool the capture names, per MCP server: called, listed by the
+// server (kagent's discovered tools), allowed by an agentgateway allowlist,
+// or configured on an agent. A server outside the cluster has no list of its
+// own, so for it this is the whole of what can be known.
 function actTools(d, callers, matched, terms) {
   const A = S.act;
+  const servers = (d.servers || []).filter(x => x.called || x.allowed || x.configured || x.listed);
+  if (!servers.length) return '<section class="panel"><div class="empty"><strong>No MCP tools in this capture</strong>No tool was called through agentgateway, and no server list, allowlist or agent configuration names one.</div></section>';
+  if (!A.srv || (A.srv !== '*' && !servers.some(x => x.name === A.srv))) A.srv = servers[0].name;
   const hit = new Set((matched || []).map(e => e.to));
-  const called = (d.targets || []).filter(x => x.kind === 'tool' && (!terms?.length || hit.has(x.id)));
-  const calledNames = new Set((d.targets || []).filter(x => x.kind === 'tool').map(x => x.label));
-  // Tools no one called can only match on tool:, server: and text.
-  const idleOk = t => (terms || []).every(tm => {
-    let ok;
-    if (tm.key === 'tool') ok = t.name.toLowerCase().startsWith(tm.val.toLowerCase());
-    else if (tm.key === 'server') ok = t.server.toLowerCase().startsWith(tm.val.toLowerCase()) || lastPartJS(t.server).toLowerCase().startsWith(tm.val.toLowerCase());
-    else if (tm.key === 'kind') ok = 'tool'.startsWith(tm.val.toLowerCase());
-    else if (tm.key) ok = false;
-    else ok = (t.server + ' ' + t.name + ' ' + (t.description || '')).toLowerCase().includes(tm.text.toLowerCase());
-    return tm.neg ? !ok : ok;
+  const called = new Map((d.targets || []).filter(x => x.kind === 'tool').map(x => [x.server + '/' + x.label, x]));
+  const onlyTools = (terms || []).every(tm => !tm.key || ['tool', 'server', 'kind'].includes(tm.key));
+  const ok = t => (terms || []).every(tm => {
+    let r;
+    if (tm.key === 'tool') r = t.name.toLowerCase().startsWith(tm.val.toLowerCase());
+    else if (tm.key === 'server') r = t.server.toLowerCase().startsWith(tm.val.toLowerCase()) || lastPartJS(t.server).toLowerCase().startsWith(tm.val.toLowerCase());
+    else if (tm.key === 'kind') r = 'tool'.startsWith(tm.val.toLowerCase());
+    else if (tm.key) { const c = called.get(t.server + '/' + t.name) || (d.targets || []).find(x => x.kind === 'tool' && x.label === t.name); r = !!c && hit.has(c.id); } // caller:, state: and the rest: tools with matching calls
+    else r = (t.server + ' ' + t.name + ' ' + (t.description || '') + ' ' + (t.allowedFor || []).join(' ') + ' ' + (t.configuredOn || []).join(' ')).toLowerCase().includes(tm.text.toLowerCase());
+    return tm.neg ? !r : r;
   });
-  const idle = (d.tools || []).filter(t => t.declared && !t.calls && !calledNames.has(t.name) && idleOk(t));
-  const listed = x => x.declared ? '<span class="green">yes</span>' : x.undeclared ? '<span class="red">no</span>' : '<span class="muted" title="No captured server list matches this server">unknown</span>';
-  const callerOf = x => [...new Set((d.edges || []).filter(e => e.to === x.id).map(e => callers.get(e.from)?.label))].join(', ');
-  return `<section class="panel"><div class="panel-head"><h2>Tools called</h2><small class="muted">Checked against the tool list each kagent MCP server reports (status.discoveredTools), where the call can be matched to that server</small></div>
-    <div class="table-scroll" style="max-height:52vh">${called.length ? `<table><thead><tr><th>Tool</th><th>Server</th><th>Calls</th><th>Refused</th><th>Failed</th><th>Listed</th><th>Callers</th><th>Description</th></tr></thead><tbody>
-    ${called.map(x => `<tr><td class="mono">${esc(x.label)}</td><td class="mono">${esc(x.server)}</td><td class="mono">${num(x.requests)}</td><td class="mono ${x.denied ? 'amber' : ''}">${num(x.denied)}</td><td class="mono">${num(x.errors)}</td><td>${listed(x)}</td><td class="rc-small">${esc(callerOf(x))}</td><td class="rc-small muted">${esc(x.description || '')}</td></tr>`).join('')}
-    </tbody></table>` : '<div class="empty"><strong>No tool calls</strong></div>'}</div></section>
-    <section class="panel mt"><div class="panel-head"><h2>Listed but never called</h2><div class="row"><small class="muted">${fbPlural(idle.length, 'tool')} across the captured MCP servers${terms?.length ? ' matching the filter' : ''}</small><button class="ghost" id="act-idle">${A.showDeclared || (terms?.length && idle.length <= 30) ? 'Hide' : 'Show'}</button></div></div>
-    ${A.showDeclared || (terms?.length && idle.length <= 30) ? `<div class="table-scroll" style="max-height:40vh"><table><thead><tr><th>Server</th><th>Tool</th><th>Description</th></tr></thead><tbody>${idle.map(t => `<tr><td class="mono">${esc(t.server)}</td><td class="mono">${esc(t.name)}</td><td class="rc-small muted">${esc(t.description || '')}</td></tr>`).join('')}</tbody></table></div>` : ''}</section>`;
+  const tools = (d.tools || []).filter(t => (A.srv === '*' || t.server === A.srv) && ok(t)).sort((x, y) => (y.calls - x.calls) || ((y.allowedFor || []).length - (x.allowedFor || []).length) || x.name.localeCompare(y.name));
+  const si = servers.find(x => x.name === A.srv);
+  const nTools = n => (d.tools || []).filter(t => t.server === n).length;
+  const chip = x => `<button class="chip ${A.srv === x.name ? 'on' : ''}" data-actsrv="${esc(x.name)}" title="${esc(`${nTools(x.name)} tools known: ${x.called} called, ${x.allowed} allowed by a policy, ${x.configured} configured on an agent, ${x.listed} listed by the server`)}">${esc(x.name)} <small>${nTools(x.name)}</small></button>`;
+  const known = si ? (si.hasList ? `${esc(si.name)} lists ${fbPlural(si.listed, 'tool')} (kagent's discovered tools).` : `${esc(si.name)} has no tool list in the capture: only kagent MCP servers report one, and agentgateway does not log tools/list. These are the tools that were called, allowed by an agentgateway allowlist, or configured on an agent; the server may offer more.`) : 'Every server.';
+  const yes = (v, cls) => v ? `<span class="${cls || 'green'}">yes</span>` : '<span class="muted">—</span>';
+  const list = xs => (xs || []).length ? `<span class="rc-small" title="${esc(xs.join('\n'))}">${esc(xs.slice(0, 3).join(', '))}${xs.length > 3 ? ` <span class="muted">and ${xs.length - 3} more</span>` : ''}</span>` : '<span class="muted">—</span>';
+  const calledAs = t => called.get(t.server + '/' + t.name) || (t.calls ? (d.targets || []).find(x => x.kind === 'tool' && x.label === t.name) : null); // kagent servers file calls under their own name
+  const rows = tools.map(t => { const c = calledAs(t); return `<tr><td class="mono">${esc(t.name)}${A.srv === '*' ? `<br><small class="muted">${esc(t.server)}</small>` : ''}</td>
+    <td class="mono">${t.calls ? `${num(t.calls)}${c?.denied ? ` <small class="amber">${num(c.denied)} refused</small>` : ''}${c?.errors ? ` <small class="muted">${num(c.errors)} failed</small>` : ''}` : '<span class="muted">not called</span>'}${c?.undeclared ? ' <span class="rc-badge red">not listed by its server</span>' : ''}</td>
+    <td>${list(t.callers)}</td><td>${list(t.allowedFor)}</td><td>${list(t.configuredOn)}</td><td>${yes(t.declared)}</td><td class="rc-small muted">${esc(t.description || '')}</td></tr>`; }).join('');
+  return `<section class="panel"><div class="panel-head"><h2>Tools by MCP server</h2><small class="muted">${esc(known)}</small></div>
+    <div class="panel-body" style="padding-bottom:0"><div class="row wrap">${servers.map(chip).join('')}<button class="chip ${A.srv === '*' ? 'on' : ''}" data-actsrv="*">All servers</button></div>${terms?.length && !onlyTools ? '<p class="muted rc-small mt">Keys other than tool: and server: keep the tools with calls that match them.</p>' : ''}</div>
+    <div class="table-scroll mt" style="max-height:60vh">${rows ? `<table><thead><tr><th>Tool</th><th>Calls</th><th>Called by</th><th title="Who an agentgateway MCP authorization rule allows to call it">Allowed for</th><th title="Agents whose toolNames or ALLOWED_TOOLS name it">Configured on</th><th title="In the server's discovered tool list (kagent)">Listed</th><th>Description</th></tr></thead><tbody>${rows}</tbody></table>` : '<div class="empty"><strong>No tools match</strong></div>'}</div></section>`;
 }
 
 function actModels(d, matched, terms) {
@@ -383,7 +394,7 @@ async function trafficPage() {
   const terms = qTerms(T.q);
   const typedKind = terms.some(tm => tm.key === 'kind');
   const srcNS = id => nodes.get(id)?.namespace || callers.get(id)?.namespace;
-  const isAgent = id => nodes.get(id)?.agentType || callers.get(id)?.agentType;
+  const isAgent = id => nodes.get(id)?.agentType || callers.get(id)?.agentType || callers.get(id)?.agentic;
   const common = (from, to) => (!T.focus || from === T.focus) && (!T.agents || isAgent(from)) && (!T.ns || srcNS(from) === T.ns || nodes.get(to)?.namespace === T.ns);
   const netAll = (d.edges || []).filter(e => tfNetOk(e, terms, nodes));
   const gwAll = (a.edges || []).filter(e => tfGwOk(e, terms, callers, targets));
@@ -420,7 +431,7 @@ async function trafficPage() {
   const sel = tfSelPanel(d, a, nodes, callers, targets);
   let body;
   if (!hasNet && !hasGw && T.tab !== 'explain') body = '<section class="panel"><div class="empty"><strong>No traffic in this capture</strong>The page is read from ztunnel access logs (istio-system) and agentgateway request logs (gateways and waypoints). Collect those pods\' logs to fill it. You can still explain any pair on the Why? tab from the captured policy.</div></section>';
-  else if (T.tab === 'map') body = toolbar + tfFocusBar(fnode, netE, gwE) + tfMap(d, a, netE, gwE, nodes, callers, targets) + sel;
+  else if (T.tab === 'map') body = toolbar + tfFocusBar(fnode, netE, gwE) + tfMap(d, a, netE, gwE, nodes, callers, targets, layer) + sel;
   else if (T.tab === 'edges') body = toolbar + tfEdges(netE, id => nodes.get(id)?.label || id) + sel;
   else if (T.tab === 'calls') body = toolbar + actCalls(gwE, callers, targets) + sel;
   else if (T.tab === 'tools') body = toolbarPlain + actTools(a, callers, gwAll, terms) + '<div class="mt"></div>' + actModels(a, gwAll, terms);
@@ -439,12 +450,19 @@ function tfSelPanel(d, a, nodes, callers, targets) {
   if (!T.sel) return '';
   const net = tfEdgePanel(d, nodes);
   const gwKnown = callers.has(T.sel) || targets.has(T.sel) || (a.edges || []).some(e => e.from + '→' + e.to === T.sel);
+  const via = (a.edges || []).filter(e => e.service === T.sel);
+  if (!gwKnown && via.length) {
+    const lbl = x => x ? actTargetLabel(x) : '';
+    return net + `<section class="panel mt"><div class="panel-head"><h2>Calls through agentgateway to ${esc(nodes.get(T.sel)?.label || (T.sel.startsWith('svc:') ? (p => p[p.length - 3] + '/' + p[p.length - 1])(T.sel.slice(4).split('/')) : T.sel))}</h2><small class="muted">${fbPlural(via.reduce((n, e) => n + e.requests, 0), 'call')} · click a row for the detail</small></div>
+      <div class="table-scroll" style="max-height:44vh"><table><thead><tr><th>Caller</th><th>Tool, model or agent</th><th>Kind</th><th>Calls</th><th>Refused</th><th>Failed</th><th>Gateway</th></tr></thead><tbody>
+      ${via.sort((x, y) => y.requests - x.requests).map(e => { const c = callers.get(e.from), t = targets.get(e.to); return `<tr class="fb-row" data-actsel="${esc(e.from + '→' + e.to)}"><td>${esc(c?.label || e.from)}</td><td class="mono">${esc(lbl(t))}</td><td>${esc(actKindName[t?.kind] || '')}</td><td class="mono">${num(e.requests)}</td><td class="mono ${e.denied ? 'amber' : ''}">${num(e.denied)}</td><td class="mono">${num(e.errors)}</td><td class="mono rc-small">${esc((e.gateways || []).join(', '))}</td></tr>`; }).join('')}</tbody></table></div></section>`;
+  }
   if (!gwKnown) return net;
   S.act.sel = T.sel;
   return net + actSel(a, callers, targets);
 }
 
-function tfMap(d, a, netE, gwE0, nodes, callers, targets) {
+function tfMap(d, a, netE, gwE0, nodes, callers, targets, layer) {
   let gwE = gwE0;
   const T = S.tf;
   if (!netE.length && !gwE.length) return '<section class="panel mt"><div class="empty"><strong>Nothing matches</strong>Change the layer, flag, namespace or filter.</div></section>';
@@ -453,43 +471,61 @@ function tfMap(d, a, netE, gwE0, nodes, callers, targets) {
   const icon = n => n?.kind === 'waypoint' ? 'router' : n?.kind === 'service' ? 'network' : n?.kind === 'external' ? 'cloud' : n?.agentType ? 'bot' : 'server';
   const sub = n => !n ? '' : [n.kind === 'service' ? 'Service' : n.kind, n.kind === 'external' ? 'outside the capture' : n.inMesh ? 'in the mesh' : 'not in the mesh', n.waypoint ? 'waypoint ' + n.waypoint : '', n.agentType ? rcTypes[n.agentType] || n.agentType : ''].filter(Boolean).join(' · ');
   const mk = id => { const n = nodes.get(id); return {id, label: n?.label || id, sub: sub(n), risk: ncls(n), icon: icon(n), tip: [n?.label, sub(n)].filter(Boolean).join('\n')}; };
-  const mkCaller = id => { if (nodes.has(id)) return mk(id); const c = callers.get(id) || {label: id}; return {id, label: c.label, sub: [c.agentType ? rcTypes[c.agentType] || c.agentType : actCallerKind[c.kind] || c.kind, c.anonymous ? 'no identity' : ''].filter(Boolean).join(' · '), risk: c.anonymous ? 'amber' : 'green', icon: c.agentType ? 'bot' : actCallerIcon[c.kind], tip: [c.label, c.identity].filter(Boolean).join('\n')}; };
+  const mkCaller = id => { if (nodes.has(id)) return mk(id); const c = callers.get(id) || {label: id}; return {id, label: c.label, sub: [c.agentType ? rcTypes[c.agentType] || c.agentType : c.agentic && c.kind === 'identity' ? actCallerKind.agentic : actCallerKind[c.kind] || c.kind, c.anonymous ? 'no identity' : ''].filter(Boolean).join(' · '), risk: c.anonymous ? 'amber' : 'green', icon: c.agentType || c.agentic ? 'bot' : actCallerIcon[c.kind], tip: [c.label, c.identity].filter(Boolean).join('\n')}; };
   const mkTarget = id => { const x = targets.get(id) || {label: id}; return {id, label: x.kind === 'tool' ? x.label : actTargetLabel(x), sub: [actKindName[x.kind], x.kind === 'tool' ? 'on ' + x.server : '', x.undeclared ? 'not in its server\'s list' : ''].filter(Boolean).join(' · '),
     risk: x.undeclared ? 'red' : x.denied ? 'amber' : x.errors > x.requests / 2 ? 'amber' : 'green', icon: actKindIcon[x.kind], tip: [actTargetLabel(x), x.description, `${num(x.requests)} calls, ${num(x.denied)} refused, ${num(x.errors)} failed`, (x.gateways || []).length ? 'through ' + x.gateways.join(', ') : ''].filter(Boolean).join('\n')}; };
   const L = new Map(), R = new Map();
   netE.forEach(e => { if (!L.has(e.from)) L.set(e.from, mk(e.from)); if (!R.has(e.to)) R.set(e.to, mk(e.to)); });
-  // With both layers on, tools fold into one box per MCP server until it is
-  // opened, so the Services the network layer draws stay readable.
-  const fold = netE.length > 0 && gwE.length > 0;
-  const groupOf = e => { const x = targets.get(e.to); return fold && x?.kind === 'tool' && !T.texp[x.server] ? 'tools:' + x.server : ''; };
-  const folded = new Map();
-  gwE = gwE.flatMap(e => {
-    const g = groupOf(e);
-    if (!g) return [e];
-    const k = e.from + '→' + g;
-    const x = folded.get(k);
-    if (x) { x.requests += e.requests; x.denied += e.denied; x.errors += e.errors; x.outsideAllowlist ||= e.outsideAllowlist; x.gateways = [...new Set([...x.gateways, ...(e.gateways || [])])]; return []; }
-    const y = {...e, to: g, gateways: [...(e.gateways || [])], folded: true};
-    folded.set(k, y);
-    return [y];
-  });
+  // With both layers on, a gateway call is drawn on the Service it went
+  // through (the waypoint's Service, or the gateway's), so the right-hand
+  // column holds Services only; the tools are on the line and in the box.
+  // The Gateway calls layer draws each tool on its own.
+  const both = layer === 'both';
+  const onSvc = new Map();
+  if (both) {
+    const loose = [];
+    for (const e of gwE) {
+      if (!e.service) { loose.push(e); continue; }
+      const k = e.from + '|' + e.service;
+      let x = onSvc.get(k);
+      if (!x) { x = {from: e.from, to: e.service, requests: 0, denied: 0, errors: 0, tokens: 0, tools: new Map(), gateways: new Set(), outside: false}; onSvc.set(k, x); }
+      x.requests += e.requests; x.denied += e.denied; x.errors += e.errors; x.tokens += (e.inputTokens || 0) + (e.outputTokens || 0);
+      const t = targets.get(e.to);
+      if (t && t.kind !== 'mcp' && t.kind !== 'http') x.tools.set(t.kind === 'tool' ? t.label : actTargetLabel(t), (x.tools.get(t.kind === 'tool' ? t.label : actTargetLabel(t)) || 0) + e.requests);
+      (e.gateways || []).forEach(g => x.gateways.add(g));
+      x.outside ||= e.outsideAllowlist;
+    }
+    gwE = loose;
+  }
+  const svcLabel = id => nodes.get(id)?.label || (id.startsWith('svc:') ? id.slice(4).split('/').filter((_, i, a) => i === a.length - 3 || i === a.length - 1).join('/') : id);
+  const svcTools = new Map();
+  for (const x of onSvc.values()) {
+    if (!L.has(x.from)) L.set(x.from, mkCaller(x.from));
+    if (!R.has(x.to)) R.set(x.to, nodes.has(x.to) ? mk(x.to) : {id: x.to, label: svcLabel(x.to), sub: 'Service', risk: 'green', icon: 'network', tip: svcLabel(x.to)});
+    const st = svcTools.get(x.to) || new Set(); x.tools.forEach((_, k) => st.add(k)); svcTools.set(x.to, st);
+  }
+  for (const [id, st] of svcTools) if (st.size) { const n = R.get(id); n.sub = `${n.sub} · ${fbPlural(st.size, 'tool')} called`; n.icon = 'plug'; n.tip += `\nCalled through agentgateway: ${[...st].join(', ')}`; }
   gwE.forEach(e => {
     if (!L.has(e.from)) L.set(e.from, mkCaller(e.from));
-    if (R.has(e.to)) return;
-    if (e.to.startsWith('tools:')) {
-      const server = e.to.slice(6), ts = (a.targets || []).filter(x => x.kind === 'tool' && x.server === server);
-      const bad = ts.some(x => x.undeclared), n = ts.length;
-      R.set(e.to, {id: e.to, label: `${server} · ${fbPlural(n, 'tool')}`, sub: 'MCP tools · click to open up', risk: bad ? 'red' : ts.some(x => x.denied) ? 'amber' : 'green', icon: 'plug', tip: ts.map(x => `${x.label} (${num(x.requests)})`).join('\n')});
-    } else R.set(e.to, mkTarget(e.to));
+    if (!R.has(e.to)) R.set(e.to, mkTarget(e.to));
   });
   const left = [...L.values()], right = [...R.values()];
   const maxC = Math.max(1, ...netE.map(e => e.connections)), maxR = Math.max(1, ...gwE.map(e => e.requests));
   const ge = netE.map(e => ({id: e.id, from: e.from, to: e.to, risk: e.risk, dash: e.denied > 0 || e.verdict === 'denied', w: 1.2 + 3 * Math.log(1 + e.connections) / Math.log(1 + maxC),
     tip: `${nodes.get(e.from)?.label} → ${nodes.get(e.to)?.label}\n${num(e.connections)} connections, ${e.tls}${e.denied ? `, ${num(e.denied)} refused` : ''}${e.via ? `\nvia ${e.via}` : ''}\npolicy: ${e.verdict}${e.layer ? ' (' + e.layer + ')' : ''}\n${e.why}\nClick for the checks`}));
-  gwE.forEach(e => ge.push({id: e.folded ? 'fold>' + e.to : e.from + '→' + e.to, from: e.from, to: e.to, risk: actEdgeRisk(e, callers), dash: e.denied > 0, cls: 'fb-gw', w: 1.2 + 3 * Math.log(1 + e.requests) / Math.log(1 + maxR),
+  const maxS = Math.max(1, ...[...onSvc.values()].map(x => x.requests));
+  for (const x of onSvc.values()) {
+    const calls = `Through agentgateway (${[...x.gateways].join(', ')}): ${num(x.requests)} calls${x.denied ? `, ${num(x.denied)} refused` : ''}${x.errors ? `, ${num(x.errors)} failed` : ''}${x.tokens ? `, ${num(x.tokens)} tokens` : ''}${x.tools.size ? '\n' + [...x.tools].map(([k, n]) => `  ${k} ×${n}`).join('\n') : ''}`;
+    const net = ge.find(g => g.from === x.from && g.to === x.to);
+    if (net) { net.tip += '\n' + calls; continue; }
+    ge.push({id: 'gwsvc>' + x.to, from: x.from, to: x.to, risk: x.outside ? 'red' : callers.get(x.from)?.anonymous || x.denied ? 'amber' : 'green', dash: x.denied > 0, cls: 'fb-gw', w: 1.2 + 3 * Math.log(1 + x.requests) / Math.log(1 + maxS),
+      tip: `${callers.get(x.from)?.label || x.from} → ${svcLabel(x.to)}\n${calls}\nNo ztunnel connection logged for this pair (the caller is not in the capture, or the logs do not cover it)`});
+  }
+  gwE.forEach(e => ge.push({id: e.from + '→' + e.to, from: e.from, to: e.to, risk: actEdgeRisk(e, callers), dash: e.denied > 0, cls: 'fb-gw', w: 1.2 + 3 * Math.log(1 + e.requests) / Math.log(1 + maxR),
     tip: `${callers.get(e.from)?.label} → ${actTargetLabel(targets.get(e.to) || {})}\n${num(e.requests)} calls through ${(e.gateways || []).join(', ')}${e.denied ? `, ${num(e.denied)} refused` : ''}${e.errors ? `, ${num(e.errors)} failed` : ''}${e.inputTokens || e.outputTokens ? `\n${num((e.inputTokens || 0) + (e.outputTokens || 0))} tokens` : ''}${e.outsideAllowlist ? '\nnot in the agent\'s tool list' : ''}`}));
   let ghosts = 0;
   const nSvc = [...R.keys()].filter(id => !targets.has(id)).length, nCalled = R.size - nSvc;
+  const nOnSvc = [...svcTools.values()].reduce((n, st) => n + st.size, 0);
   if (T.focus && T.freach) {
     const byNs = {};
     for (const e of tfUnused(netE)) { const p = e.to.slice(4).split('/'); (byNs[p[p.length - 3]] ||= []).push({id: e.to, label: p[p.length - 3] + '/' + p[p.length - 1], e}); }
@@ -506,14 +542,14 @@ function tfMap(d, a, netE, gwE0, nodes, callers, targets) {
       }
     }
   }
-  const toNote = [nSvc ? fbPlural(nSvc, 'destination') : '', nCalled ? `${num(nCalled)} tools, models or agents called` : '', ghosts ? `${num(ghosts)} allowed, not used` : ''].filter(Boolean).join(' · ');
+  const toNote = [nSvc ? fbPlural(nSvc, 'destination') : '', nCalled ? `${num(nCalled)} tools, models or agents called` : nOnSvc ? `${num(nOnSvc)} tools on them` : '', ghosts ? `${num(ghosts)} allowed, not used` : ''].filter(Boolean).join(' · ');
   const svg = fbGraph({left, right, edges: ge, sel: T.sel, heads: [['server', 'From', fbPlural(left.length, 'source')], ['network', 'To', toNote]]});
-  const legend = (netE.length && gwE.length ? '<span class="muted">Lines to Services are ztunnel connections; lines to tools, models and agents are calls through agentgateway.</span>' : '')
+  const legend = (both ? '<span class="muted">Both layers: calls through agentgateway are drawn on the Service they went through; hover a line for its tools. Choose Gateway calls for a box per tool.</span>' : '')
     + (T.focus && T.freach ? '<span><i class="rc-sw dash"></i><span class="muted">faded:</span> allowed by policy, not used</span>' : '')
     + (netE.length ? '<span><i class="rc-sw red"></i>plaintext between mesh workloads</span><span><i class="rc-sw amber"></i>no policy, plaintext from outside the mesh, or logs and policy disagree</span><span><i class="rc-sw green"></i>mutual TLS and policy looks at it</span>' : '')
     + (gwE.length ? '<span><i class="rc-sw red"></i>call outside the agent\'s tool list, to an unlisted tool, or every call refused</span><span><i class="rc-sw amber"></i>call with no identity, or some refused</span>' : '')
     + '<span><i class="rc-sw dash"></i>refused, or policy denies it</span>';
-  return fbGraphPanel('Traffic', T, svg, `<small class="muted">${[netE.length ? fbPlural(netE.length, 'connection edge') : '', gwE.length ? fbPlural(gwE.length, 'caller and target pair') : ''].filter(Boolean).join(' · ')}</small>`, legend);
+  return fbGraphPanel('Traffic', T, svg, `<small class="muted">${[netE.length ? fbPlural(netE.length, 'connection edge') : '', gwE0.length ? fbPlural(gwE0.length, 'caller and target pair') : ''].filter(Boolean).join(' · ')}</small>`, legend);
 }
 
 const fnodeLabel = () => S.tf.data?.nodes?.find(n => n.id === S.tf.focus)?.label || S.act.data?.callers?.find(c => c.id === S.tf.focus)?.label || '';
@@ -656,12 +692,13 @@ after.traffic = () => {
     else if ((c?.users || []).length === 1) words.push('jwt.sub:' + qq(c.users[0]));
     openLogs({q: words.join(' ')});
   });
-  $('#act-idle')?.addEventListener('click', () => keepY(() => { A.showDeclared = !A.showDeclared; }));
+  document.querySelectorAll('[data-actsrv]').forEach(b => b.onclick = () => keepY(() => { A.srv = b.dataset.actsrv; }));
   document.querySelectorAll('[data-actpol]').forEach(b => b.onclick = () => { const [i, j] = b.dataset.actpol.split(':').map(Number); fbOpenRef(a.denials[i].policies[j].ref); });
   // Selecting an edge fetches its explanation.
   const select = id => {
     if (id.startsWith('ghost:')) { keepY(() => { T.fexp[id.slice(6)] = true; T.gz = null; }); return; }
     if (id.startsWith('fold>')) id = id.slice(5);
+    if (id.startsWith('gwsvc>')) id = id.slice(6);
     if (id.startsWith('tools:')) { keepY(() => { (T.texp ||= {})[id.slice(6)] = true; T.gz = null; }); return; }
     if (id.startsWith('ghost>')) id = id.slice(6);
     if (id.startsWith('ns:')) { keepY(() => { T.fexp[id.slice(3)] = true; T.gz = null; }); return; }
@@ -844,7 +881,18 @@ function rcToolsTab(a, act) {
   const tools = by('tool'), models = by('model'), agents = by('agent'), other = es.filter(e => ['mcp', 'http'].includes(targets.get(e.to)?.kind));
   const refusals = (act.denials || []).filter(d => d.from === id);
   const link = feature('traffic') ? `<a class="btn" href="#traffic?agent=${encodeURIComponent(rcName(a))}">Open on Traffic</a>` : '';
-  if (!es.length) return `<section class="panel mt"><div class="empty"><strong>No calls through agentgateway</strong>No agentgateway gateway or waypoint in the capture logged a request from ${esc(rcName(a))}. Calls it makes directly, not through a gateway, are on the Traffic page as connections, without tool names.</div></section>`;
+  // Tools it may call (an allowlist names its service account, or its own
+  // configuration names them) and did not, in this capture.
+  const sa = lastPartJS(a.identity?.serviceAccount || ''), me = rcName(a); // serviceAccount is ns/name
+  const forMe = w => w === a.namespace + '/' + sa || w === 'service account ' + sa;
+  const mine = t => (t.allowedFor || []).some(forMe) || (t.configuredOn || []).includes(me);
+  const calledNames = new Set(tools.map(({t}) => t.server + '/' + t.label));
+  const idle = (act.tools || []).filter(t => mine(t) && !calledNames.has(t.server + '/' + t.name));
+  const idleBy = {};
+  idle.forEach(t => (idleBy[t.server] ||= []).push(t));
+  const idlePanel = idle.length ? `<section class="panel mt"><div class="panel-head"><h2>May call, did not</h2><small class="muted">${fbPlural(idle.length, 'tool')} an allowlist or its own configuration gives ${esc(me)} that it did not call in this capture. Candidates to take away.</small></div><div class="panel-body">
+    ${Object.entries(idleBy).map(([srv, ts]) => `<p style="margin:0 0 8px"><strong class="mono">${esc(srv)}</strong> <span class="mono rc-small">${ts.map(t => esc(t.name)).join(', ')}</span></p><p class="muted rc-small" style="margin:0 0 12px">${esc([...new Set(ts.flatMap(t => [...(t.allowedFor || []).filter(forMe).map(() => 'allowed by ' + (t.policies || []).map(p => p.namespace + '/' + p.name).join(', ')), ...((t.configuredOn || []).includes(me) ? ['in its configured tool list'] : [])]))].join('; '))}</p>`).join('')}</div></section>` : '';
+  if (!es.length) return `<section class="panel mt"><div class="empty"><strong>No calls through agentgateway</strong>No agentgateway gateway or waypoint in the capture logged a request from ${esc(me)}. Calls it makes directly, not through a gateway, are on the Traffic page as connections, without tool names.</div></section>` + idlePanel;
   const tbl = (title, head, rows, note) => rows.length ? `<section class="panel mt"><div class="panel-head"><h2>${esc(title)}</h2>${note ? `<small class="muted">${note}</small>` : ''}</div><div class="table-scroll" style="max-height:48vh"><table><thead><tr>${head.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div></section>` : '';
   const flag = (e, t) => e.outsideAllowlist ? '<span class="rc-badge red">not in its tool list</span>' : t.undeclared ? '<span class="rc-badge red">not listed by its server</span>' : t.declared ? '<span class="rc-badge green">listed</span>' : '';
   return `<div class="row between mt"><p class="muted" style="margin:0">Every call ${esc(rcName(a))} made through agentgateway: ${fbPlural(es.reduce((n, e) => n + e.requests, 0), 'call')}, ${num(es.reduce((n, e) => n + e.denied, 0))} refused, ${fbTok(es.reduce((n, e) => n + (e.inputTokens || 0) + (e.outputTokens || 0), 0))} tokens.</p>${link}</div>`
@@ -852,7 +900,8 @@ function rcToolsTab(a, act) {
     + tbl('Models', ['Model', 'Provider', 'Calls', 'Tokens in', 'Tokens out', 'Cost', 'Last seen'], models.map(({e, t}) => `<tr><td class="mono">${esc(t.label)}</td><td>${esc(t.provider || '—')}</td><td class="mono">${num(e.requests)}</td><td class="mono">${num(e.inputTokens)}</td><td class="mono">${num(e.outputTokens)}</td><td class="mono">${e.cost ? e.cost.toFixed(4) : '—'}</td><td class="rc-small">${fbTime(e.last)}</td></tr>`))
     + tbl('Agents it called (A2A)', ['Agent', 'Calls', 'Refused', 'Last seen'], agents.map(({e, t}) => `<tr><td class="mono">${esc(t.label)}</td><td class="mono">${num(e.requests)}</td><td class="mono">${num(e.denied)}</td><td class="rc-small">${fbTime(e.last)}</td></tr>`))
     + tbl('Refused', ['Target', 'Reason', 'Count', 'Gateway', 'What it means'], refusals.map(d => `<tr><td class="mono">${esc(d.target)}</td><td><span class="rc-badge amber">${esc(d.reason)}</span></td><td class="mono">${num(d.count)}</td><td class="mono rc-small">${esc(d.gateway)}</td><td class="rc-small">${esc(d.meaning || '')}</td></tr>`), 'the Refused tab on Traffic lists the policies behind each')
-    + tbl('Other requests', ['Target', 'Kind', 'Calls', 'Failed'], other.map(e => { const t = targets.get(e.to); return `<tr><td class="mono">${esc(actTargetLabel(t))}</td><td>${esc(actKindName[t.kind])}</td><td class="mono">${num(e.requests)}</td><td class="mono">${num(e.errors)}</td></tr>`; }), 'MCP sessions (initialize, tools/list) and plain HTTP');
+    + tbl('Other requests', ['Target', 'Kind', 'Calls', 'Failed'], other.map(e => { const t = targets.get(e.to); return `<tr><td class="mono">${esc(actTargetLabel(t))}</td><td>${esc(actKindName[t.kind])}</td><td class="mono">${num(e.requests)}</td><td class="mono">${num(e.errors)}</td></tr>`; }), 'MCP sessions (initialize, tools/list) and plain HTTP')
+    + idlePanel;
 }
 
 // Gateway findings that name this agent, with only its rows.
