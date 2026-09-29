@@ -60,14 +60,15 @@ flightbay ui .                              # open the newest capture here in yo
 | What happened, in order | [Timeline](/desk/timeline/) |
 | Rules that point at likely problems | [Findings](/desk/findings/) |
 | Solo best practices, scored | [Scorecard](/desk/scorecard/) and the [list of checks](/desk/scorecard-checks/) |
-| What each agent can reach on the network | [Agent reach](/desk/agent-reach/) |
+| What each agent can reach, used and called | [Agents](/desk/agent-reach/) |
+| Every connection and gateway call, and why one was denied | [Traffic](/desk/traffic/) |
 | What changed between two captures | [Compare](/desk/compare/) |
 | Envoy, ztunnel, agentgateway and istiod as captured | [Proxy configs](/desk/proxy-configs/) |
 | What was allowed, collected and verified | [Coverage](/desk/coverage/) |
 | `kubectl`, `k9s`, `stern` and the `fb*` helpers | [Terminal](/desk/terminal/) |
 | DuckDB SQL over logs, objects, events and flows | [SQL](/desk/sql/) |
 | Hand the workspace to an AI agent | [MCP server](/desk/mcp/) |
-| Priorities and Agent reach | [Flightbay Enterprise](/enterprise/) |
+| Priorities, Agents and Traffic | [Flightbay Enterprise](/enterprise/) |
 | What leaves the cluster and what never does | [Security](/security/) |
 | Environment variables and the bundle layout | [Reference](/reference/) |
 | When something does not work | [Troubleshooting](/troubleshooting/) |

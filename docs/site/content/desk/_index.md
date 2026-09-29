@@ -124,7 +124,8 @@ The sidebar has every view:
 | [Timeline](/desk/timeline/) | Events, exits, rollouts and error spikes in order |
 | [Findings](/desk/findings/) | Rules that point at likely problems |
 | [Scorecard](/desk/scorecard/) | Solo best practices, scored |
-| [Agent reach](/desk/agent-reach/) | What each agent can reach (Enterprise) |
+| [Agents](/desk/agent-reach/) | What each agent can reach, what it used and called, and how to lock it down (Enterprise) |
+| [Traffic](/desk/traffic/) | Every connection and every call through agentgateway, and why a connection was denied (Enterprise) |
 | [Compare](/desk/compare/) | What changed between captures |
 | [Proxy configs](/desk/proxy-configs/) | Envoy, ztunnel, agentgateway and istiod as captured |
 | [Coverage](/desk/coverage/) | What was allowed, collected and verified |

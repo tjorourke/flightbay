@@ -58,6 +58,8 @@ function parseHash() {
   if ((view === 'scorecard' || view === 'posture') && p.has('tab')) S.pst.tab = p.get('tab');
   if (view === 'resources' && p.has('resource')) { S.res.resource = p.get('resource'); S.res.group = p.get('group') || ''; }
   if (view === 'reach') S.reach.sel = p.get('agent') || '';
+  // Activity is now the gateway layer of Traffic; keep old links working.
+  if (view === 'activity') { location.replace('#traffic?layer=gateway' + (p.get('caller') ? '&caller=' + encodeURIComponent(p.get('caller')) : '')); S.view = 'traffic'; return; }
   S.view = view === 'posture' || view === 'bestpractices' ? 'scorecard' : view;
 }
 
@@ -75,7 +77,7 @@ async function render() {
   const seq = ++S.renderSeq;
   const navView = S.view === 'navigator' ? 'resources' : S.view;
   document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('active', a.dataset.view === navView));
-  const views = {navigator, search, overview, scorecard: posture, reach, resources, logs, timeline, findings, compare, proxies, coverage, ...(typeof reviewPage === 'function' ? {review: reviewPage} : {}), ...(typeof activityPage === 'function' ? {activity: activityPage, traffic: trafficPage} : {})};
+  const views = {navigator, search, overview, scorecard: posture, reach, resources, logs, timeline, findings, compare, proxies, coverage, ...(typeof reviewPage === 'function' ? {review: reviewPage} : {}), ...(typeof trafficPage === 'function' ? {traffic: trafficPage} : {})};
   const fn = views[S.view] || overview;
   $('#crumb').textContent = S.ws ? `Workspace / ${S.ws.case ? 'Case ' + S.ws.case : 'Snapshot'} / ${S.view}` : 'Workspace';
   try {
@@ -138,7 +140,7 @@ function morphKids(cur, next) {
 
 // Each view links to its page in the built-in documentation.
 const docPages = {overview: 'desk/overview/', search: 'desk/search/', navigator: 'desk/navigator/', resources: 'desk/resources/', logs: 'desk/logs/', timeline: 'desk/timeline/',
-  findings: 'desk/findings/', scorecard: 'desk/scorecard/', reach: 'desk/agent-reach/', activity: 'desk/activity/', traffic: 'desk/traffic/', compare: 'desk/compare/', proxies: 'desk/proxy-configs/', coverage: 'desk/coverage/', review: 'collect/review/'};
+  findings: 'desk/findings/', scorecard: 'desk/scorecard/', reach: 'desk/agent-reach/', traffic: 'desk/traffic/', compare: 'desk/compare/', proxies: 'desk/proxy-configs/', coverage: 'desk/coverage/', review: 'collect/review/'};
 function head(title, sub, actions = '') {
   const doc = docPages[S.view];
   const help = doc ? `<a class="help-link" href="/docs/${doc}" target="_blank" rel="noopener" title="How to use ${esc(title)}">? Docs</a>` : '';
@@ -383,7 +385,6 @@ async function loadWorkspace() {
   const n = (w.findings?.critical || 0) + (w.findings?.warning || 0);
   nf.textContent = n; nf.classList.toggle('hidden', !n);
   document.querySelector('.nav a[data-view="reach"]')?.classList.toggle('hidden', !feature('reach'));
-  document.querySelector('.nav a[data-view="activity"]')?.classList.toggle('hidden', !feature('activity'));
   document.querySelector('.nav a[data-view="traffic"]')?.classList.toggle('hidden', !feature('traffic'));
   if (w.terminal) $('#terminal').classList.remove('hidden');
   if (!S.state) { S.state = w.state; renderImportStatus(); }
@@ -971,7 +972,7 @@ after.scorecard = () => {
 // ---------- agent reach (Flightbay Enterprise) ----------
 // By agent: what each agent, MCP server and agent gateway can reach on the
 // network, what those destinations can reach for it, and how to close it down.
-const rcIntro = 'What each agent can reach on the network, and what those destinations can reach in turn.';
+const rcIntro = 'Every agent, MCP server and agent gateway: what it can reach, what it actually used and called, and how to lock it down to that.';
 const rcTypes = {'kagent-agent': 'kagent agent', 'mcp-server': 'MCP server', agentgateway: 'agentgateway', 'possible-agent': 'possible agent'};
 const rcRadiusCls = {open: 'red', wide: 'amber', narrow: 'blue', contained: 'green'};
 const rcRadiusWhy = {open: 'reaches the internet, or has a critical finding', wide: 'half the cluster or more', narrow: 'more than three Services', contained: 'three Services or fewer'};
@@ -1136,12 +1137,15 @@ function rcMatch(a, terms) {
 async function reach() {
   const R = S.reach;
   if (!feature('reach')) {
-    return head('Agent reach', esc(rcIntro)) + `<section class="panel"><div class="empty"><strong>Agent reach is a Flightbay Enterprise feature</strong>
+    return head('Agents', esc(rcIntro)) + `<section class="panel"><div class="empty"><strong>Agents is a Flightbay Enterprise feature</strong>
       It shows, agent by agent, what each agent, MCP server and agent gateway can reach on the network and how wide the blast radius is.<br>
       Turn it on by starting the desk with <code>FLIGHTBAY_ENTERPRISE=1 flightbay ui</code>.</div></section>`;
   }
   const rev = S.state?.revision;
   if (!R.list || R.listRev !== rev) { R.list = await api('api/reach'); R.listRev = rev; R.flowSrc = (await api('api/flows', {limit: 1}).catch(() => ({}))).bySource || {}; }
+  if (feature('traffic') && (!R.act || R.actRev !== rev)) { R.act = await api('api/activity').catch(() => null); R.actRev = rev; }
+  const gw = new Map((R.act?.callers || []).map(c => [c.id, c]));
+  const gwTok = (R.act?.callers || []).some(c => c.tokens > 0);
   const rep = R.list, all = rep.agents || [];
   const terms = qTerms(R.q);
   const shown = all.filter(a => (!R.type || a.type === R.type) && rcMatch(a, terms));
@@ -1166,14 +1170,16 @@ async function reach() {
     <td><div class="mono rc-agent-name">${esc(rcName(a))}</div><div class="row" style="gap:6px;margin-top:4px">${rcTypePill(a.type)}${multi ? `<span class="tag">${esc(a.cluster)}</span>` : ''}</div></td>
     <td>${rcBadge(a.radius, rcRadiusCls[a.radius])}</td><td>${rcBadge(a.internet, rcNetCls[a.internet])}</td>
     <td class="mono">${c.direct}<small class="muted"> / ${c.services}</small></td><td class="mono">${c.closure}</td><td class="mono ${c.write ? 'red' : ''}">${c.write}</td>
+    <td class="mono">${a.observed ? `${c.observed}<small class="muted"> / ${c.direct}</small>` : '<span class="muted">—</span>'}</td>
+    ${R.act ? (() => { const g = gw.get('w:' + a.id); return `<td class="mono">${g ? `${num(g.requests)}${g.denied ? ` <small class="amber">${num(g.denied)} refused</small>` : ''}` : '<span class="muted">—</span>'}</td>${gwTok ? `<td class="mono">${g?.tokens ? fbTok(g.tokens) : '<span class="muted">—</span>'}</td>` : ''}`; })() : ''}
     <td><div class="row" style="gap:5px">${sev(c.critical, 'critical')}${sev(c.high, 'high')}${!c.critical && !c.high ? '<span class="muted">none</span>' : ''}</div></td>
     <td class="rc-sum">${esc(a.summary)}</td></tr>`; }).join('');
   const notes = (rep.notes || []).map(n => `<div class="notice" style="margin-bottom:12px"><span>△</span><div>${esc(rcCap(n))}.</div></div>`).join('');
   const list = all.length ? `<section class="panel"><div class="panel-head"><h2>${shown.length === all.length ? all.length : `${shown.length} of ${all.length}`} agent${all.length === 1 ? '' : 's'}</h2><small class="muted">Sorted by risk. Click one for its blast radius.</small></div>
-    <div class="table-scroll" style="max-height:${R.sel ? '38vh' : '66vh'}">${shown.length ? `<table class="rc-list"><thead><tr><th>Agent</th><th>Radius</th><th>Internet</th><th title="Services reachable in one hop, of the Services in the capture">Direct</th><th title="Services reachable in any number of hops">Total</th><th title="Direct destinations it can change data on">Write</th><th>Findings</th><th>Summary</th></tr></thead><tbody>${rows}</tbody></table>`
+    <div class="table-scroll" style="max-height:${R.sel ? '38vh' : '66vh'}">${shown.length ? `<table class="rc-list"><thead><tr><th>Agent</th><th>Radius</th><th>Internet</th><th title="Services reachable in one hop, of the Services in the capture">Direct</th><th title="Services reachable in any number of hops">Total</th><th title="Direct destinations it can change data on">Write</th><th title="Destinations it was seen using, of those it may reach directly">Used</th>${R.act ? '<th title="Calls through agentgateway">Gateway calls</th>' + (gwTok ? '<th title="LLM tokens through agentgateway">Tokens</th>' : '') : ''}<th>Findings</th><th>Summary</th></tr></thead><tbody>${rows}</tbody></table>`
       : '<div class="empty"><strong>No agents match</strong>Change the filter or the type.</div>'}</div></section>`
     : `<section class="panel"><div class="empty"><strong>No agents found</strong>No kagent agents, MCP servers, agent gateways or workloads that look like agents were captured.</div></section>`;
-  return head('Agent reach', `${esc(rcIntro)} <span class="ent-pill">Enterprise</span>`, `<button id="rc-term-all">&gt;_ fbreach in terminal</button>`) + notes + `
+  return head('Agents', `${esc(rcIntro)} <span class="ent-pill">Enterprise</span>`, `<button id="rc-term-all">&gt;_ fbreach in terminal</button>`) + notes + `
     <div class="toolbar"><div class="row wrap">${chips}</div>
       <input id="rc-q" placeholder="Filter. Try type: ns: radius: internet: or text" value="${esc(R.q)}" style="min-width:320px" autocomplete="off" spellcheck="false"></div>
     ${list}${detail}`;
@@ -1194,7 +1200,7 @@ function rcDetail(a) {
   ].join('');
   const header = `<section class="panel mt" id="rc-detail"><div class="panel-body">
     <div class="row between wrap" style="align-items:flex-start"><div class="row wrap"><h2 class="mono" style="font-size:17px">${esc(rcName(a))}</h2>${rcTypePill(a.type)}<span class="tag">${esc(a.kind)}</span>${(R.list?.clusters || []).length > 1 ? `<span class="tag">${esc(a.cluster)}</span>` : ''}</div>
-      <div class="row wrap">${a.ref ? `<button id="rc-obj">Open ${esc(a.kind)}</button>` : ''}<button id="rc-logs">Logs from this agent</button>${feature('traffic') ? `<a class="btn" href="#traffic?agent=${encodeURIComponent(rcName(a))}">Traffic map</a>` : ''}${feature('activity') ? `<a class="btn" href="#activity?caller=${encodeURIComponent(rcName(a))}">Activity</a>` : ''}<button id="rc-term">&gt;_ fbreach in terminal</button><button class="ghost" id="rc-close" title="Back to the list" aria-label="Close">✕</button></div></div>
+      <div class="row wrap">${a.ref ? `<button id="rc-obj">Open ${esc(a.kind)}</button>` : ''}<button id="rc-logs">Logs from this agent</button>${feature('traffic') ? `<a class="btn" href="#traffic?agent=${encodeURIComponent(rcName(a))}" title="Its connections and gateway calls on the Traffic page">Traffic</a>` : ''}<button id="rc-term">&gt;_ fbreach in terminal</button><button class="ghost" id="rc-close" title="Back to the list" aria-label="Close">✕</button></div></div>
     <p class="rc-summary">${esc(a.summary)}</p><p class="muted" style="font-size:12px;margin-top:4px">Detected: ${esc(a.why)}${a.observed ? ` · Observed by ${esc(rcSrcList(a.observedBy))}` : ' · No flow logs cover this agent, so what it actually calls is unknown'}</p>
     <div class="rc-tiles">${tiles}</div></div></section>`;
   const G = rcGraphModel(a);
@@ -1305,12 +1311,12 @@ function rcDetail(a) {
         <td class="rc-riskcell">${rcRisk(x.risk)}<div class="rc-small muted">${esc(x.why)}</div></td></tr>${open ? `<tr class="rc-ev"><td colspan="8">${rcEvidence(x, true, a)}</td></tr>` : ''}`; }).join('')}
     </tbody></table>` : `<div class="empty"><strong>${ext.length ? 'No hosts match' : 'No external destinations'}</strong>${ext.length ? 'Choose another filter above.' : 'Nothing in its configuration, its gateways or the flow logs points outside the cluster.'}</div>`}</div></section>`;
   const U = R.usage;
-  const tabs = [['graph', 'Blast radius', ''], ...(U ? [['usage', 'What it does', U.totals.used], ['lockdown', 'Lock down', '']] : []), ['findings', 'Findings', (a.findings || []).length], ['paths', 'Paths', (a.paths || []).length], ['dest', 'Destinations', direct.length], ['external', 'External', ext.filter(x => x.reachedVia !== 'node').length], ['identity', 'Identity', '']];
+  const tabs = [['graph', 'Blast radius', ''], ...(U ? [['usage', 'What it does', U.totals.used]] : []), ...(R.act && typeof rcToolsTab === 'function' ? [['tools', 'Tools and models', (R.act.edges || []).filter(e => e.from === 'w:' + a.id && ['tool', 'model', 'agent'].includes((R.act.targets || []).find(x => x.id === e.to)?.kind)).length]] : []), ...(U ? [['lockdown', 'Lock down', '']] : []), ['findings', 'Findings', (a.findings || []).length], ['paths', 'Paths', (a.paths || []).length], ['dest', 'Destinations', direct.length], ['external', 'External', ext.filter(x => x.reachedVia !== 'node').length], ['identity', 'Identity', '']];
   const tab = R.dtab || 'graph';
   const crit = (c.critical || 0) + (c.high || 0);
   const tabRed = k => (k === 'findings' && crit) || (k === 'external' && ext.some(x => x.risk === 'red'));
   const tabBar = `<nav class="pst-tabs rc-tabs">${tabs.map(([k, label, n]) => `<button class="pst-tab ${tab === k ? 'on' : ''}" data-rctab="${k}">${label}${n !== '' && n ? `<span class="pst-tab-n ${tabRed(k) ? 'red' : ''}">${n}</span>` : ''}</button>`).join('')}</nav>`;
-  const body = {graph: graph + pathsPanel, usage: U && typeof rcUsageTab === 'function' ? rcUsageTab(a, U) : '', lockdown: U && typeof rcLockTab === 'function' ? rcLockTab(a, U) : '', findings: `<div class="mt">${findingsPanel}</div>`, paths: pathsPanel, dest: destTable, external: extTable, identity: `<div class="mt">${identity}</div>`}[tab] || graph;
+  const body = {graph: graph + pathsPanel, usage: U && typeof rcUsageTab === 'function' ? rcUsageTab(a, U) : '', lockdown: U && typeof rcLockTab === 'function' ? rcLockTab(a, U) : '', tools: R.act && typeof rcToolsTab === 'function' ? rcToolsTab(a, R.act) : '', findings: `<div class="mt">${findingsPanel}${R.act && typeof rcGwFindings === 'function' ? rcGwFindings(a, R.act) : ''}</div>`, paths: pathsPanel, dest: destTable, external: extTable, identity: `<div class="mt">${identity}</div>`}[tab] || graph;
   return header + tabBar + body;
 }
 
@@ -2526,7 +2532,7 @@ function closeModal() { $('#modal-root').innerHTML = ''; }
 
 function openSearch() {
   modal('Jump to an object or view', `<input id="gs" style="width:100%" placeholder="Any object: name, label, image, hostname. Try kind: ns: label:" autocomplete="off"><div id="gs-res" class="search-results"></div>`);
-  const views = ['navigator', 'search', 'overview', 'scorecard', ...(feature('reach') ? ['reach'] : []), ...(feature('activity') ? ['activity'] : []), ...(feature('traffic') ? ['traffic'] : []), 'resources', 'logs', 'timeline', 'findings', 'compare', 'proxies', 'coverage'];
+  const views = ['navigator', 'search', 'overview', 'scorecard', ...(feature('reach') ? ['reach'] : []), ...(feature('traffic') ? ['traffic'] : []), 'resources', 'logs', 'timeline', 'findings', 'compare', 'proxies', 'coverage'];
   let hits = [], sel = 0;
   const draw = () => {
     $('#gs-res').innerHTML = hits.map((h, i) => `<button class="${i === sel ? 'sel' : ''}" data-i="${i}">${h.all ? `<span class="green">⌕</span> Search everything for “${esc(h.all)}”<small>Search page</small>` : h.view ? `<span class="green">↗</span> ${esc(h.view)}<small>view</small>` : `<span class="badge">${esc(h.kind)}</span>${esc(h.namespace ? h.namespace + '/' : '')}${esc(h.name)}${h.snippet ? ` <span class="muted mono" style="font-size:10px">…${esc(h.snippet.slice(0, 70))}…</span>` : ''}<small>${esc(h.cluster)}</small>`}</button>`).join('');

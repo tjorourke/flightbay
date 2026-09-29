@@ -1,14 +1,16 @@
 ---
-title: Activity
-weight: 92
-description: Who called which MCP tool, model or agent through agentgateway, as whom, what was refused and why, what it cost in tokens, and which tools changed since a baseline.
+title: Gateway calls
+weight: 95
+description: The gateway layer of the Traffic page - who called which MCP tool, model or agent through agentgateway, as whom, what was refused and why, what it cost in tokens, and which tools changed since a baseline.
 ---
 
-# Activity
+# Gateway calls
 
-Activity shows what agents actually did through agentgateway: who called which MCP tool, model or agent, as whom, how often, what was refused and why, and what it cost in tokens. [Agent reach](/desk/agent-reach/) answers what an agent *could* reach; Activity answers what it *did*.
+Gateway calls are what agents actually did through agentgateway: who called which MCP tool, model or agent, as whom, how often, what was refused and why, and what it cost in tokens. They are the **Gateway calls** layer of the [Traffic](/desk/traffic/) page, and each agent's share is on its **Tools and models** tab on the [Agents](/desk/agent-reach/) page. This page explains how they are read.
 
-Activity is part of [Flightbay Enterprise](/enterprise/). Turn it on with `FLIGHTBAY_ENTERPRISE=1 flightbay ui` or `FLIGHTBAY_FEATURES=activity`.
+They were a page of their own, called Activity; `#activity` links now open Traffic with the gateway layer on, and `#activity?caller=kagent/tom-demo` filters it to that caller.
+
+Gateway calls are part of [Flightbay Enterprise](/enterprise/), with the Traffic feature (`FLIGHTBAY_FEATURES=traffic`).
 
 ![Callers on the left, the tools, models and agents they called on the right](/images/activity-map.png)
 
@@ -90,17 +92,15 @@ Calls are compared only when the baseline's logs have some tool or model calls; 
 
 ## Using the page
 
-The numbers across the top are the totals: requests, tool calls, tokens, refused, failed, and calls with no identity.
-
-**Map.** Callers on the left, what they called on the right. The chips choose which kinds of target to draw; the filter matches callers, targets and gateways. Line width follows the number of calls. Red lines are calls outside an agent's tool list, to a tool its server does not list, or where every call was refused; amber lines have no identity or some refusals; dashed lines have refusals. Hover a box to trace its lines. Click a box or a line for the detail underneath: a caller's identity and every call it made, a target's description, routes and gateways, or one caller-target pair's statuses, reasons, tokens, first and last time, and a logged error. **Log lines** opens the Log explorer on the requests behind a pair.
+On the [Traffic](/desk/traffic/) page, choose **Gateway calls** (or leave **Both** on). The chips choose which kinds of target to draw: tools, models, agents (A2A), MCP sessions, and other HTTP routes (off by default). Line width follows the number of calls. Click a caller, a target or a line for its detail underneath: a caller's identity, JWT subjects and every call it made; a target's description, routes and gateways; or one caller-target pair's statuses, reasons, tokens, first and last time, and a logged error. **Log lines** opens the Log explorer on the requests behind a pair.
 
 ![A caller's detail](/images/activity-caller.png)
 
-**Calls**, **Tools**, **Models** and **Refused** are the same data as tables. A caller that is a workload has **Agent reach** and **Traffic map** buttons, and `#activity?caller=kagent/tom-demo` opens the page on one caller. A refusal at an agentgateway waypoint has a **Why?** link to the mesh checks between the caller and the Service; the agentgateway policy listed with it is checked after them. **Models** has tokens and cost per model and per caller.
+The **Calls**, **Tools and models**, **Refused** and **Tool changes** tabs of the Traffic page are the same data as tables. A caller that is an agent has **Open on Agents**; a refusal at an agentgateway waypoint has a **Why?** link to the mesh checks between the caller and the Service, and the agentgateway policy listed with it is checked after them.
 
 ## Filtering
 
-The filter box takes free text or `key:value` terms, with suggestions from the capture as you type (like the [Scorecard](/desk/scorecard/)). Values match as a case-insensitive prefix, a leading `-` excludes, and terms combine. It filters the Map, Calls, Tools, Models and Refused tabs.
+These are the gateway keys of the Traffic page's filter box. It takes free text or `key:value` terms, with suggestions from the capture as you type. Values match as a case-insensitive prefix, a leading `-` excludes, and terms combine. `caller:` is the same as `from:`.
 
 | Key | Matches | Example |
 |---|---|---|
@@ -120,7 +120,7 @@ tool:delete -caller:kagent/
 kind:model state:noidentity
 ```
 
-On the Tools tab, the tools servers list and no one called match on `tool:`, `server:` and text only, and are shown open when the filter leaves 30 or fewer.
+On the Tools and models tab, the tools servers list and no one called match on `tool:`, `server:` and text only, and are shown open when the filter leaves 30 or fewer.
 
 ## In the terminal and over MCP
 

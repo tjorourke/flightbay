@@ -30,15 +30,17 @@ type Feature struct {
 const (
 	Priorities = "priorities" // best practices: fix-first ranking, points if fixed, severity colours
 	Reach      = "reach"      // agent reach: per-agent blast radius, network paths, fixes
-	Activity   = "activity"   // agent and tool activity: who called which tool or model, refusals, tokens, tool changes
-	Traffic    = "traffic"    // ambient traffic map and the "why was this denied?" explainer
+	Traffic    = "traffic"    // the Traffic page: ztunnel connections and agentgateway calls, and the "why was this denied?" explainer
+	// Activity was its own feature; the agentgateway calls it covered are
+	// now a layer of the Traffic page. The name stays so code reads well,
+	// and FLIGHTBAY_FEATURES=activity still turns traffic on.
+	Activity = Traffic
 )
 
 var catalogue = map[string]string{
 	Priorities: "Best practices: fix-first ranking, points recovered per fix, severity colours",
 	Reach:      "Agent reach: every agent's blast radius, the network paths it has and what to lock down",
-	Activity:   "Activity: who called which MCP tool, model or agent through agentgateway, refusals, token spend and tool changes",
-	Traffic:    "Traffic map: ambient connections with mTLS, waypoints and policy verdicts, and why a connection was denied",
+	Traffic:    "Traffic: ztunnel connections (mTLS, waypoints, policy verdicts) and agentgateway calls (tools, models, tokens, refusals, tool changes), and why a connection was denied",
 }
 
 var (
@@ -70,12 +72,20 @@ func fromEnv() map[string]bool {
 				on[n] = true
 			}
 		case strings.HasPrefix(f, "-"):
-			delete(on, f[1:])
+			delete(on, alias(f[1:]))
 		default:
-			on[f] = true
+			on[alias(f)] = true
 		}
 	}
 	return on
+}
+
+// alias maps retired feature names to the feature that took them over.
+func alias(f string) string {
+	if f == "activity" {
+		return Traffic
+	}
+	return f
 }
 
 // Enabled reports whether a feature is on.

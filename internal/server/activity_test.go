@@ -15,7 +15,7 @@ func TestActivityTrafficExplainEndpoints(t *testing.T) {
 			t.Fatalf("%s without Enterprise: %d", p, code)
 		}
 	}
-	features.Set(map[string]bool{features.Activity: true, features.Traffic: true})
+	features.Set(map[string]bool{features.Traffic: true})
 	s.WS.AddLogLines("mesh1", "agentgateway-system", "ai-1", "agentgateway", "current", []string{
 		"2026-09-28T18:30:00Z\tinfo\trequest gateway=agentgateway-system/ai listener=http route=agentgateway-system/github src.addr=10.244.1.50:5 jwt.sub=alice http.method=POST http.status=200 protocol=mcp mcp.method.name=tools/call mcp.target=github gen_ai.tool.name=list_issues duration=5ms",
 	}, "l")
@@ -52,7 +52,7 @@ func TestReachUsageEndpoint(t *testing.T) {
 	if code := get(t, srv, "/api/reach/usage?agent=payments/demo-agent", &map[string]any{}); code != 403 {
 		t.Fatalf("without Enterprise: %d", code)
 	}
-	features.Set(map[string]bool{features.Reach: true, features.Traffic: true, features.Activity: true})
+	features.Set(map[string]bool{features.Reach: true, features.Traffic: true})
 	s.WS.AddObjects("mesh1", podsRes, []map[string]any{{"kind": "Pod", "metadata": md("payments", "demo-agent", "pa", map[string]any{"app": "demo-agent"}),
 		"spec": map[string]any{"containers": []any{map[string]any{"name": "a", "image": "demo-agent:1"}}}, "status": map[string]any{"phase": "Running"}}}, "c")
 	var u struct {

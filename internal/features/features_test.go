@@ -27,3 +27,16 @@ func TestEnv(t *testing.T) {
 	}
 	Set(nil)
 }
+
+func TestActivityIsTraffic(t *testing.T) {
+	t.Setenv("FLIGHTBAY_ENTERPRISE", "")
+	t.Setenv("FLIGHTBAY_FEATURES", "activity")
+	if !Enabled(Traffic) || !Enabled(Activity) {
+		t.Fatal("the retired activity feature turns traffic on")
+	}
+	for _, f := range List() {
+		if f.Name == "activity" {
+			t.Fatal("activity is no longer listed on its own")
+		}
+	}
+}

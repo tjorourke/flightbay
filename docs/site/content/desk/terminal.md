@@ -170,7 +170,7 @@ fbreach kagent/demo-agent --fix      # include the YAML for each finding
 
 ### fbactivity
 
-[Activity](/desk/activity/): who called which tool, model or agent. Needs Flightbay Enterprise.
+[Gateway calls](/desk/activity/): who called which tool, model or agent. Needs Flightbay Enterprise.
 
 ```bash
 fbactivity
@@ -182,7 +182,7 @@ fbactivity changes           # needs a baseline
 
 ### fbtraffic
 
-The [Traffic map](/desk/traffic/) as a table, worst first. Needs Flightbay Enterprise.
+The [Traffic](/desk/traffic/) network layer as a table, worst first. Needs Flightbay Enterprise.
 
 ```bash
 fbtraffic

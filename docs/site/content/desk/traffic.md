@@ -1,18 +1,33 @@
 ---
-title: Traffic map
+title: Traffic
 weight: 94
-description: Every connection ztunnel logged, with its mTLS state, the waypoint that carried it and what the captured policy says, and an explainer for why any connection was allowed or denied.
+description: Every connection ztunnel logged and every call through agentgateway on one map, with mTLS state, waypoints, policy verdicts, tools, models, tokens and refusals, and an explainer for why any connection was allowed or denied.
 ---
 
-# Traffic map
+# Traffic
 
-The Traffic map draws every connection ztunnel logged between workloads and Services: whether it went over mutual TLS or in plaintext, which waypoint carried it, and what the captured policy says about it. The **Why?** explainer takes one source and one destination and shows every check on the way, in order, with the policy each one read.
+The Traffic page shows what happened on the cluster, in two layers on one map:
 
-The verdicts come from the same evaluator as [Agent reach](/desk/agent-reach/), so the map, the explainer and the reach report always agree.
+| Layer | From | Shows |
+|---|---|---|
+| **Network** | ztunnel access logs | Every connection between workloads and Services: mutual TLS or plaintext, the waypoint that carried it, refusals, and what the captured policy says about it |
+| **Gateway calls** | agentgateway request logs | Every call through an agentgateway gateway or waypoint: which MCP tool, model or agent was called, as whom, how often, what was refused and why, and the tokens used. See [Gateway calls](/desk/activity/) for how these are read. |
 
-The Traffic map is part of [Flightbay Enterprise](/enterprise/). Turn it on with `FLIGHTBAY_ENTERPRISE=1 flightbay ui` or `FLIGHTBAY_FEATURES=traffic`.
+The **Why?** explainer takes one source and one destination and shows every check on the way, in order, with the policy each one read. The verdicts come from the same evaluator as the [Agents](/desk/agent-reach/) page, so the map, the explainer and each agent's reach always agree.
 
-![Connections, coloured by what needs attention](/images/traffic-map.png)
+For one agent at a time (what it may reach, what it used, and the policy that would lock it down to that), use the Agents page. The Traffic page is for the whole cluster, agents or not.
+
+Traffic is part of [Flightbay Enterprise](/enterprise/). Turn it on with `FLIGHTBAY_ENTERPRISE=1 flightbay ui` or `FLIGHTBAY_FEATURES=traffic` (`activity`, the name of the gateway layer's old page, still works).
+
+![Both layers: Services the network layer drew, and MCP servers whose tools are folded until opened](/images/traffic-map.png)
+
+## Layers
+
+**Both**, **Network** and **Gateway calls** choose what the map draws; clicking the Connections or Gateway calls total does the same. With both layers on, lines to Services are ztunnel connections and lines to tools, models and agents are calls through agentgateway. A workload that does both appears once on the left.
+
+With both layers on, the tools of each MCP server fold into one box (`github · 3 tools`) so the Services stay readable. Click it to open it up. The Gateway calls layer shows every tool on its own.
+
+![The gateway layer: callers and the tools, models and agents they called](/images/activity-map.png)
 
 ## Where the data comes from
 
@@ -47,7 +62,9 @@ Edges are flagged:
 | Refused | Some connections were refused. |
 | Logs and policy disagree | Every connection was refused although policy allows it at L4, or some got through although policy denies it. The policy may be newer than the traffic, or apply differently from how it reads. |
 
-![The totals are filters](/images/traffic-stats.png)
+![The totals: each one is a filter](/images/traffic-stats.png)
+
+The totals across the top cover both layers: connections, gateway calls (with tool and LLM calls and tokens), plaintext in the mesh, traffic no policy looks at, refusals by the mesh and by the gateways, and calls with no identity. Each is a filter or opens its tab.
 
 ## Why? The explainer
 
@@ -75,20 +92,28 @@ A Service with no pods whose waypoint answers for it (an agentgateway waypoint i
 
 ## Using the page
 
-The numbers across the top are the totals, and clicking one keeps only those edges. The chips do the same, and the namespace picker and filter narrow the map further.
+| Tab | Shows |
+|---|---|
+| Map | Sources on the left, destinations and what was called on the right. Box colour is green in the mesh, amber not in the mesh, grey outside the capture. For connections, line colour is red for plaintext in the mesh, amber for no policy, plaintext from outside the mesh or disagreement, green for mutual TLS with a policy looking at it. For gateway calls, red is a call outside an agent's tool list, to a tool its server does not list, or with every call refused; amber is no identity or some refusals. Dashed lines have refusals. Hover a box to trace its lines; click a box or a line for its detail underneath. |
+| Connections | The network layer as a table, with a **Why?** button per row |
+| Calls | The gateway layer as a table: caller, target, calls, refusals, failures, tokens, gateway |
+| Tools and models | Every tool called and whether its server lists it, the tools servers offer that no one called, and tokens and cost per model and per caller |
+| Refused | Refused gateway calls, with the agentgateway policies that produce each reason, and connections refused by the mesh |
+| Tool changes | With a baseline loaded: tools added, removed or whose description changed |
+| Why? | The explainer for any workload and Service |
 
-**Map.** Sources on the left, destinations on the right. Box colour is green in the mesh, amber not in the mesh, grey outside the capture. Line colour is red for plaintext in the mesh; amber for no policy, plaintext from outside the mesh, or disagreement; green for mutual TLS with a policy looking at it. Dashed lines have refusals or a denied verdict. Hover a box to trace its lines; click a box for its edges, or a line for its detail and explanation.
-
-**Edges.** The same as a table, with a **Why?** button per row.
+Clicking a workload that made gateway calls shows both sides: its connections, and its calls with identity, JWT subjects and tokens. **Show only its traffic** follows it (see below).
 
 ## Filtering
 
-The filter box takes free text or `key:value` terms, with suggestions as you type:
+The filter box takes free text or `key:value` terms, with suggestions from the capture as you type. Values match as a case-insensitive prefix, a leading `-` excludes, and terms combine. A key only one layer has keeps that layer's edges: `tool:list_` shows gateway calls, `flag:unpoliced` shows connections.
 
 | Key | Matches | Example |
 |---|---|---|
-| `from:` | Source workload | `from:kagent/tom-demo` |
-| `to:` | Destination Service or workload | `to:kagent/github-mcp` |
+| `from:` (also `caller:`) | Source: workload, service account or address | `from:kagent/tom-demo` |
+| `to:` | Destination Service or workload, or the tool, model or agent called | `to:kagent/github-mcp` |
+| `layer:` | `network` or `gateway` | `layer:gateway` |
+| `tool:`, `server:`, `model:`, `gateway:`, `route:`, `user:`, `state:` | Gateway calls; see [Gateway calls](/desk/activity/#filtering) | `server:github state:refused` |
 | `ns:` | Namespace at either end | `ns:kagent` |
 | `flag:` | `plaintext`, `plaintext-in`, `unpoliced`, `denied`, `mismatch` | `flag:unpoliced` |
 | `tls:` | `mtls`, `plaintext`, `mixed` | `tls:plaintext` |
@@ -98,9 +123,9 @@ The filter box takes free text or `key:value` terms, with suggestions as you typ
 
 ## Following one agent
 
-**Agents only** keeps the connections made by agents, MCP servers and agent gateways. Click a workload and **Show only its connections**, or open `#traffic?agent=kagent/tom-demo` (the **Traffic map** button on [Agent reach](/desk/agent-reach/) does this), to follow one.
+**Agents only** keeps the traffic of agents, MCP servers and agent gateways. Click a workload and **Show only its traffic**, or open `#traffic?agent=kagent/tom-demo` (the **Traffic** button on the [Agents](/desk/agent-reach/) page does this), to follow one: its connections and its gateway calls.
 
-For an agent, the map then also draws what policy allows it to reach and it did not use, faded and dashed and folded by namespace. Click a namespace to open it up, and a Service to explain why it is allowed. The bar above the map counts both, and links to the agent on Agent reach and Activity.
+For an agent, the map then also draws what policy allows it to reach and it did not use, faded and dashed and folded by namespace. Click a namespace to open it up, and a Service to explain why it is allowed. The bar above the map counts both, and links to the agent on the Agents page.
 
 ![One agent: four destinations used, the rest allowed and unused](/images/traffic-focus.png)
 

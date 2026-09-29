@@ -1,14 +1,16 @@
 ---
-title: Agent reach
+title: Agents
 weight: 90
 description: For every agent, MCP server and agent gateway, what it can reach on the network, what those destinations can reach for it, and the YAML to lock each path down.
 ---
 
-# Agent reach
+# Agents
+
+The Agents page is one place per agent: what it can reach (Agent reach, below), what it actually used and called, and the policy that would lock it down to that. For the whole cluster's traffic, agents or not, see [Traffic](/desk/traffic/).
 
 Agent reach works out, for every AI agent in a snapshot, everything it can reach on the network and everything those destinations can reach on its behalf. That is the agent's real blast radius, and it is usually far wider than anyone expects.
 
-Agent reach is part of [Flightbay Enterprise](/enterprise/). Turn it on with `FLIGHTBAY_ENTERPRISE=1 flightbay ui` or `FLIGHTBAY_FEATURES=reach`.
+The Agents page is part of [Flightbay Enterprise](/enterprise/). Turn it on with `FLIGHTBAY_ENTERPRISE=1 flightbay ui` or `FLIGHTBAY_FEATURES=reach`. With the Traffic feature on as well (`FLIGHTBAY_ENTERPRISE=1` turns on both), it also shows what each agent used and called.
 
 ![Every agent, worst first](/images/reach-list.png)
 
@@ -294,7 +296,7 @@ Nothing is faded when no flow source covers the agent. Without flow logs there i
 
 ![Used: three Services and one host outside the cluster](/images/reach-used.png)
 
-Hover a line for what went over it: connections and whether they were mutual TLS, calls through agentgateway, the tools called and the tokens used. Click a box for the same under the graph, with a **Why?** button that opens the [Traffic map](/desk/traffic/) explainer for the agent and that Service. **Traffic map** and **Activity** buttons in the agent's header open those pages focused on the agent.
+Hover a line for what went over it: connections and whether they were mutual TLS, calls through agentgateway, the tools called and the tokens used. Click a box for the same under the graph, with a **Why?** button that opens the [Traffic](/desk/traffic/) explainer for the agent and that Service. The **Traffic** button in the agent's header opens the Traffic page following the agent.
 
 ### What it does
 
@@ -316,6 +318,14 @@ The **What it does** tab has the agent's activity over the log window, and every
 
 "Allowed, not used" counts every allowed destination. The **Never used** tile at the top leaves out the ones the agent is configured to call.
 
+### Tools and models
+
+With the Traffic feature on, the agent list gains **Used** (destinations it was seen using, of those it may reach directly), **Gateway calls** and, when any were logged, **Tokens**. The agent's **Tools and models** tab lists every call it made through agentgateway: the tools with their server, calls, refusals, failures, gateway and last time, and whether the tool is in its server's list and in the Agent's `toolNames`; the models with tokens and cost; the agents it called over A2A; its refused calls with the reason; and MCP sessions and other requests.
+
+![One agent's tools and MCP sessions](/images/agents-tools.png)
+
+The **Findings** tab adds **From the gateways**: the gateway findings that name this agent, with only its rows.
+
 ### Lock down to what it uses
 
 The **Lock down** tab proposes the least privilege the capture supports:
@@ -331,7 +341,7 @@ Nothing is applied; copy or download the YAML. The proposal is only as complete 
 
 ## How verdicts are worked out
 
-Everything is computed from captured objects: Services and their pods, NetworkPolicies, Istio AuthorizationPolicies, PeerAuthentications and waypoints, agentgateway routes and policies, ServiceAccounts, RBAC, Secrets and PVCs. Where a type was not captured, the verdict is **unknown**, never assumed to be allowed or denied. A Service with no pods of its own whose waypoint answers for it, such as an agentgateway waypoint in front of an MCP server outside the cluster, is evaluated to the waypoint. The [Traffic map](/desk/traffic/)'s **Why?** explainer shows every check behind any one verdict.
+Everything is computed from captured objects: Services and their pods, NetworkPolicies, Istio AuthorizationPolicies, PeerAuthentications and waypoints, agentgateway routes and policies, ServiceAccounts, RBAC, Secrets and PVCs. Where a type was not captured, the verdict is **unknown**, never assumed to be allowed or denied. A Service with no pods of its own whose waypoint answers for it, such as an agentgateway waypoint in front of an MCP server outside the cluster, is evaluated to the waypoint. The [Traffic](/desk/traffic/)'s **Why?** explainer shows every check behind any one verdict.
 
 For each Service, for each pod behind it:
 
