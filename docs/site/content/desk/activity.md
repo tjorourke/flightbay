@@ -96,7 +96,7 @@ The numbers across the top are the totals: requests, tool calls, tokens, refused
 
 ![A caller's detail](/images/activity-caller.png)
 
-**Calls**, **Tools**, **Models** and **Refused** are the same data as tables. **Models** has tokens and cost per model and per caller.
+**Calls**, **Tools**, **Models** and **Refused** are the same data as tables. A caller that is a workload has **Agent reach** and **Traffic map** buttons, and `#activity?caller=kagent/tom-demo` opens the page on one caller. A refusal at an agentgateway waypoint has a **Why?** link to the mesh checks between the caller and the Service; the agentgateway policy listed with it is checked after them. **Models** has tokens and cost per model and per caller.
 
 ## In the terminal and over MCP
 

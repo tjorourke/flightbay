@@ -276,6 +276,57 @@ Reach is what the policies allow. Observed traffic is what the capture shows act
 
 "Used" and "Never used" only mean something when a source covers the agent, and the page says which ones do. See [Observed traffic](/collect/observed-traffic/) for how to get each source into a bundle.
 
+## Allowed and used
+
+Agent reach shows what policy allows. When the capture has traffic for the agent (ztunnel access logs, agentgateway request logs or flow logs), it also shows what the agent used, so you can see the gap.
+
+The graph has three layers:
+
+| Layer | Draws |
+|---|---|
+| Allowed | Everything policy allows, as described above |
+| Used | Only what the agent was seen using, and the hosts outside the cluster it called |
+| Both | Everything allowed. What it used is drawn solid; what it never used is faded and dashed. A red line is something it used although the captured policy denies it. |
+
+![Both layers: the used namespaces stand out, the rest is faded](/images/reach-layers.png)
+
+![Used: three Services and one host outside the cluster](/images/reach-used.png)
+
+Hover a line for what went over it: connections and whether they were mutual TLS, calls through agentgateway, the tools called and the tokens used. Click a box for the same under the graph, with a **Why?** button that opens the [Traffic map](/desk/traffic/) explainer for the agent and that Service. **Traffic map** and **Activity** buttons in the agent's header open those pages focused on the agent.
+
+### What it does
+
+The **What it does** tab has the agent's activity over the log window, and every destination with its state.
+
+![Activity over time, and the first time each destination and tool was seen](/images/reach-timeline.png)
+
+**Over time** draws one lane each for ztunnel connections, calls through agentgateway, tool and LLM calls, refusals and failures, with one bar per slice of the window. A marker on top shows the first time a destination, tool, model or refusal was seen, and the table under it lists them.
+
+**Allowed and used** lists every destination:
+
+| State | Meaning |
+|---|---|
+| used | It connected or called, and some of it got through |
+| allowed, not used | Policy allows it and the logs show nothing |
+| tried, refused | Every attempt was refused |
+| used, policy denies | It got through although the captured policy denies it: the policy may be newer than the traffic |
+| used, not in reach | Something outside what Agent reach knows, such as an address outside the capture |
+
+"Allowed, not used" counts every allowed destination. The **Never used** tile at the top leaves out the ones the agent is configured to call.
+
+### Lock down to what it uses
+
+The **Lock down** tab proposes the least privilege the capture supports:
+
+- an egress NetworkPolicy for the agent that allows cluster DNS and only the Services it used, with HBONE to their waypoints in ambient; and
+- for each MCP server it called tools on through agentgateway, a `backend.mcp.authorization` rule that allows every caller seen on that route only the tools it called, by mesh identity (`source.identity.namespace` and `serviceAccount`) or JWT subject. Other callers are kept, so the rule does not cut them off. Calls with no identity get no rule, and the comment says so.
+
+Flightbay then runs Agent reach again with the proposal in place of the agent's egress policies, and shows radius, internet, direct and total reach, write access and critical and high findings before and after. It checks that every Service the agent used is still reachable, and lists anything that would be cut. Hosts outside the cluster it called directly are listed as breaking: the policy has no rule for them, and the page says to route them through agentgateway.
+
+![Before and after, what it keeps and removes, and the YAML](/images/reach-lockdown.png)
+
+Nothing is applied; copy or download the YAML. The proposal is only as complete as the log window: something the agent does rarely may not be in it.
+
 ## How verdicts are worked out
 
 Everything is computed from captured objects: Services and their pods, NetworkPolicies, Istio AuthorizationPolicies, PeerAuthentications and waypoints, agentgateway routes and policies, ServiceAccounts, RBAC, Secrets and PVCs. Where a type was not captured, the verdict is **unknown**, never assumed to be allowed or denied. A Service with no pods of its own whose waypoint answers for it, such as an agentgateway waypoint in front of an MCP server outside the cluster, is evaluated to the waypoint. The [Traffic map](/desk/traffic/)'s **Why?** explainer shows every check behind any one verdict.

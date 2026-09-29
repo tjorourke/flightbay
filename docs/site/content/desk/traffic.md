@@ -81,6 +81,14 @@ The numbers across the top are the totals, and clicking one keeps only those edg
 
 **Edges.** The same as a table, with a **Why?** button per row.
 
+## Following one agent
+
+**Agents only** keeps the connections made by agents, MCP servers and agent gateways. Click a workload and **Show only its connections**, or open `#traffic?agent=kagent/tom-demo` (the **Traffic map** button on [Agent reach](/desk/agent-reach/) does this), to follow one.
+
+For an agent, the map then also draws what policy allows it to reach and it did not use, faded and dashed and folded by namespace. Click a namespace to open it up, and a Service to explain why it is allowed. The bar above the map counts both, and links to the agent on Agent reach and Activity.
+
+![One agent: four destinations used, the rest allowed and unused](/images/traffic-focus.png)
+
 ## In the terminal and over MCP
 
 ```bash
