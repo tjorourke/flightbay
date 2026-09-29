@@ -17,6 +17,7 @@ import (
 	"k8s.io/client-go/metadata"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/flowcontrol"
 
 	"github.com/tjorourke/flightbay/internal/policy"
 )
@@ -73,6 +74,7 @@ func (l logSource) Stream(ctx context.Context, ns, pod string, o *corev1.PodLogO
 // watch cache, so logs are limited separately from list and get requests.
 func NewLogSource(cfg *rest.Config, qps float32, burst int) (LogSource, error) {
 	c := rest.CopyConfig(cfg)
+	c.RateLimiter = nil // its own budget, never the shared list limiter
 	if qps > 0 {
 		c.QPS, c.Burst = qps, max(burst, int(qps))
 	}
@@ -86,6 +88,12 @@ func NewLogSource(cfg *rest.Config, qps float32, burst int) (LogSource, error) {
 // NewClients builds the discovery, dynamic, metadata, log and port-forward
 // clients for one cluster.
 func NewClients(cfg *rest.Config) (Clients, error) {
+	// One rate limiter for every client, so the policy's QPS is the budget
+	// for the whole collector rather than for each client separately.
+	if cfg.RateLimiter == nil && cfg.QPS > 0 {
+		cfg = rest.CopyConfig(cfg)
+		cfg.RateLimiter = flowcontrol.NewTokenBucketRateLimiter(cfg.QPS, max(cfg.Burst, 1))
+	}
 	disc, err := k8sdiscovery.NewDiscoveryClientForConfig(cfg)
 	if err != nil {
 		return Clients{}, err
@@ -102,7 +110,7 @@ func NewClients(cfg *rest.Config) (Clients, error) {
 	if err != nil {
 		return Clients{}, err
 	}
-	return Clients{Discovery: disc, Dynamic: dyn, Metadata: meta, Logs: logSource{cs}, Forward: &forwarder{cfg: cfg, cs: cs}}, nil
+	return Clients{Discovery: disc, Dynamic: dyn, Metadata: meta, Logs: logSource{cs}, Forward: &forwarder{cfg: cfg, cs: cs}, Typed: NewProtoLister(cfg)}, nil
 }
 
 // ReadOnlyGuard is a safety net under every live-mode client: a transport

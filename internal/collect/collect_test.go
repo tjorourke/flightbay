@@ -34,10 +34,15 @@ const canary = "FLIGHTBAY-CANARY-51c0de"
 type fakeDiscovery struct {
 	lists []*metav1.APIResourceList
 	err   error
+	minor string // server minor version, default 34
 }
 
 func (f *fakeDiscovery) ServerVersion() (*version.Info, error) {
-	return &version.Info{GitVersion: "v1.34.1", Platform: "linux/arm64"}, nil
+	minor := f.minor
+	if minor == "" {
+		minor = "34"
+	}
+	return &version.Info{Major: "1", Minor: minor, GitVersion: "v1." + minor + ".1", Platform: "linux/arm64"}, nil
 }
 
 func (f *fakeDiscovery) ServerGroupsAndResources() ([]*metav1.APIGroup, []*metav1.APIResourceList, error) {
@@ -154,11 +159,12 @@ func metaObjects() []runtime.Object {
 }
 
 type harness struct {
-	fwd  PortForwarder
-	dyn  *dynfake.FakeDynamicClient
-	meta *metafake.FakeMetadataClient
-	logs *fakeLogs
-	disc *fakeDiscovery
+	fwd   PortForwarder
+	dyn   *dynfake.FakeDynamicClient
+	meta  *metafake.FakeMetadataClient
+	logs  *fakeLogs
+	disc  *fakeDiscovery
+	typed TypedLister
 }
 
 func newHarness() *harness {
@@ -177,7 +183,7 @@ func newHarness() *harness {
 }
 
 func (h *harness) clients() Clients {
-	return Clients{Discovery: h.disc, Dynamic: h.dyn, Metadata: h.meta, Logs: h.logs, Forward: h.fwd}
+	return Clients{Discovery: h.disc, Dynamic: h.dyn, Metadata: h.meta, Logs: h.logs, Forward: h.fwd, Typed: h.typed}
 }
 
 func run(t *testing.T, p *policy.Policy, h *harness, tweak func(*Collector)) (map[string][]byte, []string, *bundle.Reader) {

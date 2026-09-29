@@ -12,6 +12,7 @@ A capture reads every selected object type and every selected log stream once. O
 
 | Guard | Default | Why |
 |---|---|---|
+| Built-in types are read as protobuf | when the cluster is no newer than the collector | Cheaper for the API server to encode than JSON and fewer bytes; custom resources, and every type on a newer cluster, are read as JSON so no field is lost |
 | Every list is paginated | 500 objects a page | No request asks the API server to build one huge response, including events and the pod list used for logs |
 | List and get requests in flight | 4 (`--concurrency`) | Bounds the heavy lists running at once against the API server and etcd |
 | List and get request rate | 50 a second, burst 100 (`--qps`, `--burst`) | The same client-side limit kubectl uses |
@@ -21,6 +22,10 @@ A capture reads every selected object type and every selected log stream once. O
 | Only reads | always | Get, list and pod logs, plus port-forward only with `--solo-diagnostics` |
 
 On top of this, the API server's own priority and fairness queues Flightbay's requests with every other client's, and client-go honours a `429` and its `Retry-After`. A capture cannot starve the controllers or other users.
+
+All list and get requests share one rate limiter, so `--qps` is the budget for the whole capture, not per API client.
+
+Protobuf is only used when it cannot lose data: client-go decodes protobuf into typed structs, which would drop fields a newer Kubernetes added. When the cluster is newer than the Kubernetes version the collector was built against, every type is read as JSON instead, and the collection log says which encoding was used and why. The objects are the same either way: on a 1.35 kind cluster, all 5,554 objects matched between a JSON and a protobuf capture apart from fields that changed between the two runs (lease renewals, node heartbeats). An empty `status: {}` is dropped in both, because whether it appears depends on the encoding and the versions and it holds nothing. With the API server compressing responses as it does by default, protobuf sent about 22% fewer bytes for the same lists (0.7 MiB against 0.9 MiB) and the lists took about 18% less time.
 
 CRD definitions are read one per selected custom type, in parallel under the same limits. A single list of all CRDs would move the same bytes (their OpenAPI schemas are large) in one response, and would need wider RBAC.
 

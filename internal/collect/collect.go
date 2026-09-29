@@ -48,6 +48,9 @@ type Clients struct {
 	Metadata  metadata.Interface
 	Logs      LogSource
 	Forward   PortForwarder // nil when port-forward is not available
+	// Typed lists built-in types as protobuf; nil means everything goes
+	// through Dynamic as JSON.
+	Typed TypedLister
 }
 
 // LogEntry is one line of collection-log.jsonl.
@@ -380,7 +383,16 @@ func (c *Collector) CollectCluster(ctx context.Context, cluster string, cl Clien
 	c.progress("%s: discovery", cluster)
 	if v, err := cl.Discovery.ServerVersion(); err == nil {
 		_ = c.Writer.AddJSON(bundle.DiscoveryPath(cluster, "version.json"), v)
+		if cl.Typed != nil {
+			if protobufSafe(v.Minor) {
+				c.record(LogEntry{Cluster: cluster, Operation: "encoding", Result: "protobuf for built-in types, JSON for custom resources"})
+			} else {
+				cl.Typed = nil
+				c.record(LogEntry{Cluster: cluster, Operation: "encoding", Result: fmt.Sprintf("JSON for every type: the server (1.%s) is newer than this collector's client (1.%d), so protobuf could drop fields it does not know", v.Minor, clientGoMinor())})
+			}
+		}
 	} else {
+		cl.Typed = nil
 		c.record(LogEntry{Cluster: cluster, Operation: "version", Result: "failed", Error: err.Error()})
 	}
 	all, err := c.discover(cluster, cl)
@@ -618,9 +630,19 @@ func (c *Collector) list(ctx context.Context, cl Clients, r bundle.APIResource, 
 func (c *Collector) listWith(ctx context.Context, cl Clients, r bundle.APIResource, ns string, meta bool, selector string, fn func(map[string]any)) error {
 	gvr := schema.GroupVersionResource{Group: r.Group, Version: r.Version, Resource: r.Resource}
 	opts := metav1.ListOptions{Limit: 500, LabelSelector: selector}
+	typed := !meta && cl.Typed != nil && cl.Typed.Supports(gvr, r.Kind)
 	for {
 		var cont string
-		if meta {
+		if typed {
+			items, next, err := cl.Typed.List(ctx, gvr, r.Kind, ns, opts)
+			if err != nil {
+				return err
+			}
+			for _, it := range items {
+				fn(it)
+			}
+			cont = next
+		} else if meta {
 			if cl.Metadata == nil {
 				return fmt.Errorf("metadata client unavailable")
 			}
@@ -663,6 +685,13 @@ func (c *Collector) listWith(ctx context.Context, cl Clients, r bundle.APIResour
 }
 
 func (c *Collector) transform(loc string, r bundle.APIResource, obj map[string]any) map[string]any {
+	// An empty status says nothing, and whether it is present depends on the
+	// encoding and on version skew (the server's JSON sends {} for some types;
+	// a newer client-go's typed struct adds one the server never sent). Drop
+	// it so JSON and protobuf captures are the same.
+	if st, ok := obj["status"].(map[string]any); ok && len(st) == 0 {
+		delete(obj, "status")
+	}
 	if r.Group == "" && r.Resource == "secrets" {
 		mode := redact.SecretKeys
 		if c.Policy.Secrets == "metadata" || c.Policy.ObjectDetail == policy.DetailMetadata {
