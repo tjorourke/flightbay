@@ -1,14 +1,14 @@
 ---
 title: Large clusters
 weight: 62
-description: How a capture stays fast without putting load on the API server, what the defaults are, and what to change on a very large or busy cluster.
+description: Tune collection concurrency and request rates for large or busy clusters.
 ---
 
 # Large clusters
 
-A capture reads every selected object type and every selected log stream once. On a large cluster that is thousands of requests, and most of the time goes on waiting for the API server and the kubelets, not on work in the collector. Flightbay reads in parallel to cut that waiting, within limits that keep the API server safe.
+A capture can make thousands of requests to the API server and kubelets. Flightbay uses parallel reads with concurrency and rate limits. Reduce those limits when the cluster is already under load.
 
-## What protects the API server
+## Request limits
 
 | Guard | Default | Why |
 |---|---|---|
@@ -21,7 +21,7 @@ A capture reads every selected object type and every selected log stream once. O
 | Log request rate | 50 a second (`--log-qps`) | Limited separately, because a log request is proxied to a kubelet rather than served from etcd or the watch cache |
 | Only reads | always | Get, list and pod logs, plus port-forward only with `--solo-diagnostics` |
 
-On top of this, the API server's own priority and fairness queues Flightbay's requests with every other client's, and client-go honours a `429` and its `Retry-After`. A capture cannot starve the controllers or other users.
+The API server's priority and fairness configuration also applies to Flightbay requests. client-go honours `429` responses and `Retry-After`. Collection still adds load, so monitor the API server and kubelets during large captures.
 
 All list and get requests share one rate limiter, so `--qps` is the budget for the whole capture, not per API client.
 
@@ -29,13 +29,13 @@ Protobuf is only used when it cannot lose data: client-go decodes protobuf into 
 
 CRD definitions are read one per selected custom type, in parallel under the same limits. A single list of all CRDs would move the same bytes (their OpenAPI schemas are large) in one response, and would need wider RBAC.
 
-## What is quick and what is not
+## Log request volume
 
 The limit on a big capture is nearly always the number of log streams. Each container, and each previous container that restarted, is one request, and its logs have to come back through the API server from the kubelet. 4,000 pods with two containers each is 8,000 log requests, which at the default 50 a second is close to three minutes before any bytes are counted.
 
 Objects are cheaper: 200,000 objects is about 400 list requests.
 
-Inside the collector, redaction checks each line for the literal text its rules need (`authorization`, `eyJ`, `PRIVATE KEY` and so on) before running any regular expression, so the millions of lines that carry no credential cost almost nothing. The output is the same as running every rule on every line, and a test holds it to that.
+The redactor checks for literals such as `authorization`, `eyJ` and `PRIVATE KEY` before running the corresponding regular expressions. Tests compare the output with a run of all rules on all lines.
 
 ## Making a big capture quicker
 
@@ -43,11 +43,11 @@ In order of effect:
 
 1. **Narrow the logs.** `--since 1h` instead of the 24 hour default, `--log-pods` and `--log-containers` for the workloads that matter, or `--log-streams current` to skip previous containers.
 2. **Narrow the scope.** `--namespaces`, `--include-resources` or `--label-selector`.
-3. **Raise the log rate on a cluster that can take it.** `--log-concurrency 16 --log-qps 100` doubles log throughput. Kubelets serve the logs, so watch node load on small nodes.
+3. **Raise the log rate if the cluster has capacity.** `--log-concurrency 16 --log-qps 100` doubles the concurrency and rate limits. Actual throughput depends on the cluster and log volume. Monitor kubelet load.
 
-## Being gentler
+## Reducing load
 
-On a production cluster that is already under pressure, halve everything:
+On a busy production cluster, lower the concurrency and request rates:
 
 ```bash
 flightbay collect --context prod --concurrency 2 --qps 20 --burst 40 --log-concurrency 4 --log-qps 20
@@ -57,7 +57,7 @@ The capture takes longer, and the API server sees at most two lists and four log
 
 With an approved policy file (`--policy-key`), these flags are allowed because they change how fast Flightbay reads, not what it reads. They can also go in the policy file: `concurrency`, `qps`, `burst`, `logs.concurrency` and `logs.qps`.
 
-## Measured
+## Measurements
 
 A kind cluster with 3 worker nodes, 300 pods (two containers each, both writing logs), 5,000 ConfigMaps and about 6,000 events, captured with `--cluster-scoped --since 5m`: 616 log streams and 1.9 million lines, a 23 MiB bundle. The API server's own metrics were read before and after each run.
 

@@ -1124,7 +1124,7 @@ func Reach(w io.Writer, base, token, agent string, showFix bool) error {
 	fmt.Fprintf(w, "Reach: %d of %d Services directly, %d in any number of hops; internet %s; can write to %d; %d external hosts\n",
 		a.Counts.Direct, a.Counts.Services, a.Counts.Closure, a.Internet, a.Counts.Write, a.Counts.External)
 	if a.Observed {
-		fmt.Fprintf(w, "Observed by %s: called %d; %d allowed but never used\n", strings.Join(a.ObservedBy, ", "), a.Counts.Observed, a.Counts.NeverUsed)
+		fmt.Fprintf(w, "Observed by %s: called %d; %d allowed but not observed in this capture\n", strings.Join(a.ObservedBy, ", "), a.Counts.Observed, a.Counts.NeverUsed)
 	} else {
 		fmt.Fprintln(w, "Observed: no flow source covers this agent, so what it uses is unknown")
 	}

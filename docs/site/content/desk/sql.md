@@ -39,7 +39,7 @@ fbsql> SELECT kind, count(*) FROM objects
 
 ### logs
 
-A view over `log_lines`, with a proper timestamp. Use this one.
+A view over `log_lines` with a timestamp column named `time`. Use it for queries that filter or group by time.
 
 | Column | Type | Notes |
 |---|---|---|

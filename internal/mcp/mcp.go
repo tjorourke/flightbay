@@ -253,7 +253,7 @@ func tools() []tool {
 				return s.get("/api/reach", q)
 			}},
 		{Name: "agent_activity", Title: "Agent and tool activity",
-			Description: "From agentgateway request logs (gateways and agentgateway waypoints): who called which MCP tool, model or agent, as whom (mesh identity, JWT subject or address, resolved to a workload), how often, what was refused and why (with the agentgateway policies on the route, gateway or Service that could have refused it), what failed, and tokens and cost per model and caller. Tools are checked against the tools each kagent MCP server lists and against each declarative Agent's toolNames. With a baseline, tools added, removed or whose description changed (a rug pull). Pass view to trim: calls, tools, models, denials or changes. Needs Flightbay Enterprise.",
+			Description: "Read captured agentgateway requests: caller identities, tool and model calls, refusals, failures, tokens and cost. Refusals include potentially relevant policies. Tool calls are compared with captured server lists and Agent toolNames; a baseline also enables tool-list and description comparisons. Pass view to select calls, tools, models, denials or changes. Requires Flightbay Enterprise.",
 			InputSchema: obj(map[string]any{"view": str("calls, tools, models, denials or changes; omit for everything")}),
 			call: func(s *Server, a map[string]any) (string, error) {
 				body, err := s.get("/api/activity", nil)

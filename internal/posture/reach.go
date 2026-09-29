@@ -62,8 +62,8 @@ func reachChecks(ws *store.Workspace) []Check {
 				}
 			}
 		})
-	mk("agentic.agent-transitive-fetcher", "Isolation", "critical", "Agents cannot borrow internet access through a registry or proxy",
-		"A service the agent may call that fetches URLs (a package registry, proxy or scraper) gives it internet access through any SSRF or proxy feature. The OpenAI agents reached Hugging Face this way.",
+	mk("agentic.agent-transitive-fetcher", "Isolation", "critical", "Agents cannot access the internet through a registry or proxy",
+		"A reachable registry, proxy or scraper may fetch external URLs for the agent. Restrict the service's egress and check whether it accepts agent-supplied URLs.",
 		"# at the registry's waypoint: allow the agent GET and HEAD only\nspec:\n  targetRefs: [{kind: Service, group: \"\", name: <registry>}]\n  action: ALLOW\n  rules:\n  - from: [{source: {principals: [\"<td>/ns/<ns>/sa/<agent>\"]}}]\n    to: [{operation: {methods: [GET, HEAD]}}]\n# and give the registry its own egress allowlist",
 		solodocs.Istio+"security/authorization/waypoint-authz/",
 		func(c *Check) {
@@ -78,7 +78,7 @@ func reachChecks(ws *store.Workspace) []Check {
 			}
 		})
 	mk("agentic.agent-write-sensitive", "Authorization", "high", "Agents cannot write to data stores, registries or credential services they only need to read",
-		"Write access nobody audited turned a package registry into a message board between agents. Allow the methods and callers each destination needs.",
+		"Write permissions allow an agent to change shared data. Restrict each destination to the methods and callers it requires.",
 		"# per destination: an AuthorizationPolicy at its waypoint with methods: [GET, HEAD] for the agent's principal",
 		solodocs.Istio+"security/authorization/waypoint-authz/",
 		func(c *Check) {
@@ -110,7 +110,7 @@ func reachChecks(ws *store.Workspace) []Check {
 			}
 		})
 	mk("agentic.agent-least-reach", "Isolation", "medium", "Agents reach only what they use",
-		"An agent can reach whatever its destinations can reach. Allow only what it is configured for and actually calls.",
+		"Reachable services can provide indirect access to further destinations. Review access against the agent's configuration and observed calls.",
 		"# default-deny egress for the agent namespace, then one rule per destination it uses",
 		solodocs.Istio+"security/authorization/ztunnel-authz/",
 		func(c *Check) {
@@ -120,7 +120,7 @@ func reachChecks(ws *store.Workspace) []Check {
 				case a.Counts.Services > 4 && a.Counts.Direct*2 >= a.Counts.Services:
 					c.Items = append(c.Items, item(a, Fail, d))
 				case a.Counts.NeverUsed > 0 && a.Observed:
-					c.Items = append(c.Items, item(a, Warn, fmt.Sprintf("%s; %d allowed but never used", d, a.Counts.NeverUsed)))
+					c.Items = append(c.Items, item(a, Warn, fmt.Sprintf("%s; %d allowed but not observed in this capture", d, a.Counts.NeverUsed)))
 				default:
 					c.Items = append(c.Items, item(a, Pass, d))
 				}

@@ -42,7 +42,7 @@ flightbay-desk diff before.tar.zst after.tar.zst --json    # as JSON
 | Objects | Every added, removed or changed object, with the fields that changed. Filter by kind. Click a changed object for a side-by-side diff of its YAML; an added or removed one shows its YAML. |
 | Not comparable | Types or namespaces one of the bundles did not capture completely |
 
-Fields that change between captures of an unchanged object are removed before comparing: `uid`, `resourceVersion`, timestamps, `managedFields`, the last-applied annotation, condition transition times and leader-election heartbeats. What is left is real change.
+The comparison excludes fields that routinely change between captures: `uid`, `resourceVersion`, timestamps, `managedFields`, the last-applied annotation, condition transition times and leader-election heartbeats.
 
 ### Absence is judged against coverage
 

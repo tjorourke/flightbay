@@ -1,14 +1,14 @@
 ---
 title: The desk
 weight: 30
-description: Open a bundle as a local workspace with a web UI, a terminal, SQL and an MCP server, and start investigating while it loads.
+description: Open and investigate a bundle in the local workspace.
 ---
 
 # The desk
 
-`flightbay-desk` turns a bundle into a workspace on your machine. You get a web UI, a terminal where `kubectl`, `k9s` and `stern` work against the snapshot, a set of helper commands, read-only SQL, and an MCP server for AI agents. Everything runs locally. Nothing is sent anywhere.
+`flightbay-desk` imports a bundle into a local workspace. You can inspect it in the web UI, query it with SQL or use `kubectl`, `k9s` and `stern` through the snapshot API. Helper commands and an MCP server provide access from terminals and AI agents. See [MCP](/desk/mcp/) for what happens to data shared with an agent.
 
-The UI opens in the dark theme, in the style of the Solo Enterprise UI for kagent. The button at the top right switches to the light theme, which follows the agentgateway Enterprise UI, and the choice is remembered in the browser.
+The UI defaults to a dark theme. The button at the top right switches themes and saves the choice in your browser.
 
 ## Opening a bundle
 
@@ -81,7 +81,7 @@ Uploaded bundles, cloned repositories and scanned bundles go in the workspace di
 
 Workspace directories left behind by a desk that was killed rather than closed are removed after seven days.
 
-## It opens while it loads
+## Loading progress
 
 The bundle is designed to be read as a stream. `bundle.json` comes first, logs early and bulky diagnostics last, so the UI opens as soon as the header has arrived and fills in as the rest loads.
 
@@ -148,7 +148,7 @@ A bundle can hold several clusters. The picker at the top right limits every vie
 
 ### Light and dark
 
-The button at the top right switches between light and dark. The choice is remembered in the browser. The first time, it follows your system setting.
+The button at the top right switches between light and dark. The browser remembers your choice; the default is dark.
 
 ## Also in this section
 

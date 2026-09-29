@@ -187,7 +187,7 @@ func agenticChecks(e env) []Check {
 	})
 
 	add(spec{"agentic.authz-no-broad-rule", "Authorization", "high", "No authorization rule allows everything",
-		"agentgateway ORs matchExpressions, so one permissive rule silently grants past every narrow rule beside it.",
+		"agentgateway combines matchExpressions with OR. A permissive expression can allow requests that narrower expressions would reject.",
 		"# write each rule to stand alone: subject AND explicit tools\n- 'jwt.sub == \"alice\" && mcp.tool.name == \"echo\"'", kbBase + "zero-trust-agents-kubernetes/", solodocs.Agentgateway + "mcp/tool-access/"}, func(c *Check) {
 		if !policiesKnown {
 			na(c, polWhy)
@@ -351,7 +351,7 @@ func agenticChecks(e env) []Check {
 	})
 
 	add(spec{"agentic.no-literal-credentials", "Identity", "critical", "No literal credentials in routes or agent env",
-		"A literal token in an HTTPRoute or an env value is readable by anyone who can read the object and never rotates.",
+		"A literal token in an HTTPRoute or environment value is exposed to readers of the object. Use a Secret reference and configure credential rotation.",
 		"env:\n- name: MODEL_API_KEY\n  valueFrom: {secretKeyRef: {name: model-key, key: api-key}}", kbBase + "zero-trust-agents-kubernetes/", solodocs.Agentgateway + "security/backend-authn/key/"}, func(c *Check) {
 		for _, r := range md.routes {
 			for _, rule := range l(path(r.Obj, "spec", "rules")) {

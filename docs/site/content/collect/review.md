@@ -1,12 +1,12 @@
 ---
 title: Reviewing before you send
 weight: 65
-description: Open your capture in the UI, take out what you do not want to send, redact more, check what Solo will receive, and export a signed bundle with a ledger of what you removed.
+description: Remove captured data, add redaction rules and export a reviewed bundle.
 ---
 
 # Reviewing before you send
 
-The collection policy decides what Flightbay reads. Review is the second look, after capture and before anything leaves your organisation. You open the bundle in the UI on your own machine, see everything in it, take out what you do not want to send, and export a new bundle. The original is never changed.
+Open a captured bundle locally to select the data you want to share. Review can remove content and apply additional redaction rules. Export writes a new bundle and leaves the original file unchanged.
 
 ![Review and send](/images/review.png)
 
@@ -83,7 +83,7 @@ A path cannot remove an object's `kind`, `apiVersion`, name or namespace; remove
 
 ## What Solo will receive
 
-The panel at the top updates as you choose. It shows what is kept and what is removed for objects, events, log lines, diagnostic files and flow files, plus how many values were redacted, fields removed and names replaced. It runs the real export into nowhere, so the numbers are exactly what the export will do.
+The panel at the top previews the retained and removed objects, events, log lines, diagnostics and flows. It also counts redactions, field removals and name replacements. The preview uses the export process but discards its output.
 
 ## Signing the export
 

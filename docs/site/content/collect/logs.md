@@ -6,7 +6,7 @@ description: Control how much container log data a capture takes, from which pod
 
 # Logs
 
-Container logs are usually the most useful part of a bundle and always the largest. These options control how much is taken.
+Container logs can account for much of a bundle's size. Use these options to limit their volume and select the pods and containers to include.
 
 Logs are part of the `standard` profile. They are not in `minimal`, and `custom` has none until you add the `logs` category.
 
@@ -72,7 +72,7 @@ When the kubelet returns an error instead of log lines (it does this with HTTP 2
 
 ## Logs that feed other features
 
-Some logs are more than text once they are in the desk:
+The desk also parses logs for analysis:
 
 - **ztunnel, agentgateway, Envoy and CoreDNS logs** become observed traffic for [Agent reach](/desk/agent-reach/) and `fbflows`. See [Observed traffic](/collect/observed-traffic/).
 - **Error lines** feed the repeated-error finding and error-spike entries on the [Timeline](/desk/timeline/).

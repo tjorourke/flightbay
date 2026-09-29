@@ -1,0 +1,5 @@
+{{- $body := .Content -}}
+{{- if strings.HasPrefix (strings.TrimSpace .RawContent) (printf "# %s\n" .Title) -}}
+  {{- $body = replaceRE `(?s)^<h1[^>]*>.*?</h1>\s*` "" $body -}}
+{{- end -}}
+{{- $body | safeHTML -}}

@@ -1,7 +1,7 @@
 ---
 title: Sending a bundle
 weight: 70
-description: Review and sign a bundle, encrypt it so only Solo can read it, verify it before you send it, and unpack or stream it with standard tools.
+description: Verify and encrypt a bundle before sharing it with its recipient.
 ---
 
 # Sending a bundle

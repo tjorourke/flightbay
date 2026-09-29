@@ -99,7 +99,7 @@ func TestStartNeedsTheToken(t *testing.T) {
 	}
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if !strings.Contains(string(body), "What would you like to open?") || !strings.Contains(string(body), "static/start.js") {
+	if !strings.Contains(string(body), "<h1>Open a workspace</h1>") || !strings.Contains(string(body), "static/start.js") {
 		t.Fatalf("start page not served: %.200s", body)
 	}
 	// There is no workspace: the desk's APIs do not exist here, so the

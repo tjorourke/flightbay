@@ -68,7 +68,7 @@ flightbay scan . --overlay k8s/overlays/prod --overlay k8s/overlays/prod-eu
 
 Secrets and ConfigMaps are redacted by the same code the collector uses. A Secret keeps its name, type, labels and annotations, and its key names with their byte lengths. Values in `data` and `stringData` never reach the bundle. `flightbay inspect` works on a scan bundle as it does on a capture.
 
-## Declared state, not a capture
+## Checks on declared state
 
 A repository has no status, no pods, no logs and no events. The desk says "Declared state from repo X at commit abc1234" in place of "Captured", and the checks that need a running cluster say so instead of failing:
 

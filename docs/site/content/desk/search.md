@@ -1,12 +1,12 @@
 ---
 title: Search
 weight: 20
-description: Find any captured object of any kind by name, namespace, label or anything in its spec and status.
+description: Search captured objects by name, namespace, labels or content.
 ---
 
 # Search
 
-Search covers every captured object of every kind: names, namespaces, labels, and anything in spec and status, such as images, hostnames and status reasons. Use it when you know a word and not where it lives: which routes use a hostname, which pods run an image, what mentions a Secret.
+Search matches object names, namespaces, labels and content in spec and status. For example, search for a hostname to find routes that reference it, or an image name to find its pods.
 
 ![Searching every object](/images/search.png)
 

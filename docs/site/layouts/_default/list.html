@@ -1,5 +1,5 @@
 {{ define "main" }}
 <h1>{{ .Title }}</h1>{{ with .Description }}<p class="lede">{{ . }}</p>{{ end }}
-{{ .Content }}
+{{ partial "content.html" . }}
 {{ if .IsSection }}<div class="cards">{{ range .Pages.ByWeight }}<a href="{{ .RelPermalink }}"><b>{{ .Title }}</b><span>{{ .Description }}</span></a>{{ end }}</div>{{ end }}
 {{ end }}

@@ -1,12 +1,12 @@
 ---
 title: Coverage
 weight: 120
-description: What the customer allowed, what was collected, what failed and what the importer verified.
+description: Collection scope, missing data and bundle verification.
 ---
 
 # Coverage
 
-Coverage is the page that stops you drawing conclusions from missing data. It shows what the customer's policy allowed, what each collection produced, which calls failed and why, and whether the bundle verified.
+Coverage lists the collection policy, results, failed requests and bundle verification status.
 
 Check it whenever something you expected is not there. An empty result means something different when the type was excluded, when its collection failed, and when it really had nothing in it.
 

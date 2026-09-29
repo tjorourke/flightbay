@@ -6,7 +6,7 @@ description: Kubernetes events, container exits, rollouts and bursts of error lo
 
 # Timeline
 
-The Timeline answers "what happened, in what order". A rollout, then container exits, then a burst of errors is the usual shape of an incident, and it is much easier to see on one axis than across four pages.
+The Timeline orders Kubernetes events, container exits, rollouts and error spikes by timestamp. Use it to compare changes with the start of a failure.
 
 ![Timeline](/images/timeline.png)
 

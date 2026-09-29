@@ -1,25 +1,25 @@
 ---
 title: Solo flightbay
 weight: 1
-description: Take a redacted snapshot of a Kubernetes cluster and investigate it offline as if it were live.
+description: Capture Kubernetes objects and logs for offline investigation.
 ---
 
 # Solo flightbay
 
-Flightbay takes a redacted snapshot of a Kubernetes cluster and lets you investigate it offline as if it were live. You can browse every object, search every log line, run `kubectl` and `k9s` against it, read the Envoy, ztunnel and agentgateway config dumps, and get findings that know about Istio ambient, agentgateway and kgateway.
+Flightbay collects Kubernetes objects, logs and optional proxy diagnostics in a redacted bundle. Open the bundle locally to search it, inspect configuration and run checks for Kubernetes, Istio ambient, agentgateway and kgateway. A read-only snapshot API supports `kubectl` and `k9s`.
 
 ![Overview of a snapshot](/images/overview.png)
 
-It is built for support cases. The customer runs one command against their cluster and sends a file. The engineer opens that file on their laptop and has the cluster in front of them, without a VPN, a screen share or a round of "can you run this and paste the output".
+For a support case, the customer collects and reviews a bundle, then sends it to the engineer. The engineer can investigate the captured data without access to the customer's cluster.
 
-## The two commands
+## Commands
 
 | Command | Who runs it | What it does |
 |---|---|---|
 | `flightbay` | The customer, or whoever has access to the cluster | Reads the cluster through a collection policy the customer chooses, redacts in memory, and writes a verified `.tar.zst` bundle, optionally encrypted with age. A single static Go binary with no dependencies. |
 | `flightbay-desk` | The engineer investigating | Opens a bundle as a local workspace: a web UI, a terminal where `kubectl`, `k9s` and `stern` work against the snapshot, helper commands, DuckDB SQL and an MCP server for AI agents. |
 
-`flightbay ui` hands over to `flightbay-desk open`, so most people only ever type the first command:
+`flightbay ui` runs `flightbay-desk open`:
 
 ```bash
 flightbay collect --context my-cluster      # capture: writes flightbay-<case>-<time>.tar.zst
@@ -35,9 +35,9 @@ flightbay ui .                              # open the newest capture here in yo
 3. **Bundle.** The output is a plain tar stream compressed with zstd. `bundle.json` comes first and records the policy; `manifest.json` comes last with a SHA-256 for every file. With `--encrypt-to` the whole thing is wrapped in age encryption.
 4. **Check.** `flightbay inspect BUNDLE --redactions` verifies every checksum and shows what is inside, before anything is sent.
 5. **Send.** Uploading is a separate step that Flightbay does not do. The customer sends the file however they normally share files with Solo.
-6. **Investigate.** `flightbay ui BUNDLE` imports the bundle into a DuckDB workspace in a temporary directory and opens the UI while it is still loading. Nothing leaves the engineer's machine.
+6. **Investigate.** `flightbay ui BUNDLE` imports the bundle into a local DuckDB workspace and opens the UI while it loads.
 
-## What you can do with it
+## Guides
 
 | Area | Page |
 |---|---|
@@ -77,8 +77,8 @@ flightbay ui .                              # open the newest capture here in yo
 
 **Customers collecting.** You decide what Flightbay may read before anything is read. You can limit it to namespaces, exclude resource types, turn logs off, keep Secrets out entirely, and check the result with `flightbay inspect` before you send it. The [collection guide](/collect/) and [security](/security/) pages are written for you and your security team.
 
-**Solo engineers investigating.** You get the customer's cluster as a workspace: search, logs with a time axis, findings, a best-practice scorecard, proxy config dumps, and a shell where the usual tools work. The [desk guide](/desk/) is written for you.
+**Solo engineers investigating.** The [desk guide](/desk/) covers searching captured data, checking findings and using the snapshot terminal.
 
 ## Status
 
-Flightbay is early and unreleased. Everything in these pages is built and tested. Where a feature is partial, the page says so.
+Flightbay is unreleased. Feature limitations are listed on the relevant pages.

@@ -180,7 +180,7 @@ Diagnostics were not selected. Capture with `--solo-diagnostics`. Diagnostics ar
 
 No NetworkPolicy or AuthorizationPolicy exists in the capture, so every agent can reach every Service and the internet. If policies do exist, check [Coverage](/desk/coverage/): when `networkpolicies` or `authorizationpolicies` were not captured, verdicts are unknown rather than allowed, and the page says so. CNI-specific policies (Cilium, Calico, AdminNetworkPolicy) are not evaluated yet.
 
-### "Used" and "Never used" show a dash
+### "Used" and "Not observed" show a dash
 
 No flow source covers that agent. ztunnel logs cover agents in the ambient mesh; otherwise attach flow logs. See [Observed traffic](/collect/observed-traffic/).
 

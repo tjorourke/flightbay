@@ -6,7 +6,7 @@ description: What Flightbay Enterprise adds to the desk, and how to turn it on.
 
 # Flightbay Enterprise
 
-The collector and the desk work fully without Enterprise. Flightbay Enterprise adds three features to the desk, for Solo support and, later, licensed customers.
+Flightbay Enterprise enables the desk features listed below. Collection does not require Enterprise.
 
 | Feature | Name | Adds |
 |---|---|---|
@@ -57,6 +57,6 @@ Run it with the same environment as the desk.
 
 Pages, tools and helpers that show Enterprise features carry an **Enterprise** label.
 
-## A product switch, not a security boundary
+## Feature switches and access control
 
-These variables decide what the desk shows. They do not protect anything: the desk runs on your machine, and anyone who can run it can set them. Anything that must be protected (a hosted service, uploads) enforces its own authentication and authorisation.
+These environment variables control feature availability. Anyone who can start the desk can set them. Access to the workspace is controlled separately by its authentication token.

@@ -1,18 +1,18 @@
 ---
 title: Scorecard
 weight: 80
-description: Score a snapshot against Solo's best practices for agentic workloads, Istio, ingress and Kubernetes, with the evidence and the fix for every problem.
+description: Check a snapshot against Solo's configuration and security recommendations.
 ---
 
 # Scorecard
 
-The Scorecard checks the snapshot against Solo's best practices and says what to change. Findings tell you what is broken; the Scorecard tells you what is risky or fragile even when everything works: MCP endpoints anyone can call, namespaces without STRICT mTLS, privileged pods, a single istiod.
+The Scorecard checks configuration and security settings, including MCP authentication, STRICT mTLS, container privileges and istiod replicas. Each failed check lists the affected objects and a suggested fix.
 
 ![Scorecard summary](/images/scorecard-summary.png)
 
 The checks are drawn from the Solo field guides, the agentgateway, kagent, Istio and kgateway source, and Kubernetes hardening guidance. There are 130 of them, plus five more built on [Agent reach](/desk/agent-reach/) when that Enterprise feature is on. Every check is listed in [Scorecard checks](/desk/scorecard-checks/).
 
-## The four areas
+## Areas
 
 | Area | Checks | Scored when the capture has |
 |---|---|---|
@@ -171,7 +171,7 @@ With the `priorities` feature of [Flightbay Enterprise](/enterprise/), the Score
 
 The ranking is by **impact**: severity weight times the share of credit missing. Ties go to the higher severity, then more points, then failing before warning. Points are worked out as 100 × weight × (1 − score) ÷ the area's total weight.
 
-Ranking by points alone would be misleading. An area's points depend on how many checks it has, so a critical check in the large agentic area gives back fewer points than a high one in a small area. Impact does not depend on the area, which keeps an open MCP endpoint near the top where it belongs.
+Points depend on the number of checks in an area. A critical check in the agentic area can therefore recover fewer points than a high-severity check in a smaller area. Ranking by impact avoids that difference.
 
 The same ranking is available as:
 
@@ -186,7 +186,7 @@ With the `reach` feature, the Summary tab also links to [Agent reach](/desk/agen
 | Check | Severity |
 |---|---|
 | `agentic.agent-internet-reach`: agents cannot reach the internet directly | critical |
-| `agentic.agent-transitive-fetcher`: agents cannot borrow internet access through a registry or proxy | critical |
+| `agentic.agent-transitive-fetcher`: agents cannot access the internet through a registry or proxy | critical |
 | `agentic.agent-write-sensitive`: agents cannot write to data stores, registries or credential services they only need to read | high |
 | `agentic.agent-no-shared-channel`: agents do not share an identity, a volume or a writable store | high |
 | `agentic.agent-least-reach`: agents reach only what they use | medium |

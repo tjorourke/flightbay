@@ -1,7 +1,7 @@
 ---
 title: Live mode
 weight: 15
-description: Mirror a running cluster into the desk, read-only, and keep it up to date. Objects are watched, events and logs arrive as they happen, and Save as bundle turns the mirror into a normal capture.
+description: Watch cluster objects and logs in a read-only workspace, with bundle export.
 ---
 
 # Live mode
@@ -21,13 +21,13 @@ flightbay ui --live --context kind-mesh1 --namespaces kagent,istio-system   # th
 | you want the Scorecard or Agent reach to move as you fix things | you need a record of the cluster at one moment, to keep, compare or send |
 | logs are more useful as they arrive than as a window | the cluster is air-gapped or behind a jump host you cannot keep open |
 
-The two meet in the middle. **Save as bundle** writes the mirror as a normal bundle at any moment, so you can watch live and still keep the evidence.
+**Save as bundle** exports the current mirror for offline investigation or sharing.
 
-## It only reads
+## Read-only access
 
-Live mode asks the API server for four things: `get`, `list`, `watch` and `pods/log`. With `--solo-diagnostics` it also opens a port-forward to a Solo component when you ask for a diagnostics refresh. Nothing else.
+Live mode uses `get`, `list`, `watch` and `pods/log`. With `--solo-diagnostics`, it also uses port-forward to read Solo diagnostic endpoints.
 
-This is enforced in the client, not only by convention. Every request goes through a guard installed under client-go, which lets reads through and refuses any other method (and `exec`, `attach` and the API server proxy, which can reach a pod with a GET) before the request leaves the process. The guard counts what it passed. `/api/workspace` reports the counts under `live.requests`, and the desk prints them when it stops:
+A guard under client-go checks requests before they leave the process. It blocks write methods, `exec`, `attach` and the API server proxy, including proxy calls made with GET. Request counts appear under `live.requests` in `/api/workspace` and are printed when the desk stops:
 
 ```text
 Stopping. Requests made to kind-mesh1: discovery 3, get 117, list 272, log 27, watch 272; refused 0

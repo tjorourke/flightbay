@@ -4,9 +4,9 @@ weight: 5
 description: "Worked examples: plain YAML, Helm charts with values, published charts, Kustomize overlays, environments, Argo CD and Flux, then reading the result."
 ---
 
-Each example below was run against a real repository or chart, and the output shown is what `flightbay scan` printed. The same commands work on your own repository. See [Scanning a repository](/scan/) for every flag.
+These examples show scan commands and recorded output for manifests, Helm charts and Kustomize overlays. Substitute your repository paths and values files. See [Scanning a repository](/scan/) for the available flags.
 
-A scan never talks to a cluster. It reads files, renders them the way your deployment tool would, and scores what comes out. You don't need kubectl access or a kubeconfig.
+A scan renders local files and checks the resulting objects without a kubeconfig or cluster connection. Rendering limitations are listed under each example.
 
 ## Plain YAML manifests
 

@@ -1,12 +1,12 @@
 ---
 title: Signing and approved policies
 weight: 68
-description: Sign bundles with your own key so Solo can prove they came from you unmodified, have your security team sign the collection policy, and check the collector binary itself.
+description: Sign bundles and collection policies, and verify collector releases.
 ---
 
 # Signing and approved policies
 
-The manifest in every bundle proves the file has not been damaged. A signature proves who wrote it. With both, Solo can tell you the bundle it opened is exactly the one you sent, and your security team can require that captures only ever run with the policy they approved.
+Bundle checksums detect damaged files. An Ed25519 signature lets the recipient verify the bundle against a trusted public key. Security teams can also sign collection policies and require the collector to verify their approval.
 
 You keep the private keys. Solo only ever gets public keys.
 

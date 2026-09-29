@@ -518,19 +518,16 @@ a.btn:hover{background:#221f2d;border-color:#3f3950;text-decoration:none}
 .tf-focus{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 12px;padding:10px 14px;border:1px solid color-mix(in srgb,var(--teal) 45%,transparent);border-radius:7px;background:color-mix(in srgb,var(--teal) 8%,var(--panel));font-size:13px}
 @media (max-width:1100px){.ld-cmp{grid-template-columns:repeat(3,minmax(0,1fr))}}
 
-/* ---------- kagent look: Solo Enterprise UI family ----------
-   Violet-neutral surfaces, a floating sidebar with a violet wash at its foot, pill navigation,
-   round icon tiles, pill buttons and 14px cards. Loaded last so it wins over the rules above. */
-:root{--bg:#0a0910;--panel:#121019;--raised:#1a1823;--line:#25222f;--line-2:#312d3d;--text:#ecebf2;--muted:#8a879b;--teal:#a78bfa;--blue:#b9a6ff;--accent:#7c5cff;--accent-bg:#231c47;--accent-line:#3a2f7a;--r:14px;--sans:Inter,-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif}
+/* Workspace theme */
+:root{--bg:#101216;--panel:#171a20;--raised:#20242c;--line:#303640;--line-2:#454d59;--text:#eceef2;--muted:#a2aab7;--teal:#a78bfa;--blue:#b9a6ff;--accent:#6d4cce;--accent-bg:#28223c;--accent-line:#65528d;--r:6px;--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 :root[data-theme=light]{--bg:#f7f6fb;--panel:#ffffff;--raised:#f3f1f8;--line:#e7e4ef;--line-2:#d9d4e6;--text:#1d1a29;--muted:#6b6780;--teal:#6d4ae0;--blue:#5b3fd0;--accent:#6d4ae0;--accent-bg:#efeaff;--accent-line:#cfc2ff}
 body{font-size:13.5px;-webkit-font-smoothing:antialiased}
 h1{font-weight:500;letter-spacing:-.3px}h2{font-weight:500;font-size:16px}
 
 /* sidebar */
 .app{grid-template-columns:272px minmax(0,1fr)}
-.sidebar{inset:10px auto 10px 10px;width:252px;border:1px solid var(--line);border-radius:18px;overflow:auto;
-  background:radial-gradient(120% 45% at 0% 100%,rgba(124,92,255,.22),transparent 70%),linear-gradient(180deg,#100e17,#0f0d18)}
-[data-theme=light] .sidebar{background:radial-gradient(120% 45% at 0% 100%,rgba(124,92,255,.14),transparent 70%),#fbfaff}
+.sidebar{inset:10px auto 10px 10px;width:252px;border:1px solid var(--line);border-radius:6px;overflow:auto;background:var(--panel)}
+[data-theme=light] .sidebar{background:var(--panel)}
 .brand{padding:24px 24px 18px;align-items:flex-start}
 .brand-mark{width:12px;height:14px;margin-top:0;color:#20b7f3}
 .brand-text{display:flex;flex-direction:column;gap:3px}
@@ -542,11 +539,11 @@ h1{font-weight:500;letter-spacing:-.3px}h2{font-weight:500;font-size:16px}
 .nav-label{padding:14px 26px 6px;font-size:10px;letter-spacing:.09em}
 .nav{padding:0 12px;gap:2px}
 .nav .nav-label{padding:14px 14px 6px}
-.nav a{border-radius:999px;padding:8.5px 14px;border:1px solid transparent;font-size:14px;color:var(--muted)}
+.nav a{border-radius:4px;padding:8.5px 14px;border:1px solid transparent;font-size:14px;color:var(--muted)}
 .nav a:hover{background:rgba(255,255,255,.035);color:var(--text)}
-.nav a.active{background:linear-gradient(90deg,#2a2160,#1e1a3f);border-color:var(--accent-line);color:#fff;font-weight:500}
+.nav a.active{background:var(--accent-bg);border-color:var(--accent-line);color:#fff;font-weight:500}
 [data-theme=light] .nav a:hover{background:#f1eef9}
-[data-theme=light] .nav a.active{background:linear-gradient(90deg,#ebe4ff,#f4f0ff);color:#3b2a8f;border-color:var(--accent-line)}
+[data-theme=light] .nav a.active{background:var(--accent-bg);color:#3b2a8f;border-color:var(--accent-line)}
 .nav-icon{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
 .nav .count{border-radius:999px;padding:1px 8px;font-weight:600;border:1px solid #4a3614;background:#2d2110}
 [data-theme=light] .nav .count{border-color:#f1d9a6}
@@ -560,21 +557,20 @@ h1{font-weight:500;letter-spacing:-.3px}h2{font-weight:500;font-size:16px}
 .global-search .nav-icon{width:15px;height:15px}.global-search kbd{margin-left:auto;border-radius:6px}
 #cluster{height:36px;border-radius:10px;min-width:160px;background:var(--panel)}
 #theme-toggle{width:36px;height:36px;border-radius:50%;border:1px solid var(--line);background:var(--panel);padding:0}
-.snapshot{margin:0 26px 18px 16px;border:1px solid var(--line);border-radius:var(--r);padding:9px 12px 9px 16px;font-size:12.5px;color:var(--muted);
-  background:linear-gradient(90deg,rgba(62,207,142,.07),transparent 40%),var(--panel)}
-[data-theme=light] .snapshot{background:linear-gradient(90deg,rgba(6,118,71,.06),transparent 40%),#fff;border-color:var(--line);color:var(--muted)}
+.snapshot{margin:0 26px 18px 16px;border:1px solid var(--line);border-radius:var(--r);padding:9px 12px 9px 16px;font-size:12.5px;color:var(--muted);background:var(--panel)}
+[data-theme=light] .snapshot{background:#fff;border-color:var(--line);color:var(--muted)}
 .content{padding:4px 26px 60px 16px}
 
 /* controls */
-button{border-radius:999px;padding:7px 14px;background:var(--raised);border-color:var(--line-2);font-weight:500}
-button:hover{background:#221f2d;border-color:#3f3950}
-button.primary{background:linear-gradient(180deg,#8a6cff,#6b4cf0);border-color:#8f74ff;color:#fff;box-shadow:0 6px 20px -8px rgba(124,92,255,.7)}
-button.primary:hover{background:linear-gradient(180deg,#9579ff,#7455f5)}
+button{border-radius:4px;padding:7px 14px;background:var(--raised);border-color:var(--line-2);font-weight:500}
+button:hover{background:var(--raised);border-color:var(--muted)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff;box-shadow:none}
+button.primary:hover{background:#5939b5;border-color:#5939b5}
 button.active{background:var(--accent-bg);border-color:var(--accent-line);color:#fff}
 [data-theme=light] button.active{color:#3b2a8f}
 button.ghost{background:transparent;border-color:transparent}
 button.link{font-weight:500}
-input,select,textarea{border-radius:10px;background:#0f0d15;border-color:var(--line)}
+input,select,textarea{border-radius:4px;background:var(--bg);border-color:var(--line)}
 .badge{border-radius:999px;padding:2px 9px;background:rgba(255,255,255,.03);border-color:var(--line-2)}
 .badge.green{background:#0f2a1f;border-color:#1b4a36}.badge.amber{background:#2d2110;border-color:#4a3614}.badge.red{background:#2d1418;border-color:#5a2230}
 [data-theme=light] .badge.green{background:#e8f7ef;border-color:#b7e3cb}[data-theme=light] .badge.amber{background:#fdf3e1;border-color:#f1d9a6}[data-theme=light] .badge.red{background:#fdecee;border-color:#f2c1c6}
@@ -593,10 +589,9 @@ kbd{border-radius:6px}
 .panel .stats{gap:0}.panel .stats .stat{border:0!important;border-right:1px solid var(--line)!important;border-radius:0;background:none}.panel .stats .stat:last-child{border-right:0!important}
 .stat .eyebrow{text-transform:none;letter-spacing:0;font-size:12.5px;font-weight:400;color:var(--muted)}
 .stat .value{font-size:24px;font-weight:600;letter-spacing:-.3px;line-height:1.2}.stat p{font-size:12px}
-.stat-tile{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;background:var(--raised);border:1px solid var(--line-2);color:var(--text);flex:none}
+.stat-tile{width:20px;height:24px;display:grid;place-items:center;color:var(--muted);flex:none}
 .stat-tile svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
-.stat.alert .stat-tile{color:var(--amber);background:#2d2110;border-color:#4a3614}
-[data-theme=light] .stat.alert .stat-tile{background:#fdf3e1;border-color:#f1d9a6}
+.stat.alert .stat-tile{color:var(--amber)}
 .sev{width:32px;height:32px;border-radius:10px;border:1px solid transparent}
 .sev.warning{border-color:#4a3614}.sev.critical{border-color:#5a2230}.sev.info{border-color:var(--accent-line);background:var(--accent-bg)}
 th{background:#15131c;letter-spacing:.07em}
@@ -617,9 +612,7 @@ tbody tr:hover{background:#1a1722}
 /* overview charts */
 .ov-charts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:24px}
 .ov-chart{padding:18px 20px 16px;min-height:236px;display:flex;flex-direction:column;border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
-.ov-chart.v{background:radial-gradient(90% 90% at 100% 100%,rgba(124,92,255,.20),transparent 60%),var(--panel)}
-.ov-chart.g{background:radial-gradient(90% 90% at 100% 100%,rgba(62,207,142,.16),transparent 60%),var(--panel)}
-.ov-chart.m{background:radial-gradient(90% 90% at 100% 100%,rgba(217,70,239,.16),transparent 60%),var(--panel)}
+.ov-chart{background:var(--panel)}
 .ov-chart h3{font-size:16px;font-weight:500}
 .ov-chart .note{font-size:12px;color:var(--muted);margin:2px 0 14px}
 .ov-bars{display:grid;gap:11px}
@@ -627,9 +620,9 @@ tbody tr:hover{background:#1a1722}
 .ov-bar:hover{background:none;color:var(--text)}
 .ov-bar span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);font-size:12px}
 .ov-bar .t{height:8px;border-radius:999px;background:rgba(127,120,150,.14);overflow:hidden}
-.ov-bar .t i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,#6b4cf0,#b07cff)}
-.ov-bar .t i.critical{background:linear-gradient(90deg,#d83a52,#ff8a9b)}.ov-bar .t i.warning{background:linear-gradient(90deg,#c77d0a,#fdb022)}
-.ov-chart.m .ov-bar .t i{background:linear-gradient(90deg,#a21caf,#f0abfc)}
+.ov-bar .t i{display:block;height:100%;border-radius:2px;background:var(--muted)}
+.ov-bar .t i.critical{background:var(--red)}.ov-bar .t i.warning{background:var(--amber)}
+.ov-chart.m .ov-bar .t i{background:var(--muted)}
 .ov-bar b{text-align:right;font-weight:500;color:var(--text)}
 .ov-plot{flex:1;width:100%;min-height:120px;display:block}
 .ov-legend{display:flex;gap:14px;font-size:11.5px;color:var(--muted);margin-top:8px}.ov-legend i{display:inline-block;width:10px;height:3px;border-radius:2px;margin-right:6px;vertical-align:middle}
@@ -640,14 +633,10 @@ tbody tr:hover{background:#1a1722}
 @media(max-width:1100px){.app{grid-template-columns:230px minmax(0,1fr)}.sidebar{width:210px}.brand-word{font-size:23px}.ov-charts{grid-template-columns:1fr}}
 @media(max-width:800px){.app{grid-template-columns:80px minmax(0,1fr)}.sidebar{width:60px}.brand-eyebrow,.brand-word{display:none}.nav a{justify-content:center;padding:9px 0}}
 
-.bars div{background:linear-gradient(180deg,#8a6cff,#5b3fd0)}.bars div.err{background:#c77d0a}.bars div.sel{background:#b9a6ff}
-[data-theme=light] .bars div{background:linear-gradient(180deg,#9b85f5,#6d4ae0)}
+.bars div{background:var(--muted)}.bars div.err{background:var(--amber)}.bars div.sel{background:var(--teal)}
 .finding-row button.link{color:var(--text)}.finding-row button.link:hover{color:var(--teal)}
 
-/* ---------- light mode: the agentgateway UI's light theme ----------
-   Dark stays the kagent look above. Light follows the current agentgateway Enterprise UI:
-   #f8f9fb page, white surfaces, #8023c3 primary, a solid primary nav item, 6-8px corners,
-   soft shadows and tinted status badges. */
+/* Light theme */
 :root[data-theme=light]{--bg:#f8f9fb;--panel:#ffffff;--raised:#f3f4f6;--line:#e5e7eb;--line-2:#d1d5db;--text:#151927;--muted:#667085;
   --teal:#8023c3;--blue:#681aa2;--accent:#8023c3;--accent-bg:#f4e8ff;--accent-line:#e0c6f7;
   --amber:#b7791f;--red:#b42318;--green:#027a48;--r:8px;
@@ -656,7 +645,7 @@ tbody tr:hover{background:#1a1722}
 [data-theme=light] ::selection{background:color-mix(in srgb,#8023c3 78%,white);color:#fff}
 
 /* sidebar: white, flat, hairline border */
-[data-theme=light] .sidebar{background:#fff;border-color:var(--line);box-shadow:var(--shadow);border-radius:12px}
+[data-theme=light] .sidebar{background:#fff;border-color:var(--line);border-radius:6px}
 [data-theme=light] .brand-mark{color:#8023c3}
 [data-theme=light] .bundle{background:#f8f9fb;border-color:var(--line);border-radius:8px}
 [data-theme=light] .nav a{border-radius:6px;color:var(--muted);padding:7px 10px}
@@ -693,8 +682,8 @@ tbody tr:hover{background:#1a1722}
 /* surfaces */
 [data-theme=light] .panel,[data-theme=light] .histogram,[data-theme=light] .stat,[data-theme=light] .ov-chart,[data-theme=light] .modal,[data-theme=light] .start-card,[data-theme=light] .start-form{border-radius:8px;box-shadow:var(--shadow);border-color:var(--line)}
 [data-theme=light] .panel .stats .stat{box-shadow:none}
-[data-theme=light] .stat-tile{background:#f4e8ff;border-color:#e0c6f7;color:#8023c3;border-radius:8px}
-[data-theme=light] .stat.alert .stat-tile{background:#fff7e6;border-color:#f3dcae;color:#b7791f}
+[data-theme=light] .stat-tile{color:var(--muted)}
+[data-theme=light] .stat.alert .stat-tile{color:var(--amber)}
 [data-theme=light] .stat .value.amber{color:#b7791f}
 [data-theme=light] .sev{border-radius:6px}
 [data-theme=light] .sev.warning{background:#fff7e6;border-color:#f3dcae;color:#b7791f}
@@ -712,16 +701,14 @@ tbody tr:hover{background:#1a1722}
 [data-theme=light] .finding-row button.link{color:var(--text)}
 [data-theme=light] .finding-row button.link:hover{color:#8023c3}
 
-/* overview charts: flat white cards with the faintest tint */
-[data-theme=light] .ov-chart.v{background:radial-gradient(90% 90% at 100% 100%,rgba(128,35,195,.07),transparent 60%),#fff}
-[data-theme=light] .ov-chart.g{background:radial-gradient(90% 90% at 100% 100%,rgba(2,122,72,.06),transparent 60%),#fff}
-[data-theme=light] .ov-chart.m{background:radial-gradient(90% 90% at 100% 100%,rgba(192,38,211,.06),transparent 60%),#fff}
+/* Overview charts */
+[data-theme=light] .ov-chart{background:#fff}
 [data-theme=light] .ov-bar .t{background:#f3f4f6}
-[data-theme=light] .ov-bar .t i{background:#8023c3}
+[data-theme=light] .ov-bar .t i{background:var(--muted)}
 [data-theme=light] .ov-bar .t i.warning{background:#d9921f}[data-theme=light] .ov-bar .t i.critical{background:#d92d20}
-[data-theme=light] .ov-chart.m .ov-bar .t i{background:#c026d3}
+[data-theme=light] .ov-chart.m .ov-bar .t i{background:var(--muted)}
 [data-theme=light] .ov-empty span{background:#fff;border-color:var(--line-2)}
-[data-theme=light] .bars div{background:#8023c3;opacity:.85}[data-theme=light] .bars div.err{background:#d9921f}[data-theme=light] .bars div.sel{background:#681aa2;opacity:1}
+[data-theme=light] .bars div{background:var(--muted);opacity:.85}[data-theme=light] .bars div.err{background:#d9921f}[data-theme=light] .bars div.sel{background:#681aa2;opacity:1}
 :root{--chart-ok:#3ecf8e}
 :root[data-theme=light]{--chart-ok:#12b76a}
 

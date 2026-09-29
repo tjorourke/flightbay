@@ -1,12 +1,12 @@
 ---
 title: Gateway calls
 weight: 95
-description: The gateway layer of the Traffic page - who called which MCP tool, model or agent through agentgateway, as whom, what was refused and why, what it cost in tokens, and which tools changed since a baseline.
+description: Inspect agentgateway requests, caller identities, refusals and token usage.
 ---
 
 # Gateway calls
 
-Gateway calls are what agents actually did through agentgateway: who called which MCP tool, model or agent, as whom, how often, what was refused and why, and what it cost in tokens. They are the **Gateway calls** layer of the [Traffic](/desk/traffic/) page, and each agent's share is on its **Tools and models** tab on the [Agents](/desk/agent-reach/) page. This page explains how they are read.
+The **Gateway calls** layer of [Traffic](/desk/traffic/) shows requests recorded by agentgateway, including MCP tool calls, model requests and A2A calls. Each request includes the caller identity, outcome and token usage where logged. An agent's calls also appear on its **Tools and models** tab under [Agents](/desk/agent-reach/).
 
 They were a page of their own, called Activity; `#activity` links now open Traffic with the gateway layer on, and `#activity?caller=kagent/tom-demo` filters it to that caller.
 
@@ -105,7 +105,7 @@ With a baseline loaded (on the [Compare](/desk/compare/) page, or `flightbay-des
 
 | Change | Meaning |
 |---|---|
-| Description changed | Same server, same tool, different description. A tool's description is part of the prompt the model reads, so a change without a new release is how a tool is turned against its callers (a rug pull). A high finding. |
+| Description changed | Same server and tool, different description. The model reads this description, so changes can alter how it uses the tool. Review the change and its source. Reported as a high finding. |
 | Added | A server lists a tool it did not list in the baseline. Only said for servers whose list was captured both times. |
 | Removed | The reverse. |
 | Called now, not called in the baseline | A tool with calls in this capture and none in the baseline |

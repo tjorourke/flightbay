@@ -347,7 +347,7 @@ function actChanges(d) {
 }
 
 // ---------- Traffic map ----------
-const tfIntro = 'Every connection ztunnel logged and every call through agentgateway: mutual TLS, waypoints, policy verdicts, tools, models, tokens and refusals.';
+const tfIntro = 'Captured network connections and gateway calls, with policy decisions and caller details.';
 const tfLayerName = {both: 'Both', network: 'Network', gateway: 'Gateway calls'};
 const tfNoAct = {edges: [], callers: [], targets: [], tools: [], denials: [], findings: [], notes: [], coverage: [], totals: {}};
 
@@ -869,7 +869,7 @@ function tfEdgePanel(d, nodes) {
 }
 
 function tfExplainBody(ex) {
-  if (!ex) return '<p class="muted">Working out each check…</p>';
+  if (!ex) return '<p class="muted">Evaluating policies…</p>';
   if (ex.error) return `<div class="notice bad"><div>${esc(ex.error)}${(ex.suggestions || []).length ? `<br>Did you mean: ${ex.suggestions.map(s => `<button class="link mono" data-tfsug="${esc(s)}">${esc(s)}</button>`).join(', ')}` : ''}</div></div>`;
   const x = ex.res;
   const vcls = {allowed: 'green', denied: 'red', unknown: 'amber', none: ''};
@@ -880,7 +880,7 @@ function tfExplainBody(ex) {
   }).join('');
   const o = x.observed;
   return `<div class="tf-verdict tf-v-${esc(x.verdict)}"><strong>${esc(x.summary)}</strong></div>
-    <h3 class="mt">Checks, in the order traffic meets them</h3><div class="tf-steps">${steps || '<p class="muted">No checks: see the summary.</p>'}</div>
+    <h3 class="mt">Policy checks in order</h3><div class="tf-steps">${steps || '<p class="muted">No checks: see the summary.</p>'}</div>
     ${(x.conditions || []).length ? `<h3 class="mt">Not evaluated from a snapshot</h3><ul class="rc-advice">${x.conditions.map(c => `<li>${esc(c)}</li>`).join('')}</ul>` : ''}
     ${o ? `<h3 class="mt">In the access logs</h3><p>${num(o.connections)} connections, ${num(o.denied)} refused, ${num(o.hbone)} over HBONE, ${num(o.plaintext)} plaintext.${o.note ? ` <span class="${o.agrees ? 'muted' : 'amber'}">${esc(rcCap(o.note))}.</span>` : ''}</p>` : ''}
     ${(x.advice || []).map(a => `<div class="notice info mt"><div>${esc(a)}</div></div>`).join('')}
@@ -1123,7 +1123,7 @@ function rcUsageTab(a, U) {
   return `<section class="panel mt"><div class="panel-head"><h2>Over time</h2><small class="muted">${esc(fbTime(U.timeline.from))} to ${esc(fbTime(U.timeline.to))}${U.timeline.stepSeconds ? ` · one bar per ${U.timeline.stepSeconds}s` : ''} · markers show the first time a destination, tool, model or refusal was seen · from ${esc((U.sources || []).join(', ') || 'no source')}</small></div>
     <div class="panel-body">${uzTimeline(U.timeline)}${notes}</div>
     ${(U.timeline.events || []).length ? `<div class="table-scroll" style="max-height:28vh;border-top:1px solid var(--line)"><table><thead><tr><th>First seen</th><th>What</th><th></th><th>In all</th></tr></thead><tbody>${U.timeline.events.map(e => `<tr><td class="rc-small">${fbTime(e.at)}</td><td>${esc(e.kind)}</td><td class="mono">${esc(e.what)}</td><td class="mono">${num(e.count)}</td></tr>`).join('')}</tbody></table></div>` : ''}</section>
-  <section class="panel mt"><div class="panel-head"><h2>Allowed and used</h2><small class="muted">${num(t.allowed)} allowed · ${num(t.used)} used · ${num(t.unused)} allowed and not used (the Never used tile leaves out the ones it is configured to call)${t.tried ? ` · ${num(t.tried)} tried and refused` : ''}${t.mismatch + t.unexpected ? ` · <span class="red">${num(t.mismatch + t.unexpected)} used although policy denies it or reach does not know it</span>` : ''}</small></div>
+  <section class="panel mt"><div class="panel-head"><h2>Allowed and used</h2><small class="muted">${num(t.allowed)} allowed · ${num(t.used)} used · ${num(t.unused)} not observed (includes configured destinations)${t.tried ? ` · ${num(t.tried)} tried and refused` : ''}${t.mismatch + t.unexpected ? ` · <span class="red">${num(t.mismatch + t.unexpected)} denied by policy or outside evaluated reach</span>` : ''}</small></div>
     <div class="panel-body" style="padding-bottom:0"><div class="toolbar"><div class="row wrap">${chip('all', 'All', (U.destinations || []).length)}${chip('used', 'Used', t.used + t.mismatch + t.unexpected)}${chip('unused', 'Allowed, not used', t.unused)}${chip('refused', 'Refused', (U.destinations || []).filter(d => d.tried || d.refused || d.callsRefused).length)}${t.mismatch + t.unexpected ? chip('odd', 'Policy disagrees', t.mismatch + t.unexpected) : ''}</div>
     ${t.unused ? `<button data-rctab="lockdown">Lock down to what it uses →</button>` : ''}</div></div>
     <div class="table-scroll" style="max-height:56vh">${rows ? `<table><thead><tr><th>State</th><th>Destination</th><th>Policy</th><th>Connections</th><th>Gateway calls</th><th>Tools and models</th><th>Last seen</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : '<div class="empty"><strong>Nothing matches</strong></div>'}</div></section>`;
@@ -1131,7 +1131,7 @@ function rcUsageTab(a, U) {
 
 function rcLockTab(a, U) {
   const L = U.lockdown || {};
-  if (!L.fix) return `<section class="panel mt"><div class="empty"><strong>Nothing to build a policy from</strong>${esc(rcCap((L.notes || [])[0] || 'no traffic from this agent was captured'))}.</div></section>`;
+  if (!L.fix) return `<section class="panel mt"><div class="empty"><strong>Insufficient data for a proposal</strong>${esc(rcCap((L.notes || [])[0] || 'no traffic from this agent was captured'))}.</div></section>`;
   const b = {...(L.before || {})}, af = {...(L.after || {})};
   b.ch = (b.critical || 0) + (b.high || 0); af.ch = (af.critical || 0) + (af.high || 0);
   const cmp = (label, k, better) => { const x = b[k], y = af[k]; const cls = x === y ? '' : better(x, y) ? 'green' : 'red'; return `<div><div class="eyebrow">${label}</div><div class="ld-v">${esc(String(x ?? '—'))}<span class="arrow">→</span><span class="${cls}">${esc(L.evaluated ? String(y ?? '—') : '?')}</span></div></div>`; };
@@ -1139,14 +1139,14 @@ function rcLockTab(a, U) {
   const radRank = {contained: 0, narrow: 1, wide: 2, open: 3};
   const list = xs => xs.length ? `<ul class="ld-list">${xs.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '<p class="muted">none</p>';
   const R = S.reach;
-  return `<section class="panel mt"><div class="panel-head"><h2>Lock down to what it uses</h2><small class="muted">An egress policy that allows only what ${esc(a.name)} was seen using, and tool allowlists for the MCP servers it called. Flightbay only proposes it; nothing is applied.</small></div><div class="panel-body">
+  return `<section class="panel mt"><div class="panel-head"><h2>Proposed restrictions</h2><small class="muted">Egress policy and tool allowlists based on ${esc(a.name)}'s captured traffic. Review the YAML before applying it.</small></div><div class="panel-body">
     <h3>If you apply it${L.evaluated ? '' : ' <small class="muted">(not re-evaluated)</small>'}</h3>
     <div class="ld-cmp">${cmp('Radius', 'radius', (x, y) => (radRank[y] ?? 9) < (radRank[x] ?? 9))}${cmp('Internet', 'internet', (x, y) => y === 'denied' && x !== 'denied')}${cmp('Direct', 'direct', less)}${cmp('Total', 'closure', less)}${cmp('Write', 'write', less)}${cmp('Critical + high', 'ch', less)}</div>
-    <p class="muted rc-small">Worked out by running Agent reach again with the proposal in place of the agent's egress policies. Total counts what the kept destinations can reach in turn, so it only drops once they are locked down as well.</p>
+    <p class="muted rc-small">Agent reach is re-evaluated with the proposed egress policies. Total reach includes indirect paths through retained destinations, which may need separate restrictions.</p>
     ${(L.cut || []).length ? `<div class="notice bad mt"><div><strong>This would cut off destinations it uses:</strong> ${esc(L.cut.join(', '))}</div></div>` : L.evaluated ? `<div class="notice info mt"><div>Every Service it used stays reachable: ${esc((L.stillUsed || []).join(', ') || 'none')}.</div></div>` : ''}
     ${(L.breaks || []).map(x => `<div class="notice mt"><span>△</span><div>${esc(x)}</div></div>`).join('')}
     ${(L.notes || []).map(x => `<div class="notice mt"><span>△</span><div>${esc(rcCap(x))}</div></div>`).join('')}
-    <div class="grid2 rc-grid mt"><div><h3>Keeps</h3>${list(L.keeps || [])}</div><div><h3>Removes <small class="muted">${num((L.removes || []).length)} allowed today, never used</small></h3>${(L.removes || []).length > 12 && !R.ldAll ? list(L.removes.slice(0, 12)) + `<button class="ghost" id="ld-all">Show all ${num(L.removes.length)}</button>` : list(L.removes || [])}</div></div>
+    <div class="grid2 rc-grid mt"><div><h3>Keeps</h3>${list(L.keeps || [])}</div><div><h3>Removes <small class="muted">${num((L.removes || []).length)} allowed, not observed in this capture</small></h3>${(L.removes || []).length > 12 && !R.ldAll ? list(L.removes.slice(0, 12)) + `<button class="ghost" id="ld-all">Show all ${num(L.removes.length)}</button>` : list(L.removes || [])}</div></div>
     <div class="row between mt"><h3>The policy</h3><div class="row"><button id="ld-copy">Copy YAML</button><button id="ld-dl">Download</button></div></div>
     <pre class="code mt">${esc(L.fix)}</pre>
     <p class="muted rc-small mt">Built from the capture's log window only. Something the agent does rarely (a nightly job, a fallback model) may not be in it. Apply in a test namespace first, or watch refusals on the Traffic map after applying.</p></div></section>`;

@@ -1,19 +1,19 @@
 ---
 title: Traffic
 weight: 94
-description: Every connection ztunnel logged and every call through agentgateway on one map, with mTLS state, waypoints, policy verdicts, tools, models, tokens and refusals, and an explainer for why any connection was allowed or denied.
+description: Inspect captured network connections and gateway calls alongside policy decisions.
 ---
 
 # Traffic
 
-The Traffic page shows what happened on the cluster, in two layers on one map:
+The Traffic page maps connections and requests recorded in the capture:
 
 | Layer | From | Shows |
 |---|---|---|
 | **Network** | ztunnel access logs | Every connection between workloads and Services: mutual TLS or plaintext, the waypoint that carried it, refusals, and what the captured policy says about it |
 | **Gateway calls** | agentgateway request logs | Every call through an agentgateway gateway or waypoint: which MCP tool, model or agent was called, as whom, how often, what was refused and why, and the tokens used. See [Gateway calls](/desk/activity/) for how these are read. |
 
-The **Why?** explainer takes one source and one destination and shows every check on the way, in order, with the policy each one read. The verdicts come from the same evaluator as the [Agents](/desk/agent-reach/) page, so the map, the explainer and each agent's reach always agree.
+The **Why?** tab shows the evaluated policy checks for a source and destination, in order. It uses the same evaluator as [Agent reach](/desk/agent-reach/).
 
 For one agent at a time (what it may reach, what it used, and the policy that would lock it down to that), open the **Agents** tab, or click an agent's name in a finding. See [Agents tab](/desk/agent-reach/).
 
@@ -72,7 +72,7 @@ Click a box to keep its lines lit (the same trace hover shows) while you scroll 
 
 **Show only its traffic** in an agent's panel follows it. The map then draws a box for every tool it has access to on each MCP server it uses: called tools first (green; red when the captured allowlist would not allow it), then tools in its own configuration, then the rest it is allowed and did not call (faded). A server with more than 16 such tools folds the unused ones into one box; click it to open it up. The Services it may reach on the network and did not use are behind **Show Services it may reach and did not use** in the bar above the map.
 
-![Following nick-demo: the GitHub tool it called, the twelve it may call and did not, and kagent-tool-server folded](/images/tool-map.png)
+![Following tom-demo's connections and permitted GitHub tools](/images/tool-map.png)
 
 Clicking a tool box, or a caller's line to a Service, shows the same as a table under the map, **Tools … may call**.
 
@@ -81,7 +81,7 @@ Clicking a tool box, or a caller's line to a Service, shows the same as a table 
 
 Each tool says **allowed, called**, **allowed, not called**, or **called, not allowed** (called although the captured allowlist does not give it to this caller: the policy may be newer than the calls), with the calls and whether the agent's own configuration lists it.
 
-![Every GitHub tool nick-demo has access to, and the one it called](/images/tool-access.png)
+![GitHub tools permitted for tom-demo, with captured call counts](/images/tool-access.png)
 
 ![The gateway layer: callers and the tools, models and agents they called](/images/activity-map.png)
 
@@ -122,7 +122,7 @@ Edges are flagged:
 
 The totals across the top cover both layers: connections, gateway calls (with tool and LLM calls and tokens), plaintext in the mesh, traffic no policy looks at, refusals by the mesh and by the gateways, and calls with no identity. Each is a filter or opens its tab.
 
-## Why? The explainer
+## Explain a connection
 
 Pick an edge on the map or the Edges tab, or use the **Why? Explain a connection** tab with any workload and Service in the capture, not only pairs seen in the logs. The explainer runs every check traffic meets, in order, and shows what each decided and the policy it read:
 
@@ -134,7 +134,7 @@ Pick an edge on the map or the Edges tab, or use the **Why? Explain a connection
 
 Each step shows **allowed**, **denied**, **unknown** (the data was not captured), or **nothing applies**, with links to the policies. A Service with several pods is checked pod by pod until one admits the caller.
 
-![Refused at ztunnel authorization, with the fix](/images/traffic-explain.png)
+![Policy checks for tom-demo connecting to github-mcp through its waypoint](/images/traffic-explain.png)
 
 Under the checks:
 
@@ -184,7 +184,7 @@ The filter box takes free text or `key:value` terms, with suggestions from the c
 
 For an agent, the map then also draws what policy allows it to reach and it did not use, faded and dashed and folded by namespace. Click a namespace to open it up, and a Service to explain why it is allowed. The bar above the map counts both, and links to the agent on the Agents page.
 
-![One agent: four destinations used, the rest allowed and unused](/images/traffic-focus.png)
+![Traffic map filtered to tom-demo](/images/traffic-focus.png)
 
 ## In the terminal and over MCP
 

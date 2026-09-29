@@ -1,12 +1,12 @@
 ---
 title: Observed traffic
 weight: 50
-description: Where Flightbay learns who actually called whom, from the logs already in a capture and from flow logs you attach.
+description: Traffic sources in captured logs and attached flow files.
 ---
 
 # Observed traffic
 
-Policies say what is allowed. Observed traffic says what actually happened: which workload called which Service, with which method, and whether it was denied. Flightbay uses it to separate "allowed and used" from "allowed but never used" in [Agent reach](/desk/agent-reach/), and `fbflows` lists it in the terminal.
+Observed traffic records connections, requests and denials found in the capture. [Agent reach](/desk/agent-reach/) compares these records with policy permissions, and `fbflows` lists them in the terminal. A destination missing from the logs may have been used outside the capture window or through a source that was not collected.
 
 Most of it comes from logs a normal capture already has. For anything else, you can attach flow logs from your CNI, your cloud provider or a firewall.
 
@@ -194,6 +194,6 @@ Query strings are stripped from paths.
 | Where | What you get |
 |---|---|
 | `fbflows` in the [terminal](/desk/terminal/) | Source and destination pairs, grouped, with counts and the top methods and paths. `--source hubble` for one source, `--cluster mesh1` for one cluster. |
-| [Agent reach](/desk/agent-reach/) | Per destination: how many requests were seen, by which sources, which methods, which MCP tools, and how many were denied. "Never used" once any source covers the agent. |
+| [Agent reach](/desk/agent-reach/) | Requests per destination, flow sources, methods, MCP tools and denials. "Not observed" requires a source covering the agent. |
 | `flows` table in [SQL](/desk/sql/) | Envoy and CoreDNS flows and imported flow logs, one row per record. ztunnel and agentgateway flows are read from the logs directly, so use `fbflows` for those. |
 | [Coverage](/desk/coverage/) | A `flows` entry for each attached or Hubble file, with the detected format. |

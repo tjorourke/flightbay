@@ -1,16 +1,14 @@
 ---
 title: Secrets and redaction
 weight: 30
-description: What Flightbay never collects, how Secrets and ConfigMaps are handled, and how credentials in everything else are replaced before anything is written.
+description: Secret handling, built-in redaction rules and custom exclusions.
 ---
 
 # Secrets and redaction
 
-A bundle is only useful if a security team is willing to let it leave. This page explains what never goes into a bundle, and how credentials that turn up in ordinary objects, logs and dumps are replaced before anything is written to disk.
+The collector removes Secret values and applies redaction rules in memory before writing a bundle. The rules below cover recognised credential formats and sensitive field names. Review the result and add patterns or exclusions for data specific to your organisation.
 
-Everything here happens in the collector's memory. Unredacted data is never written to disk, not even to a temporary file.
-
-## Secrets never carry values
+## Secret collection modes
 
 Secret values are never collected, whatever options you choose. You decide how much of the rest you want with `--secrets`:
 
@@ -143,10 +141,10 @@ A count where you did not expect one is worth a look: extract the bundle and che
 |---|---|
 | Secret values | By design, in every mode. |
 | Helm values | Release Secrets are reduced to a chart summary. |
-| `managedFields` | On any object. It is noise, and can reveal who changed what. |
+| `managedFields` | Removed from all objects. These fields record field ownership and can identify clients that changed an object. |
 | Envoy SDS secret sections | Removed from every config dump. Certificate expiry comes from `/certs`, which holds no keys. |
 | The agentgateway and kgateway controller krt snapshot | It spans every namespace and can hold Secret contents (TLS keys, LLM provider keys), so it can honour neither a namespace limit nor "never Secret values". The controllers' logs, metrics and objects are collected instead. |
 | Anything from namespaces outside the selection | Including entries inside proxy and control-plane dumps, which are removed before writing. |
 | Anything a policy exclusion covers | Through any collector. A diagnostic endpoint that would expose an excluded type is skipped and the reason recorded. |
 
-`flightbay docs collects` prints the full list, generated from the collector's own tables. A test regenerates `docs/COLLECTS.md` from the same code, so the document and the collector cannot drift apart.
+`flightbay docs collects` prints the list generated from the collector's tables. A test checks that `docs/COLLECTS.md` matches that output.

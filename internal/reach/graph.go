@@ -76,7 +76,7 @@ func (e *engine) graph(w *workload, a Agent, reach []pair, via []Path) ([]Node, 
 			names = append(names, x.sv.name)
 		}
 		addNode(Node{ID: id, Type: "group", Label: fmt.Sprintf("%d more in %s", len(g), ns), Namespace: ns, Depth: 1, Risk: risk, Count: len(g), Detail: strings.Join(names, ", ")})
-		why := "allowed, never called and not configured"
+		why := "allowed, not configured and not observed in this capture"
 		if allUnknown {
 			why = "could not be evaluated from the capture"
 		}

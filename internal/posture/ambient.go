@@ -83,7 +83,7 @@ func ambientChecks(e env) []Check {
 	})
 
 	add(spec{"ambient.no-opt-out", "Isolation", "medium", "No workload opts out of an ambient namespace",
-		"A per-pod istio.io/dataplane-mode: none quietly gives that one workload no identity or encryption.",
+		"A pod labelled istio.io/dataplane-mode: none bypasses ambient capture and its mesh identity and encryption.",
 		"# remove from the pod template, or document the exception\nmetadata:\n  labels:\n    istio.io/dataplane-mode: none   # delete", meshBase + "istio-ambient-crds/", solodocs.Istio + "setup/add-workloads/"}, func(c *Check) {
 		if !nsKnown {
 			na(c, noNS)
@@ -197,7 +197,7 @@ func ambientChecks(e env) []Check {
 	})
 
 	add(spec{"ambient.default-deny", "Authorization", "high", "Each ambient namespace starts from default-deny",
-		"Zero trust starts from zero: an empty ALLOW policy denies everything, then you allow by identity only what you meant.",
+		"An ALLOW policy with no rules denies all requests to its selected workloads. Add explicit rules for the required caller identities.",
 		"apiVersion: security.istio.io/v1\nkind: AuthorizationPolicy\nmetadata: {name: default-deny, namespace: <ns>}\nspec: {}", meshBase + "zero-trust-agents-kubernetes/", solodocs.Istio + "security/authorization/ztunnel-authz/"}, func(c *Check) {
 		if !apOK {
 			na(c, apWhy)

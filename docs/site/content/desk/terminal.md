@@ -1,12 +1,12 @@
 ---
 title: Terminal
 weight: 130
-description: A shell where kubectl, k9s and stern work against the snapshot, and the fb helper commands for search, logs, findings, proxies, SQL, scores, reach and flows.
+description: Use kubectl, k9s and Flightbay helper commands against the workspace.
 ---
 
 # Terminal
 
-Every workspace comes with a shell wired to the snapshot. `kubectl`, `k9s` and `stern` talk to a read-only Kubernetes API that the desk serves from the bundle, so you can use the commands you already know. Next to them are the `fb*` helpers, which give you the desk's search, findings, scores and reach on the command line.
+The workspace shell configures `kubectl`, `k9s` and `stern` to use the desk's read-only snapshot API. The `fb*` helpers query logs, objects, findings and analysis results from the same workspace.
 
 ![k9s against a snapshot](/images/k9s.png)
 

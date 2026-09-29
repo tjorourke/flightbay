@@ -455,7 +455,7 @@ async function overview() {
   const pol = w.policy || {};
   const st = w.state || {};
   return head(w.case ? `Case ${w.case}` : 'Snapshot', `${(w.contexts || []).join(', ')} · ${declaredText(w) || 'captured ' + fmtDateTime(w.snapshot)}`,
-    `<button id="go-coverage">Coverage &amp; redactions</button><button class="primary" id="go-findings">Investigate findings →</button>`) + `
+    `<button id="go-coverage">Coverage &amp; redactions</button><button class="primary" id="go-findings">View findings</button>`) + `
   <div class="stats">
     <div class="stat">${ovTile('clusters')}<div><div class="eyebrow">Clusters</div><div class="value">${clusters.length}<small>${esc(clusters.map(c => c.version).filter(Boolean)[0] || '')}</small></div><p>${tot('nodes')} nodes captured · ${tot('namespaces')} namespaces</p></div></div>
     <div class="stat">${ovTile('objects')}<div><div class="eyebrow">Objects</div><div class="value">${num(tot('objects'))}</div><p>${num(tot('pods'))} pods · ${num(tot('podsRunning'))} running</p></div></div>
@@ -464,7 +464,7 @@ async function overview() {
   </div>
   ${ovCharts(charts)}
   <div class="grid2"><div>
-    <section class="panel"><div class="panel-head"><h2>Start here</h2><small>${w.state.phase === 'complete' ? 'Prioritised findings' : 'Provisional until the import is verified'}</small></div>
+    <section class="panel"><div class="panel-head"><h2>Priority findings</h2><small>${w.state.phase === 'complete' ? 'Highest severity first' : 'Provisional until the import is verified'}</small></div>
       ${(w.topFindings || []).filter(f => !S.cluster || f.cluster === S.cluster).map(findingRow).join('') || '<div class="empty"><strong>No warnings or critical findings</strong>Browse resources or search the logs.</div>'}
       <div class="panel-body row between"><small>Rules run against the captured snapshot</small><button class="link" id="all-findings">All findings →</button></div></section>
     ${(w.unavailable || []).length ? `<div class="notice mt"><span>△</span><div><strong>Not collected in this bundle</strong><br>${w.unavailable.map(esc).join('<br>')}</div></div>` : ''}
@@ -593,7 +593,7 @@ async function navigator() {
       </tbody></table></div>
       <div class="nv-status"><span>${sel ? `${esc(sel.name)}${sel.namespace ? ' · ' + esc(sel.namespace) : ''}${!S.cluster ? ' · ' + esc(sel.cluster) : ''}` : ''}</span><span><b>Enter</b> describe · <b>y</b> yaml · <b>e</b> events · <b>l</b> logs · <b>:</b> command · <b>/</b> filter · <b>?</b> help</span></div>`;
   }
-  return head('Resources', 'Every captured object. Browse with the mouse, or switch to the keyboard view to move through them the way you would in k9s.') + resTabs('navigator') + `<div class="nv">${header}<div class="nv-frame" id="nv-frame" tabindex="-1">${cmdline}${help}${body}</div></div>`;
+  return head('Resources', 'Browse captured objects by type, or use the keyboard view with k9s shortcuts.') + resTabs('navigator') + `<div class="nv">${header}<div class="nv-frame" id="nv-frame" tabindex="-1">${cmdline}${help}${body}</div></div>`;
 }
 
 // nvFilter turns a k9s-style filter into the server query plus a client-side
@@ -931,7 +931,7 @@ async function posture() {
     <div class="toolbar"><div class="row wrap">${chip('status', 'attention', 'Needs attention')}${chip('status', 'fail', 'Failing')}${chip('status', 'warn', 'Warnings')}${chip('status', 'pass', 'Passing')}${chip('status', 'na', 'Not applicable')}${chip('status', 'all', 'All')}</div>
       <input id="pst-q" placeholder="Filter. Try status: severity: category: kind: ns: or text" value="${esc(P.q)}" style="min-width:340px" autocomplete="off" spellcheck="false"></div>
     <section class="panel">${rows || (P.status === 'attention' && !P.q ? '<div class="empty"><strong>Nothing needs attention</strong>Every applicable check passes. Choose Passing or All to see them.</div>' : '<div class="empty"><strong>No checks match</strong>Change the filters above.</div>')}</section>`;
-  return head('Scorecard', "Solo's best practices for agentic workloads, Istio, ingress and Kubernetes, scored against this snapshot. Every problem comes with its evidence and the fix.", '<button id="pst-term">&gt;_ fbscore in terminal</button>') + `
+  return head('Scorecard', "Configuration and security checks for this snapshot, with affected objects and suggested fixes.", '<button id="pst-term">&gt;_ fbscore in terminal</button>') + `
     <div class="pst-cards">${present.map(card).join('')}</div>
     ${coverage}
     ${tabs}
@@ -972,7 +972,7 @@ after.scorecard = () => {
 // ---------- agent reach (Flightbay Enterprise) ----------
 // By agent: what each agent, MCP server and agent gateway can reach on the
 // network, what those destinations can reach for it, and how to close it down.
-const rcIntro = 'Every agent, MCP server and agent gateway: what it can reach, what it actually used and called, and how to lock it down to that.';
+const rcIntro = 'Agent network access, observed calls and proposed policy restrictions.';
 const rcTypes = {'kagent-agent': 'kagent agent', 'mcp-server': 'MCP server', agentgateway: 'agentgateway', 'possible-agent': 'possible agent'};
 const rcRadiusCls = {open: 'red', wide: 'amber', narrow: 'blue', contained: 'green'};
 const rcRadiusWhy = {open: 'reaches the internet, or has a critical finding', wide: 'half the cluster or more', narrow: 'more than three Services', contained: 'three Services or fewer'};
@@ -1179,7 +1179,7 @@ async function reachBody() {
     <td class="rc-sum">${esc(a.summary)}</td></tr>`; }).join('');
   const notes = (rep.notes || []).map(n => `<div class="notice" style="margin-bottom:12px"><span>△</span><div>${esc(rcCap(n))}.</div></div>`).join('');
   const list = all.length ? `<section class="panel"><div class="panel-head"><h2>${shown.length === all.length ? all.length : `${shown.length} of ${all.length}`} agent${all.length === 1 ? '' : 's'}</h2><small class="muted">Sorted by risk. Click one for its blast radius.</small></div>
-    <div class="table-scroll" style="max-height:${R.sel ? '38vh' : '66vh'}">${shown.length ? `<table class="rc-list"><thead><tr><th>Agent</th><th>Radius</th><th>Internet</th><th title="Services reachable in one hop, of the Services in the capture">Direct</th><th title="Services reachable in any number of hops">Total</th><th title="Direct destinations it can change data on">Write</th><th title="Destinations it was seen using, of those it may reach directly">Used</th>${R.act ? '<th title="Calls through agentgateway">Gateway calls</th>' + (gwTok ? '<th title="LLM tokens through agentgateway">Tokens</th>' : '') : ''}<th>Findings</th><th>Summary</th></tr></thead><tbody>${rows}</tbody></table>`
+    <div class="table-scroll" style="max-height:${R.sel ? '38vh' : '66vh'}">${shown.length ? `<table class="rc-list"><thead><tr><th>Agent</th><th>Radius</th><th>Internet</th><th title="Services reachable in one hop, of the Services in the capture">Direct</th><th title="Services reachable within the three-hop analysis limit">Total</th><th title="Direct destinations it can change data on">Write</th><th title="Destinations it was seen using, of those it may reach directly">Used</th>${R.act ? '<th title="Calls through agentgateway">Gateway calls</th>' + (gwTok ? '<th title="LLM tokens through agentgateway">Tokens</th>' : '') : ''}<th>Findings</th><th>Summary</th></tr></thead><tbody>${rows}</tbody></table>`
       : '<div class="empty"><strong>No agents match</strong>Change the filter or the type.</div>'}</div></section>`
     : `<section class="panel"><div class="empty"><strong>No agents found</strong>No kagent agents, MCP servers, agent gateways or workloads that look like agents were captured.</div></section>`;
   return notes + `
@@ -1195,16 +1195,16 @@ function rcDetail(a) {
     tile(esc(a.radius), rcRadiusCls[a.radius], esc(rcRadiusWhy[a.radius] || ''), 'Radius'),
     tile(esc(a.internet), rcNetCls[a.internet], a.metadata ? `cloud metadata ${esc(a.metadata)}` : 'direct egress', 'Internet'),
     tile(`${c.direct}<small> / ${c.services}</small>`, '', `Reaches ${c.direct} of ${c.services} Services`, 'Direct'),
-    tile(String(c.closure), '', `${c.closure} in any number of hops`, 'Total'),
+    tile(String(c.closure), '', `${c.closure} within three hops`, 'Total'),
     tile(String(c.write), c.write ? 'red' : 'green', `Can write to ${c.write}`, 'Write'),
     a.observed ? tile(String(c.observed), '', `Called ${c.observed} in the capture, seen by ${esc(rcSrcList(a.observedBy))}`, 'Used') : tile('—', 'muted', 'no flow logs cover this agent', 'Used'),
-    a.observed ? tile(String(c.neverUsed), c.neverUsed ? 'amber' : 'green', `${c.neverUsed} allowed but never called, per ${esc(rcSrcList(a.observedBy))}`, 'Never used') : tile('—', 'muted', 'needs flow logs (ztunnel, agentgateway, Hubble…) to tell', 'Never used'),
+    a.observed ? tile(String(c.neverUsed), c.neverUsed ? 'amber' : 'green', `${c.neverUsed} allowed, not configured and not seen in ${esc(rcSrcList(a.observedBy))}`, 'Not observed') : tile('—', 'muted', 'Requires flow coverage for this agent', 'Not observed'),
     tile(String(c.external || 0), (a.external || []).some(x => x.risk === 'red') ? 'red' : '', `hosts outside the cluster${(a.external || []).filter(x => x.reachedVia === 'gateway').length ? `, ${(a.external || []).filter(x => x.reachedVia === 'gateway').length} through the gateway` : ''}`, 'External'),
   ].join('');
   const header = `<section class="panel mt" id="rc-detail"><div class="panel-body">
     <div class="row between wrap" style="align-items:flex-start"><div class="row wrap"><h2 class="mono" style="font-size:17px">${esc(rcName(a))}</h2>${rcTypePill(a.type)}<span class="tag">${esc(a.kind)}</span>${(R.list?.clusters || []).length > 1 ? `<span class="tag">${esc(a.cluster)}</span>` : ''}</div>
       <div class="row wrap">${a.ref ? `<button id="rc-obj">Open ${esc(a.kind)}</button>` : ''}<button id="rc-logs">Logs from this agent</button>${feature('traffic') ? `<a class="btn" href="#traffic?agent=${encodeURIComponent(rcName(a))}" title="Its connections and gateway calls on the Traffic page">Traffic</a>` : ''}<button id="rc-term">&gt;_ fbreach in terminal</button><button class="ghost" id="rc-close" title="Back to the list" aria-label="Close">✕</button></div></div>
-    <p class="rc-summary">${esc(a.summary)}</p><p class="muted" style="font-size:12px;margin-top:4px">Detected: ${esc(a.why)}${a.observed ? ` · Observed by ${esc(rcSrcList(a.observedBy))}` : ' · No flow logs cover this agent, so what it actually calls is unknown'}</p>
+    <p class="rc-summary">${esc(a.summary)}</p><p class="muted" style="font-size:12px;margin-top:4px">Detected: ${esc(a.why)}${a.observed ? ` · Observed by ${esc(rcSrcList(a.observedBy))}` : ' · No flow coverage for this agent'}</p>
     <div class="rc-tiles">${tiles}</div></div></section>`;
   const G = rcGraphModel(a);
   const vbtn = (v, label, hint) => `<button class="chip ${G.view === v ? 'on' : ''}" data-rgview="${v}" title="${esc(hint)}">${label}</button>`;
@@ -1222,7 +1222,7 @@ function rcDetail(a) {
     <div class="rc-chain">${p.hops.map(h => `<span class="rc-hop ${h === 'internet' || h === '169.254.169.254' ? 'net' : ''}">${esc(h)}</span>`).join('<span class="rc-arrow">→</span>')}</div>
     <small class="muted rc-why">${esc(p.why)}</small></div>`).join('');
   const pathsPanel = `<section class="panel mt"><div class="panel-head"><h2>Paths</h2><small class="muted">From the agent to the internet, cloud metadata, fetchers and stores</small></div>
-    ${paths || '<div class="empty"><strong>No path to the internet or cloud metadata</strong>Nothing this agent can reach leads out of the cluster.</div>'}</section>`;
+    ${paths || '<div class="empty"><strong>No external path found</strong>The evaluated paths do not reach the internet or cloud metadata. Results depend on captured policies and the analysis limits.</div>'}</section>`;
   // Findings: one line each; open one for the affected list and the fix.
   const itemTable = f => {
     const its = f.items || [];
@@ -1271,18 +1271,18 @@ function rcDetail(a) {
   const dchip = (k, label) => `<button class="chip ${R.dchip === k ? 'on' : ''}" data-rcd="${k}">${label} <small>${counts[k]}</small></button>`;
   const cl = a.cluster;
   const destTable = `<section class="panel mt"><div class="panel-head"><h2>Destinations</h2><small class="muted">Services it can reach in one hop, sorted by risk${a.observed ? ` · calls seen by ${esc(rcSrcList(a.observedBy))}` : ''}. Hosts outside the cluster are on the External tab</small></div><div class="panel-body" style="padding-bottom:0">
-    <div class="toolbar"><div class="row wrap">${dchip('all', 'All')}${dchip('risky', 'Risky')}${dchip('used', 'Used')}${dchip('never', 'Never used')}${rcFoundMenu(direct, R.dfound || 'any', 'data-rcdf', a)}</div>
+    <div class="toolbar"><div class="row wrap">${dchip('all', 'All')}${dchip('risky', 'Risky')}${dchip('used', 'Used')}${dchip('never', 'Not observed')}${rcFoundMenu(direct, R.dfound || 'any', 'data-rcdf', a)}</div>
       <input id="rc-dq" placeholder="Filter destinations" value="${esc(R.dq)}" autocomplete="off" spellcheck="false" style="min-width:240px"></div>
 </div>
     <div class="table-scroll" style="max-height:60vh">${drows.length ? `<table class="rc-dest"><thead><tr><th>Risk</th><th>Destination</th><th>Verdict</th><th>Methods</th><th>Called</th><th>Found by</th><th>Why</th></tr></thead><tbody>
       ${drows.map(e => { const s = rcSvc(e.to); const open = !!(R.evOpen || {})[e.to]; return `<tr class="rc-evrow ${open ? 'open' : ''}"><td>${rcRisk(e.risk)}</td>
-        <td class="mono rc-dst">${s ? `<button class="link" data-rcsvc="${attr({cluster: cl, group: '', resource: 'services', namespace: s.namespace, name: s.name})}">${esc(dest(e))}</button>` : esc(dest(e))}${never.has(dest(e)) ? '<br><small class="muted">never used</small>' : ''}</td>
+        <td class="mono rc-dst">${s ? `<button class="link" data-rcsvc="${attr({cluster: cl, group: '', resource: 'services', namespace: s.namespace, name: s.name})}">${esc(dest(e))}</button>` : esc(dest(e))}${never.has(dest(e)) ? '<br><small class="muted">not observed</small>' : ''}</td>
         <td class="${e.verdict === 'allowed' ? '' : e.verdict === 'denied' ? 'green' : 'amber'}">${esc(e.verdict)}${e.layer ? ` <small class="muted">${esc(e.layer)}</small>` : ''}</td>
         <td class="mono rc-small">${e.methods == null ? '<span class="muted">any method</span>' : esc(e.methods.join(', ') || 'none')}${e.write ? ' <span class="red">· write</span>' : ''}</td>
         <td class="rc-small">${e.observed ? `${num(e.observed)}${(e.observedMethods || []).length ? ` <span class="muted mono">${esc(e.observedMethods.join(', '))}</span>` : ''}${e.observedDenied ? ` <span class="amber">· ${num(e.observedDenied)} denied</span>` : ''}${(e.tools || []).length ? `<div class="rc-tools">tools ${e.tools.map(t => `<span class="mono">${esc(t)}</span>`).join(', ')}</div>` : ''}<div class="rc-srcs">${rcSrcs(e.observedBy)}</div>` : '<span class="muted">not seen</span>'}</td>
         <td class="rc-found"><button class="rc-evbtn" data-rcev="${esc(e.to)}" title="Show the evidence">${rcFoundChips(e.found)}<span class="muted">${open ? '▾' : '▸'}</span></button></td>
         <td class="rc-wrap">${esc(e.why)}${(e.reasons || []).length ? `<br><small class="muted">${esc(e.reasons.join('; '))}</small>` : ''}${e.via ? `<br><small class="muted">via ${esc(e.via)}</small>` : ''}</td></tr>${open ? `<tr class="rc-ev"><td colspan="7">${rcEvidence(e, false, a)}</td></tr>` : ''}`; }).join('')}
-    </tbody></table>` : `<div class="empty"><strong>${direct.length ? 'No destinations match' : 'No destinations'}</strong>${direct.length ? 'Change the filter above.' : 'Nothing in the cluster is reachable from this agent.'}</div>`}</div></section>`;
+    </tbody></table>` : `<div class="empty"><strong>${direct.length ? 'No destinations match' : 'No destinations found'}</strong>${direct.length ? 'Change the filter above.' : 'No reachable Services were found in the captured data.'}</div>`}</div></section>`;
   const ext = a.external || [];
   const eChipOk = (x, k) => k === 'registries' ? (x.class === 'registry' || x.class === 'proxy') : k === 'llm' ? x.class === 'llm' : k === 'direct' ? x.reachedVia === 'direct' : k === 'gateway' ? x.reachedVia === 'gateway' : k === 'observed' ? (x.observed > 0 || x.lookups > 0) : true;
   const echips = [['all', 'All'], ['registries', 'Registries'], ['llm', 'LLM'], ['direct', 'Direct'], ['gateway', 'Through gateway'], ['observed', 'Observed']];
@@ -1790,7 +1790,7 @@ async function search() {
   const examples = ['kind:pod', 'CrashLoopBackOff', 'kind:httproute', 'label:app', 'kind:deployment ns:istio-system', '"image"'];
   const bar = `<form class="query" id="obj-form"><span class="green">⌕</span><input id="obj-q" value="${esc(Q.q)}" placeholder='Search every object. Try kind: ns: label: name: or free text, e.g. kind:pod label:app=checkout' autocomplete="off" spellcheck="false" aria-label="Object search">${Q.q ? '<button type="button" class="ghost" id="obj-clear" title="Clear the search (Esc)">Clear ✕</button>' : ''}<button class="primary">Search ↵</button></form>
     <div class="help-row"><span>Try</span>${examples.map(x => `<button data-otry="${esc(x)}">${esc(x)}</button>`).join('')}</div>`;
-  const header = head('Search', 'Every captured object of every kind: names, namespaces, labels, and anything in spec and status (images, hostnames, status reasons).');
+  const header = head('Search', 'Search captured objects by name, namespace, labels or content in spec and status.');
   if (!Q.q.trim()) {
     const types = await api('api/resources', {cluster: S.cluster});
     const {groups, hidden} = groupKinds(types);
@@ -1867,7 +1867,7 @@ async function resources() {
     truncated: 'This list was truncated: ' + (cur.reason || ''),
     'not-collected': 'No collection record for this type in the bundle.',
   }[cur.state] || '')}</span></div>`;
-  return head('Resources', 'Every captured object. Browse with the mouse, or switch to the keyboard view to move through them the way you would in k9s.', `<button id="res-k9s" title="k9s on this type and namespace, in the terminal">Open in k9s</button><button id="res-term">&gt;_ kubectl get ${esc(cur.resource)}</button>`) + resTabs('resources') + `
+  return head('Resources', 'Browse captured objects by type, or use the keyboard view with k9s shortcuts.', `<button id="res-k9s" title="k9s on this type and namespace, in the terminal">Open in k9s</button><button id="res-term">&gt;_ kubectl get ${esc(cur.resource)}</button>`) + resTabs('resources') + `
   <div class="resource-layout"><nav class="types" aria-label="Resource types">${groups.map(([area, ts]) => `<h3 style="margin:12px 8px 4px;font-size:10px;letter-spacing:.08em;text-transform:uppercase" class="muted">${esc(area)}</h3>` + ts.map(t => `<button class="${t.resource === cur.resource && t.group === cur.group ? 'active' : ''}" data-type="${attr({g: t.group, r: t.resource})}" title="${esc(t.name)} · ${esc(t.state)}"><span>${kindLabel(t)}</span><span><small>${t.count}</small> <span class="st state-${esc(t.state)}">●</span></span></button>`).join('')).join('')}
     ${hidden ? `<p class="muted" style="font-size:11px;margin:12px 8px">${hidden} types with no captured objects are hidden. <button class="link" id="res-cov">Coverage</button> shows which were excluded or failed.</p>` : ''}</nav>
   <div><div class="toolbar"><select id="res-ns" aria-label="Namespace"><option value="">All namespaces</option>${S.res.nsOptions.map(n => `<option ${n === S.res.ns ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
@@ -2247,7 +2247,7 @@ async function findings() {
   const all = await api('api/findings', {cluster: S.cluster});
   const fs = all.filter(f => (!S.findingSev || f.severity === S.findingSev) && (!S.findingsRule || f.rule === S.findingsRule));
   const prov = all.some(f => f.provisional);
-  return head('Findings', 'Things to look at, each linked to its evidence. None of them is a root cause on its own.', `<select id="sev"><option value="">All severities</option>${['critical', 'warning', 'info'].map(s => `<option ${S.findingSev === s ? 'selected' : ''}>${s}</option>`).join('')}</select>`) +
+  return head('Findings', 'Detected conditions, with supporting objects, logs and suggested next steps.', `<select id="sev"><option value="">All severities</option>${['critical', 'warning', 'info'].map(s => `<option ${S.findingSev === s ? 'selected' : ''}>${s}</option>`).join('')}</select>`) +
     (prov ? '<div class="notice info" style="margin-bottom:14px">These findings are provisional: the bundle has not finished loading or failed verification. Rules that depend on something being absent wait for complete coverage.</div>' : '') +
     `<section class="panel"><div class="panel-head"><h2>${fs.length} findings</h2>${S.findingsRule ? `<button class="chip" id="clear-rule" title="Show every rule">rule: ${esc(S.findingsRule)} ×</button>` : '<small>Deterministic rules</small>'}</div>${fs.map(findingRow).join('') || '<div class="empty"><strong>No findings in this selection</strong></div>'}</section>`;
 }
@@ -2506,7 +2506,7 @@ async function coverage() {
   const locs = Object.entries(rep.locations || {}).sort();
   const cov = c.coverage.filter(x => !S.cluster || x.cluster === S.cluster);
   const target = x => x.type === 'logs' ? `logs ${x.namespace}/${x.pod}/${x.container} (${x.stream})` : x.type === 'events' ? 'events' : x.type === 'diagnostic' ? `${x.container} ${x.namespace}/${x.pod} ${x.resource}` : (x.group ? `${x.resource}.${x.group}` : x.resource);
-  return head('Coverage', 'What the customer allowed, what was collected, and what the importer verified.') + `
+  return head('Coverage', 'Collection scope, missing data and bundle verification.') + `
   <div class="grid2"><div>
     <section class="panel"><div class="panel-head"><h2>Collections</h2><small>${cov.length} records · ${cov.filter(x => x.state !== 'complete').length} not complete</small></div>
     <div class="table-scroll" style="max-height:55vh"><table><thead><tr><th>Cluster</th><th>Collection</th><th>Items</th><th>State</th><th>Reason</th></tr></thead><tbody>

@@ -6,7 +6,7 @@ description: Add Envoy, ztunnel and agentgateway config dumps, istiod debug outp
 
 # Solo diagnostics
 
-Objects tell you what was configured. Diagnostics tell you what the proxies actually loaded: the listeners, routes, clusters and certificates each Envoy had, the workloads and policies ztunnel knew about, which proxies istiod thought were in sync. Most mesh and gateway cases turn on the difference between the two.
+Diagnostics capture the configuration loaded by Envoy, ztunnel and agentgateway, plus istiod's sync status and debug output. Compare these with Kubernetes objects when investigating configuration that has not reached a proxy.
 
 These endpoints are only reachable on each pod's localhost admin port, so Flightbay reads them through port-forward. Diagnostics are off by default.
 
@@ -65,7 +65,7 @@ kind-flightbay-e2e  config_dump.json   1 items   complete: 13 entries naming nam
 kind-flightbay-e2e  endpointz.json     1 items   complete: 2 entries naming namespaces outside the selection removed
 ```
 
-## Exclusions reach into the dumps
+## Resource exclusions
 
 If you exclude a resource type, diagnostics that would reveal it are cut down or skipped:
 
@@ -79,7 +79,7 @@ If you exclude a resource type, diagnostics that would reveal it are cut down or
 
 Envoy SDS secret sections are always removed from config dumps, whatever the policy. Certificate details for expiry checks come from `/certs`, which holds no keys.
 
-## What is deliberately not read
+## Excluded controller snapshots
 
 The agentgateway and kgateway controllers are built on a library called krt, which keeps an in-memory copy of every Kubernetes object the controller watches, including the Secrets it reads (TLS keys, API keys for LLM providers). The admin port can dump all of it as one document. It covers every namespace and contains Secret values, so it cannot honour a namespace limit or "never Secret values". Flightbay never reads it, and collects the controllers' logs, metrics and objects instead.
 

@@ -1134,7 +1134,7 @@ func ambientExtra(e env) []Check {
 	})
 
 	add(spec{"ambient.waypoint-earns-keep", "Cost", "low", "Every waypoint is used",
-		"A waypoint is a proxy Deployment you pay for and patch. One that nothing points at, or that carries no L7 policy or routing, is only overhead.",
+		"An unused waypoint consumes resources. Check its Service bindings and L7 policies or routes before deciding whether to remove it.",
 		"kubectl delete gateway -n <ns> <waypoint>\n# or use it\nkubectl label service <svc> istio.io/use-waypoint=<waypoint>", meshBase + "whose-waypoint-l7-multicluster/", solodocs.Istio + "waypoints/overview/"}, func(c *Check) {
 		var wps []*store.Object
 		for _, gw := range x.gws {

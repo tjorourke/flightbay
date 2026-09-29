@@ -6,11 +6,11 @@ description: Search every captured log line with a query language, a zoomable ti
 
 # Log explorer
 
-The log explorer searches every captured log line, across every pod and cluster in the bundle, in the way Kibana or OpenSearch Dashboards do. Use it to find the error, see when it started, and follow a request across pods.
+The Log explorer searches captured logs across pods and clusters. Filter by text, parsed fields or time, then open a line for surrounding messages or follow a request ID across pods.
 
 ![Log explorer](/images/logs.png)
 
-It is fast on large captures: searching 10 million lines takes 20 to 250 ms for structured queries and under a second for free text.
+In the recorded 10-million-line benchmark, structured queries took 20 to 250 ms and free-text queries took under a second. Query time depends on the capture and machine.
 
 ## Query syntax
 

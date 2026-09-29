@@ -83,10 +83,10 @@ Reply with a ranked table (issue, affected objects, risk, fix YAML) and a short 
 			text: func(a map[string]string) string {
 				return fmt.Sprintf(`Review agent %s.
 
-1. agent_reach with agent %q: network reach, reach it borrows through proxies and registries, write access, credentials, and the YAML to close each path.
+1. agent_reach with agent %q: direct and indirect network access, write permissions, credentials and proposed restrictions.
 2. agent_activity for the tools and models it called and the calls that were denied or failed.
 3. get_object the agent and the policies, routes and backends in front of it. Check authentication, tool allowlists, passthrough tokens, guardrails and budgets.
-4. Compare what it can do with what it did: every reachable path it never used is a candidate to close.
+4. Compare permitted access with observed calls. Identify unobserved destinations for review, noting that the capture may omit infrequent traffic.
 
 Reply with the paths to close first, the evidence, and the fix YAML.`+evidenceRules, a["agent"], a["agent"])
 			}},

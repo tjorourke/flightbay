@@ -784,7 +784,7 @@ func edgeRisk(w *workload, sv *service, ed Edge) (string, string) {
 	case ed.Layer == "L7" && !ed.Write:
 		return "green", "read-only methods allowed"
 	case ed.Methods == nil && ed.Observed == 0 && !ed.Declared:
-		return "amber", "allowed, but never called and not configured"
+		return "amber", "allowed, not configured and not observed in this capture"
 	case ed.Methods == nil:
 		return "amber", "every method allowed (no request-level rule)"
 	}
@@ -812,7 +812,7 @@ func summary(w *workload, a Agent, via []Path) string {
 		x := externalFetcher(a)
 		return fmt.Sprintf("%s has no open internet egress, but reaches %s, %s outside the cluster that fetches from the internet on request.", name, x.Host, article(x.Product))
 	case a.Internet == Allowed:
-		return fmt.Sprintf("%s reaches the internet directly and %d of %d Services in the cluster (%d in any number of hops).", name, a.Counts.Direct, a.Counts.Services, a.Counts.Closure)
+		return fmt.Sprintf("%s reaches the internet directly and %d of %d Services in the cluster (%d within three hops).", name, a.Counts.Direct, a.Counts.Services, a.Counts.Closure)
 	case len(via) > 0:
 		return fmt.Sprintf("%s has no internet access itself, but reaches it in %d hops: %s.", name, len(via[0].Hops)-1, strings.Join(via[0].Hops, " → "))
 	case a.Counts.Direct == 0:

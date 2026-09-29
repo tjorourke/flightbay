@@ -6,7 +6,7 @@ description: Install Flightbay, open the sample bundle, take your first capture 
 
 # Getting started
 
-This page takes you from nothing to an open workspace in a few minutes: install the two binaries, open the sample bundle that ships in the repository, then capture a cluster of your own.
+Install the binaries and open the sample bundle before collecting from your own cluster.
 
 ## Install
 
@@ -101,7 +101,7 @@ Start with a dry run. It reads API discovery only, and prints what would be coll
 flightbay collect --context my-cluster --dry-run
 ```
 
-When the plan looks right, run it for real. The default `standard` profile collects objects, events, the last 24 hours of logs and Helm release summaries from every namespace you can read:
+After reviewing the plan, run the capture. The default `standard` profile collects objects, events, the last 24 hours of logs and Helm release summaries from the namespaces you can read:
 
 ```bash
 flightbay collect --context my-cluster --case 01234567
@@ -144,7 +144,7 @@ See [Reviewing before you send](/collect/review/) and [Signing](/collect/signing
 
 Flightbay does not upload anything. Send the file the way you normally share files with Solo support. [Sending a bundle](/collect/sending/) covers encryption, verification and the file format.
 
-## Where next
+## Examples
 
 - [Collect examples](/collect/examples/): capture commands for one namespace, the agentic stack, Istio ambient, several clusters, sharing less and encrypting.
 - [Scan examples](/scan/examples/): check a repository, a Helm chart or a Kustomize overlay before it is deployed.

@@ -34,7 +34,7 @@ func (e *engine) findings(w *workload, a Agent, reach []pair, all []*workload, d
 
 	if len(a.Identity.HostAccess) > 0 {
 		add(docsPodSecurity, "critical", "Runs with host access",
-			fmt.Sprintf("%s has %s. A process that can reach the host needs no network path to escalate.", w.name, strings.Join(a.Identity.HostAccess, ", ")),
+			fmt.Sprintf("%s has %s. These settings expose host resources to the workload; review whether it requires them.", w.name, strings.Join(a.Identity.HostAccess, ", ")),
 			"spec:\n  hostNetwork: false\n  containers:\n  - securityContext: {privileged: false, allowPrivilegeEscalation: false}")
 	}
 
@@ -63,7 +63,7 @@ func (e *engine) findings(w *workload, a Agent, reach []pair, all []*workload, d
 		p := fetchers[name]
 		sv := c.svcByKey[name]
 		add(docsWaypointAuthz, "critical", "Inherits internet access through "+name,
-			fmt.Sprintf("%s can call %s, which fetches or proxies URLs and can itself reach the internet: %s. An SSRF or proxy feature there gives the agent the internet, as the package registry did in the OpenAI and Hugging Face incident.", w.name, name, strings.Join(p.Hops, " → ")),
+			fmt.Sprintf("%s can call %s, which is classified as a URL fetcher or proxy and has internet access: %s. Confirm whether it accepts agent-supplied URLs and restrict its upstream access.", w.name, name, strings.Join(p.Hops, " → ")),
 			e.readOnlyPolicy(w, sv)+"\n---\n# and give "+name+" an egress allowlist of the upstreams it really needs\n"+e.egressPolicyFor(sv))
 	}
 
@@ -128,7 +128,7 @@ func (e *engine) findings(w *workload, a Agent, reach []pair, all []*workload, d
 			title = fmt.Sprintf("Can write to %d sensitive services", len(writes))
 		}
 		addItems(docsWaypointAuthz, "high", title,
-			"Nothing on the network stops it changing data here; only each application's own login does. Unaudited write access is how the incident's agents turned a registry into a message board.",
+			"The evaluated network policies permit methods that can write data. Application-level permissions are not evaluated. Restrict methods and callers where write access is unnecessary.",
 			"# Shown for "+svcLabel(first.sv)+"; repeat for each destination listed.\n"+fix, items)
 	}
 	var sharedItems []FindingItem
@@ -154,7 +154,7 @@ func (e *engine) findings(w *workload, a Agent, reach []pair, all []*workload, d
 	}
 	if a.Counts.Direct > len(needed)+2 && a.Counts.Direct*2 >= total && total > 4 {
 		add(docsNetpolAmbient, "high", fmt.Sprintf("Can reach %d of %d Services", a.Counts.Direct, total),
-			fmt.Sprintf("%s is configured to call %d of them and called %d in the capture. It does not need the rest, and through them it reaches %d Services in total.", w.name, len(declSvcs), a.Counts.Observed, a.Counts.Closure),
+			fmt.Sprintf("%s is configured to call %d of them and called %d in the capture. Total evaluated reach is %d Services. Review the remaining destinations for access that can be removed.", w.name, len(declSvcs), a.Counts.Observed, a.Counts.Closure),
 			egressFix)
 	}
 	if a.Counts.NeverUsed > 0 && a.Observed {
@@ -167,8 +167,8 @@ func (e *engine) findings(w *workload, a Agent, reach []pair, all []*workload, d
 			items = append(items, FindingItem{Target: n, Note: "not configured, not called"})
 		}
 		_ = list
-		addItems(docsNetpolAmbient, "medium", fmt.Sprintf("%d allowed destinations were never used", a.Counts.NeverUsed),
-			"Allowed, not configured, and not called while the access logs were recorded. These are the cheapest paths to close.", egressFix, items)
+		addItems(docsNetpolAmbient, "medium", fmt.Sprintf("%d allowed destinations were not observed", a.Counts.NeverUsed),
+			"These destinations are allowed but are not configured or called in the captured data. Check for traffic outside the capture window before removing access.", egressFix, items)
 	}
 
 	switch {
@@ -199,7 +199,7 @@ func (e *engine) findings(w *workload, a Agent, reach []pair, all []*workload, d
 	}
 	for _, dg := range a.Identity.Dangerous {
 		add(docsRBAC, "high", "Service account can "+strings.SplitN(dg, ": ", 2)[1],
-			fmt.Sprintf("%s runs as %s, which can %s. A file-read bug in the agent becomes that permission.", w.name, a.Identity.ServiceAccount, dg), "# remove the rule, or split it into a separate service account the agent does not run as")
+			fmt.Sprintf("%s runs as %s, which can %s. A stolen service account token grants the same permissions.", w.name, a.Identity.ServiceAccount, dg), "# remove the rule, or split it into a separate service account the agent does not run as")
 	}
 	if a.Identity.TokenMounted && len(a.Identity.RBAC) == 0 && a.Identity.RBACComplete {
 		add(docsSAToken, "medium", "Mounts an API token it has no use for",
@@ -216,7 +216,7 @@ func (e *engine) findings(w *workload, a Agent, reach []pair, all []*workload, d
 	}
 	if a.Identity.Sandbox == "" && (w.agentType == "kagent-agent" || w.agentType == "possible-agent") {
 		add(docsRuntimeClass, "low", "Shares the node kernel",
-			"The agent runs in an ordinary container. A kernel exploit is one step to root on the node, as in the incident. Run agents that execute code under a sandbox runtime.",
+			"No recognised sandbox runtime is configured. The container shares the node kernel. Consider a sandbox runtime for agents that execute untrusted code.",
 			"spec:\n  runtimeClassName: gvisor")
 	}
 	out = append(out, e.externalFindings(w, a)...)

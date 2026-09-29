@@ -1,12 +1,12 @@
 ---
 title: Security
 weight: 50
-description: What leaves the cluster in a bundle, what never does, how bundles are verified and encrypted, and how the desk keeps a snapshot on your machine.
+description: Collection permissions, data handling and bundle protection.
 ---
 
 # Security
 
-This page is for the security team that has to approve sending a bundle, and for the engineer who has to keep it safe once it arrives. It covers what the collector reads, what it never reads, how the file is protected, and what the desk does with it.
+Use this page when approving a collection policy or reviewing how a bundle is stored and shared.
 
 ## The collector
 
@@ -63,7 +63,7 @@ The redaction report records how many values each rule replaced in each file, ne
 
 `manifest.json`, the last file in every bundle, holds a SHA-256 of every other file, plus the capture end time and whether collection completed. `flightbay inspect`, `flightbay extract` and the desk check every file against it. A bundle that fails verification is reported as such; the desk shows what it could read, marked as unverified, and never as verified.
 
-The manifest proves the bundle has not been damaged or altered since it was written. A signature proves who wrote it: `flightbay collect --sign KEY` (or `flightbay ui BUNDLE --sign KEY` for what you export from the Review and send page) signs the manifest with the customer's Ed25519 key, and `flightbay inspect --verify-key` and the desk check it against the customer's public key. Solo only ever holds public keys. See [Signing and approved policies](/collect/signing/).
+The manifest's checksums detect file corruption. To verify the bundle's origin and integrity against a trusted public key, sign it with `flightbay collect --sign KEY`, or use `flightbay ui BUNDLE --sign KEY` for a reviewed export. The signature covers the manifest and is checked by `flightbay inspect --verify-key` and the desk. Send Solo the public key; retain the private key. See [Signing and approved policies](/collect/signing/).
 
 ## Approved policies
 

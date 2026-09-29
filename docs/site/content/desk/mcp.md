@@ -1,14 +1,12 @@
 ---
 title: MCP server
 weight: 150
-description: Give an AI agent read-only access to an open workspace over the Model Context Protocol, with tools, resources, completions and investigation prompts for objects, logs, findings, scores, reach and proxy configs.
+description: Connect an AI agent to the workspace's read-only MCP tools and resources.
 ---
 
 # MCP server
 
-`flightbay-desk mcp` makes the open workspace available to AI agents over the Model Context Protocol. The agent gets read-only tools for everything the desk can do: search objects and logs, read-only SQL, findings, best-practice scores, agent reach, objects, proxy configs, the timeline, coverage and comparisons. Every object, log stream, proxy dump, finding and Scorecard check is also a `flightbay://` resource that you can attach to a conversation, with completions for the names in each address. Seven prompts walk the agent through common investigations.
-
-Use it when you want an assistant to do the legwork on a case: gather the evidence behind the findings, follow a trace across pods, or check whether a problem started with a change.
+`flightbay-desk mcp` exposes read-only workspace tools over the Model Context Protocol. Agents can search objects and logs, query SQL and inspect analysis results. Captured data is also available through `flightbay://` resources. The tool, resource and prompt tables below list the supported operations.
 
 ## Connecting an agent
 
@@ -119,4 +117,4 @@ In Claude Code, run them as `/mcp__flightbay__triage`, `/mcp__flightbay__pod_deb
 
 ## Where the data goes
 
-The MCP server only talks to your local desk. Snapshot data reaches a model only if the agent you connect uses a hosted one. If the customer's data must stay on your machine, connect an agent that runs a local model, or do not connect one.
+The MCP server reads from your local desk. The connected agent controls where tool results are sent, including whether they reach a hosted model. If the data must remain local, check the agent's model and tool configuration before connecting it.

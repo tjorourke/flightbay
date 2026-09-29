@@ -108,7 +108,7 @@ async function reviewPage() {
   if (S.state && S.state.phase !== 'complete' && S.state.phase !== 'live') return head('Review and send', 'Waiting for the bundle to finish loading.') + '<div class="notice info"><div>The bundle is still loading. The review lists everything in it once it has been read and verified.</div></div>';
   const d = S.rv.data;
   const sign = d.signer ? `<span class="green">It will be signed by ${esc(d.signer.name)} (${esc(d.signer.keyId)})</span>.` : '<span class="amber">It will not be signed</span>: choose or create a key under Sign the export.';
-  return head('Review and send', 'Choose what leaves your organisation. The original bundle is not changed; the export is a new file with a ledger of what you removed.',
+  return head('Review and send', 'Select data to include in a new bundle. The export records removals and leaves the original file unchanged.',
     `<a class="help-link" href="api/review?format=yaml" download="review-plan.yaml" title="Reuse it with flightbay review --plan">Download plan</a>`) + `
   ${d.live ? `<div class="notice info"><div><strong>Frozen from the live mirror at ${fmtDateTime(d.frozen)}.</strong> What you choose here applies to that copy, so the cluster changing does not move things under you. <button class="link" id="rv-refreeze">Freeze again now</button></div></div>` : ''}
   <div class="grid2 rv-top"><section class="panel" id="rv-what">${rvWhat()}</section><section class="panel" id="rv-sign">${rvSignPanel()}</section></div>
@@ -185,7 +185,7 @@ async function rvSetKey(body) {
 // refresh) can close it half way.
 function rvKeyModal() {
   const dir = S.rv.keys?.keysDir || '~/.flightbay/keys';
-  modal('Create a signing key', `<p class="muted" style="margin:0 0 12px">A signing key has two halves. The private key (.key) stays on this machine and signs what you export. The public key (.pub) goes to Solo once, so they can check your bundles came from you unmodified.</p>
+  modal('Create a signing key', `<p class="muted" style="margin:0 0 12px">Keep the private key (.key) to sign exports. Send the public key (.pub) to Solo so they can verify your bundles.</p>
     <label style="display:block">Who signs with it<input id="rvm-name" placeholder="ACME platform team" style="width:100%;margin-top:6px" autocomplete="off"></label>
     <p class="muted" style="font-size:12px">Shown to Solo whenever one of your bundles verifies. Saved in <span class="mono">${esc(dir)}</span>, readable only by you.</p>
     <div id="rvm-err" class="red" style="font-size:13px"></div>

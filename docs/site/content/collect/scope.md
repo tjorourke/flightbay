@@ -6,7 +6,7 @@ description: Choose which clusters, namespaces and resource types flightbay read
 
 # Scope
 
-Scope decides what `flightbay collect` is allowed to read. Get it right before the capture, because nothing outside the scope is read at all: it is not collected and filtered later, it is never requested.
+Scope sets which clusters, namespaces, resource types and data categories `flightbay collect` reads. Review the resolved scope with `--dry-run`. Some mesh-wide diagnostic endpoints require filtering after reading; see [Solo diagnostics](/collect/solo-diagnostics/#filtered-to-your-namespaces).
 
 ## Profiles
 

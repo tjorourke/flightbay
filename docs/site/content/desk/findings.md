@@ -1,14 +1,12 @@
 ---
 title: Findings
 weight: 70
-description: Deterministic rules that run over a snapshot and point at likely problems, each with its evidence and a next step.
+description: Inspect rule-based findings and their supporting objects and logs.
 ---
 
 # Findings
 
-Findings are rules that run over the snapshot and point at things worth looking at: crash loops, routes that were not accepted, proxies that have not picked up config, certificates about to expire. Each one comes with its evidence, a log query and a next step.
-
-They are signals, not a verdict. A finding tells you where to look; it does not claim to be the root cause.
+Findings identify conditions in the snapshot such as crash loops, rejected routes, stale proxy configuration and expiring certificates. Open a finding for its evidence, log query and suggested next step. Confirm the cause using the linked objects and logs.
 
 ![Findings](/images/findings.png)
 
@@ -44,7 +42,7 @@ Filter by severity with the menu at the top. Clicking a bar in **Findings by rul
 
 The `xds.*` and `cert.*` rules need [Solo diagnostics](/collect/solo-diagnostics/) in the capture.
 
-## Never a finding on missing data
+## Missing data
 
 A rule that depends on something being absent (a Service a route points at, a waypoint a namespace uses) only runs once that data has fully loaded, and never fires on a type the customer chose not to collect. Until the bundle is verified, findings are marked **provisional**, and the page says why.
 
@@ -61,7 +59,7 @@ The severity menu narrows to critical, warning or info. Click a finding to open 
 - **Inspect object** to open the object in the drawer;
 - **Open the logs** to run the finding's log query in the [Log explorer](/desk/logs/).
 
-The top findings also appear on the [Overview](/desk/overview/) under "Start here".
+The top findings also appear on the [Overview](/desk/overview/) under "Priority findings".
 
 ## From the terminal and agents
 

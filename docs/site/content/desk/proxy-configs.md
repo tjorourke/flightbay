@@ -6,7 +6,7 @@ description: Read what each Envoy, ztunnel and agentgateway had loaded, and isti
 
 # Proxy configs
 
-Proxy configs shows what each proxy had actually loaded when the snapshot was taken: listeners, routes, clusters, endpoints, workloads, policies and certificates. For istiod it shows which proxies are in sync and what configuration it holds. Use it when the objects look right and the traffic does not behave: the answer is usually in the difference between what was applied and what the proxy has.
+Proxy configs shows the captured listeners, routes, clusters, endpoints, workloads, policies and certificates. The istiod view includes sync status and control-plane configuration. Compare these with the Kubernetes objects when investigating configuration that has not reached a proxy.
 
 ![Proxy configs](/images/proxies.png)
 

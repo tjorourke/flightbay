@@ -19,24 +19,24 @@
 </header>
 <main class="start-main" id="main">
   <div class="start-head">
-    <h1>What would you like to open?</h1>
-    <p class="muted" id="start-sub">Nothing was given to <code>flightbay ui</code>, so pick one of these. Everything stays on this machine.</p>
+    <h1>Open a workspace</h1>
+    <p class="muted" id="start-sub">Choose a cluster, a captured bundle or a repository.</p>
   </div>
   <div class="start-cards" id="cards">
     <button class="start-card" data-card="live" aria-expanded="false" aria-controls="form-live">
       <span class="start-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.2"/><path d="M8.2 15.8a5.4 5.4 0 0 1 0-7.6M15.8 8.2a5.4 5.4 0 0 1 0 7.6M5.3 18.7a9.5 9.5 0 0 1 0-13.4M18.7 5.3a9.5 9.5 0 0 1 0 13.4"/></svg></span>
       <strong>Live stream a cluster</strong>
-      <span class="muted">Mirror a cluster you can reach with kubectl, read-only.</span>
+      <span class="muted">Watch objects and logs using your kubeconfig. Read-only access.</span>
     </button>
     <button class="start-card" data-card="file" aria-expanded="false" aria-controls="form-file">
       <span class="start-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 2.8h8l4 4v14.4H6z"/><path d="M14 2.8v4h4M9 12h6M9 15.5h6"/></svg></span>
       <strong>Open a file</strong>
-      <span class="muted">Investigate a bundle a customer sent, or review one before you send it.</span>
+      <span class="muted">Inspect a captured bundle or review its contents before sharing.</span>
     </button>
     <button class="start-card" data-card="repo" aria-expanded="false" aria-controls="form-repo">
       <span class="start-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="6.5" cy="5.5" r="2"/><circle cx="6.5" cy="18.5" r="2"/><circle cx="17.5" cy="8.5" r="2"/><path d="M6.5 7.5v9M17.5 10.5c0 4-11 2.5-11 6"/></svg></span>
       <strong>Open a repo</strong>
-      <span class="muted">Check manifests, Helm charts and Kustomize overlays before they are deployed.</span>
+      <span class="muted">Scan Kubernetes manifests, Helm charts or Kustomize overlays.</span>
     </button>
 
     <section class="start-form hidden" id="form-live" data-for="live" aria-label="Live stream a cluster">
@@ -76,7 +76,7 @@
     <section class="start-form hidden" id="form-file" data-for="file" aria-label="Open a file">
       <div class="start-recent">
         <div class="row between"><h3>Recent bundles</h3><button class="ghost" id="fl-refresh" title="Look again">↻</button></div>
-        <div id="fl-list"><p class="muted">Looking…</p></div>
+        <div id="fl-list"><p class="muted">Finding bundles…</p></div>
       </div>
       <div class="start-drop" id="fl-drop" tabindex="0" role="button" aria-label="Drop a bundle here, or choose a file">
         <strong>Drop a bundle here</strong>

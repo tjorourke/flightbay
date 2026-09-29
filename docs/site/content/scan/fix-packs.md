@@ -60,7 +60,7 @@ Copying `proposals/` over the repository root puts each proposal next to the man
 
 ## Raising the pull request
 
-The fix pack stops at the directory. Opening the pull request is left to CI, so a person always reviews it. Both CI examples have a commented-out job that does it:
+Flightbay writes the fix pack to a directory. Both CI examples include a commented-out job for opening a pull request with those files:
 
 - [`examples/ci/github-actions.yml`](https://github.com/tjorourke/flightbay/blob/main/examples/ci/github-actions.yml): writes the pack, copies `proposals/` into a branch, and runs `gh pr create` with the README as the description;
 - [`examples/ci/gitlab-ci.yml`](https://github.com/tjorourke/flightbay/blob/main/examples/ci/gitlab-ci.yml): the same with a push option that opens a merge request.

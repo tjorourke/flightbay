@@ -1127,7 +1127,7 @@ func changeFindings(ch *ToolChanges) []Finding {
 			items = append(items, FindingItem{Target: d.Server + "/" + d.Name, Note: "was: " + clip(d.Before, 120) + " | now: " + clip(d.After, 120)})
 		}
 		out = append(out, Finding{Severity: "high", Title: "MCP tools changed their description since the baseline",
-			Detail: "A tool's description is part of the prompt the model reads. A description that changes without a new release is how a tool gets turned against its callers (a rug pull).",
+			Detail: "The model reads tool descriptions, so changes can alter how it uses a tool. Review the changed descriptions and confirm their source.",
 			Items:  items, Advice: []string{"Confirm each change with the server's owner.", "Pin the server image by digest, and register servers through agentregistry so a change needs approval."},
 			Source: "https://mastertheagent.com/solo/agentregistry-push-best-practices/"})
 	}
@@ -1137,7 +1137,7 @@ func changeFindings(ch *ToolChanges) []Finding {
 			items = append(items, FindingItem{Target: t.Server + "/" + t.Name, Note: clip(t.Description, 140)})
 		}
 		out = append(out, Finding{Severity: "medium", Title: "MCP servers offer tools that were not there in the baseline",
-			Detail: "New tools are new things an agent can be talked into doing. Check each is expected, and that tool-level authorization covers it.",
+			Detail: "The server's captured tool list has new entries. Confirm that they are expected and covered by tool-level authorization.",
 			Items:  items, Source: activityGuide})
 	}
 	return out

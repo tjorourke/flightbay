@@ -40,7 +40,7 @@ A chart or overlay that fails to render does not stop the scan. It is listed on 
 
 ## Only new failures
 
-A gate that fails on every existing problem gets switched off. Two ways to report and gate only what a change introduces:
+Use either option below to report and gate only failures introduced by a change:
 
 | Flags | What it compares with |
 |---|---|

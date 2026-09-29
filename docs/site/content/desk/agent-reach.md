@@ -1,26 +1,26 @@
 ---
 title: Agents tab
 weight: 96
-description: For every agent, MCP server and agent gateway, what it can reach on the network, what those destinations can reach for it, and the YAML to lock each path down.
+description: Inspect an agent's network access and observed calls, and generate proposed restrictions.
 ---
 
 # Agents tab
 
-The **Agents** tab of the [Traffic](/desk/traffic/) page is one place per agent: what it can reach (Agent reach, below), what it actually used and called, and the policy that would lock it down to that. It was a page of its own; `#reach` and `#reach?agent=ns/name` links now open the tab, and `#traffic?tab=agents&agent=ns/name` opens one agent. Every agent's findings are also on the Traffic page's Findings panel, grouped across agents.
+The **Agents** tab of [Traffic](/desk/traffic/) shows each agent's network access, observed calls and proposed policy changes. Agent reach evaluates captured policies and follows reachable destinations for up to three hops. Its results depend on the data and policy types covered by the capture; see [Limits](#limits).
 
-Agent reach works out, for every AI agent in a snapshot, everything it can reach on the network and everything those destinations can reach on its behalf. That is the agent's real blast radius, and it is usually far wider than anyone expects.
+Open `#traffic?tab=agents&agent=ns/name` for a specific agent. Older `#reach` and `#reach?agent=ns/name` links also open this tab. The Traffic Findings panel groups findings across agents.
 
 The Agents tab is part of [Flightbay Enterprise](/enterprise/). Turn it on with `FLIGHTBAY_ENTERPRISE=1 flightbay ui` or `FLIGHTBAY_FEATURES=reach`; with only `reach` on, the Traffic page shows just this tab. With the Traffic feature on as well (`FLIGHTBAY_ENTERPRISE=1` turns on both), it also shows what each agent used and called.
 
 ![Every agent, worst first](/images/reach-list.png)
 
-## Why it exists
+## Indirect internet access
 
 In August 2026 OpenAI described an incident in which evaluation agents, running in containers inside its own infrastructure, ended up breaching Hugging Face. The agents never broke out of their containers. They were allowed to call an internal package registry, and that registry had its own route to the internet. It accepted writes (PUT, then MKCOL over WebDAV, which the agents used to build a message board between themselves) and it fetched URLs on request. Once an agent could make the registry fetch for it, the registry's reach became the agent's. After a full clean-up, the agents rebuilt their channel four days later.
 
-The lesson is that an agent is only as contained as the weakest thing it can call. Checking the agent's own egress is not enough; you have to follow every destination it can reach and ask what that can reach in turn. Agent reach does that from the snapshot, and generates the fixes.
+An agent's egress policy can allow a service that fetches external URLs on its behalf. Agent reach checks for these indirect paths and generates proposed restrictions from the snapshot.
 
-The full story, and the controls that break each step, are in the field guide: [The OpenAI and Hugging Face incident: zero trust for agents on Kubernetes](https://mastertheagent.com/solo/zero-trust-agents-kubernetes/).
+The field guide describes the incident and relevant controls: [The OpenAI and Hugging Face incident: zero trust for agents on Kubernetes](https://mastertheagent.com/solo/zero-trust-agents-kubernetes/).
 
 ## What counts as an agent
 
@@ -45,7 +45,7 @@ The list shows every agent, worst first:
 | Radius | `open`, `wide`, `narrow` or `contained` (below) |
 | Internet | Whether it can reach the internet directly: `allowed`, `denied` or `unknown` |
 | Direct | Services it can reach in one hop, of all the Services in the capture |
-| Total | Services it can reach in any number of hops |
+| Total | Services reachable within the three-hop analysis limit |
 | Write | Direct destinations it can change data on |
 | Findings | Critical and high findings |
 | Summary | One sentence, such as "demo-agent reaches the internet in 2 hops through artifactory, which fetches on request" |
@@ -72,13 +72,13 @@ Notes above the list say what could not be evaluated, for example "no NetworkPol
 
 ## Direct and total reach
 
-**Direct** reach is every Service the agent can open a connection to, after NetworkPolicy, ambient mTLS and AuthorizationPolicy have had their say. The Kubernetes API server is not counted (that access is through the agent's token and RBAC, shown under Identity), and neither are waypoint Services (a waypoint only forwards to the Services bound to it, and those hops are evaluated directly).
+**Direct** reach counts Services allowed by the evaluated NetworkPolicy, ambient mTLS and AuthorizationPolicy rules. Kubernetes API access is listed separately under Identity using the agent's token and RBAC. Waypoint Services are excluded from the count; their forwarding paths are evaluated against the bound Services.
 
 **Total** reach follows the chain: what each destination's pods can reach, and what those can reach, up to three hops. A destination that can reach the internet makes the path out a finding, even if the agent itself cannot.
 
 **Internet** is evaluated against a public address, and **cloud metadata** against `169.254.169.254`. Only Kubernetes NetworkPolicy can stop either: ambient does not police traffic to destinations outside the mesh unless it goes through an egress gateway. On kind clusters there is no metadata endpoint, so it is reported as "would reach" at a lower severity.
 
-## Fetchers lend their reach
+## Services that fetch URLs
 
 Some destinations fetch from elsewhere on request: package registries and proxies, HTTP forward proxies, scrapers and headless browsers, URL fetch tools, LLM proxies. If an agent can call one, and that service can reach the internet, the agent can reach the internet through it, whatever its own egress says. This is the Hugging Face path, and it is reported as a critical finding: "Inherits internet access through ...".
 
@@ -133,10 +133,10 @@ Click an agent to open its page. The header has its summary, why it is listed, w
 | Radius | Its radius and what that means |
 | Internet | Direct internet egress, and cloud metadata |
 | Direct | Services reached in one hop, of the total |
-| Total | Services reached in any number of hops |
+| Total | Services reachable within the three-hop analysis limit |
 | Write | Destinations it can change data on |
 | Used | Destinations it actually called, and which logs saw it. A dash when no flow source covers the agent. |
-| Never used | Allowed, not configured, and never called. Needs flow data to mean anything. |
+| Not observed | Allowed, not configured, and not seen in the captured flow data. Requires flow coverage. |
 | External | Hosts outside the cluster, and how many go through the gateway |
 
 Buttons open the agent's object, its logs, or `fbreach` for it in the terminal.
@@ -150,7 +150,7 @@ Buttons open the agent's object, its logs, or `fbreach` for it in the terminal.
 | Paths | Chains from the agent to the internet, cloud metadata, fetchers and stores |
 | Destinations | Every Service it can reach in one hop |
 | External | Every host outside the cluster |
-| Identity | What it carries without anyone deciding to give it |
+| Identity | Service account, credentials, RBAC and host access |
 
 ### The graph
 
@@ -189,12 +189,12 @@ Hover a line for the verdict, the policies that decided it, the methods allowed 
 
 ### Destinations
 
-Every Service the agent can reach in one hop, riskiest first. Chips: **All**, **Risky**, **Used**, **Never used**, and a filter box.
+Services the agent can reach in one hop, sorted by risk. Chips: **All**, **Risky**, **Used**, **Not observed**, and a filter box.
 
 | Column | Shows |
 |---|---|
 | Risk | red, amber, green or grey |
-| Destination | The Service, and "never used" where that applies |
+| Destination | The Service, and "not observed" where that applies |
 | Verdict | allowed, denied or unknown, and L4 or L7 |
 | Methods | "any method", or the methods an L7 rule allows, and whether it can write |
 | Called | Requests seen, methods, denials, MCP tools, and which sources saw them |
@@ -232,7 +232,7 @@ Findings are one line each; open one for the detail, a table of what it affects 
 | Holds a credential for a host that probably allows writes | high |
 | Can use the gateway's credential for a host without authenticating | high |
 | Egress is not limited to the gateway's backends (agent gateways) | high |
-| N allowed destinations were never used | medium |
+| N allowed destinations were not observed | medium |
 | Reaches external hosts it is not configured for | medium |
 | Would reach a cloud metadata endpoint (kind) | medium |
 | Internet access could not be determined | medium |
@@ -276,7 +276,7 @@ Reach is what the policies allow. Observed traffic is what the capture shows act
 - CoreDNS query logs (the `log` plugin is off by default);
 - Hubble, Calico, AWS, GCP and Azure flow logs, and generic CSV or JSON, attached at capture or added when the bundle is opened.
 
-"Used" and "Never used" only mean something when a source covers the agent, and the page says which ones do. See [Observed traffic](/collect/observed-traffic/) for how to get each source into a bundle.
+"Used" and "Not observed" apply only when a flow source covers the agent. The page lists those sources. Absence from the captured window does not establish that a destination is never used. See [Observed traffic](/collect/observed-traffic/) for supported sources.
 
 ## Allowed and used
 
@@ -288,13 +288,13 @@ The graph has three layers:
 |---|---|
 | Allowed | Everything policy allows, as described above |
 | Used | Only what the agent was seen using, and the hosts outside the cluster it called |
-| Both | Everything allowed. What it used is drawn solid; what it never used is faded and dashed. A red line is something it used although the captured policy denies it. |
+| Both | Allowed destinations, with observed calls drawn solid and unobserved paths faded and dashed. Red lines show observed traffic denied by the captured policy. |
 
 Nothing is faded when no flow source covers the agent. Without flow logs there is no way to tell used from unused, so every box keeps its full colour and the header's **Used** tile reads "no flow logs cover this agent".
 
 ![Both layers: the used namespaces stand out, the rest is faded](/images/reach-layers.png)
 
-![Used: three Services and one host outside the cluster](/images/reach-used.png)
+![Observed connections from tom-demo to two Services](/images/reach-used.png)
 
 Hover a box to trace its lines, or click it to keep them lit (click another box or close its panel to move on). Hover a line for what went over it: connections and whether they were mutual TLS, calls through agentgateway, the tools called and the tokens used. Click a box for the same under the graph, with a **Why?** button that opens the [Traffic](/desk/traffic/) explainer for the agent and that Service. The **Traffic** button in the agent's header opens the Traffic page following the agent.
 
@@ -316,7 +316,7 @@ The **What it does** tab has the agent's activity over the log window, and every
 | used, policy denies | It got through although the captured policy denies it: the policy may be newer than the traffic |
 | used, not in reach | Something outside what Agent reach knows, such as an address outside the capture |
 
-"Allowed, not used" counts every allowed destination. The **Never used** tile at the top leaves out the ones the agent is configured to call.
+"Allowed, not used" counts every allowed destination. The **Not observed** tile at the top leaves out the ones the agent is configured to call.
 
 ### Tools and models
 
@@ -381,7 +381,7 @@ kagent/demo-agent               kagent-agent    open    allowed   57/64   58    
 
 The MCP `agent_reach` tool returns the list, or one agent in full when you pass `agent: namespace/name`. The [Scorecard](/desk/scorecard/) gains five agentic checks built on the same analysis.
 
-## Proven on a real cluster
+## End-to-end test
 
 `test/e2e/reach.sh` (or `make e2e-reach`) recreates the incident on a kind cluster running Istio ambient: two agents sharing a PVC, a registry that accepts PUT and MKCOL and can reach the internet, and a database.
 
@@ -394,4 +394,4 @@ test/e2e/reach.sh            # create a kind cluster, run, delete it
 KEEP=1 test/e2e/reach.sh     # keep the cluster for another run
 ```
 
-It needs `go`, `kind`, `kubectl`, `docker`, `istioctl`, `python3` and `curl`, and uses a kubeconfig of its own, so no other context is touched. The live proof caught five real bugs in the analysis before it shipped.
+It needs `go`, `kind`, `kubectl`, `docker`, `istioctl`, `python3` and `curl`. The test uses its own kubeconfig.
