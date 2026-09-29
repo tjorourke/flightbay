@@ -88,7 +88,7 @@ function fbGraph({left, right, far = [], edges, heads, sel}) {
 function fbGraphPanel(title, st, svg, controls, legend) {
   return `<section class="panel mt rc-gpanel ${st.gfull ? 'full' : ''}"><div class="panel-head rc-ghead"><div class="row wrap"><h2>${esc(title)}</h2>${controls}</div>
       <div class="row rc-zoom"><button id="rg-out" title="Zoom out (-)">−</button><span id="rg-pct" class="mono muted">100%</span><button id="rg-in" title="Zoom in (+)">+</button><button id="rg-fit" title="Fit (0)">Fit</button><button id="rg-full" title="${st.gfull ? 'Exit full screen (Esc)' : 'Full screen (f)'}">${st.gfull ? '⤡ Exit' : '⤢ Full screen'}</button></div></div>
-    <div class="rg-vp" id="rg-vp" tabindex="0">${svg}</div><div class="rc-legend">${legend}<span class="muted">Hover a box to trace its lines · click a box or a line for detail · drag to move · Ctrl+scroll to zoom</span></div></section>`;
+    <div class="rg-vp" id="rg-vp" tabindex="0">${svg}</div><div class="rc-legend">${legend}<span class="muted">Hover a box to trace its lines · click it to keep them lit (click it again, the background or Esc to let go) and for its detail · drag to move · Ctrl+scroll to zoom</span></div></section>`;
 }
 
 // Pan and zoom, full screen, hover tracing and clicks for a graph panel.
@@ -105,13 +105,31 @@ function fbGraphWire(st, key, onPick) {
   const fb = $('#rg-full'); if (fb) fb.onclick = () => full(!st.gfull);
   if (st.gfull) { document.onkeydown = e => { if (e.key === 'Escape' && st.gfull) { document.onkeydown = null; full(false); } }; $('#rg-vp').focus(); }
   const vp = $('#rg-vp'), rg = $('#rg-svg');
-  rg.querySelectorAll('[data-rgid]').forEach(g => g.onclick = () => { if (!vp.dataset.dragged) onPick(g.dataset.rgid); });
-  rg.querySelectorAll('[data-fbe]').forEach(g => g.onclick = () => { if (!vp.dataset.dragged) onPick(g.dataset.fbe); });
+  // Clicking a box pins its trace (the same one hover shows) until it is
+  // clicked again, the background is clicked, or Esc is pressed; it survives
+  // redraws, so the page can be scrolled with it on.
   const clear = () => { rg.classList.remove('rg-hl'); rg.querySelectorAll('.on').forEach(x => x.classList.remove('on')); };
-  rg.querySelectorAll('[data-rgid]').forEach(g => {
-    g.onmouseenter = () => {
-      clear();
-      const id = g.dataset.rgid, near = new Set([id]);
+  const pinned = () => st.pin && rg.querySelector(`[data-rgid="${CSS.escape(st.pin)}"]`);
+  const restore = () => { clear(); if (pinned()) light(st.pin); rg.querySelectorAll('.rg-node').forEach(g => g.classList.toggle('rg-pin', g.dataset.rgid === st.pin)); };
+  rg.querySelectorAll('[data-rgid]').forEach(g => g.onclick = ev => {
+    ev.stopPropagation();
+    if (vp.dataset.dragged) return;
+    st.pin = st.pin === g.dataset.rgid ? '' : g.dataset.rgid;
+    restore();
+    onPick(g.dataset.rgid);
+  });
+  rg.querySelectorAll('[data-fbe]').forEach(g => g.onclick = ev => { ev.stopPropagation(); if (!vp.dataset.dragged) onPick(g.dataset.fbe); });
+  vp.onclick = () => { if (!vp.dataset.dragged && st.pin) { st.pin = ''; restore(); } };
+  if (!window.fbPinEsc) {
+    window.fbPinEsc = true;
+    document.addEventListener('keydown', e => {
+      if (e.key !== 'Escape' || document.querySelector('.modal-backdrop') || !S.tf.pin) return;
+      S.tf.pin = '';
+      document.querySelectorAll('#rg-svg').forEach(r => { r.classList.remove('rg-hl'); r.querySelectorAll('.on,.rg-pin').forEach(y => y.classList.remove('on', 'rg-pin')); });
+    });
+  }
+  function light(id) {
+      const near = new Set([id]);
       const byOf = e => (e.dataset.by || '').split(' ').filter(Boolean);
       const edges = [...rg.querySelectorAll('.rg-edge')];
       edges.forEach(e => { if (e.dataset.f === id || e.dataset.t === id) { e.classList.add('on'); near.add(e.dataset.f); near.add(e.dataset.t); } });
@@ -123,9 +141,12 @@ function fbGraphWire(st, key, onPick) {
       });
       rg.querySelectorAll('[data-rgid]').forEach(x => { if (near.has(x.dataset.rgid)) x.classList.add('on'); });
       rg.classList.add('rg-hl');
-    };
-    g.onmouseleave = clear;
+  }
+  rg.querySelectorAll('[data-rgid]').forEach(g => {
+    g.onmouseenter = () => { clear(); light(g.dataset.rgid); };
+    g.onmouseleave = restore;
   });
+  restore();
 }
 
 // ---------- Activity ----------
@@ -699,8 +720,8 @@ function tfMap(d, a, netE, gwE0, nodes, callers, targets, layer) {
   const toNote = [nAcc ? `${fbPlural(nAcc, 'tool')} it may call or called` : '', nSvc ? fbPlural(nSvc, 'destination') : '', nCalled ? `${num(nCalled)} tools, models or agents called` : far.length ? 'MCP tools behind them' : nOnSvc ? `${num(nOnSvc)} tools on them` : '', ghosts ? `${num(ghosts)} allowed, not used` : ''].filter(Boolean).join(' · ');
   const svg = fbGraph({left, right, far, edges: ge, sel: T.sel, heads: [['server', 'From', fbPlural(left.length, 'source')], ['network', 'To', toNote], ['plug', 'Tools', (() => { const t = [...svcSum.values()].reduce((m, x) => ({allowed: m.allowed + x.allowed, called: m.called + x.called}), {allowed: 0, called: 0}); return `${fbPlural(t.allowed, 'tool')} allowed · ${num(t.called)} called`; })()]]});
   const legend = (acc.length ? `<span class="muted">Following ${esc(left.find(n => n.id === T.focus)?.label || '')}: a box for every tool it has access to on ${acc.map(x => esc(x.server)).join(', ')}.</span><span><i class="rc-sw green"></i>allowed, called</span><span><i class="rc-sw dash"></i><span class="muted">faded:</span> allowed, not called</span><span><i class="rc-sw red"></i>called, not allowed by the captured allowlist</span>` : '')
-    + (both && !acc.length && far.length ? '<span class="muted">Tools behind each Service:</span><span><i class="rc-sw green"></i>called, and allowed for its callers</span><span><i class="rc-sw red"></i>called by a caller the captured allowlist does not allow</span><span><i class="rc-sw grey"></i><span class="muted">faded, dashed:</span> allowed, not called (or configured, not allowed)</span><span class="muted">Click an agent for just the tools it may call.</span>' : '')
-    + (both && !acc.length && !far.length ? '<span class="muted">Click an agent to see every tool it may call, called or not.</span>' : '')
+    + (both && !acc.length && far.length ? '<span class="muted">Tools behind each Service:</span><span><i class="rc-sw green"></i>called, and allowed for its callers</span><span><i class="rc-sw red"></i>called by a caller the captured allowlist does not allow</span><span><i class="rc-sw grey"></i><span class="muted">faded, dashed:</span> allowed, not called (or configured, not allowed)</span><span class="muted">Click a box to keep its lines lit; an agent\'s panel below has Show only its traffic.</span>' : '')
+    + (both && !acc.length && !far.length ? '<span class="muted">Click a box to keep its lines lit. An agent\'s panel below lists every tool it may call, and Show only its traffic draws them.</span>' : '')
     + (both && !acc.length ? '<span class="muted">Both layers: calls through agentgateway are drawn on the Service they went through; hover a line for its tools. Choose Gateway calls for a box per tool.</span>' : '')
     + (T.focus && T.freach && (!acc.length || T.showGhosts) ? '<span><i class="rc-sw dash"></i><span class="muted">faded Services:</span> allowed by policy, not used</span>' : '')
     + (netE.length ? '<span><i class="rc-sw red"></i>plaintext between mesh workloads</span><span><i class="rc-sw amber"></i>no policy, plaintext from outside the mesh, or logs and policy disagree</span><span><i class="rc-sw green"></i>mutual TLS and policy looks at it</span>' : '')
@@ -861,7 +882,7 @@ after.traffic = () => {
     if (id.startsWith('accfold:')) { keepY(() => { T.fexp['acc:' + id.slice(8)] = true; T.gz = null; }); return; }
     const cm = new Map((S.act.data?.callers || []).map(c => [c.id, c]));
     const agentish = nodes.get(id)?.agentType || cm.get(id)?.agentType || cm.get(id)?.agentic;
-    if (agentish && T.focus !== id) { T.focus = id; T.sel = id; T.fexp = {}; T.gz = null; render(); return; }
+    void agentish; // following an agent is its panel's Show only its traffic
     if (id.startsWith('fold>')) id = id.slice(5);
     if (id.startsWith('tools:')) { keepY(() => { (T.texp ||= {})[id.slice(6)] = true; T.gz = null; }); return; }
     if (id.startsWith('ghost>')) id = id.slice(6);

@@ -1728,20 +1728,24 @@ after.reach = () => {
   // Hovering a box keeps its own lines and neighbours and fades the rest.
   const rg = $('#rg-svg');
   if (rg) {
+    // The selected box (R.gsel) keeps its trace lit, the same one hover shows.
     const clear = () => { rg.classList.remove('rg-hl'); rg.querySelectorAll('.on').forEach(x => x.classList.remove('on')); };
+    const light = g => {
+      const id = g.dataset.rgid, near = new Set([id]);
+      rg.querySelectorAll('.rg-edge').forEach(e => {
+        const f = e.dataset.f, t = e.dataset.t;
+        if (f === id || t === id || (t === 'rg-frame' && g.dataset.grid)) { e.classList.add('on'); near.add(f); near.add(t); }
+      });
+      rg.querySelectorAll('[data-rgid]').forEach(x => { if (near.has(x.dataset.rgid)) x.classList.add('on'); });
+      rg.classList.add('rg-hl');
+    };
+    const pinned = () => R.gsel && rg.querySelector(`[data-rgid="${CSS.escape(R.gsel)}"]`);
+    const restore = () => { clear(); const p = pinned(); if (p) light(p); };
     rg.querySelectorAll('[data-rgid]').forEach(g => {
-      g.onmouseenter = () => {
-        clear();
-        const id = g.dataset.rgid, near = new Set([id]);
-        rg.querySelectorAll('.rg-edge').forEach(e => {
-          const f = e.dataset.f, t = e.dataset.t;
-          if (f === id || t === id || (t === 'rg-frame' && g.dataset.grid)) { e.classList.add('on'); near.add(f); near.add(t); }
-        });
-        rg.querySelectorAll('[data-rgid]').forEach(x => { if (near.has(x.dataset.rgid)) x.classList.add('on'); });
-        rg.classList.add('rg-hl');
-      };
-      g.onmouseleave = clear;
+      g.onmouseenter = () => { clear(); light(g); };
+      g.onmouseleave = restore;
     });
+    restore();
   }
   document.querySelectorAll('#main [data-rcsvc]').forEach(b => b.onclick = () => openObject(JSON.parse(b.dataset.rcsvc)));
   document.querySelectorAll('[data-rcfopen]').forEach(b => b.onclick = () => { const i = +b.dataset.rcfopen; R.fixOpen[i] = !R.fixOpen[i]; const y = scrollY; render().then(() => scrollTo(0, y)); });

@@ -296,7 +296,7 @@ Nothing is faded when no flow source covers the agent. Without flow logs there i
 
 ![Used: three Services and one host outside the cluster](/images/reach-used.png)
 
-Hover a line for what went over it: connections and whether they were mutual TLS, calls through agentgateway, the tools called and the tokens used. Click a box for the same under the graph, with a **Why?** button that opens the [Traffic](/desk/traffic/) explainer for the agent and that Service. The **Traffic** button in the agent's header opens the Traffic page following the agent.
+Hover a box to trace its lines, or click it to keep them lit (click another box or close its panel to move on). Hover a line for what went over it: connections and whether they were mutual TLS, calls through agentgateway, the tools called and the tokens used. Click a box for the same under the graph, with a **Why?** button that opens the [Traffic](/desk/traffic/) explainer for the agent and that Service. The **Traffic** button in the agent's header opens the Traffic page following the agent.
 
 ### What it does
 

@@ -39,7 +39,9 @@ The middle column holds Services only. A call through agentgateway is drawn on t
 
 ### What a caller may call
 
-Click an agent to follow it. The map then draws a box for every tool it has access to on each MCP server it uses: called tools first (green; red when the captured allowlist would not allow it), then tools in its own configuration, then the rest it is allowed and did not call (faded). A server with more than 16 such tools folds the unused ones into one box; click it to open it up. The Services it may reach on the network and did not use are behind **Show Services it may reach and did not use** in the bar above the map.
+Click a box to keep its lines lit (the same trace hover shows) while you scroll or zoom: click it again, click the background, or press Esc to let go. A pinned agent lights its Service and the tools it called; a pinned tool lights everyone who called it. Clicking also opens the box's detail under the map.
+
+**Show only its traffic** in an agent's panel follows it. The map then draws a box for every tool it has access to on each MCP server it uses: called tools first (green; red when the captured allowlist would not allow it), then tools in its own configuration, then the rest it is allowed and did not call (faded). A server with more than 16 such tools folds the unused ones into one box; click it to open it up. The Services it may reach on the network and did not use are behind **Show Services it may reach and did not use** in the bar above the map.
 
 ![Following nick-demo: the GitHub tool it called, the twelve it may call and did not, and kagent-tool-server folded](/images/tool-map.png)
 

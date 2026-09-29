@@ -739,3 +739,5 @@ tbody tr:hover{background:#1a1722}
 .rg-node.rg-dim{opacity:.4}
 .rg-node.rg-unusednode{opacity:.7}
 .rg-unused .rg-line{opacity:.5}
+/* a pinned box on the graphs */
+.rg-node.rg-pin rect{stroke-width:3;filter:drop-shadow(0 0 5px color-mix(in srgb,var(--teal) 70%,transparent))}
