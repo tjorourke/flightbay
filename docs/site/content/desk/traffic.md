@@ -29,7 +29,11 @@ With both layers on, the right-hand column holds Services only. A call through a
 
 ### What a caller may call
 
-Click a caller's line to a Service (or a caller, or one of its tool calls) for **Tools … may call**: every tool it has access to on each MCP server behind that Service, not only the ones it called.
+Click an agent to follow it. The map then draws a box for every tool it has access to on each MCP server it uses: called tools first (green; red when the captured allowlist would not allow it), then tools in its own configuration, then the rest it is allowed and did not call (faded). A server with more than 16 such tools folds the unused ones into one box; click it to open it up. The Services it may reach on the network and did not use are behind **Show Services it may reach and did not use** in the bar above the map.
+
+![Following nick-demo: the GitHub tool it called, the twelve it may call and did not, and kagent-tool-server folded](/images/tool-map.png)
+
+Clicking a tool box, or a caller's line to a Service, shows the same as a table under the map, **Tools … may call**.
 
 - When an agentgateway allowlist (`backend.mcp.authorization`) covers the server, the caller may call the tools a clause names for its service account or JWT subject, and those named for any caller. The allowlist is named. A caller it does not name may call none.
 - With no allowlist, the caller may call every tool the server offers: its tool list for a kagent server, or, for a server outside the cluster, the tools known from calls, other allowlists and agent configuration, with a note that it may offer more.

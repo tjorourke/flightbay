@@ -49,7 +49,7 @@ function fbGraph({left, right, edges, heads, sel}) {
   const L = [...left], R = [...right];
   const li = new Map(L.map((n, i) => [n.id, i]));
   const bary = (n, map, key) => { const xs = edges.filter(e => e[key] === n.id).map(e => map.get(e[key === 'to' ? 'from' : 'to'])).filter(x => x !== undefined); return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 1e9; };
-  R.sort((a, b) => bary(a, li, 'to') - bary(b, li, 'to') || a.label.localeCompare(b.label));
+  R.sort((a, b) => (a.order ?? 1) - (b.order ?? 1) || bary(a, li, 'to') - bary(b, li, 'to') || a.label.localeCompare(b.label));
   const ri = new Map(R.map((n, i) => [n.id, i]));
   L.sort((a, b) => bary(a, ri, 'from') - bary(b, ri, 'from') || a.label.localeCompare(b.label));
   const lrow = new Map(L.map((n, i) => [n.id, i])), rrow = new Map(R.map((n, i) => [n.id, i]));
@@ -451,6 +451,11 @@ function tfSelPanel(d, a, nodes, callers, targets) {
   // A caller-to-Service line (drawn with both layers on, or a connection that
   // also carried gateway calls): what the caller may call on the MCP servers
   // behind that Service, and the calls themselves.
+  if (T.sel.startsWith('acc:') && T.focus) {
+    const srv = T.sel.slice(4, T.sel.lastIndexOf('/'));
+    const who = taWho(a, [T.focus]);
+    return taPanel(a, who, [srv], `Tools ${who.label} may call on ${srv}`);
+  }
   let pair = null;
   if (T.sel.startsWith('gwsvc|')) { const [, f, t] = T.sel.split('|'); pair = {from: f, to: t}; }
   else { const ne = (d.edges || []).find(e => e.id === T.sel); if (ne) pair = {from: ne.from, to: ne.to}; }
@@ -507,6 +512,19 @@ function tfMap(d, a, netE, gwE0, nodes, callers, targets, layer) {
   // column holds Services only; the tools are on the line and in the box.
   // The Gateway calls layer draws each tool on its own.
   const both = layer === 'both';
+  // Following one caller: a box for every tool it has access to on the MCP
+  // servers it uses, drawn by what it did with it. Its tool calls and MCP
+  // sessions on those servers are drawn by these boxes instead.
+  const acc = [];
+  if (T.focus && layer !== 'network') {
+    const who = taWho(a, [T.focus]);
+    for (const srv of taServers(a, who)) acc.push(toolAccess(a, who, srv));
+  }
+  if (acc.length) {
+    const accSrv = new Set(acc.map(x => x.server));
+    const mcpRoutes = new Set(gwE.filter(e => e.from === T.focus && accSrv.has(targets.get(e.to)?.server) && targets.get(e.to)?.kind === 'tool').flatMap(e => e.routes || []));
+    gwE = gwE.filter(e => { const t = targets.get(e.to); return !(e.from === T.focus && (t?.kind === 'tool' && accSrv.has(t.server) || t?.kind === 'mcp' && ((t.routes || []).some(r => mcpRoutes.has(r)) || accSrv.has(t.server)))); });
+  }
   const onSvc = new Map();
   if (both) {
     const loose = [];
@@ -552,26 +570,48 @@ function tfMap(d, a, netE, gwE0, nodes, callers, targets, layer) {
   let ghosts = 0;
   const nSvc = [...R.keys()].filter(id => !targets.has(id)).length, nCalled = R.size - nSvc;
   const nOnSvc = [...svcTools.values()].reduce((n, st) => n + st.size, 0);
-  if (T.focus && T.freach) {
+  if (T.focus && T.freach && (!acc.length || T.showGhosts)) {
     const byNs = {};
     for (const e of tfUnused(netE)) { const p = e.to.slice(4).split('/'); (byNs[p[p.length - 3]] ||= []).push({id: e.to, label: p[p.length - 3] + '/' + p[p.length - 1], e}); }
     for (const [ns, list] of Object.entries(byNs).sort()) {
       ghosts += list.length;
       if (T.fexp[ns] || list.length === 1) {
         for (const g of list) {
-          right.push({id: g.id, label: g.label, sub: 'allowed, not used', risk: 'grey', icon: 'network', cls: 'rg-unusednode', tip: `${g.label}\nPolicy allows ${fnodeLabel()} to reach it (${g.e.verdict}${g.e.layer ? ', ' + g.e.layer : ''}), and it made no connection to it in the capture.\nClick for the checks`});
+          right.push({id: g.id, order: 3, label: g.label, sub: 'allowed, not used', risk: 'grey', icon: 'network', cls: 'rg-unusednode', tip: `${g.label}\nPolicy allows ${fnodeLabel()} to reach it (${g.e.verdict}${g.e.layer ? ', ' + g.e.layer : ''}), and it made no connection to it in the capture.\nClick for the checks`});
           ge.push({id: 'ghost>' + g.id, from: T.focus, to: g.id, risk: 'grey', dash: true, cls: 'rg-unused', w: 1, tip: `allowed, not used: ${g.label}`});
         }
       } else {
-        right.push({id: 'ghost:' + ns, label: `${ns} (${list.length})`, sub: 'allowed, not used · click to open up', risk: 'grey', icon: 'folder', cls: 'rg-unusednode', tip: list.map(g => g.label).join('\n')});
+        right.push({id: 'ghost:' + ns, order: 3, label: `${ns} (${list.length})`, sub: 'allowed, not used · click to open up', risk: 'grey', icon: 'folder', cls: 'rg-unusednode', tip: list.map(g => g.label).join('\n')});
         ge.push({id: 'ghost>ns:' + ns, from: T.focus, to: 'ghost:' + ns, risk: 'grey', dash: true, cls: 'rg-unused', w: 1, tip: `${list.length} Services in ${ns} it may reach and did not`});
       }
     }
   }
-  const toNote = [nSvc ? fbPlural(nSvc, 'destination') : '', nCalled ? `${num(nCalled)} tools, models or agents called` : nOnSvc ? `${num(nOnSvc)} tools on them` : '', ghosts ? `${num(ghosts)} allowed, not used` : ''].filter(Boolean).join(' · ');
+  if (acc.length) {
+    if (!left.some(n => n.id === T.focus)) left.push(nodes.has(T.focus) ? mk(T.focus) : mkCaller(T.focus));
+    const maxA = Math.max(1, ...acc.flatMap(x => x.rows.map(r => r.calls)));
+    for (const x of acc) {
+      const shown = [], idle = [];
+      for (const r of x.rows) (r.calls || !r.allowed || r.configured || x.rows.length <= 16 || T.fexp['acc:' + x.server] ? shown : idle).push(r);
+      for (const r of shown) {
+        const id = 'acc:' + x.server + '/' + r.name;
+        const st = !r.allowed ? 'called, not allowed' : r.calls ? `allowed, called ×${num(r.calls)}` : 'allowed, not called';
+        right.push({id, order: r.calls || !r.allowed ? 0 : r.configured ? 1.5 + acc.indexOf(x) / 100 : 2 + acc.indexOf(x) / 100, label: r.name, sub: `${lastPartJS(x.server)} · ${st}`, risk: !r.allowed ? 'red' : r.calls ? 'green' : 'grey', icon: 'plug', cls: r.calls || !r.allowed ? '' : 'rg-unusednode',
+          tip: `${r.name} on ${x.server}\n${st}${r.refused ? `, ${num(r.refused)} refused` : ''}${r.configured ? '\nin its own tool list' : ''}${r.description ? '\n' + r.description : ''}\n${x.note}`});
+        ge.push({id: 'accl:' + id, from: T.focus, to: id, risk: !r.allowed ? 'red' : r.calls ? 'green' : 'grey', dash: !r.calls, cls: r.calls ? 'fb-gw' : 'rg-unused', w: r.calls ? 1.2 + 3 * Math.log(1 + r.calls) / Math.log(1 + maxA) : 1, tip: `${st}: ${r.name}`});
+      }
+      if (idle.length) {
+        right.push({id: 'accfold:' + x.server, order: 2.5 + acc.indexOf(x) / 100, label: `${fbPlural(idle.length, 'more tool')} on ${lastPartJS(x.server)}`, sub: 'allowed, not called · click to open up', risk: 'grey', icon: 'folder', cls: 'rg-unusednode', tip: idle.map(r => r.name).join('\n')});
+        ge.push({id: 'accl:accfold:' + x.server, from: T.focus, to: 'accfold:' + x.server, risk: 'grey', dash: true, cls: 'rg-unused', w: 1, tip: `${idle.length} tools it may call on ${x.server} and did not`});
+      }
+    }
+  }
+  const nAcc = acc.reduce((n, x) => n + x.rows.length, 0);
+  const toNote = [nAcc ? `${fbPlural(nAcc, 'tool')} it may call or called` : '', nSvc ? fbPlural(nSvc, 'destination') : '', nCalled ? `${num(nCalled)} tools, models or agents called` : nOnSvc ? `${num(nOnSvc)} tools on them` : '', ghosts ? `${num(ghosts)} allowed, not used` : ''].filter(Boolean).join(' · ');
   const svg = fbGraph({left, right, edges: ge, sel: T.sel, heads: [['server', 'From', fbPlural(left.length, 'source')], ['network', 'To', toNote]]});
-  const legend = (both ? '<span class="muted">Both layers: calls through agentgateway are drawn on the Service they went through; hover a line for its tools. Choose Gateway calls for a box per tool.</span>' : '')
-    + (T.focus && T.freach ? '<span><i class="rc-sw dash"></i><span class="muted">faded:</span> allowed by policy, not used</span>' : '')
+  const legend = (acc.length ? `<span class="muted">Following ${esc(left.find(n => n.id === T.focus)?.label || '')}: a box for every tool it has access to on ${acc.map(x => esc(x.server)).join(', ')}.</span><span><i class="rc-sw green"></i>allowed, called</span><span><i class="rc-sw dash"></i><span class="muted">faded:</span> allowed, not called</span><span><i class="rc-sw red"></i>called, not allowed by the captured allowlist</span>` : '')
+    + (both && !acc.length ? '<span class="muted">Click an agent to see every tool it may call.</span>' : '')
+    + (both && !acc.length ? '<span class="muted">Both layers: calls through agentgateway are drawn on the Service they went through; hover a line for its tools. Choose Gateway calls for a box per tool.</span>' : '')
+    + (T.focus && T.freach && (!acc.length || T.showGhosts) ? '<span><i class="rc-sw dash"></i><span class="muted">faded Services:</span> allowed by policy, not used</span>' : '')
     + (netE.length ? '<span><i class="rc-sw red"></i>plaintext between mesh workloads</span><span><i class="rc-sw amber"></i>no policy, plaintext from outside the mesh, or logs and policy disagree</span><span><i class="rc-sw green"></i>mutual TLS and policy looks at it</span>' : '')
     + (gwE.length ? '<span><i class="rc-sw red"></i>call outside the agent\'s tool list, to an unlisted tool, or every call refused</span><span><i class="rc-sw amber"></i>call with no identity, or some refused</span>' : '')
     + '<span><i class="rc-sw dash"></i>refused, or policy denies it</span>';
@@ -594,7 +634,7 @@ function tfFocusBar(fnode, netE, gwE) {
   const calls = gwE.reduce((n, e) => n + e.requests, 0);
   return `<div class="tf-focus"><strong class="mono">${esc(fnode.label)}</strong><span>${fbPlural(new Set(netE.map(e => e.to)).size, 'destination')} used${calls ? `, ${num(calls)} calls through agentgateway to ${fbPlural(new Set(gwE.map(e => e.to)).size, 'target')}` : ''}${T.freach ? `, ${num(un.length)} more Services allowed by policy and not used` : ''}.</span>
     ${T.freach ? '' : `<span class="muted">${feature('reach') ? 'Not an agent on the Agents page, so what else it may reach is not drawn.' : 'Turn on Agent reach to see what else it may reach.'}</span>`}
-    <span style="flex:1"></span>${T.freach ? `<a class="btn" href="#reach?agent=${encodeURIComponent(fnode.label)}">Open on Agents</a>` : ''}<button class="ghost" id="tf-unfocus">Show everything</button></div>`;
+    <span style="flex:1"></span>${T.freach && (gwE.length || T.showGhosts) ? `<button id="tf-ghosts">${T.showGhosts ? 'Hide' : 'Show'} Services it may reach and did not use</button>` : ''}${T.freach ? `<a class="btn" href="#reach?agent=${encodeURIComponent(fnode.label)}">Open on Agents</a>` : ''}<button class="ghost" id="tf-unfocus">Show everything</button></div>`;
 }
 
 function tfEdges(edges, lab) {
@@ -723,6 +763,11 @@ after.traffic = () => {
   // Selecting an edge fetches its explanation.
   const select = id => {
     if (id.startsWith('ghost:')) { keepY(() => { T.fexp[id.slice(6)] = true; T.gz = null; }); return; }
+    if (id.startsWith('accl:')) id = id.slice(5);
+    if (id.startsWith('accfold:')) { keepY(() => { T.fexp['acc:' + id.slice(8)] = true; T.gz = null; }); return; }
+    const cm = new Map((S.act.data?.callers || []).map(c => [c.id, c]));
+    const agentish = nodes.get(id)?.agentType || cm.get(id)?.agentType || cm.get(id)?.agentic;
+    if (agentish && T.focus !== id) { T.focus = id; T.sel = id; T.fexp = {}; T.gz = null; render(); return; }
     if (id.startsWith('fold>')) id = id.slice(5);
     if (id.startsWith('tools:')) { keepY(() => { (T.texp ||= {})[id.slice(6)] = true; T.gz = null; }); return; }
     if (id.startsWith('ghost>')) id = id.slice(6);
@@ -743,11 +788,12 @@ after.traffic = () => {
       if (T.ex?.key !== e.id) { await tfRunExplain(e.id, from.label, to.kind === 'service' ? to.label : to.label, e.cluster); const w = $('#tf-why'); if (w && T.sel === e.id) { w.innerHTML = tfExplainBody(T.ex); tfWireExplain(); } }
     });
   };
-  fbGraphWire(T, 'tf|' + (T.layer || '') + '|' + Object.entries(A.kinds).filter(([, v]) => v).map(([k]) => k).join(',') + '|' + T.flag + '|' + T.ns + '|' + T.q + '|' + T.focus + '|' + T.agents + '|' + Object.keys(T.fexp).join(',') + '|' + Object.keys(T.texp || {}).join(',') + (T.gfull ? '|full' : ''), select);
+  fbGraphWire(T, 'tf|' + (T.layer || '') + '|' + Object.entries(A.kinds).filter(([, v]) => v).map(([k]) => k).join(',') + '|' + T.flag + '|' + T.ns + '|' + T.q + '|' + T.focus + '|' + T.agents + '|' + Object.keys(T.fexp).join(',') + '|' + Object.keys(T.texp || {}).join(',') + '|' + (T.showGhosts ? 'g' : '') + (T.gfull ? '|full' : ''), select);
   document.querySelectorAll('[data-tfsel]').forEach(tr => tr.onclick = ev => { if (!ev.target.closest('[data-tfwhy]')) select(tr.dataset.tfsel); });
   document.querySelectorAll('[data-actsel]').forEach(tr => tr.onclick = () => select(tr.dataset.actsel));
   document.querySelectorAll('[data-tfwhy]').forEach(b => b.onclick = () => select(b.dataset.tfwhy));
   $('#tf-selx')?.addEventListener('click', () => keepY(() => { T.sel = ''; }));
+  $('#tf-ghosts')?.addEventListener('click', () => keepY(() => { T.showGhosts = !T.showGhosts; T.gz = null; }));
   $('#tf-agents')?.addEventListener('click', () => keepY(() => { T.agents = !T.agents; T.gz = null; }));
   $('#tf-unfocus')?.addEventListener('click', () => { T.focus = ''; T.freach = null; T.fexp = {}; T.gz = null; T.sel = ''; history.replaceState(null, '', '#traffic'); T.lastHash = location.hash; render(); });
   $('#tf-focus')?.addEventListener('click', () => { T.focus = T.sel; T.sel = ''; T.fexp = {}; T.gz = null; render(); });
