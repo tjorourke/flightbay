@@ -176,8 +176,8 @@ func (c *cluster) serviceFor(w *workload, port int) *service {
 	return first
 }
 
-// resolveSrc finds the workload a flow came from: by pod name, then by pod
-// IP, then by a SPIFFE identity whose service account only one workload uses.
+// resolveSrc finds the workload a flow came from: by pod name, then by a
+// SPIFFE identity whose service account only one workload uses, then by pod IP.
 func (c *cluster) resolveSrc(f store.Flow) *workload {
 	if f.SrcPod != "" {
 		ns := f.SrcNamespace
@@ -190,24 +190,31 @@ func (c *cluster) resolveSrc(f store.Flow) *workload {
 			}
 		}
 	}
-	if f.SrcIP != "" {
-		if w := c.ips().pod[stripPort(f.SrcIP)]; w != nil {
-			return w
+	byIP := func() *workload {
+		if f.SrcIP == "" {
+			return nil
 		}
+		return c.ips().pod[stripPort(f.SrcIP)]
 	}
+	// A SPIFFE identity is verified by mTLS and an address is not (pod IPs
+	// are reused), so with an identity the address only picks between
+	// workloads that share its service account.
 	if ns, sa, ok := spiffeSA(f.SrcIdentity); ok {
-		var hit *workload
+		var hits []*workload
 		for _, w := range c.works {
 			if w.ns == ns && w.sa == sa {
-				if hit != nil {
-					return nil // shared service account: cannot tell which
-				}
-				hit = w
+				hits = append(hits, w)
 			}
 		}
-		return hit
+		if len(hits) == 1 {
+			return hits[0]
+		}
+		if w := byIP(); w != nil && w.ns == ns && w.sa == sa {
+			return w
+		}
+		return nil
 	}
-	return nil
+	return byIP()
 }
 
 func spiffeSA(id string) (ns, sa string, ok bool) {

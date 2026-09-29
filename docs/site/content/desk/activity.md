@@ -98,6 +98,30 @@ The numbers across the top are the totals: requests, tool calls, tokens, refused
 
 **Calls**, **Tools**, **Models** and **Refused** are the same data as tables. A caller that is a workload has **Agent reach** and **Traffic map** buttons, and `#activity?caller=kagent/tom-demo` opens the page on one caller. A refusal at an agentgateway waypoint has a **Why?** link to the mesh checks between the caller and the Service; the agentgateway policy listed with it is checked after them. **Models** has tokens and cost per model and per caller.
 
+## Filtering
+
+The filter box takes free text or `key:value` terms, with suggestions from the capture as you type (like the [Scorecard](/desk/scorecard/)). Values match as a case-insensitive prefix, a leading `-` excludes, and terms combine. It filters the Map, Calls, Tools, Models and Refused tabs.
+
+| Key | Matches | Example |
+|---|---|---|
+| `caller:` | Who called: workload, service account, or address | `caller:kagent/tom-demo` |
+| `tool:` | MCP tool name | `tool:list_` |
+| `server:` | MCP server (target) or its route | `server:github` |
+| `model:` | LLM model or provider | `model:claude` |
+| `kind:` | `tool`, `model`, `agent`, `mcp` or `http`. Overrides the kind chips. | `kind:tool` |
+| `gateway:` | agentgateway gateway or waypoint | `gateway:kagent/` |
+| `route:` | Gateway route | `route:kagent/github-mcp` |
+| `user:` | JWT subject | `user:alice` |
+| `state:` | `ok`, `refused`, `failed`, `noidentity`, `outsidelist` | `state:refused` |
+
+```text
+server:github state:refused
+tool:delete -caller:kagent/
+kind:model state:noidentity
+```
+
+On the Tools tab, the tools servers list and no one called match on `tool:`, `server:` and text only, and are shown open when the filter leaves 30 or fewer.
+
 ## In the terminal and over MCP
 
 ```bash

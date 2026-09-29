@@ -81,6 +81,21 @@ The numbers across the top are the totals, and clicking one keeps only those edg
 
 **Edges.** The same as a table, with a **Why?** button per row.
 
+## Filtering
+
+The filter box takes free text or `key:value` terms, with suggestions as you type:
+
+| Key | Matches | Example |
+|---|---|---|
+| `from:` | Source workload | `from:kagent/tom-demo` |
+| `to:` | Destination Service or workload | `to:kagent/github-mcp` |
+| `ns:` | Namespace at either end | `ns:kagent` |
+| `flag:` | `plaintext`, `plaintext-in`, `unpoliced`, `denied`, `mismatch` | `flag:unpoliced` |
+| `tls:` | `mtls`, `plaintext`, `mixed` | `tls:plaintext` |
+| `verdict:` | `allowed`, `denied`, `unknown` | `verdict:denied` |
+| `via:` | The waypoint that carried it | `via:github-mcp-waypoint` |
+| `kind:` | `agent` for a source that is an agent; `service`, `workload` or `external` for the destination | `kind:agent` |
+
 ## Following one agent
 
 **Agents only** keeps the connections made by agents, MCP servers and agent gateways. Click a workload and **Show only its connections**, or open `#traffic?agent=kagent/tom-demo` (the **Traffic map** button on [Agent reach](/desk/agent-reach/) does this), to follow one.

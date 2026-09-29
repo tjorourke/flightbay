@@ -82,13 +82,59 @@ async function render() {
     const html = await fn(seq);
     if (seq !== S.renderSeq || html === undefined) return;
     taClose(true);
-    $('#main').innerHTML = html;
+    if (S.morph && S.lastView === S.view) morphHTML($('#main'), html); else $('#main').innerHTML = html;
+    S.lastView = S.view;
     after[S.view]?.();
   } catch (e) {
     if (seq === S.renderSeq) $('#main').innerHTML = `<div class="notice bad">${esc(e.message)}</div>`;
   }
 }
 const after = {};
+
+// morphHTML updates el to match html, touching only what differs: unchanged
+// nodes keep their scroll position, selection and state. Used for live
+// refreshes, where the same view is redrawn with slightly newer data.
+function morphHTML(el, html) {
+  const t = document.createElement('template');
+  t.innerHTML = html;
+  morphKids(el, t.content);
+}
+function morphSame(a, b) {
+  return a.nodeType === b.nodeType && (a.nodeType !== 1 || (a.tagName === b.tagName && (a.id || '') === (b.id || '')));
+}
+function morphKids(cur, next) {
+  const want = [...next.childNodes];
+  want.forEach((n, i) => {
+    const o = cur.childNodes[i];
+    if (!o) { cur.appendChild(n); return; }
+    if (!morphSame(o, n)) { cur.replaceChild(n, o); return; }
+    if (o.nodeType !== 1) { if (o.nodeValue !== n.nodeValue) o.nodeValue = n.nodeValue; return; }
+    for (const at of [...o.attributes]) if (!n.hasAttribute(at.name)) o.removeAttribute(at.name);
+    for (const at of [...n.attributes]) if (o.getAttribute(at.name) !== at.value) o.setAttribute(at.name, at.value);
+    if (/^(INPUT|TEXTAREA|SELECT)$/.test(o.tagName) && o !== document.activeElement) {
+      if (o.type === 'checkbox' || o.type === 'radio') o.checked = n.checked; else if (o.value !== n.value) o.value = n.value;
+    }
+    morphKids(o, n);
+  });
+  while (cur.childNodes.length > want.length) cur.removeChild(cur.lastChild);
+}
+
+// Views wire their handlers after every render. With morphHTML the elements
+// survive, so a listener added again would fire twice: inside #main, adding
+// the same listener (same event and code) replaces the earlier one.
+{
+  const add = EventTarget.prototype.addEventListener, reg = new WeakMap();
+  EventTarget.prototype.addEventListener = function (type, fn, opts) {
+    if (this instanceof Element && fn && this.closest?.('#main')) {
+      let m = reg.get(this);
+      if (!m) reg.set(this, m = new Map());
+      const k = type + '|' + String(fn), old = m.get(k);
+      if (old) this.removeEventListener(type, old.fn, old.opts);
+      m.set(k, {fn, opts});
+    }
+    return add.call(this, type, fn, opts);
+  };
+}
 
 // Each view links to its page in the built-in documentation.
 const docPages = {overview: 'desk/overview/', search: 'desk/search/', navigator: 'desk/navigator/', resources: 'desk/resources/', logs: 'desk/logs/', timeline: 'desk/timeline/',
@@ -1105,7 +1151,8 @@ async function reach() {
     if (R.detailKey !== key) {
       R.detail = await api('api/reach', {agent: R.sel}).catch(e => ({error: e.message}));
       R.usage = R.detail.error ? null : await api('api/reach/usage', {agent: R.sel}).catch(() => null);
-      R.detailKey = key; R.fixOpen = {}; R.gexpand = {}; R.gz = null;
+      if (R.detailAgent !== R.sel) { R.fixOpen = {}; R.gexpand = {}; R.gz = null; R.evOpen = {}; R.ldAll = false; }
+      R.detailKey = key; R.detailAgent = R.sel;
     }
     detail = R.detail.error ? `<div class="notice bad mt">${esc(R.detail.error)}</div>` : rcDetail(R.detail);
   }
@@ -2629,7 +2676,8 @@ async function liveSave() {
 // Throttled refresh: at most once every 3 s, and never while the user types
 // or has a drawer or modal open. A blocked refresh waits for its moment.
 function liveBusy() {
-  const a = document.activeElement;
+  const a = document.activeElement, sel = getSelection();
+  if (sel && !sel.isCollapsed && $('#main')?.contains(sel.anchorNode)) return true; // you are selecting or copying
   return S.drawerOpen || !!document.querySelector('.modal-backdrop') || !!TA.active ||
     (a && (/INPUT|TEXTAREA|SELECT/.test(a.tagName) || a.isContentEditable || a.closest?.('.xterm')));
 }
@@ -2649,11 +2697,13 @@ async function liveRefresh() {
   // Review and send works on a frozen copy of the mirror: redrawing it would
   // only lose what you are in the middle of choosing.
   if (S.view === 'review') return;
-  const main = $('#main'), top = main?.scrollTop || 0;
-  const scrolls = [...document.querySelectorAll('#main .table-scroll')].map(e => e.scrollTop);
-  try { await loadWorkspace(); await render(); } catch (_) { /* the next change retries */ }
-  if (main) main.scrollTop = top;
-  document.querySelectorAll('#main .table-scroll').forEach((e, i) => { if (scrolls[i]) e.scrollTop = scrolls[i]; });
+  // Patch the page in place rather than rebuilding it, so scroll positions,
+  // text selections, open panels and zoom survive new data.
+  const main = $('#main'), top = main?.scrollTop || 0, wy = scrollY;
+  S.morph = true;
+  try { await loadWorkspace(); await render(); } catch (_) { /* the next change retries */ } finally { S.morph = false; }
+  if (main && main.scrollTop !== top) main.scrollTop = top;
+  if (scrollY !== wy) scrollTo(0, wy);
 }
 
 {

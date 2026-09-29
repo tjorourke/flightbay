@@ -112,7 +112,7 @@ The banner that says **Offline snapshot** for a bundle reads, in live mode:
 
 It is green while every watch is connected and amber while any is reconnecting. A watch that drops resumes from the last resourceVersion it saw. A watch whose version has expired (410 Gone) lists again and reconciles, so a missed deletion is still applied.
 
-Pages refresh themselves when the mirror changes, at most once every three seconds. They wait while you are typing, while a drawer or dialog is open, and while the tab is hidden. The Log explorer keeps its own **Follow incoming data** switch: off, it tells you how many new lines match; on, it keeps the newest in view.
+Pages refresh themselves when the mirror changes, at most once every three seconds. A refresh updates the page in place: only what changed is redrawn, so where you have scrolled to (in the page, a table or a YAML block), open findings, graph zoom and the tab you are on stay put. Refreshes wait while you are typing, while you have text selected on the page, while a drawer or dialog is open, and while the tab is hidden. The Log explorer keeps its own **Follow incoming data** switch: off, it tells you how many new lines match; on, it keeps the newest in view.
 
 Ages in tables, certificate lifetimes and `since:` in log queries count from now, not from a capture time.
 

@@ -386,28 +386,29 @@ func (b *actBuilder) tool(server, name string) *ToolInfo {
 // caller resolves who made a request: the mesh identity agentgateway saw
 // (waypoints log src.identity), else the source address, with the JWT
 // subject kept as the user.
-func (b *actBuilder) caller(c *cluster, agents map[*workload]string, f map[string]string) *ActCaller {
+func (b *actBuilder) caller(c *cluster, agents map[*workload]string, f map[string]string, at time.Time) *ActCaller {
 	ident, user, addr := f["src.identity"], f["jwt.sub"], stripPort(f["src.addr"])
 	var w *workload
-	if ident != "" {
-		if ns, sa, ok := spiffeSA(ident); ok {
-			var hit *workload
-			shared := false
-			for _, x := range c.works {
-				if x.ns == ns && x.sa == sa {
-					if hit != nil {
-						shared = true
-					}
-					hit = x
-				}
-			}
-			if !shared {
-				w = hit
+	ns, sa, hasID := spiffeSA(ident)
+	if hasID {
+		// The mesh identity is verified by mTLS; the address is not. With an
+		// identity, the address only picks between workloads that share it.
+		var hits []*workload
+		for _, x := range c.works {
+			if x.ns == ns && x.sa == sa {
+				hits = append(hits, x)
 			}
 		}
-	}
-	if w == nil && addr != "" {
-		w = c.ips().pod[addr]
+		switch {
+		case len(hits) == 1:
+			w = hits[0]
+		case len(hits) > 1 && addr != "":
+			if byIP := c.podAt(addr, at); byIP != nil && byIP.ns == ns && byIP.sa == sa {
+				w = byIP
+			}
+		}
+	} else if addr != "" {
+		w = c.podAt(addr, at)
 	}
 	var id string
 	var ca ActCaller
@@ -419,9 +420,8 @@ func (b *actBuilder) caller(c *cluster, agents map[*workload]string, f map[strin
 			ca.Identity = ident
 		}
 	case ident != "":
-		ns, sa, _ := spiffeSA(ident)
 		id = "id:" + ident
-		ca = ActCaller{Kind: "identity", Label: "service account " + ns + "/" + sa, Namespace: ns, Identity: ident}
+		ca = ActCaller{Kind: "identity", Label: ns + "/" + sa, Namespace: ns, Identity: ident}
 	case user != "":
 		id = "user:" + user
 		ca = ActCaller{Kind: "user", Label: "JWT subject " + user}
@@ -444,6 +444,27 @@ func (b *actBuilder) caller(c *cluster, agents map[*workload]string, f map[strin
 	ca.ID, ca.Anonymous = id, true
 	b.callers[id] = &ca
 	return &ca
+}
+
+// podAt returns the workload whose pod had this address at time t. Pod IPs
+// are reused, and logs can be older than the pod that holds the address now:
+// a pod that started after t did not make the request.
+func (c *cluster) podAt(addr string, t time.Time) *workload {
+	w := c.ips().pod[addr]
+	if w == nil || t.IsZero() {
+		return w
+	}
+	for _, p := range w.pods {
+		st := m(p.Obj["status"])
+		if s(st["podIP"]) != addr {
+			continue
+		}
+		start, err := time.Parse(time.RFC3339, first(s(st["startTime"]), s(path(p.Obj, "metadata", "creationTimestamp"))))
+		if err == nil && start.After(t.Add(time.Minute)) {
+			return nil
+		}
+	}
+	return w
 }
 
 // isNodeGatewayIP: the .1 address of a pod range is the node's bridge on kind
@@ -494,7 +515,7 @@ func (b *actBuilder) add(c *cluster, agents map[*workload]string, r store.AgwReq
 	cv.Requests += r.Count
 	b.pods[gw][r.Namespace+"/"+r.Pod] = true
 
-	ca := b.caller(c, agents, f)
+	ca := b.caller(c, agents, f, r.First)
 	tid, tt := target(f)
 	t := b.targets[tid]
 	if t == nil {

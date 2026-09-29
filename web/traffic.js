@@ -116,9 +116,48 @@ function fbGraphWire(st, key, onPick) {
 const actIntro = 'Who called which MCP tool, model or agent through agentgateway, as whom, what was refused and what it cost.';
 const actKinds = {tool: 'Tools', model: 'Models', agent: 'Agents (A2A)', mcp: 'MCP sessions', http: 'Other HTTP routes'};
 const actKindIcon = {tool: 'plug', model: 'sparkles', agent: 'bot', mcp: 'plug', http: 'route'};
+const actCallerKind = {identity: 'service account, no workload captured', workload: 'workload', user: 'JWT subject', outside: 'outside the cluster', address: 'address'};
 const actCallerIcon = {workload: 'server', identity: 'key', user: 'key', outside: 'globe', address: 'network'};
 const actTargetLabel = t => t.kind === 'tool' ? `${t.server}/${t.label}` : t.kind === 'model' ? `${t.provider ? t.provider + '/' : ''}${t.label}` : t.label;
 const actKindName = {tool: 'tool', model: 'model', agent: 'agent', mcp: 'MCP session', http: 'HTTP route'};
+
+// The Activity filter: free text, or key:value terms matched as a
+// case-insensitive prefix, like the Scorecard's. Every term is matched
+// against one caller-to-target pair.
+const lastPartJS = x => String(x || '').split('/').pop();
+const actState = (e, c) => [e.requests > e.denied + e.errors ? 'ok' : '', e.denied ? 'refused' : '', e.errors ? 'failed' : '', c?.anonymous ? 'noidentity' : '', e.outsideAllowlist ? 'outsidelist' : ''].filter(Boolean);
+const actFields = {
+  caller: (e, c) => [c?.label, c?.label?.split('/').pop(), c?.identity].filter(Boolean),
+  tool: (e, c, t) => t?.kind === 'tool' ? [t.label] : [],
+  server: (e, c, t) => t?.kind === 'tool' || t?.kind === 'mcp' ? [t.server, ...(t.routes || [])].filter(Boolean) : [],
+  model: (e, c, t) => t?.kind === 'model' ? [t.label, t.provider].filter(Boolean) : [],
+  kind: (e, c, t) => [t?.kind],
+  gateway: e => e.gateways || [],
+  route: e => e.routes || [],
+  user: (e, c) => [...(e.users || []), ...(c?.users || [])],
+  state: (e, c) => actState(e, c),
+};
+const actKeys = [
+  {value: 'caller', hint: 'who called: workload, service account or address', example: 'caller:kagent/tom-demo'},
+  {value: 'tool', hint: 'MCP tool name', example: 'tool:list_issues'},
+  {value: 'server', hint: 'MCP server or its route', example: 'server:github'},
+  {value: 'model', hint: 'LLM model or provider', example: 'model:claude'},
+  {value: 'kind', hint: 'tool, model, agent, mcp or http', example: 'kind:tool'},
+  {value: 'gateway', hint: 'agentgateway gateway or waypoint', example: 'gateway:kagent/'},
+  {value: 'route', hint: 'gateway route', example: 'route:kagent/github-mcp'},
+  {value: 'user', hint: 'JWT subject', example: 'user:alice'},
+  {value: 'state', hint: 'ok, refused, failed, noidentity or outsidelist', example: 'state:refused'},
+];
+const actStateHint = {ok: 'some calls got through', refused: 'refused by gateway policy', failed: 'backend or routing errors', noidentity: 'no mesh identity and no JWT subject', outsidelist: 'not in the kagent Agent\'s toolNames'};
+function actMatch(e, terms, callers, targets) {
+  const c = callers.get(e.from), t = targets.get(e.to);
+  return terms.every(tm => {
+    let ok;
+    if (tm.key && actFields[tm.key]) { const w = tm.val.toLowerCase(); ok = actFields[tm.key](e, c, t).some(v => String(v || '').toLowerCase().startsWith(w)); }
+    else ok = [c?.label, c?.identity, t && actTargetLabel(t), t?.server, t?.kind, t?.description, ...(e.gateways || []), ...(e.routes || []), ...(e.users || [])].join(' ').toLowerCase().includes((tm.text ?? `${tm.key}:${tm.val}`).toLowerCase());
+    return tm.neg ? !ok : ok;
+  });
+}
 
 function actEdgeRisk(e, callers) {
   const c = callers.get(e.from);
@@ -139,8 +178,9 @@ async function activityPage() {
   }
   const callers = new Map((d.callers || []).map(c => [c.id, c])), targets = new Map((d.targets || []).map(x => [x.id, x]));
   const terms = qTerms(A.q);
-  const textOk = (...xs) => terms.every(tm => { const ok = xs.join(' ').toLowerCase().includes((tm.text ?? `${tm.key}:${tm.val}`).toLowerCase()); return tm.neg ? !ok : ok; });
-  const edges = (d.edges || []).filter(e => { const tg = targets.get(e.to); return tg && A.kinds[tg.kind] && textOk(callers.get(e.from)?.label || '', actTargetLabel(tg), tg.kind, (e.gateways || []).join(' ')); });
+  const typedKind = terms.some(tm => tm.key === 'kind'); // a kind: term overrides the chips
+  const edges = (d.edges || []).filter(e => { const tg = targets.get(e.to); return tg && (typedKind || A.kinds[tg.kind]) && actMatch(e, terms, callers, targets); });
+  const allMatch = (d.edges || []).filter(e => actMatch(e, terms, callers, targets)); // every kind, for the other tabs
   const stat = (label, value, sub, cls = '') => `<div class="stat"><div class="eyebrow">${label}</div><div class="value ${cls}">${value}</div><p>${sub}</p></div>`;
   const stats = `<div class="stats fb-stats">${stat('Requests', num(t.requests), `through ${fbPlural((d.coverage || []).length, 'gateway')}`)}
     ${stat('Tool calls', num(t.toolCalls), `${fbPlural((d.targets || []).filter(x => x.kind === 'tool').length, 'tool')} called`)}
@@ -157,14 +197,16 @@ async function activityPage() {
   const tabs = `<nav class="pst-tabs">${tabN('map', 'Map')}${tabN('calls', 'Calls', edges.length)}${tabN('tools', 'Tools', (d.targets || []).filter(x => x.kind === 'tool').length)}${tabN('models', 'Models', (d.targets || []).filter(x => x.kind === 'model').length)}${tabN('denials', 'Refused', (d.denials || []).length, (d.denials || []).length ? 'amber' : '')}${tabN('changes', 'Tool changes', nChanges, (ch?.described || []).length ? 'red' : '')}</nav>`;
   const kindCount = k => (d.edges || []).filter(e => targets.get(e.to)?.kind === k).length;
   const kchips = Object.entries(actKinds).filter(([k]) => kindCount(k)).map(([k, l]) => `<button class="chip ${A.kinds[k] ? 'on' : ''}" data-actkind="${k}">${esc(l)} <small>${kindCount(k)}</small></button>`).join('');
-  const toolbar = `<div class="toolbar"><div class="row wrap">${kchips}</div><input id="act-q" placeholder="Filter callers, targets and gateways" value="${esc(A.q)}" style="min-width:280px" autocomplete="off" spellcheck="false"></div>`;
+  const input = `<input id="act-q" placeholder="Filter. Try caller: tool: server: model: state: or text" value="${esc(A.q)}" style="min-width:340px" autocomplete="off" spellcheck="false">`;
+  const toolbar = `<div class="toolbar"><div class="row wrap">${typedKind ? '<small class="muted">kind: in the filter overrides the chips</small>' : kchips}</div>${input}</div>`;
+  const toolbarPlain = `<div class="toolbar">${input}${A.q ? `<small class="muted">${fbPlural(allMatch.length, 'caller and target pair')} match</small>` : ''}</div>`;
   let body = '';
   if (!(d.edges || []).length) body = '<section class="panel"><div class="empty"><strong>No agentgateway requests in this capture</strong>The activity map is read from agentgateway request logs. Collect the gateway and waypoint pods\' logs to fill it.</div></section>';
   else if (A.tab === 'map') body = toolbar + actMap(d, edges, callers, targets) + actSel(d, callers, targets);
   else if (A.tab === 'calls') body = toolbar + actCalls(edges, callers, targets);
-  else if (A.tab === 'tools') body = actTools(d, callers);
-  else if (A.tab === 'models') body = actModels(d);
-  else if (A.tab === 'denials') body = actDenials(d);
+  else if (A.tab === 'tools') body = toolbarPlain + actTools(d, callers, allMatch, terms);
+  else if (A.tab === 'models') body = toolbarPlain + actModels(d, allMatch, terms);
+  else if (A.tab === 'denials') body = toolbarPlain + actDenials(d, allMatch, terms);
   if (A.tab === 'changes') body = actChanges(d);
   return head('Activity', `${esc(actIntro)} <span class="ent-pill">Enterprise</span>`, '<button id="act-term">&gt;_ fbactivity in terminal</button>') + notes + stats + cov + findings + tabs + body;
 }
@@ -173,7 +215,7 @@ function actMap(d, edges, callers, targets) {
   const A = S.act;
   const leftIds = new Set(edges.map(e => e.from)), rightIds = new Set(edges.map(e => e.to));
   const maxReq = Math.max(1, ...edges.map(e => e.requests));
-  const left = [...leftIds].map(id => { const c = callers.get(id); return {id, label: c.label, sub: [c.agentType ? rcTypes[c.agentType] || c.agentType : c.kind, c.anonymous ? 'no identity' : c.users?.length ? 'JWT ' + c.users.join(', ') : ''].filter(Boolean).join(' · '),
+  const left = [...leftIds].map(id => { const c = callers.get(id); return {id, label: c.label, sub: [c.agentType ? rcTypes[c.agentType] || c.agentType : actCallerKind[c.kind] || c.kind, c.anonymous ? 'no identity' : c.users?.length ? 'JWT ' + c.users.join(', ') : ''].filter(Boolean).join(' · '),
     risk: c.anonymous ? 'amber' : c.denied ? 'amber' : 'green', icon: c.agentType ? 'bot' : actCallerIcon[c.kind], tip: [c.label, c.identity, `${num(c.requests)} calls, ${num(c.denied)} refused, ${num(c.errors)} failed`, c.tokens ? `${num(c.tokens)} tokens` : ''].filter(Boolean).join('\n')}; });
   const right = [...rightIds].map(id => { const x = targets.get(id); return {id, label: x.kind === 'tool' ? x.label : actTargetLabel(x), sub: [actKindName[x.kind], x.kind === 'tool' ? x.server : '', x.undeclared ? 'not in its server\'s list' : ''].filter(Boolean).join(' · '),
     risk: x.undeclared ? 'red' : x.denied ? 'amber' : x.errors > x.requests / 2 ? 'amber' : 'green', icon: actKindIcon[x.kind], tip: [actTargetLabel(x), x.description, `${num(x.requests)} calls, ${num(x.denied)} refused, ${num(x.errors)} failed`, (x.gateways || []).length ? 'through ' + x.gateways.join(', ') : ''].filter(Boolean).join('\n')}; });
@@ -197,7 +239,7 @@ function actSel(d, callers, targets) {
     const es = (d.edges || []).filter(e => e.from === c.id);
     const links = c.kind === 'workload' ? `${c.agentType && feature('reach') ? `<a class="btn" href="#reach?agent=${encodeURIComponent(c.label)}">Agent reach</a>` : ''}${feature('traffic') ? `<a class="btn" href="#traffic?agent=${encodeURIComponent(c.label)}">Traffic map</a>` : ''}` : '';
     return `<section class="panel mt" id="act-detail"><div class="panel-head"><h2>${esc(c.label)}</h2><div class="row">${links}${c.ref ? '<button id="act-obj">Open object</button>' : ''}${close}</div></div><div class="panel-body">
-      <dl class="metadata"><dt>Kind</dt><dd>${esc(c.agentType ? (rcTypes[c.agentType] || c.agentType) + ' (' + c.kind + ')' : c.kind)}</dd>${c.identity ? `<dt>Mesh identity</dt><dd class="mono">${esc(c.identity)}</dd>` : ''}${(c.users || []).length ? `<dt>JWT subjects</dt><dd class="mono">${esc(c.users.join(', '))}</dd>` : ''}${(c.addresses || []).length ? `<dt>Addresses</dt><dd class="mono">${esc(c.addresses.join(', '))}</dd>` : ''}
+      <dl class="metadata"><dt>Kind</dt><dd>${esc(c.agentType ? (rcTypes[c.agentType] || c.agentType) + ' (workload)' : actCallerKind[c.kind] || c.kind)}</dd>${c.identity ? `<dt>Mesh identity</dt><dd class="mono">${esc(c.identity)}</dd>` : ''}${(c.users || []).length ? `<dt>JWT subjects</dt><dd class="mono">${esc(c.users.join(', '))}</dd>` : ''}${(c.addresses || []).length ? `<dt>Addresses</dt><dd class="mono">${esc(c.addresses.join(', '))}</dd>` : ''}
       <dt>Calls</dt><dd>${num(c.requests)} · ${num(c.denied)} refused · ${num(c.errors)} failed${c.tokens ? ` · ${num(c.tokens)} tokens` : ''}</dd>${c.anonymous ? '<dt>Identity</dt><dd class="red">none on any call: no mesh identity and no JWT subject</dd>' : ''}</dl></div>${edgeRows(es)}</section>`;
   }
   if (x) {
@@ -228,35 +270,50 @@ function actCalls(edges, callers, targets) {
     </tbody></table></div></section>`;
 }
 
-function actTools(d, callers) {
+function actTools(d, callers, matched, terms) {
   const A = S.act;
-  const called = (d.targets || []).filter(x => x.kind === 'tool');
-  const calledNames = new Set(called.map(x => x.label));
-  const idle = (d.tools || []).filter(t => t.declared && !t.calls && !calledNames.has(t.name));
+  const hit = new Set((matched || []).map(e => e.to));
+  const called = (d.targets || []).filter(x => x.kind === 'tool' && (!terms?.length || hit.has(x.id)));
+  const calledNames = new Set((d.targets || []).filter(x => x.kind === 'tool').map(x => x.label));
+  // Tools no one called can only match on tool:, server: and text.
+  const idleOk = t => (terms || []).every(tm => {
+    let ok;
+    if (tm.key === 'tool') ok = t.name.toLowerCase().startsWith(tm.val.toLowerCase());
+    else if (tm.key === 'server') ok = t.server.toLowerCase().startsWith(tm.val.toLowerCase()) || lastPartJS(t.server).toLowerCase().startsWith(tm.val.toLowerCase());
+    else if (tm.key === 'kind') ok = 'tool'.startsWith(tm.val.toLowerCase());
+    else if (tm.key) ok = false;
+    else ok = (t.server + ' ' + t.name + ' ' + (t.description || '')).toLowerCase().includes(tm.text.toLowerCase());
+    return tm.neg ? !ok : ok;
+  });
+  const idle = (d.tools || []).filter(t => t.declared && !t.calls && !calledNames.has(t.name) && idleOk(t));
   const listed = x => x.declared ? '<span class="green">yes</span>' : x.undeclared ? '<span class="red">no</span>' : '<span class="muted" title="No captured server list matches this server">unknown</span>';
   const callerOf = x => [...new Set((d.edges || []).filter(e => e.to === x.id).map(e => callers.get(e.from)?.label))].join(', ');
   return `<section class="panel"><div class="panel-head"><h2>Tools called</h2><small class="muted">Checked against the tool list each kagent MCP server reports (status.discoveredTools), where the call can be matched to that server</small></div>
     <div class="table-scroll" style="max-height:52vh">${called.length ? `<table><thead><tr><th>Tool</th><th>Server</th><th>Calls</th><th>Refused</th><th>Failed</th><th>Listed</th><th>Callers</th><th>Description</th></tr></thead><tbody>
     ${called.map(x => `<tr><td class="mono">${esc(x.label)}</td><td class="mono">${esc(x.server)}</td><td class="mono">${num(x.requests)}</td><td class="mono ${x.denied ? 'amber' : ''}">${num(x.denied)}</td><td class="mono">${num(x.errors)}</td><td>${listed(x)}</td><td class="rc-small">${esc(callerOf(x))}</td><td class="rc-small muted">${esc(x.description || '')}</td></tr>`).join('')}
     </tbody></table>` : '<div class="empty"><strong>No tool calls</strong></div>'}</div></section>
-    <section class="panel mt"><div class="panel-head"><h2>Listed but never called</h2><div class="row"><small class="muted">${fbPlural(idle.length, 'tool')} across the captured MCP servers</small><button class="ghost" id="act-idle">${A.showDeclared ? 'Hide' : 'Show'}</button></div></div>
-    ${A.showDeclared ? `<div class="table-scroll" style="max-height:40vh"><table><thead><tr><th>Server</th><th>Tool</th><th>Description</th></tr></thead><tbody>${idle.map(t => `<tr><td class="mono">${esc(t.server)}</td><td class="mono">${esc(t.name)}</td><td class="rc-small muted">${esc(t.description || '')}</td></tr>`).join('')}</tbody></table></div>` : ''}</section>`;
+    <section class="panel mt"><div class="panel-head"><h2>Listed but never called</h2><div class="row"><small class="muted">${fbPlural(idle.length, 'tool')} across the captured MCP servers${terms?.length ? ' matching the filter' : ''}</small><button class="ghost" id="act-idle">${A.showDeclared || (terms?.length && idle.length <= 30) ? 'Hide' : 'Show'}</button></div></div>
+    ${A.showDeclared || (terms?.length && idle.length <= 30) ? `<div class="table-scroll" style="max-height:40vh"><table><thead><tr><th>Server</th><th>Tool</th><th>Description</th></tr></thead><tbody>${idle.map(t => `<tr><td class="mono">${esc(t.server)}</td><td class="mono">${esc(t.name)}</td><td class="rc-small muted">${esc(t.description || '')}</td></tr>`).join('')}</tbody></table></div>` : ''}</section>`;
 }
 
-function actModels(d) {
-  const models = (d.targets || []).filter(x => x.kind === 'model');
-  const spenders = (d.callers || []).filter(c => c.tokens > 0).sort((a, b) => b.tokens - a.tokens);
-  if (!models.length) return '<section class="panel"><div class="empty"><strong>No LLM calls</strong>No agentgateway request log in the capture names a model or provider.</div></section>';
+function actModels(d, matched, terms) {
+  const hit = new Set((matched || []).map(e => e.to)), hitC = new Set((matched || []).map(e => e.from));
+  const models = (d.targets || []).filter(x => x.kind === 'model' && (!terms?.length || hit.has(x.id)));
+  const spenders = (d.callers || []).filter(c => c.tokens > 0 && (!terms?.length || hitC.has(c.id))).sort((a, b) => b.tokens - a.tokens);
+  if (!models.length) return terms?.length ? '<section class="panel"><div class="empty"><strong>No model calls match</strong></div></section>' : '<section class="panel"><div class="empty"><strong>No LLM calls</strong>No agentgateway request log in the capture names a model or provider.</div></section>';
   return `<div class="grid2 rc-grid"><section class="panel"><div class="panel-head"><h2>Models</h2></div><div class="table-scroll"><table><thead><tr><th>Model</th><th>Provider</th><th>Calls</th><th>Tokens in</th><th>Tokens out</th><th>Cost</th></tr></thead><tbody>
     ${models.map(x => `<tr><td class="mono">${esc(x.label)}</td><td>${esc(x.provider || '—')}</td><td class="mono">${num(x.requests)}</td><td class="mono">${num(x.inputTokens)}</td><td class="mono">${num(x.outputTokens)}</td><td class="mono">${x.cost ? x.cost.toFixed(4) : '—'}</td></tr>`).join('')}</tbody></table></div></section>
     <section class="panel"><div class="panel-head"><h2>Spend by caller</h2></div><div class="table-scroll"><table><thead><tr><th>Caller</th><th>Tokens</th><th>Calls</th><th></th></tr></thead><tbody>
     ${spenders.map(c => `<tr><td>${esc(c.label)}</td><td class="mono">${num(c.tokens)}</td><td class="mono">${num(c.requests)}</td><td>${c.anonymous ? '<span class="rc-badge amber">no identity</span>' : ''}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">No token counts were logged</td></tr>'}</tbody></table></div></section></div>`;
 }
 
-function actDenials(d) {
-  const ds = d.denials || [];
+function actDenials(d, matched, terms) {
+  const pairs = new Set((matched || []).map(e => e.from + '→' + e.to));
+  const all = d.denials || [];
+  const ds = terms?.length ? all.filter(x => pairs.has(x.from + '→' + x.to) && (terms.every(tm => tm.key !== 'gateway' || x.gateway.toLowerCase().startsWith(tm.val.toLowerCase()) || tm.neg))) : all;
+  if (all.length && !ds.length) return '<section class="panel"><div class="empty"><strong>No refusals match</strong></div></section>';
   if (!ds.length) return '<section class="panel"><div class="empty"><strong>No refused calls</strong>No agentgateway request in the capture was refused by policy.</div></section>';
-  return ds.map((x, i) => `<section class="panel ${i ? 'mt' : ''}"><div class="panel-head"><h2>${num(x.count)} × ${esc(x.caller)} → ${esc(x.target)}</h2><span class="rc-badge amber">${esc(x.reason)}</span></div><div class="panel-body">
+  return ds.map(x => [x, all.indexOf(x)]).map(([x, i], k) => `<section class="panel ${k ? 'mt' : ''}"><div class="panel-head"><h2>${num(x.count)} × ${esc(x.caller)} → ${esc(x.target)}</h2><span class="rc-badge amber">${esc(x.reason)}</span></div><div class="panel-body">
     <p>${esc(x.meaning || '')}</p>
     <dl class="metadata"><dt>Gateway</dt><dd class="mono">${esc(x.gateway)}</dd>${x.route ? `<dt>Route</dt><dd class="mono">${esc(x.route)}</dd>` : ''}${x.status ? `<dt>Status</dt><dd class="mono">${esc(x.status)}</dd>` : ''}<dt>Last</dt><dd>${fbTime(x.last)}</dd>${x.error ? `<dt>Logged error</dt><dd class="mono rc-small">${esc(x.error)}</dd>` : ''}</dl>
     <h3 class="mt">Policies at this gateway</h3>${(x.policies || []).length ? `<div class="table-scroll rc-items"><table><thead><tr><th></th><th>Policy</th><th>Attached to</th><th>Sets</th></tr></thead><tbody>
@@ -287,9 +344,24 @@ after.activity = () => {
   document.querySelectorAll('[data-acttab]').forEach(b => b.onclick = () => { A.tab = b.dataset.acttab; render(); });
   document.querySelectorAll('[data-actkind]').forEach(b => b.onclick = () => keepY(() => { A.kinds[b.dataset.actkind] = !A.kinds[b.dataset.actkind]; A.gz = null; }));
   const q = $('#act-q');
-  if (q) { let t; q.oninput = e => { clearTimeout(t); t = setTimeout(() => { const c = e.target.selectionStart, v = e.target.value; A.q = v; A.gz = null; render().then(() => refocus('#act-q', c, v)); }, 250); }; }
+  if (q) {
+    let t; q.oninput = e => { clearTimeout(t); t = setTimeout(() => { const c = e.target.selectionStart, v = e.target.value; A.q = v; A.gz = null; render().then(() => refocus('#act-q', c, v)); }, 250); };
+    typeahead(q, {keys: actKeys, values: (f, p, rest) => {
+      const get = actFields[f];
+      if (!get) return [];
+      const D = S.act.data, callers = new Map((D.callers || []).map(c => [c.id, c])), targets = new Map((D.targets || []).map(x => [x.id, x]));
+      const terms = qTerms(rest);
+      const es = (D.edges || []).filter(e => actMatch(e, terms, callers, targets));
+      let vals = es.flatMap(e => get(e, callers.get(e.from), targets.get(e.to)));
+      if (f === 'caller') vals = es.map(e => callers.get(e.from)?.label).filter(Boolean);
+      if (f === 'tool' || f === 'server') { // tools servers list but no one called
+        for (const x of D.tools || []) if (x.declared && (!terms.length)) vals.push(f === 'tool' ? x.name : lastPartJS(x.server));
+      }
+      return countValues(vals, p, f === 'state' ? v => actStateHint[v] : f === 'kind' ? v => actKindName[v] : null);
+    }});
+  }
   const pick = id => { A.sel = A.sel === id ? '' : id; const y = scrollY; render().then(() => { scrollTo(0, y); if (A.sel) $('#act-detail')?.scrollIntoView({block: 'nearest', behavior: 'smooth'}); }); };
-  fbGraphWire(A, 'act|' + Object.entries(A.kinds).filter(([, v]) => v).map(([k]) => k).join(',') + '|' + A.q + '|' + A.key + (A.gfull ? '|full' : ''), pick);
+  fbGraphWire(A, 'act|' + Object.entries(A.kinds).filter(([, v]) => v).map(([k]) => k).join(',') + '|' + A.q + (A.gfull ? '|full' : ''), pick);
   $('#act-selx')?.addEventListener('click', () => keepY(() => { A.sel = ''; }));
   document.querySelectorAll('[data-actsel]').forEach(tr => tr.onclick = () => pick(tr.dataset.actsel));
   const c = (d.callers || []).find(x => x.id === A.sel);
@@ -316,6 +388,36 @@ const tfIntro = 'Every connection ztunnel logged, whether it went over mutual TL
 const tfFlags = {plaintext: ['Plaintext in the mesh', 'red'], 'plaintext-in': ['Plaintext from outside the mesh', 'amber'], unpoliced: ['No policy', 'amber'], denied: ['Refused', 'amber'], mismatch: ['Logs and policy disagree', 'amber']};
 const tfVerdictCls = {allowed: '', denied: 'green', unknown: 'amber'};
 
+const tfFields = {
+  from: (e, n) => [n(e.from)?.label, n(e.from)?.label?.split('/').pop()],
+  to: (e, n) => [n(e.to)?.label, n(e.to)?.label?.split('/').pop()],
+  ns: (e, n) => [n(e.from)?.namespace, n(e.to)?.namespace],
+  flag: e => e.flags || [],
+  tls: e => [e.tls],
+  verdict: e => [e.verdict],
+  via: e => [e.via, lastPartJS(e.via)],
+  kind: (e, n) => [n(e.from)?.agentType ? 'agent' : '', n(e.to)?.kind],
+};
+const tfKeys = [
+  {value: 'from', hint: 'source workload', example: 'from:kagent/tom-demo'},
+  {value: 'to', hint: 'destination Service or workload', example: 'to:kagent/github-mcp'},
+  {value: 'ns', hint: 'namespace at either end', example: 'ns:kagent'},
+  {value: 'flag', hint: 'plaintext, plaintext-in, unpoliced, denied or mismatch', example: 'flag:unpoliced'},
+  {value: 'tls', hint: 'mtls, plaintext or mixed', example: 'tls:plaintext'},
+  {value: 'verdict', hint: 'allowed, denied or unknown', example: 'verdict:denied'},
+  {value: 'via', hint: 'waypoint that carried it', example: 'via:github-mcp-waypoint'},
+  {value: 'kind', hint: 'agent (source), service, workload, external (destination)', example: 'kind:agent'},
+];
+function tfMatch(e, terms, nodes) {
+  const n = id => nodes.get(id);
+  return terms.every(tm => {
+    let ok;
+    if (tm.key && tfFields[tm.key]) { const w = tm.val.toLowerCase(); ok = tfFields[tm.key](e, n).some(v => String(v || '').toLowerCase().startsWith(w)); }
+    else ok = [n(e.from)?.label, n(e.to)?.label, e.via, e.why, e.verdict, e.tls].join(' ').toLowerCase().includes((tm.text ?? `${tm.key}:${tm.val}`).toLowerCase());
+    return tm.neg ? !ok : ok;
+  });
+}
+
 function tfFromHash(p) {
   if (p.get('from') && p.get('to')) { S.tf.exFrom = p.get('from'); S.tf.exTo = p.get('to'); S.tf.tab = 'explain'; S.tf.ex = null; }
   if (p.get('agent')) { S.tf.focusName = p.get('agent'); S.tf.focus = ''; S.tf.tab = 'map'; S.tf.sel = ''; S.tf.gz = null; }
@@ -339,8 +441,7 @@ async function trafficPage() {
   }
   const fnode = T.focus ? nodes.get(T.focus) : null;
   if (fnode && feature('reach') && T.fkey !== T.focus + '|' + T.key) { T.freach = await api('api/reach', {agent: fnode.label}).catch(() => null); T.fkey = T.focus + '|' + T.key; }
-  const edges = (d.edges || []).filter(e => (!T.focus || e.from === T.focus) && (!T.agents || nodes.get(e.from)?.agentType) && (!T.flag || (e.flags || []).includes(T.flag)) && (!T.ns || nodes.get(e.from)?.namespace === T.ns || nodes.get(e.to)?.namespace === T.ns) &&
-    terms.every(tm => { const ok = [lab(e.from), lab(e.to), e.via, e.why, e.verdict, e.tls].join(' ').toLowerCase().includes((tm.text ?? `${tm.key}:${tm.val}`).toLowerCase()); return tm.neg ? !ok : ok; }));
+  const edges = (d.edges || []).filter(e => (!T.focus || e.from === T.focus) && (!T.agents || nodes.get(e.from)?.agentType) && (!T.flag || (e.flags || []).includes(T.flag)) && (!T.ns || nodes.get(e.from)?.namespace === T.ns || nodes.get(e.to)?.namespace === T.ns) && tfMatch(e, terms, nodes));
   const stat = (label, value, sub, flag, cls = '') => `<div class="stat ${flag !== undefined ? 'fb-statbtn' : ''} ${flag && T.flag === flag ? 'on' : ''}" ${flag !== undefined ? `data-tfflag="${flag}" title="Show only these"` : ''}><div class="eyebrow">${label}</div><div class="value ${cls}">${value}</div><p>${sub}</p></div>`;
   const stats = `<div class="stats fb-stats">${stat('Edges', num(t.edges), `${num(t.connections)} connections logged`, '')}
     ${stat('Plaintext in the mesh', num(t.plaintext), 'between two enrolled workloads', 'plaintext', t.plaintext ? 'red' : '')}
@@ -355,7 +456,7 @@ async function trafficPage() {
   const nsOpts = `<select id="tf-ns"><option value="">All namespaces</option>${(d.namespaces || []).map(n => `<option ${T.ns === n ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>`;
   const nAgents = (d.edges || []).filter(e => nodes.get(e.from)?.agentType).length;
   const fchips = (nAgents ? `<button class="chip ${T.agents ? 'on' : ''}" id="tf-agents" title="Only connections made by agents, MCP servers and agent gateways">Agents only <small>${nAgents}</small></button>` : '') + `<button class="chip ${!T.flag ? 'on' : ''}" data-tfflag="">All</button>` + Object.entries(tfFlags).map(([k, [l]]) => { const n = (d.edges || []).filter(e => (e.flags || []).includes(k)).length; return n ? `<button class="chip ${T.flag === k ? 'on' : ''}" data-tfflag="${k}">${esc(l)} <small>${n}</small></button>` : ''; }).join('');
-  const toolbar = `<div class="toolbar"><div class="row wrap">${fchips}</div><div class="row">${nsOpts}<input id="tf-q" placeholder="Filter workloads, Services, waypoints" value="${esc(T.q)}" style="min-width:240px" autocomplete="off" spellcheck="false"></div></div>`;
+  const toolbar = `<div class="toolbar"><div class="row wrap">${fchips}</div><div class="row">${nsOpts}<input id="tf-q" placeholder="Filter. Try from: to: flag: tls: via: or text" value="${esc(T.q)}" style="min-width:300px" autocomplete="off" spellcheck="false"></div></div>`;
   let body;
   if (!d.captured) body = '<section class="panel"><div class="empty"><strong>No ztunnel access logs in this capture</strong>The traffic map is read from ztunnel access logs. Collect the istio-system ztunnel pods\' logs to fill it. You can still explain any pair on the Why? tab from the captured policy.</div></section>';
   else if (T.tab === 'map') body = toolbar + tfFocusBar(fnode, edges) + tfMap(d, edges, nodes) + tfEdgePanel(d, nodes);
@@ -505,7 +606,16 @@ after.traffic = () => {
   document.querySelectorAll('[data-tfflag]').forEach(b => b.onclick = () => keepY(() => { T.flag = T.flag === b.dataset.tfflag ? '' : b.dataset.tfflag; T.gz = null; if (T.tab === 'explain') T.tab = 'map'; }));
   const ns = $('#tf-ns'); if (ns) ns.onchange = () => keepY(() => { T.ns = ns.value; T.gz = null; });
   const q = $('#tf-q');
-  if (q) { let t; q.oninput = e => { clearTimeout(t); t = setTimeout(() => { const c = e.target.selectionStart, v = e.target.value; T.q = v; T.gz = null; render().then(() => refocus('#tf-q', c, v)); }, 250); }; }
+  if (q) {
+    let t; q.oninput = e => { clearTimeout(t); t = setTimeout(() => { const c = e.target.selectionStart, v = e.target.value; T.q = v; T.gz = null; render().then(() => refocus('#tf-q', c, v)); }, 250); };
+    typeahead(q, {keys: tfKeys, alias: {namespace: 'ns'}, values: (f, p, rest) => {
+      const get = tfFields[f];
+      if (!get) return [];
+      const D = S.tf.data, nm = new Map((D.nodes || []).map(n => [n.id, n])), terms = qTerms(rest);
+      const vals = (D.edges || []).filter(e => tfMatch(e, terms, nm)).flatMap(e => get(e, id => nm.get(id)));
+      return countValues(vals.filter(Boolean), p, f === 'flag' ? v => (tfFlags[v] || [])[0] : null);
+    }});
+  }
   // Selecting an edge fetches its explanation.
   const select = id => {
     if (id.startsWith('ghost:')) { keepY(() => { T.fexp[id.slice(6)] = true; T.gz = null; }); return; }
@@ -527,7 +637,7 @@ after.traffic = () => {
       if (T.ex?.key !== e.id) { await tfRunExplain(e.id, from.label, to.kind === 'service' ? to.label : to.label, e.cluster); const w = $('#tf-why'); if (w && T.sel === e.id) { w.innerHTML = tfExplainBody(T.ex); tfWireExplain(); } }
     });
   };
-  fbGraphWire(T, 'tf|' + T.flag + '|' + T.ns + '|' + T.q + '|' + T.key + '|' + T.focus + '|' + T.agents + '|' + Object.keys(T.fexp).join(',') + (T.gfull ? '|full' : ''), select);
+  fbGraphWire(T, 'tf|' + T.flag + '|' + T.ns + '|' + T.q + '|' + T.focus + '|' + T.agents + '|' + Object.keys(T.fexp).join(',') + (T.gfull ? '|full' : ''), select);
   document.querySelectorAll('[data-tfsel]').forEach(tr => tr.onclick = ev => { if (!ev.target.closest('[data-tfwhy]')) select(tr.dataset.tfsel); });
   document.querySelectorAll('[data-tfwhy]').forEach(b => b.onclick = () => select(b.dataset.tfwhy));
   $('#tf-selx')?.addEventListener('click', () => keepY(() => { T.sel = ''; }));

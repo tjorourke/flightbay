@@ -15,7 +15,7 @@ var (
 )
 
 // agwLine is an agentgateway request log line in the text format.
-func agwLine(ts, kv string) string { return ts + "\tinfo\trequest " + kv + " duration=5ms" }
+func agwLine(ts, kv string) string { return ts + " " + ts + "\tinfo\trequest " + kv + " duration=5ms" }
 
 // activityWS: one kagent agent (declarative, allowed list_issues only) calls
 // the github MCP server through an agentgateway waypoint; someone outside the
@@ -174,5 +174,46 @@ func TestActivityEmpty(t *testing.T) {
 	a := EvaluateActivity(store.New(), nil, "")
 	if len(a.Callers) != 0 || len(a.Notes) == 0 || !strings.Contains(a.Notes[0], "no agentgateway request logs") {
 		t.Fatalf("an empty capture says why it is empty: %+v", a.Notes)
+	}
+}
+
+// A pod that holds an address now did not make requests logged before it
+// started: pod IPs are reused.
+func TestActivityCallerNotByReusedIP(t *testing.T) {
+	ws := activityWS(t, "Lists", "list_issues")
+	late := pod("kagent", "waf", "waf", map[string]any{"app": "waf"}, false, nil)
+	late["status"].(map[string]any)["podIP"] = "10.244.1.60"
+	late["status"].(map[string]any)["startTime"] = "2026-09-29T00:00:00Z"
+	ws.AddObjects("c", rPod, []map[string]any{late}, "late")
+	ws.AddLogLines("c", "agentgateway-system", "ai-2", "agentgateway", "current", []string{
+		agwLine("2026-09-28T18:40:00Z", "gateway=agentgateway-system/ai listener=http route=agentgateway-system/anthropic src.addr=10.244.1.60:9 http.status=200 protocol=llm gen_ai.provider.name=anthropic gen_ai.request.model=m"),
+	}, "l3")
+	ws.WaitLogs()
+	for _, c := range EvaluateActivity(ws, nil, "").Callers {
+		if c.Label == "kagent/waf" {
+			t.Fatalf("a request from before the pod started was put down to it: %+v", c)
+		}
+	}
+}
+
+// A verified mesh identity wins over the address: the address's pod runs as
+// another service account, so the request is put down to the identity.
+func TestActivityIdentityBeatsAddress(t *testing.T) {
+	ws := activityWS(t, "Lists", "list_issues")
+	ws.AddLogLines("c", "kagent", "github-mcp-waypoint-1", "agentgateway", "current", []string{
+		agwLine("2026-09-28T18:50:00Z", "gateway=kagent/github-mcp-waypoint listener=waypoint route=kagent/github-mcp src.addr=10.244.1.50:7 src.identity=spiffe://mesh1/ns/kagent/sa/gone http.status=200 protocol=mcp mcp.method.name=tools/call mcp.target=github gen_ai.tool.name=list_issues"),
+	}, "l4")
+	ws.WaitLogs()
+	found := false
+	for _, c := range EvaluateActivity(ws, nil, "").Callers {
+		if c.Identity == "spiffe://mesh1/ns/kagent/sa/gone" {
+			found = true
+			if c.Kind != "identity" || c.Label != "kagent/gone" {
+				t.Fatalf("the notebook pod holds the address but runs as another service account: %+v", c)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("the identity caller is missing")
 	}
 }
