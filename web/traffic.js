@@ -50,7 +50,7 @@ function fbFindingsWire(st, list, key) {
 // to a far box, and an edge's by lists the left-hand boxes it stands for,
 // so hovering one of those traces through to the far column.
 function fbGraph({left, right, far = [], edges, heads, sel}) {
-  const bw = 250, bh = 42, vg = 10, gap = Math.max(220, Math.min(420, 90 + edges.length * 4)), gap2 = 200, HB = 52, top = HB + 16;
+  const bw = 250, bh = 42, vg = 10, gap = Math.max(220, Math.min(420, 90 + edges.length * 4)), gap2 = 200, HB = (heads || []).some(h => Array.isArray(h[2]) && h[2].length > 1) ? 64 : 52, top = HB + 16;
   const L = [...left], R = [...right], F = [...far];
   const li = new Map(L.map((n, i) => [n.id, i]));
   const bary = (n, map, key) => { const xs = edges.filter(e => e[key] === n.id).map(e => map.get(e[key === 'to' ? 'from' : 'to'])).filter(x => x !== undefined); return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 1e9; };
@@ -66,6 +66,7 @@ function fbGraph({left, right, far = [], edges, heads, sel}) {
   const X0 = 16, X1 = 16 + bw + gap, X2 = X1 + bw + gap2;
   const W = (F.length ? X2 : X1) + bw + 16, H = top + rows * (bh + vg) + 10;
   const yL = id => top + lOff + lrow.get(id) * (bh + vg), yR = id => top + rOff + rrow.get(id) * (bh + vg), yF = id => top + fOff + frow.get(id) * (bh + vg);
+  const hfit = s => { const n = Math.floor((bw - 48) / 5.2); s = String(s || ''); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
   const fit = (s, px) => { const n = Math.max(4, Math.floor((bw - 44) / px)); s = String(s || ''); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
   const risk = r => ['red', 'amber', 'green', 'grey'].includes(r) ? r : 'grey';
   const rank = {grey: 0, green: 1, amber: 2, red: 3};
@@ -81,7 +82,7 @@ function fbGraph({left, right, far = [], edges, heads, sel}) {
     <rect width="${bw}" height="${bh}" rx="7"/>${rgIcon(n.icon || 'service', bw - 26, (bh - 16) / 2, 16, 'rg-nic')}<text x="11" y="17" class="rg-l">${esc(fit(n.label, 7.1))}</text><text x="11" y="32" class="rg-s">${esc(fit(n.sub || '', 6.2))}</text></g>`;
   const headSvg = (x, [icon, label, note]) => `<g class="rg-head" transform="translate(${x},8)"><rect class="rg-hbg" width="${bw}" height="${HB - 14}" rx="8"/>
     <circle class="rg-hdot" cx="20" cy="${(HB - 14) / 2}" r="13"/>${rgIcon(icon, 11, (HB - 14) / 2 - 9, 18, 'rg-hic')}
-    <text x="42" y="16" class="rg-hl">${esc(label)}</text><text x="42" y="30" class="rg-hn">${esc(note)}</text></g>`;
+    <title>${esc([label, ...[].concat(note || [])].join('\n'))}</title><text x="42" y="16" class="rg-hl">${esc(label)}</text>${[].concat(note || []).map((t, i) => `<text x="42" y="${30 + i * 13}" class="rg-hn">${esc(hfit(t))}</text>`).join('')}</g>`;
   const marker = r => `<marker id="fba-${r}" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="9" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="rg-arrow-${r}"/></marker>`;
   return `<svg class="rg" id="rg-svg" data-w="${W}" data-h="${H}" width="100%" height="100%" role="img"><defs>${['red', 'amber', 'green', 'grey'].map(marker).join('')}</defs><g id="rg-root">
     ${headSvg(X0, heads[0])}${headSvg(X1, heads[1])}${F.length && heads[2] ? headSvg(X2, heads[2]) : ''}${edgeSvg}${L.map(n => node(n, X0, yL(n.id))).join('')}${R.map(n => node(n, X1, yR(n.id))).join('')}${F.map(n => node(n, X2, yF(n.id))).join('')}</g></svg>`;
@@ -801,7 +802,7 @@ function tfMap(d, a, netE, gwE0, nodes, callers, targets, layer) {
   }
   const nAcc = acc.reduce((n, x) => n + x.rows.length, 0);
   const toNote = [nAcc ? `${fbPlural(nAcc, 'tool')} it may call or called` : '', nSvc ? fbPlural(nSvc, 'destination') : '', nCalled ? `${num(nCalled)} tools, models or agents called` : far.length ? 'MCP tools behind them' : nOnSvc ? `${num(nOnSvc)} tools on them` : '', ghosts ? `${num(ghosts)} allowed, not used` : ''].filter(Boolean).join(' · ');
-  const svg = fbGraph({left, right, far, edges: ge, sel: T.sel, heads: [['server', 'From', fbPlural(left.length, 'source')], ['network', 'To', toNote], ['plug', 'Tools', (() => { const t = [...svcSum.values()].reduce((m, x) => ({allowed: m.allowed + x.allowed, open: m.open + (x.openTools || 0), called: m.called + x.called}), {allowed: 0, open: 0, called: 0}); return [`${num(t.allowed)} allowed`, t.open ? `${num(t.open)} no allowlist covers` : '', `${num(t.called)} called`].filter(Boolean).join(' · '); })()]]});
+  const svg = fbGraph({left, right, far, edges: ge, sel: T.sel, heads: [['server', 'From', fbPlural(left.length, 'source')], ['network', 'To', toNote], ['plug', 'Tools', (() => { const t = [...svcSum.values()].reduce((m, x) => ({allowed: m.allowed + x.allowed, open: m.open + (x.openTools || 0), conf: m.conf + (x.openTools ? Math.min(x.configured || 0, x.openTools) : 0), called: m.called + x.called}), {allowed: 0, open: 0, conf: 0, called: 0}); const l1 = [t.allowed ? `${num(t.allowed)} allowed` : '', `${num(t.called)} called`].filter(Boolean).join(' · '), l2 = [t.conf ? `${num(t.conf)} not enforced` : '', t.open - t.conf ? `${num(t.open - t.conf)} not blocked` : ''].filter(Boolean).join(' · '); return l2 ? [l1, l2] : l1; })()]]});
   const legend = (acc.length ? `<span class="muted">Following ${esc(left.find(n => n.id === T.focus)?.label || '')}: a box for every tool it has access to on ${acc.map(x => esc(x.server)).join(', ')}.</span><span><i class="rc-sw green"></i>allowed, called</span><span><i class="rc-sw dash"></i><span class="muted">faded:</span> allowed, not called</span><span><i class="rc-sw red"></i>called, not allowed by the captured allowlist</span>` : '')
     + (both && !acc.length && far.length ? '<span class="muted">Tools behind each Service:</span><span><i class="rc-sw green"></i>called, and allowed for its callers</span><span><i class="rc-sw red"></i>called by a caller the captured allowlist does not allow</span><span><i class="rc-sw amber"></i>allowed, may have run inside run_code (Code Mode does not log which tools); or in an agent\'s config on a server no allowlist covers, so not enforced</span><span><i class="rc-sw grey"></i><span class="muted">faded, dashed:</span> allowed, not called (or configured, not allowed)</span><span class="muted">Click a box to keep its lines lit; an agent\'s panel below has Show only its traffic.</span>' : '')
     + (both && !acc.length && !far.length ? '<span class="muted">Click a box to keep its lines lit. An agent\'s panel below lists every tool it may call, and Show only its traffic draws them.</span>' : '')
