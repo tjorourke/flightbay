@@ -17,7 +17,7 @@ The **Why?** explainer takes one source and one destination and shows every chec
 
 For one agent at a time (what it may reach, what it used, and the policy that would lock it down to that), open the **Agents** tab, or click an agent's name in a finding. See [Agents tab](/desk/agent-reach/).
 
-Traffic is part of [Flightbay Enterprise](/enterprise/). It is on by default; `FLIGHTBAY_FEATURES=-traffic` turns it off (`activity`, the name of the gateway layer's old page, still works as a name). `AGENT=1` opens the desk on this page in [agent mode](/enterprise/#agent-mode).
+Traffic is part of [Flightbay Enterprise](/enterprise/). It is on by default; `FLIGHTBAY_FEATURES=-traffic` turns it off (`activity`, the name of the gateway layer's old page, still works as a name). `AGENT=1` opens the desk on this page in [agent mode](/desk/agent-mode/).
 
 ![Both layers: the GitHub tools behind each Service; behind mcp-demo, run_code and get_tool, and the allowed tools that may have run inside run_code in amber](/images/traffic-map.png)
 

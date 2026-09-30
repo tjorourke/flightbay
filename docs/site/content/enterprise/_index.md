@@ -43,6 +43,8 @@ AGENT=1 flightbay ui --live --context kind-mesh1
 flightbay ui --agent flightbay-DEMO-20260927T1842Z.tar.zst
 ```
 
+See [Agent mode](/desk/agent-mode/) for what it shows and how to work through the agents on Traffic.
+
 ## Checking what is on
 
 ```bash
