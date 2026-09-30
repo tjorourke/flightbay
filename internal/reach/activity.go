@@ -1227,7 +1227,11 @@ func (b *actBuilder) policyTools(c *cluster) {
 				continue
 			}
 			if why := notAccepted(p); why != "" {
-				b.a.Notes = append(b.a.Notes, fmt.Sprintf("%s %s/%s has an MCP authorization rule, but %s, so it is not applied and its allowlist is left out", p.Kind, p.Namespace, p.Name, why))
+				// Not attached is common (Agent Registry writes policies for
+				// routes that may not exist) and needs no note; rejected does.
+				if strings.Contains(why, "Accepted") {
+					b.a.Notes = append(b.a.Notes, fmt.Sprintf("%s %s/%s has an MCP authorization rule, but %s, so it is not applied and its allowlist is left out", p.Kind, p.Namespace, p.Name, why))
+				}
 				continue
 			}
 			deny := strings.EqualFold(s(az["action"]), "Deny")

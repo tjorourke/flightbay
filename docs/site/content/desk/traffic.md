@@ -46,7 +46,7 @@ The menu also lists the other flow sources in the capture (Hubble, VPC flow logs
 
 **Found by** (above) chooses the layer: ztunnel connections, agentgateway calls, or both. A workload that does both appears once on the left.
 
-With both layers on, the map has three columns: sources, the Services they reached, and **Tools**, every tool of the MCP servers behind each Service, called or not. The Service box counts them (`13 allowed · 2 called · 2 not allowed`), and each tool is coloured by what the captured allowlists say:
+With both layers on, the map has three columns: sources, the Services they reached, and **Tools**, every tool of the MCP servers behind each Service, called or not. The Service box counts them against the allowlist (`4 of 5 tools allowed · 2 called`: the fifth is not allowed to anyone; a tool can be allowed and called, so the two numbers overlap), and each tool is coloured by what the captured allowlists say:
 
 | Tool | Means |
 |---|---|

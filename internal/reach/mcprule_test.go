@@ -138,7 +138,7 @@ func TestActivityMCPRuleGuardsTheServer(t *testing.T) {
 	if si := server(a, "kagent/github"); si != nil && si.Guarded {
 		t.Fatalf("a policy that was not accepted guards nothing: %+v", si)
 	}
-	if !strings.Contains(strings.Join(a.Notes, "\n"), "not applied") {
+	if !strings.Contains(strings.Join(a.Notes, "\n"), "not applied") { // Accepted False is noted
 		t.Fatalf("the note says why it is left out: %v", a.Notes)
 	}
 }
