@@ -529,7 +529,7 @@ function tfSelPanel(d, a, nodes, callers, targets) {
     const es = (a.edges || []).filter(e => e.service === svc && (t => t && (t.kind === 'tool' ? t.label : actTargetLabel(t)) === tool)(targets.get(e.to)));
     const srvs = [...new Set((a.edges || []).filter(e => e.service === svc).map(e => targets.get(e.to)).filter(x => x?.kind === 'tool').map(x => x.server))];
     const info = (a.tools || []).find(t => t.name === tool && srvs.includes(t.server));
-    const guarded = info && (a.tools || []).some(t => t.server === info.server && (t.allowedFor || []).length);
+    const guarded = info && srvGuarded(a, info.server);
     const may = !info ? '' : guarded ? ((info.allowedFor || []).length ? `Allowed for <span class="mono">${esc(info.allowedFor.join(', '))}</span> by ${esc((info.policies || []).map(p => p.namespace + '/' + p.name).join(', '))}.` : 'The allowlist on this server gives it to no one.') : `No allowlist on ${esc(info.server)}: every caller may call it.`;
     return `<section class="panel mt"><div class="panel-head"><h2><span class="mono">${esc(tool)}</span> through ${esc(nodes.get(svc)?.label || (p => p[p.length - 3] + '/' + p[p.length - 1])(svc.slice(4).split('/')))}</h2><button class="ghost" id="act-selx" aria-label="Close">✕</button></div>
       <div class="panel-body" style="padding-bottom:0"><p class="rc-small" style="margin:0">${may}${(info?.configuredOn || []).length ? ` In the configuration of <span class="mono">${esc(info.configuredOn.join(', '))}</span>.` : ''}${info?.description ? `<br><span class="muted">${esc(info.description)}</span>` : ''}</p></div>
@@ -604,7 +604,8 @@ function tfMap(d, a, netE, gwE0, nodes, callers, targets, layer) {
   const acc = [];
   if (T.focus && layer !== 'network') {
     const who = taWho(a, [T.focus]);
-    for (const srv of taServers(a, who)) acc.push(toolAccess(a, who, srv));
+    // A server with no allowlist that the network keeps it from is not access.
+    for (const srv of taServers(a, who)) { const x = toolAccess(a, who, srv); if (!(x.blocked && !x.rows.some(r => r.calls))) acc.push(x); }
   }
   if (acc.length) {
     const accSrv = new Set(acc.map(x => x.server));
@@ -675,11 +676,12 @@ function tfMap(d, a, netE, gwE0, nodes, callers, targets, layer) {
         // without that, only a server with one Service is drawn.
         const mine = c?.serverServices?.[srv] || ((si?.services || []).length === 1 ? si.services : []);
         for (const svc of mine) {
-          (svcServers.get(svc) || svcServers.set(svc, new Set()).get(svc)).add(srv);
+          const rch = taReach(a, who.label, svc), blocked = rch.verdict === 'denied';
+          if (!blocked) (svcServers.get(svc) || svcServers.set(svc, new Set()).get(svc)).add(srv);
           const reached = [...onSvc.values()].some(x => x.from === n.id && x.to === svc) || ge.some(g => g.from === n.id && g.to === svc);
           if (reached) continue;
           if (!R.has(svc)) { const node = nodes.has(svc) ? mk(svc) : {id: svc, label: svcLabel(svc), sub: 'Service', risk: 'grey', icon: 'network', tip: svcLabel(svc)}; R.set(svc, node); right.push(node); }
-          ge.push({id: 'cfg|' + n.id + '|' + svc, from: n.id, to: svc, risk: 'grey', dash: true, cls: 'rg-unused', w: 1, tip: `${n.label} → ${svcLabel(svc)}\nConfigured for or allowed tools on ${srv}, and not seen calling it in the capture`});
+          ge.push({id: 'cfg|' + n.id + '|' + svc, from: n.id, to: svc, risk: blocked ? 'red' : 'grey', dash: true, cls: 'rg-unused', w: 1, tip: `${n.label} → ${svcLabel(svc)}\n${blocked ? `In its configuration for ${srv}, but the network blocks it${rch.why ? ': ' + rch.why : ''}` : `Configured for or allowed tools on ${srv}, and not seen calling it in the capture${rch.verdict === 'allowed' ? '\nThe network lets it reach this Service' : ''}`}`});
         }
       }
     }
@@ -701,7 +703,7 @@ function tfMap(d, a, netE, gwE0, nodes, callers, targets, layer) {
       const codeCalls = metas.some(mt => mt.mode === 'Code' && (per.get(svc + '|' + actTargetLabel(mt))?.calls || 0) > 0);
       for (const srv of servers) {
         const infos = (a.tools || []).filter(t => t.server === srv);
-        const guarded = infos.some(t => (t.allowedFor || []).length);
+        const guarded = srvGuarded(a, srv);
         const names = new Set([...infos.map(t => t.name), ...[...per.keys()].filter(k => k.startsWith(svc + '|')).map(k => k.slice(svc.length + 1)).filter(n => (a.targets || []).some(x => x.kind === 'tool' && x.server === srv && x.label === n))]);
         const idle = [];
         for (const name of names) {
@@ -795,14 +797,14 @@ function tfMap(d, a, netE, gwE0, nodes, callers, targets, layer) {
         ge.push({id: 'accl:' + id, from: T.focus, to: id, risk: 'green', cls: 'fb-gw', w: 2, tip: `${k} ×${num(n)}`});
       }
       if (idle.length) {
-        right.push({id: 'accfold:' + x.server, order: 2.5 + acc.indexOf(x) / 100, label: `${fbPlural(idle.length, 'more tool')} on ${lastPartJS(x.server)}`, sub: 'allowed, not called · click to open up', risk: 'grey', icon: 'folder', cls: 'rg-unusednode', tip: idle.map(r => r.name).join('\n')});
+        right.push({id: 'accfold:' + x.server, order: 2.5 + acc.indexOf(x) / 100, label: `${fbPlural(idle.length, 'more tool')} on ${lastPartJS(x.server)}`, sub: `${x.guarded ? 'allowed, not called' : 'no allowlist, not blocked'} · click to open up`, risk: x.guarded ? 'grey' : 'amber', icon: 'folder', cls: 'rg-unusednode', tip: idle.map(r => r.name).join('\n')});
         ge.push({id: 'accl:accfold:' + x.server, from: T.focus, to: 'accfold:' + x.server, risk: 'grey', dash: true, cls: 'rg-unused', w: 1, tip: `${idle.length} tools it may call on ${x.server} and did not`});
       }
     }
   }
   const nAcc = acc.reduce((n, x) => n + x.rows.length, 0);
   const toNote = [nAcc ? `${fbPlural(nAcc, 'tool')} it may call or called` : '', nSvc ? fbPlural(nSvc, 'destination') : '', nCalled ? `${num(nCalled)} tools, models or agents called` : far.length ? 'MCP tools behind them' : nOnSvc ? `${num(nOnSvc)} tools on them` : '', ghosts ? `${num(ghosts)} allowed, not used` : ''].filter(Boolean).join(' · ');
-  const svg = fbGraph({left, right, far, edges: ge, sel: T.sel, heads: [['server', 'From', fbPlural(left.length, 'source')], ['network', 'To', toNote], ['plug', 'Tools', (() => { const line = (svc, x) => x.openTools ? `${lastPartJS(svcLabel(svc))} · ${fbPlural(x.openTools, 'tool')}, no allowlist` : `${lastPartJS(svcLabel(svc))} · ${num(x.allowed)} allowed · ${num(x.called)} called`; const one = left.length === 1 && (nodes.get(left[0].id)?.agentType || callers.get(left[0].id)?.agentType || callers.get(left[0].id)?.agentic); let all = [...svcSum.entries()]; if (one) { const kept = all.filter(([, x]) => !x.openTools); if (!kept.length) return `${num(all.reduce((m, [, x]) => m + x.called, 0))} called`; all = kept; } if (all.length && all.length <= 2) return all.map(([svc, x]) => line(svc, x)); const t = all.reduce((m, [, x]) => ({allowed: m.allowed + x.allowed, open: m.open + (x.openTools || 0), openSrv: m.openSrv + (x.openTools ? 1 : 0), called: m.called + x.called}), {allowed: 0, open: 0, openSrv: 0, called: 0}); const l1 = `${num(t.allowed)} allowed · ${num(t.called)} called`; return t.open ? [l1, `${num(t.open)} on ${fbPlural(t.openSrv, 'server')} with no allowlist`] : l1; })()]]});
+  const svg = fbGraph({left, right, far, edges: ge, sel: T.sel, heads: [['server', 'From', fbPlural(left.length, 'source')], ['network', 'To', toNote], ['plug', 'Tools', (() => { const line = (svc, x) => x.openTools ? `${lastPartJS(svcLabel(svc))} · ${fbPlural(x.openTools, 'tool')}, no allowlist` : `${lastPartJS(svcLabel(svc))} · ${num(x.allowed)} allowed · ${num(x.called)} called`; const one = left.length === 1 && (nodes.get(left[0].id)?.agentType || callers.get(left[0].id)?.agentType || callers.get(left[0].id)?.agentic); let all = [...svcSum.entries()]; if (one) { const kept = all.filter(([svc, x]) => !x.openTools || taReach(a, callers.get(left[0].id)?.label || left[0].label, svc).verdict !== 'denied'); if (!kept.length) return `${num(all.reduce((m, [, x]) => m + x.called, 0))} called`; all = kept; } if (all.length && all.length <= 2) return all.map(([svc, x]) => line(svc, x)); const t = all.reduce((m, [, x]) => ({allowed: m.allowed + x.allowed, open: m.open + (x.openTools || 0), openSrv: m.openSrv + (x.openTools ? 1 : 0), called: m.called + x.called}), {allowed: 0, open: 0, openSrv: 0, called: 0}); const l1 = `${num(t.allowed)} allowed · ${num(t.called)} called`; return t.open ? [l1, `${num(t.open)} on ${fbPlural(t.openSrv, 'server')} with no allowlist`] : l1; })()]]});
   const legend = (acc.length ? `<span class="muted">Following ${esc(left.find(n => n.id === T.focus)?.label || '')}: a box for every tool it has access to on ${acc.map(x => esc(x.server)).join(', ')}.</span><span><i class="rc-sw green"></i>allowed, called</span><span><i class="rc-sw dash"></i><span class="muted">faded:</span> allowed, not called</span><span><i class="rc-sw red"></i>called, not allowed by the captured allowlist</span>` : '')
     + (both && !acc.length && far.length ? '<span class="muted">Tools behind each Service:</span><span><i class="rc-sw green"></i>called, and allowed for its callers</span><span><i class="rc-sw red"></i>called by a caller the captured allowlist does not allow</span><span><i class="rc-sw amber"></i>allowed, may have run inside run_code (Code Mode does not log which tools); or in an agent\'s config on a server no allowlist covers, so not enforced</span><span><i class="rc-sw grey"></i><span class="muted">faded, dashed:</span> allowed, not called (or configured, not allowed)</span><span class="muted">Click a box to keep its lines lit; an agent\'s panel below has Show only its traffic.</span>' : '')
     + (both && !acc.length && !far.length ? '<span class="muted">Click a box to keep its lines lit. An agent\'s panel below lists every tool it may call, and Show only its traffic draws them.</span>' : '')
@@ -1180,16 +1182,15 @@ function rcToolsTab(a, act) {
   // Tools it may call (an allowlist names its service account, or its own
   // configuration names them) and did not, in this capture.
   const sa = lastPartJS(a.identity?.serviceAccount || ''), me = rcName(a); // serviceAccount is ns/name
-  const forMe = w => w === a.namespace + '/' + sa || w === 'service account ' + sa;
-  const mine = t => (t.allowedFor || []).some(forMe) || (t.configuredOn || []).includes(me);
+  const whoA = taWho(act, [id], a.namespace, sa);
+  const mine = t => taAllowed(t, whoA) || (t.configuredOn || []).includes(me);
   const calledNames = new Set(tools.map(({t}) => t.server + '/' + t.label));
   const idle = (act.tools || []).filter(t => mine(t) && !calledNames.has(t.server + '/' + t.name));
   const idleBy = {};
   idle.forEach(t => (idleBy[t.server] ||= []).push(t));
-  const whoA = taWho(act, [id], a.namespace, sa);
   const accessPanel = taPanel(act, whoA, taServers(act, whoA), `Tools ${me} may call`);
   const idlePanel0 = idle.length ? `<section class="panel mt"><div class="panel-head"><h2>May call, did not</h2><small class="muted">${fbPlural(idle.length, 'tool')} an allowlist or its own configuration gives ${esc(me)} that it did not call in this capture. Candidates to take away.</small></div><div class="panel-body">
-    ${Object.entries(idleBy).map(([srv, ts]) => `<p style="margin:0 0 8px"><strong class="mono">${esc(srv)}</strong> <span class="mono rc-small">${ts.map(t => esc(t.name)).join(', ')}</span></p><p class="muted rc-small" style="margin:0 0 12px">${esc([...new Set(ts.flatMap(t => [...(t.allowedFor || []).filter(forMe).map(() => 'allowed by ' + (t.policies || []).map(p => p.namespace + '/' + p.name).join(', ')), ...((t.configuredOn || []).includes(me) ? ['in its configured tool list'] : [])]))].join('; '))}</p>`).join('')}</div></section>` : '';
+    ${Object.entries(idleBy).map(([srv, ts]) => `<p style="margin:0 0 8px"><strong class="mono">${esc(srv)}</strong> <span class="mono rc-small">${ts.map(t => esc(t.name)).join(', ')}</span></p><p class="muted rc-small" style="margin:0 0 12px">${esc([...new Set(ts.flatMap(t => [...(taAllowed(t, whoA) ? [0] : []).map(() => 'allowed by ' + (t.policies || []).map(p => p.namespace + '/' + p.name).join(', ')), ...((t.configuredOn || []).includes(me) ? ['in its configured tool list'] : [])]))].join('; '))}</p>`).join('')}</div></section>` : '';
   void idlePanel0;
   if (!es.length) return accessPanel + `<section class="panel mt"><div class="empty"><strong>No calls through agentgateway</strong>No agentgateway gateway or waypoint in the capture logged a request from ${esc(me)}. Calls it makes directly, not through a gateway, are on the Traffic page as connections, without tool names.</div></section>`;
   const tbl = (title, head, rows, note) => rows.length ? `<section class="panel mt"><div class="panel-head"><h2>${esc(title)}</h2>${note ? `<small class="muted">${note}</small>` : ''}</div><div class="table-scroll" style="max-height:48vh"><table><thead><tr>${head.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div></section>` : '';
@@ -1228,13 +1229,31 @@ function taServers(act, who) {
   const called = new Set((act.edges || []).filter(e => who.ids.includes(e.from)).map(e => (act.targets || []).find(x => x.id === e.to)).filter(x => x?.kind === 'tool').map(x => x.server));
   return [...new Set((act.tools || []).filter(t => mine(t) || called.has(t.server)).map(t => t.server).concat([...called]))].filter(Boolean);
 }
+// An allowlist entry: "ns/sa", "service account sa", "namespace ns",
+// "JWT subject u" or "any caller", with " (if ...)" when the rule also tests
+// something the capture cannot decide; that is read as allowed.
+function taMatch(w, who) {
+  w = w.replace(/ \(if .*\)$/, '');
+  return w === 'any caller' || (who.sa && (w === `${who.ns}/${who.sa}` || w === 'service account ' + who.sa)) || (who.ns && w === 'namespace ' + who.ns) || who.users.some(u => w === 'JWT subject ' + u);
+}
 function taAllowed(t, who) {
-  return (t.allowedFor || []).some(w => w === 'any caller' || (who.sa && (w === `${who.ns}/${who.sa}` || w === 'service account ' + who.sa)) || who.users.some(u => w === 'JWT subject ' + u));
+  return (t.allowedFor || []).some(w => taMatch(w, who)) && !(t.deniedFor || []).some(w => taMatch(w, who));
+}
+// An allowlist covers the server: an accepted Allow rule targets it, even
+// one that names no tool for anyone (false), which allows nothing.
+function srvGuarded(act, srv) {
+  return !!(act.servers || []).find(x => x.name === srv)?.guarded || (act.tools || []).some(t => t.server === srv && (t.allowedFor || []).length);
+}
+// Whether the network lets an agent reach a Service its configuration
+// points an MCP server at: allowed, denied or unknown (not evaluated).
+function taReach(act, label, svc) {
+  return act.reach?.[label]?.[svc] || {verdict: 'unknown'};
 }
 function toolAccess(act, who, server) {
   const tools = (act.tools || []).filter(t => t.server === server);
   const si = (act.servers || []).find(x => x.name === server) || {};
-  const guarded = tools.some(t => (t.allowedFor || []).length);
+  const guarded = srvGuarded(act, server);
+  const blocked = !guarded && (si.services || []).length > 0 && si.services.every(svc => taReach(act, who.label, svc).verdict === 'denied');
   const calls = new Map();
   for (const e of act.edges || []) {
     if (!who.ids.includes(e.from)) continue;
@@ -1262,11 +1281,14 @@ function toolAccess(act, who, server) {
   const n = rows.filter(r => r.allowed).length;
   let note;
   if (guarded) note = n ? `${fbPlural(n, 'tool')}: what the allowlist ${policies.join(', ')} gives ${who.label}.` : `The allowlist ${policies.join(', ')} names no tool for ${who.label}, so it may call none.`;
+  else if (blocked) note = `No agentgateway allowlist covers ${server}, but the network blocks ${who.label} from reaching it${taReach(act, who.label, si.services[0]).why ? ': ' + taReach(act, who.label, si.services[0]).why : ''}.`;
   else if (si.hasList) note = `No agentgateway allowlist covers ${server}, so nothing enforces which tools ${who.label} calls: it can call all ${fbPlural(n, 'tool')} the server lists, whatever its own configuration says.`;
   else note = `No agentgateway allowlist covers ${server}, so nothing enforces which tools ${who.label} calls: it can call every tool the server offers, whatever its own configuration says. Its tool list is not in the capture (it is outside the cluster, and agentgateway does not log tools/list), so these ${fbPlural(n, 'tool')} are only the ones known from calls, other allowlists and agent configuration; it may offer more.`;
+  if ((si.unread || []).length) note += ` Flightbay could not read ${fbPlural(si.unread.length, 'rule expression')} on this server, so what ${si.unread.length > 1 ? 'they allow' : 'it allows'} is not shown: ${si.unread.join(' | ')}`;
+  if ((si.denyAll || []).length) note += ` A Deny rule refuses every tool to ${si.denyAll.join(', ')}.`;
   if (meta.run_code) note += ` It called run_code ${fbPlural(meta.run_code, 'time')} (Code Mode): agentgateway checks each tool its code calls against the same allowlist, but does not log which, so every allowed tool it did not call directly may have run inside run_code.`;
   if (meta.get_tool) note += ` It looked tools up with get_tool ${fbPlural(meta.get_tool, 'time')} (Search mode); the logs do not say which.`;
-  return {server, rows, guarded, allowedN: n, note, meta};
+  return {server, rows, guarded, blocked, allowedN: n, note, meta};
 }
 function taTable(acc) {
   const flag = r => r.viaCode ? '<span class="uz-st tried" title="Code Mode: its run_code calls may have used this tool; the logs do not say">allowed, may have run in run_code</span>' : !r.allowed && r.calls ? '<span class="rc-badge red" title="Called, although the captured allowlist does not name it for this caller: the policy may be newer than the calls">called, not allowed</span>'
@@ -1302,7 +1324,7 @@ const tfFoundSet = {any: ['both', 'both'], ztunnel: ['network', 'both'], agentga
 function tfFoundMenu(d, a, hasNet, hasGw) {
   const T = S.tf, cur = T.found || 'any';
   const tools = a.tools || [];
-  const guarded = new Set(tools.filter(t => (t.allowedFor || []).length).map(t => t.server));
+  const guarded = new Set(tools.map(t => t.server).filter(srv => srvGuarded(a, srv)));
   const n = {any: (d.edges || []).length + (a.edges || []).length, ztunnel: (d.edges || []).length, agentgateway: (a.edges || []).length,
     called: tools.filter(t => t.calls).length, allowed: tools.filter(t => guarded.has(t.server) ? (t.allowedFor || []).length : t.declared || t.calls).length, configured: tools.filter(t => (t.configuredOn || []).length).length};
   const ok = k => k === 'any' || (k === 'ztunnel' ? hasNet : k === 'agentgateway' ? hasGw : hasGw || tools.length) && n[k];

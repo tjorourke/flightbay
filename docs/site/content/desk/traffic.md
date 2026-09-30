@@ -76,8 +76,20 @@ Click a box to keep its lines lit (the same trace hover shows) while you scroll 
 
 Clicking a tool box, or a caller's line to a Service, shows the same as a table under the map, **Tools … may call**.
 
-- When an agentgateway allowlist (`backend.mcp.authorization`) covers the server, the caller may call the tools a clause names for its service account or JWT subject, and those named for any caller. The allowlist is named. A caller it does not name may call none.
-- With no allowlist, the caller may call every tool the server offers: its tool list for a kagent server, or, for a server outside the cluster, the tools known from calls, other allowlists and agent configuration, with a note that it may offer more.
+- When an agentgateway allowlist (`backend.mcp.authorization` with action `Allow`) covers the server, the caller may call the tools a clause names for it, and those named for any caller. The allowlist is named. A caller it does not name may call none. A rule of `false`, which is how an approval flow starts, covers the server and allows nothing, so an agent that has not been approved shows no tools.
+- With no allowlist, the caller may call every tool the server offers: its tool list for a kagent server, or, for a server outside the cluster, the tools known from calls, other allowlists and agent configuration, with a note that it may offer more. The server is drawn only when the network lets the agent reach the Service its configuration points at; when a NetworkPolicy or mesh authorization blocks that path, the line to the Service is red and dashed and no tools are listed.
+
+Flightbay reads the rule as CEL, not by pattern: `||` and `&&` with brackets, `!`, `true` and `false`, `field == "value"` and `field in ["a", "b"]`. A clause admits:
+
+| The clause tests | Shown as |
+|---|---|
+| `source.identity.namespace` and `source.identity.serviceAccount` | `kagent/tom2-agent` |
+| `source.identity.serviceAccount` alone | `service account tom2-agent`, and a finding: any namespace with a service account of that name passes |
+| `source.identity.namespace` alone | `namespace kagent` |
+| `jwt.sub`, or another JWT claim | `JWT subject alice`, `JWT team sre` |
+| none of these | `any caller` |
+
+A clause with no `mcp.tool.name` test gives its callers every tool of the server. Anything else a clause tests (a method call such as `jwt.groups.exists(...)`, a negation, another field) cannot be decided from a snapshot: the caller is shown with `(if ...)` and counted as allowed. Rules with action `Deny` take tools away from the callers they name. A policy whose `Accepted` or `Attached` condition is `False` is left out, with a note, because the gateway leaves it out too. An expression Flightbay cannot parse at all is listed under the server, and what it allows is not shown.
 
 Each tool says **allowed, called**, **allowed, not called**, or **called, not allowed** (called although the captured allowlist does not give it to this caller: the policy may be newer than the calls), with the calls and whether the agent's own configuration lists it.
 

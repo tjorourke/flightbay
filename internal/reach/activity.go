@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -36,6 +35,16 @@ type Activity struct {
 	Last     time.Time     `json:"last"`
 	Clusters []string      `json:"clusters"`
 	Coverage []ActCoverage `json:"coverage"`
+	// Reach says, for each agent, whether the network lets it reach the
+	// Services its own configuration points its MCP servers at: agent ns/name
+	// -> svc:<id> -> the verdict of NetworkPolicy and mesh authorization.
+	Reach map[string]map[string]ActReach `json:"reach,omitempty"`
+}
+
+// ActReach is whether an agent can reach one Service, and why.
+type ActReach struct {
+	Verdict string `json:"verdict"` // allowed, denied, unknown
+	Why     string `json:"why,omitempty"`
 }
 
 // ActTotals sums the whole report.
@@ -178,7 +187,9 @@ type ToolInfo struct {
 	// AllowedFor lists who an agentgateway MCP authorization rule allows to
 	// call it ("kagent/demo", "jwt alice", "any caller"), with the policy.
 	AllowedFor []string `json:"allowedFor,omitempty"`
-	Policies   []Ref    `json:"policies,omitempty"`
+	// DeniedFor lists who an MCP authorization rule with action Deny refuses.
+	DeniedFor []string `json:"deniedFor,omitempty"`
+	Policies  []Ref    `json:"policies,omitempty"`
 	// ConfiguredOn lists the agents whose configuration names it (a kagent
 	// Agent's toolNames, or an ALLOWED_TOOLS variable).
 	ConfiguredOn []string `json:"configuredOn,omitempty"`
@@ -205,6 +216,19 @@ type ServerInfo struct {
 	// its kagent URL, an agent's MCP_SERVERS_CONFIG URL, or the Service its
 	// calls went through.
 	Services []string `json:"services,omitempty"`
+	// Guarded: an accepted agentgateway MCP authorization rule with action
+	// Allow covers the server, so a caller may call only what it names. A
+	// rule that names no tool for anyone (false) guards it too: it allows
+	// nothing.
+	Guarded bool `json:"guarded,omitempty"`
+	// AllowAll and DenyAll list callers a rule allows or refuses every tool
+	// of the server, with no tool named.
+	AllowAll []string `json:"allowAll,omitempty"`
+	DenyAll  []string `json:"denyAll,omitempty"`
+	Policies []Ref    `json:"policies,omitempty"` // the MCP authorization rules on it
+	// Unread are rule expressions Flightbay could not read; what they allow
+	// is not shown.
+	Unread []string `json:"unread,omitempty"`
 }
 
 // ToolChanges compares tools and callers with a baseline capture.
@@ -326,6 +350,12 @@ type actBuilder struct {
 	pending  []pendingTool                  // configured tools whose server is decided once everything is read
 	svcOf    map[string][]string            // server -> the Services it is reached through
 	agentSvc map[string]map[string][]string // agent ns/name -> server -> Services its config points at
+	// From agentgateway MCP authorization rules, per server.
+	guard    map[string][]Ref    // accepted Allow rules covering it
+	allowAll map[string][]string // callers allowed every tool
+	denyAll  map[string][]string // callers refused every tool
+	unread   map[string][]string // expressions not read
+	noNS     []FindingItem       // service accounts named without a namespace
 }
 
 // pendingTool is a tool an agent is configured for, with the servers it
@@ -339,7 +369,8 @@ func buildActivity(ws *store.Workspace) Activity {
 	a := Activity{Callers: []ActCaller{}, Targets: []ActTarget{}, Edges: []ActEdge{}, Denials: []ActDenial{}, Tools: []ToolInfo{},
 		Findings: []Finding{}, Gateways: []string{}, Notes: []string{}, Clusters: ws.Clusters(), Coverage: []ActCoverage{}, Servers: []ServerInfo{}}
 	b := &actBuilder{a: &a, callers: map[string]*ActCaller{}, targets: map[string]*ActTarget{}, edges: map[[2]string]*ActEdge{},
-		denials: map[string]*ActDenial{}, tools: map[string]*ToolInfo{}, cov: map[string]*ActCoverage{}, pods: map[string]map[string]bool{}, allow: map[string]map[string]bool{}, servers: map[string]string{}, svcOf: map[string][]string{}, agentSvc: map[string]map[string][]string{}}
+		denials: map[string]*ActDenial{}, tools: map[string]*ToolInfo{}, cov: map[string]*ActCoverage{}, pods: map[string]map[string]bool{}, allow: map[string]map[string]bool{}, servers: map[string]string{}, svcOf: map[string][]string{}, agentSvc: map[string]map[string][]string{},
+		guard: map[string][]Ref{}, allowAll: map[string][]string{}, denyAll: map[string][]string{}, unread: map[string][]string{}}
 	inventory := false
 	for _, cl := range ws.Clusters() {
 		c := newCluster(ws, cl)
@@ -855,6 +886,8 @@ func (b *actBuilder) finish(inventory bool) {
 		}
 	}
 	b.placeConfigured()
+	b.applyServerRules()
+	b.configuredReach()
 	b.serverSummary()
 	for _, ca := range b.callers {
 		if m := b.agentSvc[ca.Label]; m != nil && (ca.Kind == "workload" || ca.Kind == "identity") {
@@ -921,6 +954,7 @@ func (b *actBuilder) finish(inventory bool) {
 	}
 	a.Findings = append(a.Findings, b.findings()...)
 	a.Findings = append(a.Findings, b.unenforcedLists()...)
+	a.Findings = append(a.Findings, b.noNamespaceFinding()...)
 }
 
 // serverOf matches a called tool to a captured MCP server.
@@ -1171,59 +1205,65 @@ func nonEmpty(xs ...string) []string {
 	return out
 }
 
-var (
-	reSA     = regexp.MustCompile(`serviceAccount\s*==\s*"([^"]+)"`)
-	reNS     = regexp.MustCompile(`identity\.namespace\s*==\s*"([^"]+)"`)
-	reJWT    = regexp.MustCompile(`jwt\.sub\s*==\s*"([^"]+)"`)
-	reToolIn = regexp.MustCompile(`mcp\.tool\.name\s+in\s*\[([^\]]*)\]`)
-	reToolEq = regexp.MustCompile(`mcp\.tool\.name\s*==\s*"([^"]+)"`)
-	reQuoted = regexp.MustCompile(`"([^"]+)"`)
-)
-
-// policyTools reads the tools agentgateway MCP authorization rules allow,
-// and for whom. A rule is a CEL expression; each || clause that names tools
-// (mcp.tool.name in [...] or == "...") is read with the caller it names
-// (a service account, a JWT subject, or nobody in particular).
+// policyTools reads the tools agentgateway MCP authorization rules allow or
+// refuse, and for whom. Each rule is read into its ways through (see
+// readMCPRule): the callers each admits and the tools it covers. A policy
+// its controller did not accept is left out, as the gateway leaves it out.
 func (b *actBuilder) policyTools(c *cluster) {
 	for _, g := range []struct{ group, res string }{{"agentgateway.dev", "agentgatewaypolicies"}, {"enterpriseagentgateway.solo.io", "enterpriseagentgatewaypolicies"}} {
 		for _, p := range c.list(g.group, g.res) {
 			az := m(path(p.Obj, "spec", "backend", "mcp", "authorization"))
-			if az == nil || strings.EqualFold(s(az["action"]), "Deny") {
+			if az == nil {
 				continue
 			}
-			servers := c.policyServers(p)
+			if why := notAccepted(p); why != "" {
+				b.a.Notes = append(b.a.Notes, fmt.Sprintf("%s %s/%s has an MCP authorization rule, but %s, so it is not applied and its allowlist is left out", p.Kind, p.Namespace, p.Name, why))
+				continue
+			}
+			deny := strings.EqualFold(s(az["action"]), "Deny")
+			raw := c.policyServers(p)
+			servers := b.canonicalServers(c, p.Namespace, raw)
+			if !deny {
+				for _, srv := range servers {
+					if !hasRef(b.guard[srv], p) {
+						b.guard[srv] = append(b.guard[srv], *refOf(p))
+					}
+				}
+			}
 			for _, expr := range strList(l(path(az, "policy", "matchExpressions"))) {
-				for _, clause := range strings.Split(expr, "||") {
-					var tools []string
-					for _, mm := range reToolIn.FindAllStringSubmatch(clause, -1) {
-						for _, q := range reQuoted.FindAllStringSubmatch(mm[1], -1) {
-							tools = append(tools, q[1])
-						}
+				clauses, ok := readMCPRule(expr)
+				if !ok {
+					for _, srv := range servers {
+						b.unread[srv] = union(b.unread[srv], []string{strings.Join(strings.Fields(expr), " ")})
 					}
-					for _, mm := range reToolEq.FindAllStringSubmatch(clause, -1) {
-						tools = append(tools, mm[1])
-					}
-					if len(tools) == 0 {
-						continue
-					}
-					who := "any caller"
-					if mm := reSA.FindStringSubmatch(clause); mm != nil {
-						who = mm[1]
-						if ns := reNS.FindStringSubmatch(clause); ns != nil {
-							who = ns[1] + "/" + mm[1]
-						} else {
-							who = "service account " + mm[1]
-						}
-					} else if mm := reJWT.FindStringSubmatch(clause); mm != nil {
-						who = "JWT subject " + mm[1]
+					continue
+				}
+				for _, cl := range clauses {
+					for _, sa := range cl.saNoNS {
+						b.noNS = append(b.noNS, FindingItem{Target: p.Namespace + "/" + p.Name, Class: "service account " + sa, Access: strings.Join(servers, ", "),
+							Note: fmt.Sprintf("the rule matches service account %s in any namespace; add source.identity.namespace == \"<namespace>\" to the same clause", sa)})
 					}
 					for _, srv := range servers {
-						for _, t := range tools {
+						if cl.tools == nil {
+							if deny {
+								b.denyAll[srv] = union(b.denyAll[srv], cl.who)
+							} else {
+								b.allowAll[srv] = union(b.allowAll[srv], cl.who)
+							}
+							continue
+						}
+						for _, t := range cl.tools {
 							// Multiplexed MCP prefixes tools with the target; a rule
 							// often names both spellings.
-							t = strings.TrimPrefix(t, srv+"_")
+							for _, pre := range append([]string{lastPart(srv)}, raw...) {
+								t = strings.TrimPrefix(t, pre+"_")
+							}
 							ti := b.tool(srv, t)
-							ti.AllowedFor = union(ti.AllowedFor, []string{who})
+							if deny {
+								ti.DeniedFor = union(ti.DeniedFor, cl.who)
+							} else {
+								ti.AllowedFor = union(ti.AllowedFor, cl.who)
+							}
 							if !hasRef(ti.Policies, p) {
 								ti.Policies = append(ti.Policies, *refOf(p))
 							}
@@ -1233,6 +1273,120 @@ func (b *actBuilder) policyTools(c *cluster) {
 			}
 		}
 	}
+}
+
+// canonicalServers files the servers a policy names under the names calls
+// and tool lists use: a kagent server's ns/name when the target name, or the
+// Service the policy is attached to, is how that server is reached.
+func (b *actBuilder) canonicalServers(c *cluster, ns string, names []string) []string {
+	var out []string
+	for _, n := range names {
+		if x := b.servers[n]; x != "" {
+			out = union(out, []string{x})
+			continue
+		}
+		found := false
+		if sv := c.svcByKey[key(ns, n)]; sv != nil {
+			for srv, svcs := range b.svcOf {
+				for _, id := range svcs {
+					if id == "svc:"+sv.id && strings.Contains(srv, "/") {
+						out, found = union(out, []string{srv}), true
+					}
+				}
+			}
+		}
+		if !found {
+			out = union(out, []string{n})
+		}
+	}
+	return out
+}
+
+// notAccepted says why a policy is not in force, from its Accepted and
+// Attached conditions; empty when it is, or when the capture has no status.
+func notAccepted(p *store.Object) string {
+	for _, a := range l(path(p.Obj, "status", "ancestors")) {
+		for _, cd := range l(m(a)["conditions"]) {
+			cm := m(cd)
+			if t := s(cm["type"]); (t == "Accepted" || t == "Attached") && s(cm["status"]) == "False" {
+				msg := first(s(cm["message"]), s(cm["reason"]))
+				return fmt.Sprintf("its %s condition is False (%s)", t, msg)
+			}
+		}
+	}
+	return ""
+}
+
+// applyServerRules gives the callers a rule allows (or refuses) every tool
+// of a server each tool known for it, once every tool is known.
+func (b *actBuilder) applyServerRules() {
+	for _, t := range b.tools {
+		if who := b.allowAll[t.Server]; len(who) > 0 {
+			t.AllowedFor = union(t.AllowedFor, who)
+		}
+		if who := b.denyAll[t.Server]; len(who) > 0 {
+			t.DeniedFor = union(t.DeniedFor, who)
+		}
+	}
+}
+
+// configuredReach evaluates, for each agent, the network path to the
+// Services its configuration reaches its MCP servers at, so an open server
+// it cannot reach is not reported as one it can call.
+func (b *actBuilder) configuredReach() {
+	for who, bySrv := range b.agentSvc {
+		for _, svcs := range bySrv {
+			for _, id := range svcs {
+				for _, c := range b.clusters {
+					w, sv := c.findWorkload(who), c.findService(id)
+					if w == nil || sv == nil {
+						continue
+					}
+					h := c.evalHop(w, sv)
+					r := ActReach{Verdict: h.verdict}
+					if len(h.reasons) > 0 {
+						r.Why = h.reasons[0]
+					}
+					if b.a.Reach == nil {
+						b.a.Reach = map[string]map[string]ActReach{}
+					}
+					if b.a.Reach[who] == nil {
+						b.a.Reach[who] = map[string]ActReach{}
+					}
+					b.a.Reach[who][id] = r
+					break
+				}
+			}
+		}
+	}
+}
+
+// guarded says whether an allowlist covers the server.
+func (b *actBuilder) guarded(srv string) bool {
+	return len(b.guard[srv]) > 0
+}
+
+// noNamespaceFinding: a rule that names a service account without a
+// namespace lets a service account of that name in any namespace in.
+func (b *actBuilder) noNamespaceFinding() []Finding {
+	if len(b.noNS) == 0 {
+		return nil
+	}
+	seen := map[string]bool{}
+	var items []FindingItem
+	for _, it := range b.noNS {
+		k := it.Target + "|" + it.Class
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		items = append(items, it)
+	}
+	return []Finding{{Severity: "medium", Title: "An MCP allowlist names a service account without its namespace",
+		Detail: "The rule matches on source.identity.serviceAccount alone. A workload in any namespace in the mesh whose service account has the same name passes it, so whoever can create a service account in another namespace gets the same tools.",
+		Items:  items,
+		Advice: []string{"Test the namespace in the same clause as the service account: source.identity.namespace == \"kagent\" && source.identity.serviceAccount == \"<agent>\"."},
+		Source: activityGuide, Docs: "https://docs.solo.io/agentgateway/kubernetes/latest/mcp/mcp-access/"}}
 }
 
 func hasRef(rs []Ref, o *store.Object) bool {
@@ -1392,9 +1546,14 @@ func (b *actBuilder) serverSummary() {
 		}
 		si.Meta[t.Label] += t.Requests
 	}
+	for n := range b.guard {
+		get(n)
+	}
 	for n, si := range by {
 		si.ToolMode = modes[n]
 		si.Services = b.svcOf[n]
+		si.Guarded, si.Policies = b.guarded(n), b.guard[n]
+		si.AllowAll, si.DenyAll, si.Unread = b.allowAll[n], b.denyAll[n], b.unread[n]
 		b.a.Servers = append(b.a.Servers, *si)
 	}
 	sort.Slice(b.a.Servers, func(i, j int) bool {
@@ -1540,7 +1699,7 @@ func (b *actBuilder) unenforcedLists() []Finding {
 	cfg := map[string]map[string]int{} // server -> agent -> tools configured
 	for _, t := range b.tools {
 		total[t.Server]++
-		if len(t.AllowedFor) > 0 {
+		if len(t.AllowedFor) > 0 || b.guarded(t.Server) {
 			guarded[t.Server] = true
 		}
 		for _, who := range t.ConfiguredOn {
