@@ -49,9 +49,26 @@ function fbFindingsWire(st, list, key) {
 // far, when given, is a third column; its edges run from a right-hand box
 // to a far box, and an edge's by lists the left-hand boxes it stands for,
 // so hovering one of those traces through to the far column.
-function fbGraph({left, right, far = [], edges, heads, sel}) {
+function fbGraph({left, right, far = [], edges, heads: heads0, sel}) {
+  let heads = heads0;
   const bw = 250, bh = 42, vg = 10, gap = Math.max(220, Math.min(420, 90 + edges.length * 4)), gap2 = 200, HB = (heads || []).some(h => Array.isArray(h[2]) && h[2].length > 1) ? 64 : 52, top = HB + 16;
-  const L = [...left], R = [...right], F = [...far];
+  const L = [...left];
+  let R = [...right], F = [...far];
+  // A selected source draws only what it reaches: its destinations, and the
+  // tools behind them it called or may call. Every source stays, so the
+  // next one is a click away.
+  if (sel && L.some(n => n.id === sel)) {
+    const near = new Set([sel]);
+    for (const e of edges) {
+      if (e.from === sel) near.add(e.to);
+      if ((e.by || []).includes(sel)) { near.add(e.from); near.add(e.to); }
+    }
+    if (near.size > 1) {
+      R = R.filter(n => near.has(n.id)); F = F.filter(n => near.has(n.id));
+      const who = L.find(n => n.id === sel)?.label || '';
+      heads = [heads[0], [heads[1][0], heads[1][1], `${fbPlural(R.length, 'destination')} of ${who}`], heads[2] && [heads[2][0], heads[2][1], `${fbPlural(F.length, 'tool')} it called or may call`]];
+    }
+  }
   const li = new Map(L.map((n, i) => [n.id, i]));
   const bary = (n, map, key) => { const xs = edges.filter(e => e[key] === n.id).map(e => map.get(e[key === 'to' ? 'from' : 'to'])).filter(x => x !== undefined); return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 1e9; };
   R.sort((a, b) => (a.order ?? 1) - (b.order ?? 1) || bary(a, li, 'to') - bary(b, li, 'to') || a.label.localeCompare(b.label));
@@ -122,11 +139,12 @@ function fbGraphWire(st, key, onPick) {
     onPick(g.dataset.rgid);
   });
   rg.querySelectorAll('[data-fbe]').forEach(g => g.onclick = ev => { ev.stopPropagation(); if (!vp.dataset.dragged) onPick(g.dataset.fbe); });
-  vp.onclick = () => { if (!vp.dataset.dragged && st.pin) { st.pin = ''; restore(); } };
+  vp.onclick = () => { if (!vp.dataset.dragged && st.pin) { const redraw = st.sel === st.pin; st.pin = ''; restore(); if (redraw) { st.sel = ''; render(); } } };
   if (!window.fbPinEsc) {
     window.fbPinEsc = true;
     document.addEventListener('keydown', e => {
       if (e.key !== 'Escape' || document.querySelector('.modal-backdrop') || !S.tf.pin) return;
+      if (S.tf.sel === S.tf.pin) { S.tf.pin = ''; S.tf.sel = ''; render(); return; }
       S.tf.pin = '';
       document.querySelectorAll('#rg-svg').forEach(r => { r.classList.remove('rg-hl'); r.querySelectorAll('.on,.rg-pin').forEach(y => y.classList.remove('on', 'rg-pin')); });
     });
@@ -831,6 +849,7 @@ function tfMap(d, a, netE, gwE0, nodes, callers, targets, layer) {
   }
   const nAcc = acc.reduce((n, x) => n + x.rows.length, 0);
   const toNote = [nAcc ? `${fbPlural(nAcc, 'tool')} it may call or called` : '', nSvc ? fbPlural(nSvc, 'destination') : '', nCalled ? `${num(nCalled)} tools, models or agents called` : far.length ? 'MCP tools behind them' : nOnSvc ? `${num(nOnSvc)} tools on them` : '', ghosts ? `${num(ghosts)} allowed, not used` : ''].filter(Boolean).join(' · ');
+  T.selSrc = left.some(n => n.id === T.sel) ? T.sel : ''; // a selected source redraws the map, so it fits again
   const svg = fbGraph({left, right, far, edges: ge, sel: T.sel, heads: [['server', 'From', fbPlural(left.length, 'source')], ['network', 'To', toNote], ['plug', 'Tools', (() => { const line = (svc, x) => x.openTools ? `${lastPartJS(svcLabel(svc))} · ${fbPlural(x.openTools, 'tool')}, no allowlist` : `${lastPartJS(svcLabel(svc))} · ${tfToolSum(x)}`; const one = left.length === 1 && (nodes.get(left[0].id)?.agentType || callers.get(left[0].id)?.agentType || callers.get(left[0].id)?.agentic); let all = [...svcSum.entries()]; if (one) { const kept = all.filter(([svc, x]) => !x.openTools || taReach(a, callers.get(left[0].id)?.label || left[0].label, svc).verdict !== 'denied'); if (!kept.length) return `${num(all.reduce((m, [, x]) => m + x.called, 0))} called`; all = kept; } if (all.length && all.length <= 2) return all.map(([svc, x]) => line(svc, x)); const t = all.reduce((m, [, x]) => ({total: m.total + (x.openTools ? 0 : x.total || 0), allowed: m.allowed + x.allowed, denied: m.denied + (x.denied || 0), open: m.open + (x.openTools || 0), openSrv: m.openSrv + (x.openTools ? 1 : 0), called: m.called + x.called}), {total: 0, allowed: 0, denied: 0, open: 0, openSrv: 0, called: 0}); const l1 = tfToolSum(t); return t.open ? [l1, `${num(t.open)} on ${fbPlural(t.openSrv, 'server')} with no allowlist`] : l1; })()]]});
   const legend = (acc.length ? `<span class="muted">Following ${esc(left.find(n => n.id === T.focus)?.label || '')}: a box for every tool it has access to on ${acc.map(x => esc(x.server)).join(', ')}.</span><span><i class="rc-sw green"></i>allowed, called</span><span><i class="rc-sw dash"></i><span class="muted">faded:</span> allowed, not called</span><span><i class="rc-sw red"></i>called, not allowed by the captured allowlist</span>` : '')
     + (both && !acc.length && far.length ? '<span class="muted">Tools behind each Service:</span><span><i class="rc-sw green"></i>called, and allowed for its callers</span><span><i class="rc-sw red"></i>called by a caller the captured allowlist does not allow</span><span><i class="rc-sw amber"></i>allowed, may have run inside run_code (Code Mode does not log which tools); or in an agent\'s config on a server no allowlist covers, so not enforced</span><span><i class="rc-sw grey"></i><span class="muted">faded, dashed:</span> allowed, not called (or configured, not allowed)</span><span class="muted">Click a box to keep its lines lit; an agent\'s panel below has Show only its traffic.</span>' : '')
@@ -1040,7 +1059,7 @@ after.traffic = () => {
       if (T.ex?.key !== e.id) { await tfRunExplain(e.id, from.label, to.kind === 'service' ? to.label : to.label, e.cluster); const w = $('#tf-why'); if (w && T.sel === e.id) { w.innerHTML = tfExplainBody(T.ex); tfWireExplain(); } }
     });
   };
-  fbGraphWire(T, 'tf|' + (T.layer || '') + '|' + Object.entries(A.kinds).filter(([, v]) => v).map(([k]) => k).join(',') + '|' + T.flag + '|' + T.ns + '|' + T.q + '|' + T.focus + '|' + T.agents + '|' + Object.keys(T.fexp).join(',') + '|' + Object.keys(T.texp || {}).join(',') + '|' + (T.showGhosts ? 'g' : '') + '|' + (T.tools || '') + (T.gfull ? '|full' : ''), select);
+  fbGraphWire(T, 'tf|' + (T.layer || '') + '|' + Object.entries(A.kinds).filter(([, v]) => v).map(([k]) => k).join(',') + '|' + T.flag + '|' + T.ns + '|' + T.q + '|' + T.focus + '|' + T.agents + '|' + Object.keys(T.fexp).join(',') + '|' + Object.keys(T.texp || {}).join(',') + '|' + (T.showGhosts ? 'g' : '') + '|' + (T.tools || '') + '|' + (T.selSrc || '') + (T.gfull ? '|full' : ''), select);
   document.querySelectorAll('[data-tfsel]').forEach(tr => tr.onclick = ev => { if (!ev.target.closest('[data-tfwhy]')) select(tr.dataset.tfsel); });
   document.querySelectorAll('[data-actsel]').forEach(tr => tr.onclick = () => select(tr.dataset.actsel));
   document.querySelectorAll('[data-tfwhy]').forEach(b => b.onclick = () => select(b.dataset.tfwhy));
