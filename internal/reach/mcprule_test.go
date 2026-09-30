@@ -80,7 +80,7 @@ func TestActivityMCPRuleGuardsTheServer(t *testing.T) {
 		ws := activityWS(t, "Lists", "list_issues", "get_issue")
 		body := map[string]any{"spec": map[string]any{
 			"targetRefs": []any{map[string]any{"kind": "Service", "name": "github-mcp"}},
-			"backend": map[string]any{"mcp": map[string]any{"authorization": map[string]any{"action": "Allow", "policy": map[string]any{"matchExpressions": []any{expr}}}}}}}
+			"backend":    map[string]any{"mcp": map[string]any{"authorization": map[string]any{"action": "Allow", "policy": map[string]any{"matchExpressions": []any{expr}}}}}}}
 		if status != nil {
 			body["status"] = status
 		}
