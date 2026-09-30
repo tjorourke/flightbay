@@ -505,6 +505,12 @@ async function trafficPage() {
   const gwAll = (a.edges || []).filter(e => tfGwOk(e, terms, callers, targets));
   const netE = layer === 'gateway' ? [] : netAll.filter(e => common(e.from, e.to) && (!T.flag || (e.flags || []).includes(T.flag)));
   const gwE = layer === 'network' || T.flag ? [] : gwAll.filter(e => common(e.from, e.to) && (typedKind || A.kinds[targets.get(e.to)?.kind]));
+  // Agents with MCP servers in their configuration and no traffic at all
+  // (deployed a moment ago, say): drawn with the servers they are set up for.
+  const withEdges = new Set([...(d.edges || []), ...(a.edges || [])].map(e => e.from));
+  const lc = x => (x || '').toLowerCase();
+  const fresh = layer !== 'both' || T.flag ? [] : (a.callers || []).filter(c => c.serverServices && !withEdges.has(c.id) && (!T.focus || c.id === T.focus) && (!T.ns || c.namespace === T.ns)
+    && terms.every(tm => !tm.neg && (tm.text ? lc(c.label).includes(lc(tm.text)) : ['from', 'caller', 'kind'].includes(tm.key) && (tm.key === 'kind' ? tm.val === 'agent' : lc(c.label).startsWith(lc(tm.val))))));
   const stat = (label, value, sub, attrs, cls = '', on = false) => `<div class="stat fb-statbtn ${on ? 'on' : ''}" ${attrs}><div class="eyebrow">${label}</div><div class="value ${cls}">${value}</div><p>${sub}</p></div>`;
   const netRefused = (d.edges || []).filter(e => e.denied > 0).length;
   const stats = `<div class="stats fb-stats">${stat('Connections', num(t.connections), `${fbPlural(t.edges || 0, 'edge')} from ztunnel`, 'data-tflayer="network" title="Only ztunnel connections"', '', layer === 'network')}
@@ -528,7 +534,7 @@ async function trafficPage() {
   const tabs = `<nav class="pst-tabs">${hasTraffic ? tab('map', 'Map') : ''}${feature('reach') ? tab('agents', 'Agents', nAg) : ''}${hasNet ? tab('edges', 'Connections', netE.length) : ''}${hasGw ? tab('calls', 'Calls', gwE.length) : ''}${hasGw ? tab('tools', 'Tools and models', nTools) : ''}${hasTraffic ? tab('refused', 'Refused', netRefused + (a.denials || []).length, 'amber') : ''}${hasGw ? tab('changes', 'Tool changes', nChanges, (ch?.described || []).length ? 'red' : '') : ''}${hasTraffic ? tab('explain', 'Why? Explain a connection') : ''}</nav>`;
   const nsOpts = `<select id="tf-ns"><option value="">All namespaces</option>${(d.namespaces || []).map(n => `<option ${T.ns === n ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>`;
   const lchips = hasNet && hasGw ? `<span class="rc-layer" style="margin:0 6px 0 0;padding:0 8px 0 0;border-left:0;border-right:1px solid var(--line)">${Object.entries(tfLayerName).map(([k, l]) => `<button class="chip ${layer === k ? 'on' : ''}" data-tflayer="${k}">${l}</button>`).join('')}</span>` : '';
-  const nAgents = [...(d.edges || []), ...(a.edges || [])].filter(e => isAgent(e.from)).length;
+  const nAgents = [...(d.edges || []), ...(a.edges || [])].filter(e => isAgent(e.from)).length + fresh.length;
   const achip = nAgents ? `<button class="chip ${T.agents ? 'on' : ''}" id="tf-agents" title="Only traffic from agents, MCP servers and agent gateways">Agents only <small>${nAgents}</small></button>` : '';
   const fchips = layer === 'gateway' ? '' : Object.entries(tfFlags).map(([k, [l]]) => { const n = (d.edges || []).filter(e => (e.flags || []).includes(k)).length; return n ? `<button class="chip ${T.flag === k ? 'on' : ''}" data-tfflag="${k}">${esc(l)} <small>${n}</small></button>` : ''; }).join('');
   const kindCount = k => (a.edges || []).filter(e => targets.get(e.to)?.kind === k).length;
@@ -542,7 +548,7 @@ async function trafficPage() {
   let body;
   if (T.tab === 'agents') return head('Traffic', `${esc(tfIntro)} <span class="ent-pill">Enterprise</span>`, '<button id="tf-term">&gt;_ fbtraffic in terminal</button>') + notes + stats + cov + findings + tabs + await reachBody();
   if (!hasNet && !hasGw && T.tab !== 'explain') body = '<section class="panel"><div class="empty"><strong>No traffic in this capture</strong>The page is read from ztunnel access logs (istio-system) and agentgateway request logs (gateways and waypoints). Collect those pods\' logs to fill it. You can still explain any pair on the Why? tab from the captured policy.</div></section>';
-  else if (T.tab === 'map') body = toolbar + tfFocusBar(fnode, netE, gwE) + tfMap(d, a, netE, gwE, nodes, callers, targets, layer) + sel;
+  else if (T.tab === 'map') body = toolbar + tfFocusBar(fnode, netE, gwE) + tfMap(d, a, netE, gwE, nodes, callers, targets, layer, fresh) + sel;
   else if (T.tab === 'edges') body = toolbar + tfEdges(netE, id => nodes.get(id)?.label || id) + sel;
   else if (T.tab === 'calls') body = toolbar + actCalls(gwE, callers, targets) + sel;
   else if (T.tab === 'tools') body = toolbarPlain + actTools(a, callers, gwAll, terms) + '<div class="mt"></div>' + actModels(a, gwAll, terms);
@@ -618,10 +624,10 @@ function tfSelPanel(d, a, nodes, callers, targets) {
   return net + actSel(a, callers, targets) + access + cw;
 }
 
-function tfMap(d, a, netE, gwE0, nodes, callers, targets, layer) {
+function tfMap(d, a, netE, gwE0, nodes, callers, targets, layer, fresh = []) {
   let gwE = gwE0;
   const T = S.tf;
-  if (!netE.length && !gwE.length) return '<section class="panel mt"><div class="empty"><strong>Nothing matches</strong>Change the layer, flag, namespace or filter.</div></section>';
+  if (!netE.length && !gwE.length && !fresh.length) return '<section class="panel mt"><div class="empty"><strong>Nothing matches</strong>Change the layer, flag, namespace or filter.</div></section>';
   T.texp ||= {};
   const ncls = n => !n ? 'grey' : n.kind === 'external' ? 'grey' : n.inMesh ? 'green' : 'amber';
   const icon = n => n?.kind === 'waypoint' ? 'router' : n?.kind === 'service' ? 'network' : n?.kind === 'external' ? 'cloud' : n?.agentType ? 'bot' : 'server';
@@ -679,6 +685,7 @@ function tfMap(d, a, netE, gwE0, nodes, callers, targets, layer) {
     if (!L.has(e.from)) L.set(e.from, mkCaller(e.from));
     if (!R.has(e.to)) R.set(e.to, mkTarget(e.to));
   });
+  fresh.forEach(c => { if (!L.has(c.id)) L.set(c.id, mkCaller(c.id)); });
   const left = [...L.values()], right = [...R.values()];
   const maxC = Math.max(1, ...netE.map(e => e.connections)), maxR = Math.max(1, ...gwE.map(e => e.requests));
   const ge = netE.map(e => ({id: e.id, from: e.from, to: e.to, risk: e.risk, dash: e.denied > 0 || e.verdict === 'denied', w: 1.2 + 3 * Math.log(1 + e.connections) / Math.log(1 + maxC),
