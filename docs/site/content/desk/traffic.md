@@ -89,6 +89,8 @@ Flightbay reads the rule as CEL, not by pattern: `||` and `&&` with brackets, `!
 | `jwt.sub`, or another JWT claim | `JWT subject alice`, `JWT team sre` |
 | none of these | `any caller` |
 
+An agent's configuration (`MCP_SERVERS_CONFIG`) often names a server its own way, such as `site-daylight` for a Service whose waypoint route sends to the backend target `daylight`. Flightbay follows the Service's route to the target, so the agent's configured tools, the allowlist and the calls land on one server. A rule that names both `x` and a prefixed spelling (`site_daylight_x`) counts as one tool.
+
 A clause with no `mcp.tool.name` test gives its callers every tool of the server. Anything else a clause tests (a method call such as `jwt.groups.exists(...)`, a negation, another field) cannot be decided from a snapshot: the caller is shown with `(if ...)` and counted as allowed. Rules with action `Deny` take tools away from the callers they name. A policy whose `Accepted` or `Attached` condition is `False` is left out, with a note, because the gateway leaves it out too. An expression Flightbay cannot parse at all is listed under the server, and what it allows is not shown.
 
 Each tool says **allowed, called**, **allowed, not called**, or **called, not allowed** (called although the captured allowlist does not give it to this caller: the policy may be newer than the calls), with the calls and whether the agent's own configuration lists it.

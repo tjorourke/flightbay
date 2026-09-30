@@ -169,3 +169,48 @@ func TestActivityConfiguredReach(t *testing.T) {
 		t.Fatalf("default-deny egress: blocked: %+v", r)
 	}
 }
+
+func TestFoldAliases(t *testing.T) {
+	got := strings.Join(foldAliases([]string{"list_places", "site_daylight_list_places", "work_window", "site_daylight_work_window", "moon_phase_x"}), ",")
+	if got != "list_places,work_window,moon_phase_x" {
+		t.Fatalf("got %s", got)
+	}
+}
+
+// An agent's config names the server its own way (site-daylight) at a
+// Service whose waypoint route sends to a backend target (daylight): its
+// configured tools are filed under the target, where the allowlist is.
+func TestActivityConfigResolvesThroughServiceRoute(t *testing.T) {
+	ws := activityWS(t, "Lists", "list_issues")
+	for _, r := range []bundle.APIResource{rAgwBe, rRoute} {
+		ws.SetCoverage(bundle.Coverage{ID: "c." + r.Resource, Cluster: "c", Type: bundle.CoverageResource, Group: r.Group, Version: r.Version, Resource: r.Resource, State: bundle.StateComplete})
+	}
+	ws.AddObjects("c", rSvc, []map[string]any{svc("kagent", "daylight-mcp", nil, 80, map[string]any{"istio.io/use-waypoint": "github-mcp-waypoint"})}, "s3")
+	ws.AddObjects("c", rAgwBe, []map[string]any{o("AgentgatewayBackend", "kagent", "daylight-mcp", nil, map[string]any{"spec": map[string]any{
+		"mcp": map[string]any{"targets": []any{map[string]any{"name": "daylight", "static": map[string]any{"host": "site-daylight.mcp-servers.svc.cluster.local"}}}}}})}, "be3")
+	ws.AddObjects("c", rRoute, []map[string]any{o("HTTPRoute", "kagent", "daylight-mcp", nil, map[string]any{"spec": map[string]any{
+		"parentRefs": []any{map[string]any{"group": "", "kind": "Service", "name": "daylight-mcp"}},
+		"rules":      []any{map[string]any{"backendRefs": []any{map[string]any{"group": "agentgateway.dev", "kind": "AgentgatewayBackend", "name": "daylight-mcp"}}}}}})}, "rt3")
+	ws.AddObjects("c", rAgwPol, []map[string]any{o("AgentgatewayPolicy", "kagent", "daylight-per-agent", nil, map[string]any{"spec": map[string]any{
+		"targetRefs": []any{map[string]any{"kind": "AgentgatewayBackend", "name": "daylight-mcp"}},
+		"backend": map[string]any{"mcp": map[string]any{"authorization": map[string]any{"action": "Allow", "policy": map[string]any{"matchExpressions": []any{
+			`source.identity.namespace == "kagent" && source.identity.serviceAccount == "climb" && mcp.tool.name in ["work_window", "site_daylight_work_window"]`}}}}}}})}, "pol3")
+	ws.AddObjects("c", rKAgent, []map[string]any{o("Agent", "kagent", "climb", nil, map[string]any{"spec": map[string]any{"byo": map[string]any{"deployment": map[string]any{"env": []any{
+		map[string]any{"name": "MCP_SERVERS_CONFIG", "value": `[{"name":"site-daylight","url":"http://daylight-mcp.kagent.svc.cluster.local/"}]`},
+		map[string]any{"name": "ALLOWED_TOOLS", "value": `["work_window"]`}}}}}})}, "a3")
+	a := EvaluateActivity(ws, nil, "")
+	for _, x := range a.Tools {
+		if x.Server == "site-daylight" {
+			t.Fatalf("filed under the agent's own name for the server: %+v", x)
+		}
+		if strings.HasPrefix(x.Name, "site_daylight_") {
+			t.Fatalf("the prefixed spelling folds into the tool: %+v", x)
+		}
+		if x.Server == "daylight" && x.Name == "work_window" && (strings.Join(x.AllowedFor, ",") != "kagent/climb" || strings.Join(x.ConfiguredOn, ",") != "kagent/climb") {
+			t.Fatalf("work_window is allowed and configured on one server: %+v", x)
+		}
+	}
+	if strings.Contains(findingTitles(a.Findings), "not enforced") && strings.Contains(findingTitles(a.Findings), "climb") {
+		t.Fatalf("the allowlist covers it: %s", findingTitles(a.Findings))
+	}
+}

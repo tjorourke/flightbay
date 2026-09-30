@@ -722,12 +722,15 @@ function tfMap(d, a, netE, gwE0, nodes, callers, targets, layer) {
         ge.push({id: 'svctl:' + id, from: svc, to: id, by: [...y.callers], risk: 'green', cls: 'fb-gw', w: 1.2 + 3 * Math.log(1 + y.calls) / Math.log(1 + maxT), tip: `${svcLabel(svc)} → ${mt.label}: ${num(y.calls)} calls`});
       }
       const codeCalls = metas.some(mt => mt.mode === 'Code' && (per.get(svc + '|' + actTargetLabel(mt))?.calls || 0) > 0);
+      const drawn = new Set(); // one box per tool name behind a Service, even when two server names share it
       for (const srv of servers) {
         const infos = (a.tools || []).filter(t => t.server === srv);
         const guarded = srvGuarded(a, srv);
         const names = new Set([...infos.map(t => t.name), ...[...per.keys()].filter(k => k.startsWith(svc + '|')).map(k => k.slice(svc.length + 1)).filter(n => (a.targets || []).some(x => x.kind === 'tool' && x.server === srv && x.label === n))]);
         const idle = [];
         for (const name of names) {
+          if (drawn.has(name)) continue;
+          drawn.add(name);
           const t = infos.find(x => x.name === name) || {name, server: srv};
           const y = per.get(svc + '|' + name) || {calls: 0, callers: new Set()};
           const allowed = guarded ? (t.allowedFor || []).length > 0 : true;

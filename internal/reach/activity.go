@@ -1262,7 +1262,7 @@ func (b *actBuilder) policyTools(c *cluster) {
 							}
 							continue
 						}
-						for _, t := range cl.tools {
+						for _, t := range foldAliases(cl.tools) {
 							// Multiplexed MCP prefixes tools with the target; a rule
 							// often names both spellings.
 							for _, pre := range append([]string{lastPart(srv)}, raw...) {
@@ -1307,6 +1307,30 @@ func (b *actBuilder) canonicalServers(c *cluster, ns string, names []string) []s
 		}
 		if !found {
 			out = union(out, []string{n})
+		}
+	}
+	return out
+}
+
+// foldAliases drops a tool named <prefix>_x when the same list names x:
+// an agent prefixes tools with its own name for the server (site_daylight_x
+// for a server it calls site-daylight), and approval rules name both.
+func foldAliases(tools []string) []string {
+	in := map[string]bool{}
+	for _, t := range tools {
+		in[t] = true
+	}
+	var out []string
+	for _, t := range tools {
+		alias := false
+		for i := 0; i < len(t); i++ {
+			if t[i] == '_' && in[t[i+1:]] {
+				alias = true
+				break
+			}
+		}
+		if !alias {
+			out = append(out, t)
 		}
 	}
 	return out
@@ -1535,6 +1559,13 @@ func (b *actBuilder) configuredTools(c *cluster) {
 					return srv // a kagent server with a tool list
 				}
 			}
+			// A Service whose route sends to one agentgateway MCP target:
+			// calls and allowlists name the server by that target.
+			if len(keys) > 1 {
+				if srvs := c.serviceServers(keys[1]); len(srvs) == 1 {
+					return srvs[0]
+				}
+			}
 			return name // the name calls through agentgateway use
 		}
 		for _, e := range l(path(ag.Obj, "spec", "byo", "deployment", "env")) {
@@ -1711,6 +1742,26 @@ func (c *cluster) routeServers(route string) []string {
 						}
 					}
 				}
+			}
+		}
+	}
+	return out
+}
+
+// serviceServers names the MCP targets behind a Service (ns/name): the
+// backends of the HTTPRoutes attached to it, as an agentgateway waypoint
+// serves them.
+func (c *cluster) serviceServers(svcKey string) []string {
+	ns, name, ok := strings.Cut(svcKey, "/")
+	if !ok {
+		return nil
+	}
+	var out []string
+	for _, r := range c.list("gateway.networking.k8s.io", "httproutes") {
+		for _, pr := range l(path(r.Obj, "spec", "parentRefs")) {
+			pm := m(pr)
+			if s(pm["kind"]) == "Service" && s(pm["name"]) == name && first(s(pm["namespace"]), r.Namespace) == ns {
+				out = union(out, c.routeServers(r.Namespace+"/"+r.Name))
 			}
 		}
 	}
