@@ -35,7 +35,7 @@ The Scorecard trim is done by the desk, not the page, so `fbscore` in the termin
 
 Traffic opens with every source on the left, the Services they reached in the middle and the MCP tools behind them on the right. **Agents only** in the chips keeps the traffic of agents, MCP servers and agent gateways.
 
-Click an agent and the map redraws with only what that agent reaches: its destinations and the tools it called or may call, with the column headers counting just those. The other sources stay on the left, so the next agent is one click away. Click the agent again, click the background, or press Esc for the whole map.
+Click an agent and the map redraws with only what that agent reaches: its destinations and the tools it called or may call, with the column headers counting just those. The other sources stay on the left, so the next agent is one click away. Click the agent again, click the background, or press Esc for the whole map. A newly deployed agent shows the MCP servers and tools its configuration names straight away, with dashed lines until it calls them.
 
 ![kagent/demo-agent selected: its two MCP Services and the two tools it called, which the captured allowlists do not allow](/images/agent-mode-select.png)
 

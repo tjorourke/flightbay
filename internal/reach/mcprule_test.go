@@ -170,6 +170,31 @@ func TestActivityConfiguredReach(t *testing.T) {
 	}
 }
 
+// A newly deployed agent that has not called anything yet is a caller with
+// the Services its configuration reaches its MCP servers at, so the map
+// draws its servers and tools before its first call.
+func TestActivityConfiguredAgentWithoutCalls(t *testing.T) {
+	ws := activityWS(t, "Lists", "list_issues")
+	ws.AddObjects("c", rSvc, []map[string]any{svc("kagent", "quiz-mcp", map[string]any{"app": "quiz"}, 80, nil)}, "s2")
+	ws.AddObjects("c", rPod, []map[string]any{pod("kagent", "quiz-host", "quiz-host", map[string]any{"app": "quiz-host"}, true, nil)}, "p2")
+	ws.AddObjects("c", rKAgent, []map[string]any{o("Agent", "kagent", "quiz-host", nil, map[string]any{"spec": map[string]any{"byo": map[string]any{"deployment": map[string]any{"env": []any{
+		map[string]any{"name": "MCP_SERVERS_CONFIG", "value": `[{"name":"it-pub-quiz","url":"http://quiz-mcp.kagent.svc.cluster.local/"}]`},
+		map[string]any{"name": "ALLOWED_TOOLS", "value": `["start_quiz"]`}}}}}})}, "a2")
+	a := EvaluateActivity(ws, nil, "")
+	for _, ca := range a.Callers {
+		if ca.Label == "kagent/quiz-host" {
+			if ca.Kind != "workload" || !ca.Agentic || ca.Requests != 0 || ca.Anonymous {
+				t.Fatalf("an agent with no calls: %+v", ca)
+			}
+			if got := strings.Join(ca.ServerServices["it-pub-quiz"], ","); got != "svc:c/kagent/svc/quiz-mcp" {
+				t.Fatalf("its configured Service: %v", ca.ServerServices)
+			}
+			return
+		}
+	}
+	t.Fatalf("kagent/quiz-host is not a caller: %+v", a.Callers)
+}
+
 func TestFoldAliases(t *testing.T) {
 	got := strings.Join(foldAliases([]string{"list_places", "site_daylight_list_places", "work_window", "site_daylight_work_window", "moon_phase_x"}), ",")
 	if got != "list_places,work_window,moon_phase_x" {

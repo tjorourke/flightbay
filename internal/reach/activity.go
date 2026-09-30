@@ -892,6 +892,7 @@ func (b *actBuilder) finish(inventory bool) {
 	b.applyServerRules()
 	b.configuredReach()
 	b.serverSummary()
+	b.configuredCallers()
 	for _, ca := range b.callers {
 		if m := b.agentSvc[ca.Label]; m != nil && (ca.Kind == "workload" || ca.Kind == "identity") {
 			ca.ServerServices = m
@@ -1395,6 +1396,34 @@ func (b *actBuilder) configuredReach() {
 					break
 				}
 			}
+		}
+	}
+}
+
+// configuredCallers adds an agent whose configuration names MCP servers as a
+// caller even when it has made no call yet, so a newly deployed agent shows
+// the servers and tools it is set up for straight away.
+func (b *actBuilder) configuredCallers() {
+	have := map[string]bool{}
+	for _, ca := range b.callers {
+		if ca.Kind == "workload" || ca.Kind == "identity" {
+			have[ca.Label] = true
+		}
+	}
+	for who := range b.agentSvc {
+		if have[who] {
+			continue
+		}
+		for _, c := range b.clusters {
+			w := c.findWorkload(who)
+			if w == nil {
+				continue
+			}
+			id := "w:" + w.id
+			if b.callers[id] == nil {
+				b.callers[id] = &ActCaller{ID: id, Kind: "workload", Label: w.ns + "/" + w.name, Namespace: w.ns, AgentType: w.agentType, Ref: refOf(w.obj), Agentic: true}
+			}
+			break
 		}
 	}
 }

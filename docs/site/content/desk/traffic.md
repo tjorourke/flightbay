@@ -58,7 +58,7 @@ With both layers on, the map has three columns: sources, the Services they reach
 
 An agent's own tool list (kagent `toolNames`, or `ALLOWED_TOOLS` on a BYO agent) only filters what the model is offered. It is enforced only where an agentgateway allowlist (`backend.mcp.authorization`) covers the server and the agent's calls go through agentgateway (a gateway route or an agentgateway waypoint). When they do not, the Findings panel has **An agent's tool list is not enforced**, with the agent, the server, how many of its tools the list names, and what to add.
 
-An agent's configured MCP servers are drawn even when the capture has no call to them: a dashed line to the Service its own configuration reaches the server at (`MCP_SERVERS_CONFIG`, or a declarative Agent's RemoteMCPServer), and the tools it is configured for or allowed in the Tools column, kept out of the folded box. So an agent given GitHub and Kubernetes SRE tools shows both, even if it only used GitHub.
+An agent's configured MCP servers are drawn even when the capture has no call to them: a dashed line to the Service its own configuration reaches the server at (`MCP_SERVERS_CONFIG`, or a declarative Agent's RemoteMCPServer), and the tools it is configured for or allowed in the Tools column, kept out of the folded box. So an agent given GitHub and Kubernetes SRE tools shows both, even if it only used GitHub. An agent that has not called anything yet, such as one deployed a moment ago, is drawn the same way: on a live mirror its servers and tools appear as soon as its Agent is created.
 
 `run_code` and `get_tool`, the meta-tools of agentgateway's Code and Search modes, get boxes of their own beside the real tools. See [Tool modes](/desk/activity/#tool-modes-code-and-search).
 
