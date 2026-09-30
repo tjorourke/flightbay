@@ -33,7 +33,7 @@ func (s *Server) reachReport() reach.Report {
 //	/api/reach?full=1        everything
 func (s *Server) reach(w http.ResponseWriter, r *http.Request) {
 	if !features.Enabled(features.Reach) {
-		jerr(w, 403, "agent reach is a Flightbay Enterprise feature; start the desk with FLIGHTBAY_ENTERPRISE=1")
+		jerr(w, 403, "agent reach is a Flightbay Enterprise feature; it was turned off with FLIGHTBAY_ENTERPRISE=0 or FLIGHTBAY_FEATURES")
 		return
 	}
 	rep := s.reachReport()

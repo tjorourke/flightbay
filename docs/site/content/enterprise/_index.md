@@ -1,7 +1,7 @@
 ---
 title: Flightbay Enterprise
 weight: 40
-description: What Flightbay Enterprise adds to the desk, and how to turn it on.
+description: What Flightbay Enterprise adds to the desk, how to turn it off, and agent mode.
 ---
 
 # Flightbay Enterprise
@@ -16,23 +16,32 @@ The collector and the desk work fully without Enterprise. Flightbay Enterprise a
 
 The collector has no Enterprise features. A customer never needs Enterprise to capture a bundle.
 
-## Turning it on
+## Turning it off
 
-Features are off by default. They are read from the environment of the desk process:
+Every feature is on by default. They are read from the environment of the desk process:
 
 ```bash
-FLIGHTBAY_ENTERPRISE=1 flightbay ui                         # every Enterprise feature
-FLIGHTBAY_FEATURES=priorities flightbay ui                  # just this one
-FLIGHTBAY_FEATURES=priorities,reach flightbay ui            # these
-FLIGHTBAY_ENTERPRISE=1 FLIGHTBAY_FEATURES=-reach flightbay ui   # everything except reach
+flightbay ui                                                # every Enterprise feature
+FLIGHTBAY_FEATURES=-reach flightbay ui                      # everything except reach
+FLIGHTBAY_ENTERPRISE=0 flightbay ui                         # none of them
+FLIGHTBAY_ENTERPRISE=0 FLIGHTBAY_FEATURES=traffic flightbay ui   # only traffic
 ```
 
 | Variable | Values |
 |---|---|
-| `FLIGHTBAY_ENTERPRISE` | `1`, `true`, `yes` or `on` turns every feature on |
+| `FLIGHTBAY_ENTERPRISE` | `0`, `false`, `no` or `off` turns every feature off; anything else, or unset, leaves them on |
 | `FLIGHTBAY_FEATURES` | A comma-separated list of feature names. `all` or `enterprise` turns them all on; a leading `-` turns one off. |
 
 Set them on the process that opens the bundle (`flightbay ui` or `flightbay-desk open`). The helpers and `flightbay-desk mcp` ask that desk, so they follow its setting.
+
+## Agent mode
+
+`AGENT=1` (or `FLIGHTBAY_AGENT=1`, or `flightbay ui --agent`) trims the desk to what matters for agents: **Traffic** (opened first), the **Scorecard** with only the agentic area, **Resources** and the **Log explorer**. The rest of the navigation, Save as bundle and Export and sign are hidden, and links to other pages land on Traffic. It works on a bundle and on a live cluster:
+
+```bash
+AGENT=1 flightbay ui --live --context kind-mesh1
+flightbay ui --agent flightbay-DEMO-20260927T1842Z.tar.zst
+```
 
 ## Checking what is on
 
@@ -42,8 +51,8 @@ flightbay-desk features
 
 ```text
 priorities   on   Best practices: fix-first ranking, points recovered per fix, severity colours
-reach        off  Agent reach: every agent's blast radius, the network paths it has and what to lock down
-traffic      off  Traffic: ztunnel connections (mTLS, waypoints, policy verdicts) and agentgateway calls (tools, models, tokens, refusals, tool changes), and why a connection was denied
+reach        on   Agent reach: every agent's blast radius, the network paths it has and what to lock down
+traffic      on   Traffic: ztunnel connections (mTLS, waypoints, policy verdicts) and agentgateway calls (tools, models, tokens, refusals, tool changes), and why a connection was denied
 ```
 
 Run it with the same environment as the desk.

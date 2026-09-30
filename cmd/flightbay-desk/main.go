@@ -869,7 +869,7 @@ func featuresCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "features",
 		Short: "List Flightbay Enterprise features and whether they are on",
-		Long:  "Enterprise features are off by default. Turn them all on with FLIGHTBAY_ENTERPRISE=1, or pick some with FLIGHTBAY_FEATURES=priorities (a leading - turns one off).",
+		Long:  "Enterprise features are on by default. Turn them all off with FLIGHTBAY_ENTERPRISE=0, or one with FLIGHTBAY_FEATURES=-reach (FLIGHTBAY_ENTERPRISE=0 FLIGHTBAY_FEATURES=traffic keeps only that one).",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			for _, f := range features.List() {
 				st := "off"

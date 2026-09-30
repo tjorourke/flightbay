@@ -186,4 +186,4 @@ No flow source covers that agent. ztunnel logs cover agents in the ambient mesh;
 
 ### Agent reach is missing from the sidebar
 
-It is a [Flightbay Enterprise](/enterprise/) feature. Start the desk with `FLIGHTBAY_ENTERPRISE=1` or `FLIGHTBAY_FEATURES=reach`.
+It is a [Flightbay Enterprise](/enterprise/) feature. It is on by default; it is off only when the desk was started with `FLIGHTBAY_ENTERPRISE=0` or `FLIGHTBAY_FEATURES=-reach`.

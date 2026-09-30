@@ -47,7 +47,7 @@ function statusCell(v) {
 
 // ---------- navigation ----------
 function parseHash() {
-  const h = location.hash.slice(1) || 'overview';
+  const h = location.hash.slice(1) || (S.ws?.agent ? 'traffic' : 'overview');
   const [view, query] = h.split('?');
   const p = new URLSearchParams(query || '');
   if (view === 'logs') {
@@ -61,6 +61,7 @@ function parseHash() {
   // Activity is now the gateway layer of Traffic; keep old links working.
   if (view === 'activity') { location.replace('#traffic?layer=gateway' + (p.get('caller') ? '&caller=' + encodeURIComponent(p.get('caller')) : '')); S.view = 'traffic'; return; }
   S.view = view === 'posture' || view === 'bestpractices' ? 'scorecard' : view;
+  if (S.ws?.agent && !AGENT_VIEWS.includes(S.view)) { location.replace('#traffic'); S.view = 'traffic'; }
 }
 
 function nav(view) {
@@ -389,6 +390,17 @@ async function loadWorkspace() {
   if (w.terminal) $('#terminal').classList.remove('hidden');
   if (!S.state) { S.state = w.state; renderImportStatus(); }
   if (typeof onWorkspace === 'function') onWorkspace(w);
+  if (w.agent) agentMode();
+}
+
+// Agent mode (AGENT=1): only the views about agents. Links to any other
+// view land on Traffic.
+const AGENT_VIEWS = ['traffic', 'scorecard', 'resources', 'navigator', 'logs', 'search'];
+function agentMode() {
+  document.body.classList.add('agent-mode');
+  document.title = 'Solo flightbay agent';
+  const b = document.querySelector('.sidebar .brand'); if (b) { b.href = '#traffic'; b.setAttribute('aria-label', 'Solo flightbay agent: Traffic'); }
+  if (!AGENT_VIEWS.includes(S.view)) location.replace('#traffic');
 }
 
 // ---------- overview ----------
@@ -931,7 +943,7 @@ async function posture() {
     <div class="toolbar"><div class="row wrap">${chip('status', 'attention', 'Needs attention')}${chip('status', 'fail', 'Failing')}${chip('status', 'warn', 'Warnings')}${chip('status', 'pass', 'Passing')}${chip('status', 'na', 'Not applicable')}${chip('status', 'all', 'All')}</div>
       <input id="pst-q" placeholder="Filter. Try status: severity: category: kind: ns: or text" value="${esc(P.q)}" style="min-width:340px" autocomplete="off" spellcheck="false"></div>
     <section class="panel">${rows || (P.status === 'attention' && !P.q ? '<div class="empty"><strong>Nothing needs attention</strong>Every applicable check passes. Choose Passing or All to see them.</div>' : '<div class="empty"><strong>No checks match</strong>Change the filters above.</div>')}</section>`;
-  return head('Scorecard', "Solo's best practices for agentic workloads, Istio, ingress and Kubernetes, scored against this snapshot. Every problem comes with its evidence and the fix.", '<button id="pst-term">&gt;_ fbscore in terminal</button>') + `
+  return head('Scorecard', S.ws?.agent ? "Solo's best practices for agentgateway, kagent and MCP, scored against this snapshot. Every problem comes with its evidence and the fix." : "Solo's best practices for agentic workloads, Istio, ingress and Kubernetes, scored against this snapshot. Every problem comes with its evidence and the fix.", '<button id="pst-term">&gt;_ fbscore in terminal</button>') + `
     <div class="pst-cards">${present.map(card).join('')}</div>
     ${coverage}
     ${tabs}
@@ -1142,7 +1154,7 @@ async function reachBody() {
   if (!feature('reach')) {
     return `<section class="panel"><div class="empty"><strong>Agents is a Flightbay Enterprise feature</strong>
       It shows, agent by agent, what each agent, MCP server and agent gateway can reach on the network and how wide the blast radius is.<br>
-      Turn it on by starting the desk with <code>FLIGHTBAY_ENTERPRISE=1 flightbay ui</code> or <code>FLIGHTBAY_FEATURES=reach</code>.</div></section>`;
+      It was turned off: the desk was started with <code>FLIGHTBAY_ENTERPRISE=0</code> or <code>FLIGHTBAY_FEATURES=-reach</code>.</div></section>`;
   }
   const rev = S.state?.revision;
   if (!R.list || R.listRev !== rev) { R.list = await api('api/reach'); R.listRev = rev; R.flowSrc = (await api('api/flows', {limit: 1}).catch(() => ({}))).bySource || {}; }
@@ -2539,7 +2551,7 @@ function closeModal() { $('#modal-root').innerHTML = ''; }
 
 function openSearch() {
   modal('Jump to an object or view', `<input id="gs" style="width:100%" placeholder="Any object: name, label, image, hostname. Try kind: ns: label:" autocomplete="off"><div id="gs-res" class="search-results"></div>`);
-  const views = ['navigator', 'search', 'overview', 'scorecard', ...(feature('traffic') || feature('reach') ? ['traffic'] : []), 'resources', 'logs', 'timeline', 'findings', 'compare', 'proxies', 'coverage'];
+  const views = ['navigator', 'search', 'overview', 'scorecard', ...(feature('traffic') || feature('reach') ? ['traffic'] : []), 'resources', 'logs', 'timeline', 'findings', 'compare', 'proxies', 'coverage'].filter(v => !S.ws?.agent || AGENT_VIEWS.includes(v));
   let hits = [], sel = 0;
   const draw = () => {
     $('#gs-res').innerHTML = hits.map((h, i) => `<button class="${i === sel ? 'sel' : ''}" data-i="${i}">${h.all ? `<span class="green">⌕</span> Search everything for “${esc(h.all)}”<small>Search page</small>` : h.view ? `<span class="green">↗</span> ${esc(h.view)}<small>view</small>` : `<span class="badge">${esc(h.kind)}</span>${esc(h.namespace ? h.namespace + '/' : '')}${esc(h.name)}${h.snippet ? ` <span class="muted mono" style="font-size:10px">…${esc(h.snippet.slice(0, 70))}…</span>` : ''}<small>${esc(h.cluster)}</small>`}</button>`).join('');

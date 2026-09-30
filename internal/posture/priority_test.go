@@ -67,11 +67,22 @@ func TestImpactIgnoresAreaSize(t *testing.T) {
 }
 
 func TestReachChecksAreEnterprise(t *testing.T) {
+	t.Setenv("FLIGHTBAY_ENTERPRISE", "0") // reach is on by default
 	ws := fixture(t)
 	for _, c := range Evaluate(ws).Checks {
 		switch c.ID {
 		case "agentic.agent-internet-reach", "agentic.agent-transitive-fetcher", "agentic.agent-write-sensitive", "agentic.agent-no-shared-channel", "agentic.agent-least-reach":
 			t.Fatalf("%s shown without the reach feature", c.ID)
 		}
+	}
+}
+
+func TestOnlyKeepsOneAreaAndRenumbers(t *testing.T) {
+	r := Report{Areas: []AreaScore{{Area: "agentic"}, {Area: "ambient"}},
+		Checks:     []Check{{ID: "a", Area: "agentic"}, {ID: "b", Area: "ambient"}},
+		Priorities: []Priority{{Rank: 1, ID: "b", Area: "ambient"}, {Rank: 2, ID: "a", Area: "agentic"}}}
+	o := r.Only("agentic")
+	if len(o.Areas) != 1 || len(o.Checks) != 1 || len(o.Priorities) != 1 || o.Priorities[0].Rank != 1 {
+		t.Fatalf("%+v", o)
 	}
 }

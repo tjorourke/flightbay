@@ -95,7 +95,7 @@ Examples:
 
 ## flightbay-desk features
 
-Enterprise features are off by default. Turn them all on with FLIGHTBAY_ENTERPRISE=1, or pick some with FLIGHTBAY_FEATURES=priorities (a leading - turns one off).
+Enterprise features are on by default. Turn them all off with FLIGHTBAY_ENTERPRISE=0, or one with FLIGHTBAY_FEATURES=-reach (FLIGHTBAY_ENTERPRISE=0 FLIGHTBAY_FEATURES=traffic keeps only that one).
 
 ```text
 flightbay-desk features

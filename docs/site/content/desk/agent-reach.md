@@ -10,7 +10,7 @@ The **Agents** tab of the [Traffic](/desk/traffic/) page is one place per agent:
 
 Agent reach works out, for every AI agent in a snapshot, everything it can reach on the network and everything those destinations can reach on its behalf. That is the agent's real blast radius, and it is usually far wider than anyone expects.
 
-The Agents tab is part of [Flightbay Enterprise](/enterprise/). Turn it on with `FLIGHTBAY_ENTERPRISE=1 flightbay ui` or `FLIGHTBAY_FEATURES=reach`; with only `reach` on, the Traffic page shows just this tab. With the Traffic feature on as well (`FLIGHTBAY_ENTERPRISE=1` turns on both), it also shows what each agent used and called.
+The Agents tab is part of [Flightbay Enterprise](/enterprise/). It is on by default; `FLIGHTBAY_FEATURES=-reach` turns it off; with only `reach` on, the Traffic page shows just this tab. With the Traffic feature on as well (`FLIGHTBAY_ENTERPRISE=1` turns on both), it also shows what each agent used and called.
 
 ![Every agent, worst first](/images/reach-list.png)
 

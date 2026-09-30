@@ -80,6 +80,31 @@ type Report struct {
 	Priorities []Priority  `json:"priorities,omitempty"` // Enterprise: fix-first ranking
 }
 
+// Only keeps one area: its score, its checks and its priorities.
+func (r Report) Only(area string) Report {
+	out := Report{Areas: []AreaScore{}, Checks: []Check{}}
+	for _, a := range r.Areas {
+		if a.Area == area {
+			out.Areas = append(out.Areas, a)
+		}
+	}
+	for _, c := range r.Checks {
+		if c.Area == area {
+			out.Checks = append(out.Checks, c)
+		}
+	}
+	if r.Priorities != nil {
+		out.Priorities = []Priority{}
+		for _, p := range r.Priorities {
+			if p.Area == area {
+				p.Rank = len(out.Priorities) + 1
+				out.Priorities = append(out.Priorities, p)
+			}
+		}
+	}
+	return out
+}
+
 // WithPriorities fills in points recovered per check and the fix-first
 // ranking (the Flightbay Enterprise priority view). top <= 0 keeps them all.
 func (r Report) WithPriorities(top int) Report {

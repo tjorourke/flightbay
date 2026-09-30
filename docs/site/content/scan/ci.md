@@ -6,7 +6,7 @@ description: Fail a pull request when it adds a failing Scorecard check, and sho
 
 # Using it in CI
 
-With `--fail-on`, `flightbay scan` is a CI gate. It renders the repository, runs the [Scorecard](/desk/scorecard/) in the same process on the result, and exits 1 when a check at or above the severity you chose fails. Agent reach checks are included when `FLIGHTBAY_FEATURES` includes `reach` or `FLIGHTBAY_ENTERPRISE=1` is set.
+With `--fail-on`, `flightbay scan` is a CI gate. It renders the repository, runs the [Scorecard](/desk/scorecard/) in the same process on the result, and exits 1 when a check at or above the severity you chose fails. Agent reach checks are included unless `FLIGHTBAY_ENTERPRISE=0` or `FLIGHTBAY_FEATURES=-reach` is set.
 
 ```bash
 flightbay scan . --fail-on high

@@ -203,7 +203,7 @@ Every scan writes a bundle unless you pass `--no-bundle`. Open it like a capture
 
 ```bash
 flightbay scan . --env prod --bundle ~/Downloads/myrepo-prod.tar.zst
-FLIGHTBAY_ENTERPRISE=1 flightbay ui ~/Downloads/myrepo-prod.tar.zst
+flightbay ui ~/Downloads/myrepo-prod.tar.zst
 ```
 
 - The banner says **Declared state from myrepo at commit abc1234**, with "(uncommitted changes)" if your working tree was dirty.

@@ -11,7 +11,7 @@ S.tf = {tab: 'map', flag: '', ns: '', q: '', sel: '', data: null, key: '', gz: n
 const fbKey = () => `${S.state?.revision ?? ''}/${S.state?.logLines ?? ''}`;
 const fbPlural = (n, one, many) => `${num(n)} ${n === 1 ? one : (many || one + 's')}`;
 const fbEntOff = (title, what, flag) => head(title, '') + `<section class="panel"><div class="empty"><strong>${esc(title)} is a Flightbay Enterprise feature</strong>${esc(what)}<br>
-  Turn it on by starting the desk with <code>FLIGHTBAY_ENTERPRISE=1 flightbay ui</code> (or <code>FLIGHTBAY_FEATURES=${esc(flag)}</code>).</div></section>`;
+  It was turned off: the desk was started with <code>FLIGHTBAY_ENTERPRISE=0</code> or <code>FLIGHTBAY_FEATURES=-${esc(flag)}</code>.</div></section>`;
 const fbTime = t => t && !String(t).startsWith('0001') ? fmtDateTime(t) : '—';
 const fbTok = n => n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e4 ? Math.round(n / 1e3) + 'k' : num(n);
 const fbOpenRef = r => openObject({cluster: r.cluster, group: r.group, resource: r.resource, namespace: r.namespace, name: r.name});

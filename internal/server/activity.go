@@ -43,7 +43,7 @@ func (s *Server) activityReport() reach.Activity {
 // activity serves the agent and tool activity report (Flightbay Enterprise).
 func (s *Server) activity(w http.ResponseWriter, r *http.Request) {
 	if !features.Enabled(features.Activity) {
-		jerr(w, 403, "agent and tool activity is a Flightbay Enterprise feature; start the desk with FLIGHTBAY_ENTERPRISE=1")
+		jerr(w, 403, "agent and tool activity is a Flightbay Enterprise feature; it was turned off with FLIGHTBAY_ENTERPRISE=0 or FLIGHTBAY_FEATURES")
 		return
 	}
 	writeJSON(w, 200, s.activityReport())
@@ -70,7 +70,7 @@ func (s *Server) trafficReport() reach.Traffic {
 // traffic serves the ambient traffic map (Flightbay Enterprise).
 func (s *Server) traffic(w http.ResponseWriter, r *http.Request) {
 	if !features.Enabled(features.Traffic) {
-		jerr(w, 403, "the traffic map is a Flightbay Enterprise feature; start the desk with FLIGHTBAY_ENTERPRISE=1")
+		jerr(w, 403, "the traffic map is a Flightbay Enterprise feature; it was turned off with FLIGHTBAY_ENTERPRISE=0 or FLIGHTBAY_FEATURES")
 		return
 	}
 	writeJSON(w, 200, s.trafficReport())
@@ -81,7 +81,7 @@ func (s *Server) traffic(w http.ResponseWriter, r *http.Request) {
 //	/api/explain?from=ns/workload&to=ns/service[&cluster=c]
 func (s *Server) explain(w http.ResponseWriter, r *http.Request) {
 	if !features.Enabled(features.Traffic) {
-		jerr(w, 403, "the explainer is a Flightbay Enterprise feature; start the desk with FLIGHTBAY_ENTERPRISE=1")
+		jerr(w, 403, "the explainer is a Flightbay Enterprise feature; it was turned off with FLIGHTBAY_ENTERPRISE=0 or FLIGHTBAY_FEATURES")
 		return
 	}
 	q := r.URL.Query()
@@ -109,7 +109,7 @@ func (s *Server) explain(w http.ResponseWriter, r *http.Request) {
 //	/api/reach/usage?agent=ns/name
 func (s *Server) reachUsage(w http.ResponseWriter, r *http.Request) {
 	if !features.Enabled(features.Reach) {
-		jerr(w, 403, "agent reach is a Flightbay Enterprise feature; start the desk with FLIGHTBAY_ENTERPRISE=1")
+		jerr(w, 403, "agent reach is a Flightbay Enterprise feature; it was turned off with FLIGHTBAY_ENTERPRISE=0 or FLIGHTBAY_FEATURES")
 		return
 	}
 	id := r.URL.Query().Get("agent")

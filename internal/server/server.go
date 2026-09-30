@@ -351,7 +351,7 @@ func (s *Server) snapshot() time.Time { return apiserver.SnapshotTime(s.WS) }
 
 func (s *Server) workspace(w http.ResponseWriter, r *http.Request) {
 	h := s.WS.Header()
-	out := map[string]any{"state": s.WS.State(), "snapshot": s.snapshot(), "terminal": s.Terminal, "kubeconfig": s.KubeconfigPath(), "features": features.Map()}
+	out := map[string]any{"state": s.WS.State(), "snapshot": s.snapshot(), "terminal": s.Terminal, "kubeconfig": s.KubeconfigPath(), "features": features.Map(), "agent": features.AgentMode()}
 	if h != nil {
 		out["case"], out["bundleId"], out["collector"], out["captureStart"] = h.Case, h.BundleID, h.Collector, h.CaptureStart
 		out["contexts"], out["planned"], out["unavailable"] = h.Contexts, h.Planned, h.Unavailable
@@ -691,7 +691,7 @@ func (s *Server) logFields(w http.ResponseWriter, r *http.Request) {
 func (s *Server) posture(w http.ResponseWriter, r *http.Request) {
 	rep := posture.Evaluate(s.WS)
 	if r.URL.Query().Get("top") != "" && !features.Enabled(features.Priorities) {
-		jerr(w, 403, "the fix-first ranking is a Flightbay Enterprise feature; start the desk with FLIGHTBAY_ENTERPRISE=1")
+		jerr(w, 403, "the fix-first ranking is a Flightbay Enterprise feature; it was turned off with FLIGHTBAY_ENTERPRISE=0 or FLIGHTBAY_FEATURES")
 		return
 	}
 	if features.Enabled(features.Priorities) {
@@ -700,6 +700,9 @@ func (s *Server) posture(w http.ResponseWriter, r *http.Request) {
 			top = 10
 		}
 		rep = rep.WithPriorities(top)
+	}
+	if features.AgentMode() {
+		rep = rep.Only("agentic")
 	}
 	writeJSON(w, 200, rep)
 }

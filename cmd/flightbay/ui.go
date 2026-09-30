@@ -23,13 +23,16 @@ file (recent bundles here and in ~/Downloads are listed), or scan a repo. Flags 
 --no-browser, --workdir, --keep and -i carry over to whatever you open from it.
 
 With a bundle it opens that bundle, with a directory the newest flightbay-*.tar.zst in it, and with
---live it mirrors a cluster read-only. Everything after ui is passed to flightbay-desk.`,
+--live it mirrors a cluster read-only. --agent (or AGENT=1) opens agent mode: only Traffic, the agentic
+Scorecard, Resources and the Log explorer. Everything else after ui is passed to flightbay-desk.`,
 		Example: `  flightbay ui                                   # the start page
   flightbay ui .                                 # the newest bundle here
   flightbay ui flightbay-DEMO-20260927T1842Z.tar.zst
   flightbay ui ~/Downloads                         # newest bundle in a folder
   flightbay ui BUNDLE --sign flightbay-signing.key # remove objects, logs or namespaces on Review and send, export a signed copy
-  flightbay ui --live --context kind-mesh1 --namespaces kagent   # mirror a cluster live, read-only`,
+  flightbay ui --live --context kind-mesh1 --namespaces kagent   # mirror a cluster live, read-only
+  flightbay ui --agent --live --context kind-mesh1                # agent mode: Traffic, agentic Scorecard, Resources, Logs
+  AGENT=1 flightbay ui --live --context kind-mesh1                # the same`,
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true, // flags go to flightbay-desk open
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -47,16 +50,25 @@ With a bundle it opens that bundle, with a directory the newest flightbay-*.tar.
 				sub = "start"
 			}
 			var rest []string
+			env := os.Environ()
 			for _, a := range args {
 				if a == "--live" || a == "--live=true" {
 					sub = "live" // flags after it go to flightbay-desk live
 					continue
 				}
+				if a == "--agent" || a == "--agent=true" {
+					env = append(env, "FLIGHTBAY_AGENT=1") // agent mode, the same as AGENT=1
+					continue
+				}
 				rest = append(rest, a)
 			}
+			if sub == "open" && len(rest) == 0 {
+				sub = "start"
+			}
 			argv := append([]string{desk, sub}, rest...)
-			if err := syscall.Exec(desk, argv, os.Environ()); err != nil {
+			if err := syscall.Exec(desk, argv, env); err != nil {
 				c := exec.Command(desk, argv[1:]...) // platforms without exec
+				c.Env = env
 				c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
 				return c.Run()
 			}

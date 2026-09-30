@@ -324,7 +324,8 @@ file (recent bundles here and in ~/Downloads are listed), or scan a repo. Flags 
 --no-browser, --workdir, --keep and -i carry over to whatever you open from it.
 
 With a bundle it opens that bundle, with a directory the newest flightbay-*.tar.zst in it, and with
---live it mirrors a cluster read-only. Everything after ui is passed to flightbay-desk.
+--live it mirrors a cluster read-only. --agent (or AGENT=1) opens agent mode: only Traffic, the agentic
+Scorecard, Resources and the Log explorer. Everything else after ui is passed to flightbay-desk.
 
 ```text
 flightbay ui [BUNDLE | DIR] | ui --live [--context CTX] [scope flags]
@@ -339,6 +340,8 @@ Examples:
   flightbay ui ~/Downloads                         # newest bundle in a folder
   flightbay ui BUNDLE --sign flightbay-signing.key # remove objects, logs or namespaces on Review and send, export a signed copy
   flightbay ui --live --context kind-mesh1 --namespaces kagent   # mirror a cluster live, read-only
+  flightbay ui --agent --live --context kind-mesh1                # agent mode: Traffic, agentic Scorecard, Resources, Logs
+  AGENT=1 flightbay ui --live --context kind-mesh1                # the same
 ```
 
 ## flightbay version

@@ -1,10 +1,13 @@
 // Package features gates Flightbay Enterprise features.
 //
-// The customer collector and the open desk work without any of these. They
-// are turned on for Solo support (and, later, licensed customers) with:
+// Every feature is on by default. Turn them off with:
 //
-//	FLIGHTBAY_ENTERPRISE=1                  every Enterprise feature
-//	FLIGHTBAY_FEATURES=priorities,reach     just these (a leading - turns one off)
+//	FLIGHTBAY_ENTERPRISE=0                  every Enterprise feature off
+//	FLIGHTBAY_FEATURES=-reach               just this one off
+//	FLIGHTBAY_ENTERPRISE=0 FLIGHTBAY_FEATURES=traffic   only these on
+//
+// Agent mode (AGENT=1 or FLIGHTBAY_AGENT=1) trims the desk to what matters
+// for agents: Traffic, the agentic Scorecard, Resources and the Log explorer.
 //
 // This is a product gate, not a security boundary: anything that must be
 // protected (the hosted service, uploads) enforces its own authentication.
@@ -56,9 +59,17 @@ func truthy(v string) bool {
 	return false
 }
 
+func falsy(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "0", "false", "no", "off":
+		return true
+	}
+	return false
+}
+
 func fromEnv() map[string]bool {
 	on := map[string]bool{}
-	if truthy(os.Getenv("FLIGHTBAY_ENTERPRISE")) {
+	if !falsy(os.Getenv("FLIGHTBAY_ENTERPRISE")) {
 		for n := range catalogue {
 			on[n] = true
 		}
@@ -133,4 +144,26 @@ func Map() map[string]bool {
 		out[n] = Enabled(n)
 	}
 	return out
+}
+
+var agentOverride *bool
+
+// AgentMode reports whether the desk runs in agent mode: AGENT=1 or
+// FLIGHTBAY_AGENT=1, or SetAgentMode.
+func AgentMode() bool {
+	mu.RLock()
+	o := agentOverride
+	mu.RUnlock()
+	if o != nil {
+		return *o
+	}
+	return truthy(os.Getenv("FLIGHTBAY_AGENT")) || truthy(os.Getenv("AGENT"))
+}
+
+// SetAgentMode turns agent mode on or off for this process (tests, the
+// --agent flag).
+func SetAgentMode(on bool) {
+	mu.Lock()
+	agentOverride = &on
+	mu.Unlock()
 }
