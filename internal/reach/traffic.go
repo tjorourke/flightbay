@@ -48,6 +48,9 @@ type TNode struct {
 	Waypoint  string `json:"waypoint,omitempty"` // a Service's waypoint
 	AgentType string `json:"agentType,omitempty"`
 	Ref       *Ref   `json:"ref,omitempty"`
+	// Gone: a workload ztunnel logged by name that is no longer in the
+	// capture (deleted since it made the connection).
+	Gone bool `json:"gone,omitempty"`
 }
 
 // TEdge is traffic from one workload to one Service (or workload, when it
@@ -287,7 +290,9 @@ func (t *Traffic) externalNode(nodes map[string]*TNode, cl, ns, name string) str
 	}
 	id := "x:" + cl + "/" + label
 	if nodes[id] == nil {
-		nodes[id] = &TNode{ID: id, Cluster: cl, Kind: "external", Label: label, Namespace: ns}
+		// A namespaced name that is not a host is an in-cluster workload the
+		// capture no longer has.
+		nodes[id] = &TNode{ID: id, Cluster: cl, Kind: "external", Label: label, Namespace: ns, Gone: ns != "" && !strings.Contains(name, ".")}
 	}
 	return id
 }

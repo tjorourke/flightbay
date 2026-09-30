@@ -351,6 +351,25 @@ const tfIntro = 'Every connection ztunnel logged and every call through agentgat
 const tfLayerName = {both: 'Both', network: 'Network', gateway: 'Gateway calls'};
 const tfNoAct = {edges: [], callers: [], targets: [], tools: [], denials: [], findings: [], notes: [], coverage: [], totals: {}};
 
+// Agents and workloads that are gone (a service account with no workload
+// any more, a pod ztunnel logged that the capture no longer has) are left
+// off the page unless Show gone is on: the page shows what is running now.
+function tfApplyGone() {
+  const T = S.tf, A = S.act, [d, a] = T.raw || [null, null];
+  if (!d) return;
+  const goneC = new Set((a?.callers || []).filter(c => c.gone).map(c => c.id));
+  const goneN = new Set((d.nodes || []).filter(n => n.gone).map(n => n.id));
+  const goneL = new Set([...(a?.callers || []).filter(c => c.gone).map(c => c.label), ...(d.nodes || []).filter(n => n.gone).map(n => n.label)]);
+  T.goneN = goneL.size;
+  if (T.showGone || !goneL.size) { T.data = d; A.data = a; return; }
+  const keepF = f => { if (!(f.items || []).length) return true; const items = f.items.filter(i => !goneL.has(i.target)); if (!items.length) return false; f.items = items; return true; };
+  T.data = {...d, nodes: (d.nodes || []).filter(n => !goneN.has(n.id)), edges: (d.edges || []).filter(e => !goneN.has(e.from) && !goneN.has(e.to)), findings: (d.findings || []).map(f => ({...f})).filter(keepF)};
+  A.data = a && {...a, callers: a.callers.filter(c => !goneC.has(c.id)), edges: (a.edges || []).filter(e => !goneC.has(e.from)), denials: (a.denials || []).filter(x => !goneC.has(x.from)),
+    // A tool known only from calls by callers that are gone goes with them.
+    tools: (a.tools || []).map(t => { const callers = (t.callers || []).filter(l => !goneL.has(l)); return {...t, callers, calls: callers.length ? t.calls : 0}; })
+      .filter(t => t.calls || t.declared || (t.allowedFor || []).length || (t.configuredOn || []).length), findings: (a.findings || []).map(f => ({...f})).filter(keepF)};
+}
+
 // One filter for both layers. Network edges answer the network keys,
 // gateway calls the gateway keys; from: (or caller:), to:, ns: and layer:
 // work on both. A key a layer does not have leaves its edges out.
@@ -443,7 +462,8 @@ async function trafficPage() {
   if (!T.data || T.key !== fbKey()) {
     const [d, a, r] = await Promise.all([hasTraffic ? api('api/traffic') : Promise.resolve({nodes: [], edges: [], findings: [], notes: [], totals: {}, namespaces: []}), hasTraffic ? api('api/activity').catch(() => null) : null,
       feature('reach') ? api('api/reach').catch(() => null) : null]);
-    T.data = d; A.data = a; T.reach = r; T.key = A.key = fbKey();
+    T.raw = [d, a]; T.reach = r; T.key = A.key = fbKey();
+    tfApplyGone();
     if (feature('reach') && !S.reach.flowSrc) S.reach.flowSrc = (await api('api/flows', {limit: 1}).catch(() => ({}))).bySource || {};
   }
   const d = T.data, a = A.data || tfNoAct, t = d.totals || {}, at = a.totals || {};
@@ -496,7 +516,8 @@ async function trafficPage() {
   const kindCount = k => (a.edges || []).filter(e => targets.get(e.to)?.kind === k).length;
   const kchips = layer === 'network' || typedKind ? '' : Object.entries(actKinds).filter(([k]) => kindCount(k)).map(([k, l]) => `<button class="chip ${A.kinds[k] ? 'on' : ''}" data-actkind="${k}" title="Gateway calls to ${esc(l.toLowerCase())}">${esc(l)} <small>${kindCount(k)}</small></button>`).join('');
   const input = `<input id="tf-q" placeholder="Filter. Try from: to: tool: server: flag: state: layer: or text" value="${esc(T.q)}" style="min-width:340px" autocomplete="off" spellcheck="false">`;
-  const toolbar = `<div class="toolbar"><div class="row wrap">${tfFoundMenu(d, a, hasNet, hasGw)}${achip}${fchips}${kchips}</div><div class="row">${nsOpts}${input}</div></div>`;
+  const gchip = T.goneN ? `<button class="chip ${T.showGone ? 'on' : ''}" id="tf-gone" title="Agents and workloads in the logs that no longer exist: deleted since they made these calls">${T.showGone ? 'Showing' : 'Show'} gone <small>${num(T.goneN)}</small></button>` : '';
+  const toolbar = `<div class="toolbar"><div class="row wrap">${tfFoundMenu(d, a, hasNet, hasGw)}${achip}${fchips}${kchips}${gchip}</div><div class="row">${nsOpts}${input}</div></div>`;
   void lchips;
   const toolbarPlain = `<div class="toolbar">${input}</div>`;
   const sel = tfSelPanel(d, a, nodes, callers, targets);
@@ -1022,6 +1043,7 @@ after.traffic = () => {
   document.querySelectorAll('[data-tftools]').forEach(b => b.onclick = () => keepY(() => { T.tools = b.dataset.tftools; T.gz = null; }));
   $('#tf-ghosts')?.addEventListener('click', () => keepY(() => { T.showGhosts = !T.showGhosts; T.gz = null; }));
   $('#tf-agents')?.addEventListener('click', () => keepY(() => { T.agents = !T.agents; T.gz = null; }));
+  $('#tf-gone')?.addEventListener('click', () => keepY(() => { T.showGone = !T.showGone; T.gz = null; tfApplyGone(); }));
   $('#tf-unfocus')?.addEventListener('click', () => { T.focus = ''; T.freach = null; T.fexp = {}; T.gz = null; T.sel = ''; history.replaceState(null, '', '#traffic'); T.lastHash = location.hash; render(); });
   $('#tf-focus')?.addEventListener('click', () => { T.focus = T.sel; T.sel = ''; T.fexp = {}; T.gz = null; render(); });
   $('#tf-focusc')?.addEventListener('click', ev => { T.focus = ev.currentTarget.dataset.id; T.sel = ''; T.fexp = {}; T.gz = null; render(); });

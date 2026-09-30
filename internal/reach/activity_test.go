@@ -343,3 +343,53 @@ func TestActivityUnenforcedToolList(t *testing.T) {
 		t.Fatalf("triage lists list_issues on a server with no allowlist: %+v", f)
 	}
 }
+
+// A service account that made calls but has no workload now is gone; one
+// whose workload is in the capture is not.
+func TestActivityGoneCaller(t *testing.T) {
+	ws := activityWS(t, "Lists", "list_issues")
+	ws.AddLogLines("c", "kagent", "github-mcp-waypoint-1", "agentgateway", "current", []string{
+		agwLine("2026-09-28T18:28:00Z", "gateway=kagent/github-mcp-waypoint route=kagent/github-mcp protocol=mcp mcp.method.name=tools/call mcp.target=github src.addr=10.244.1.99:1 src.identity=spiffe://mesh1/ns/kagent/sa/ep-demo http.status=200 gen_ai.tool.name=list_issues"),
+	}, "gone")
+	ws.WaitLogs()
+	a := EvaluateActivity(ws, nil, "")
+	seen := 0
+	for _, c := range a.Callers {
+		switch c.Label {
+		case "kagent/ep-demo":
+			seen++
+			if !c.Gone {
+				t.Fatalf("ep-demo has no workload: %+v", c)
+			}
+		case "kagent/triage":
+			seen++
+			if c.Gone {
+				t.Fatalf("triage is running: %+v", c)
+			}
+		}
+	}
+	if seen != 2 {
+		t.Fatalf("callers %+v", a.Callers)
+	}
+}
+
+// A pod address in a node's pod range that no pod holds any more is gone.
+func TestActivityGoneAddress(t *testing.T) {
+	ws := activityWS(t, "Lists", "list_issues")
+	rNode := res("", "v1", "nodes", "Node")
+	ws.SetCoverage(bundle.Coverage{ID: "c.nodes", Cluster: "c", Type: bundle.CoverageResource, Group: "", Version: "v1", Resource: "nodes", State: bundle.StateComplete})
+	ws.AddObjects("c", rNode, []map[string]any{o("Node", "", "w1", nil, map[string]any{"spec": map[string]any{"podCIDR": "10.244.1.0/24"}})}, "n")
+	ws.AddLogLines("c", "agentgateway-system", "ai-2", "agentgateway", "current", []string{
+		agwLine("2026-09-28T18:31:00Z", "gateway=agentgateway-system/ai route=agentgateway-system/anthropic src.addr=10.244.1.77:5 http.status=200 protocol=llm gen_ai.provider.name=anthropic gen_ai.request.model=m"),
+	}, "gone-ip")
+	ws.WaitLogs()
+	a := EvaluateActivity(ws, nil, "")
+	for _, c := range a.Callers {
+		if c.Label == "10.244.1.77" && !c.Gone {
+			t.Fatalf("no pod holds 10.244.1.77: %+v", c)
+		}
+		if c.Label == "kagent/notebook" && c.Gone {
+			t.Fatalf("notebook is running: %+v", c)
+		}
+	}
+}

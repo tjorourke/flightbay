@@ -92,6 +92,9 @@ type ActCaller struct {
 	// reaches each MCP server at (MCP_SERVERS_CONFIG, or a declarative
 	// Agent's RemoteMCPServer URL).
 	ServerServices map[string][]string `json:"serverServices,omitempty"`
+	// Gone: a service account that made calls but has no workload in the
+	// capture any more (the agent was deleted).
+	Gone bool `json:"gone,omitempty"`
 	// Agentic: a workload or service account that called MCP tools, models
 	// or agents. It marks agents whose workload is gone or was not captured,
 	// which have no agent type of their own.
@@ -893,6 +896,13 @@ func (b *actBuilder) finish(inventory bool) {
 		if m := b.agentSvc[ca.Label]; m != nil && (ca.Kind == "workload" || ca.Kind == "identity") {
 			ca.ServerServices = m
 		}
+		switch ca.Kind {
+		case "identity":
+			ca.Gone = !b.hasServiceAccount(ca.Identity)
+		case "address":
+			// A pod address no pod in the capture holds: the pod is gone.
+			ca.Gone = b.podAddressGone(ca.Label)
+		}
 	}
 	for _, ca := range b.callers {
 		if ca.Anonymous {
@@ -1359,6 +1369,61 @@ func (b *actBuilder) configuredReach() {
 			}
 		}
 	}
+}
+
+// hasServiceAccount says whether any workload in the capture runs as the
+// service account of this SPIFFE ID.
+func (b *actBuilder) hasServiceAccount(ident string) bool {
+	ns, sa, ok := spiffeSA(ident)
+	if !ok {
+		return true
+	}
+	for _, c := range b.clusters {
+		for _, w := range c.works {
+			if w.ns == ns && w.sa == sa {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// podAddressGone says whether addr is in a node's pod range while no pod in
+// the capture has it.
+func (b *actBuilder) podAddressGone(addr string) bool {
+	ip := net.ParseIP(addr)
+	if ip == nil {
+		return false
+	}
+	for _, c := range b.clusters {
+		if c.ips().pod[addr] != nil || c.ips().node[addr] {
+			return false
+		}
+		nodes := c.list("", "nodes")
+		if len(nodes) == 0 {
+			// Nodes not collected (a namespaced mirror): take the /24 of the
+			// pod addresses in the capture as the pod range.
+			if v4 := ip.To4(); v4 != nil {
+				for a := range c.ips().pod {
+					if p := net.ParseIP(a).To4(); p != nil && p[0] == v4[0] && p[1] == v4[1] && p[2] == v4[2] {
+						return true
+					}
+				}
+			}
+		}
+		for _, n := range nodes {
+			cidrs := strList(l(path(n.Obj, "spec", "podCIDRs")))
+			if cidr := s(path(n.Obj, "spec", "podCIDR")); cidr != "" {
+				cidrs = append(cidrs, cidr)
+			}
+			for _, cd := range cidrs {
+				if _, nw, err := net.ParseCIDR(cd); err == nil && nw.Contains(ip) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // guarded says whether an allowlist covers the server.

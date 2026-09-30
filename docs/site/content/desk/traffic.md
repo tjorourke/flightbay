@@ -190,9 +190,13 @@ The filter box takes free text or `key:value` terms, with suggestions from the c
 | `via:` | The waypoint that carried it | `via:github-mcp-waypoint` |
 | `kind:` | `agent` for a source that is an agent; `service`, `workload` or `external` for the destination | `kind:agent` |
 
+## Gone agents and workloads
+
+The page shows what is running now. A caller whose workload no longer exists is left off: a service account that called through agentgateway but has no workload in the capture, a pod address no pod holds any more (in a node's pod range, or the /24 of the capture's pods when nodes were not collected), and a pod ztunnel logged by name that has since been deleted. Their calls, refusals, finding items and the tools known only from their calls go with them. **Show gone N** in the chips brings them back, for when you are looking for what a deleted agent did. On a live mirror this follows the cluster: delete an agent and it drops off the map at the next refresh.
+
 ## Following one agent
 
-**Agents only** keeps the traffic of agents, MCP servers and agent gateways, and of service accounts that called MCP tools, models or agents through agentgateway. Those are agents whose workload is gone or was not captured: they show as `agent by its calls, no workload captured`. Click a workload and **Show only its traffic**, or open `#traffic?agent=kagent/tom-demo` (the **Traffic** button on the [Agents](/desk/agent-reach/) page does this), to follow one: its connections and its gateway calls.
+**Agents only** keeps the traffic of agents, MCP servers and agent gateways, and of service accounts that called MCP tools, models or agents through agentgateway. Those are agents whose workload was not captured; ones whose workload is gone are hidden unless **Show gone** is on. Click a workload and **Show only its traffic**, or open `#traffic?agent=kagent/tom-demo` (the **Traffic** button on the [Agents](/desk/agent-reach/) page does this), to follow one: its connections and its gateway calls.
 
 For an agent, the map then also draws what policy allows it to reach and it did not use, faded and dashed and folded by namespace. Click a namespace to open it up, and a Service to explain why it is allowed. The bar above the map counts both, and links to the agent on the Agents page.
 
