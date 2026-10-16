@@ -2,6 +2,8 @@ name: ci
 on:
   push: {branches: [main]}
   pull_request:
+permissions:
+  contents: read
 jobs:
   test:
     strategy:
@@ -12,6 +14,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with: {go-version-file: go.mod}
+      - name: reject unapproved capture archives
+        run: test "$(git ls-files '*.tar.zst' '*.tar.zst.age' | sort)" = "examples/sample-bundle.tar.zst"
       - run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
       - run: go vet ./...
       - run: go test -race ./...
@@ -22,3 +26,12 @@ jobs:
       - name: sample bundle opens and verifies
         run: |
           /tmp/flightbay inspect examples/sample-bundle.tar.zst | grep -q "Verified: yes"
+
+  docs:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: peaceiris/actions-hugo@v3
+        with: {hugo-version: "0.160.0", extended: true}
+      - name: build documentation site
+        run: hugo --source docs/site --destination /tmp/flightbay-docs

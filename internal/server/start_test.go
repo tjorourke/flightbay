@@ -109,8 +109,10 @@ func TestStartNeedsTheToken(t *testing.T) {
 			t.Errorf("GET %s on the start page: %d, want 404", p, resp.StatusCode)
 		}
 	}
-	if resp, _ := e.do(t, "GET", "/favicon.svg", "", false); resp.StatusCode != 200 {
-		t.Errorf("favicon: %d", resp.StatusCode)
+	for _, p := range []string{"/favicon.svg", "/favicon-32.png", "/apple-touch-icon.png"} {
+		if resp, _ := e.do(t, "GET", p, "", false); resp.StatusCode != 200 {
+			t.Errorf("favicon asset %s: %d", p, resp.StatusCode)
+		}
 	}
 	if resp, _ := e.do(t, "GET", "/docs/getting-started/", "", false); resp.StatusCode != 200 {
 		t.Errorf("docs: %d", resp.StatusCode)
@@ -302,12 +304,12 @@ func TestStartContextsAndLive(t *testing.T) {
 	if resp, b := e.do(t, "POST", "/api/start/live-plan", `{"kubeconfig":"`+kc+`","context":"fake"}`, true); resp.StatusCode != 501 {
 		t.Errorf("live-plan without a planner: %d %s", resp.StatusCode, b)
 	}
-	resp, b = e.do(t, "POST", "/api/start/live", `{"kubeconfig":"`+kc+`","namespaces":"kagent, istio-*","soloDiagnostics":true}`, true)
+	resp, b = e.do(t, "POST", "/api/start/live", `{"kubeconfig":"`+kc+`","namespaces":"kagent, istio-*","diagnostics":true}`, true)
 	if resp.StatusCode != 200 {
 		t.Fatalf("live: %d %s", resp.StatusCode, b)
 	}
 	a := e.wantLaunch(t)
-	if a.Kind != "live" || a.Live == nil || a.Live.Context != "fake" || a.Live.Namespaces != "kagent,istio-*" || !a.Live.SoloDiagnostics {
+	if a.Kind != "live" || a.Live == nil || a.Live.Context != "fake" || a.Live.Namespaces != "kagent,istio-*" || !a.Live.Diagnostics {
 		t.Errorf("live action: %+v %+v", a, a.Live)
 	}
 }
@@ -417,11 +419,11 @@ func TestStartLiveAccess(t *testing.T) {
 	var got LiveRequest
 	e.s.LiveAccess = func(_ context.Context, r LiveRequest) (LiveAccess, error) {
 		got = r
-		return LiveAccess{ClusterScoped: true, SoloDiagnostics: false, SoloDiagnosticsWhy: "cannot port-forward"}, nil
+		return LiveAccess{ClusterScoped: true, Diagnostics: false, DiagnosticsWhy: "cannot port-forward"}, nil
 	}
 	resp, b := e.do(t, "POST", "/api/start/live-access", body, true)
 	var a LiveAccess
-	if resp.StatusCode != 200 || json.Unmarshal(b, &a) != nil || !a.ClusterScoped || a.SoloDiagnostics || a.SoloDiagnosticsWhy == "" {
+	if resp.StatusCode != 200 || json.Unmarshal(b, &a) != nil || !a.ClusterScoped || a.Diagnostics || a.DiagnosticsWhy == "" {
 		t.Fatalf("access: %d %s", resp.StatusCode, b)
 	}
 	if got.Context != "fake" || got.Namespaces != "shop" {

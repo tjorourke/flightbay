@@ -32,7 +32,7 @@ func (s *Server) liveSave(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"path": path, "ms": time.Since(start).Milliseconds()})
 }
 
-// liveRefreshDiagnostics re-reads one Solo component's admin endpoints over
+// liveRefreshDiagnostics re-reads one component's admin endpoints over
 // port-forward (POST ?pod=namespace/name) and replaces its captured files.
 func (s *Server) liveRefreshDiagnostics(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -44,7 +44,7 @@ func (s *Server) liveRefreshDiagnostics(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if s.RefreshDiagnostics == nil || !s.WS.IsLive() {
-		jerr(w, http.StatusConflict, "diagnostics refresh needs flightbay-desk live --solo-diagnostics")
+		jerr(w, http.StatusConflict, "diagnostics refresh needs flightbay-desk live --diagnostics")
 		return
 	}
 	ns, pod, ok := strings.Cut(r.URL.Query().Get("pod"), "/")

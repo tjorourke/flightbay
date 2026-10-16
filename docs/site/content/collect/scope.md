@@ -36,7 +36,7 @@ flightbay collect --profile custom --collect objects,events --namespaces payment
 | `logs` | `pods/log` for the selected containers. See [Logs](/collect/logs/). |
 | `nodes` | Node objects: conditions, capacity, versions, taints. Needs `--cluster-scoped`. |
 | `helm` | Release summaries from Helm's release Secrets. Needs `--secrets keys`. |
-| `proxies`, `control-plane`, `metrics` | Admin endpoints of Solo components, through port-forward. See [Solo diagnostics](/collect/solo-diagnostics/). |
+| `proxies`, `control-plane`, `metrics` | Admin endpoints of supported components, through port-forward. See [Proxy and control-plane diagnostics](/collect/diagnostics/). |
 
 A category whose dependency is missing is not silently added; the dry run lists it under "Not collected" with the reason.
 

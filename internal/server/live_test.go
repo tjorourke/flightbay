@@ -57,7 +57,7 @@ func TestLiveWorkspaceAndEndpoints(t *testing.T) {
 	s.RefreshDiagnostics = func(_ context.Context, ns, pod string) (int, error) {
 		gotNS, gotPod = ns, pod
 		if pod == "nope" {
-			return 0, errors.New("not a Solo component")
+			return 0, errors.New("not a supported component")
 		}
 		return 4, nil
 	}

@@ -1,4 +1,5 @@
 'use strict';
+document.querySelectorAll('.brand').forEach(a => a.setAttribute('aria-label', 'Flightbay start page'));
 // Flightbay start page: what flightbay ui shows when it has nothing to open.
 // Loaded only by start.html. When the user picks something the server hands
 // over to the desk on the same address and token; this page waits for it.
@@ -43,7 +44,7 @@ function tilde(p) { return ST.home && p.startsWith(ST.home + '/') ? '~' + p.slic
 
 function liveForm() {
   return {kubeconfig: $('#lv-kubeconfig').value.trim(), context: $('#lv-context').value, namespaces: $('#lv-ns').value.trim(),
-    excludeNamespaces: $('#lv-exns').value.trim(), clusterScoped: $('#lv-cluster').checked, soloDiagnostics: $('#lv-solo').checked};
+    excludeNamespaces: $('#lv-exns').value.trim(), clusterScoped: $('#lv-cluster').checked, diagnostics: $('#lv-diagnostics').checked};
 }
 
 function repoForm() {
@@ -61,7 +62,7 @@ function cliFor() {
     if (f.namespaces) a.push('--namespaces', list(f.namespaces).join(','));
     if (f.excludeNamespaces) a.push('--exclude-namespaces', list(f.excludeNamespaces).join(','));
     if (f.clusterScoped) a.push('--cluster-scoped');
-    if (f.soloDiagnostics) a.push('--solo-diagnostics');
+    if (f.diagnostics) a.push('--diagnostics');
   } else if (ST.card === 'file') {
     const p = ST.lastAction?.path || $('#fl-path').value.trim() || ST.files[0]?.path || 'BUNDLE';
     a.push(ST.lastAction?.review ? 'review' : 'ui', tilde(p));
@@ -137,14 +138,14 @@ async function checkAccess() {
   const f = liveForm();
   const seq = ++ST.accessSeq;
   if (!f.context) return;
-  for (const [id, why] of [['#lv-cluster', '#lv-cluster-why'], ['#lv-solo', '#lv-solo-why']]) { $(id).checked = true; $(why).textContent = ''; }
+  for (const [id, why] of [['#lv-cluster', '#lv-cluster-why'], ['#lv-diagnostics', '#lv-diagnostics-why']]) { $(id).checked = true; $(why).textContent = ''; }
   try {
     const a = await call('/api/start/live-access', f);
     if (seq !== ST.accessSeq) return;
     $('#lv-cluster').checked = a.clusterScoped;
     $('#lv-cluster-why').textContent = a.clusterScopedWhy ? 'Off: ' + a.clusterScopedWhy + '.' : '';
-    $('#lv-solo').checked = a.soloDiagnostics;
-    $('#lv-solo-why').textContent = a.soloDiagnosticsWhy ? 'Off: ' + a.soloDiagnosticsWhy + '.' : '';
+    $('#lv-diagnostics').checked = a.diagnostics;
+    $('#lv-diagnostics-why').textContent = a.diagnosticsWhy ? 'Off: ' + a.diagnosticsWhy + '.' : '';
   } catch (e) {
     // Unreachable or no access review allowed: leave both on; live mode
     // records anything it is refused.
@@ -154,9 +155,9 @@ async function checkAccess() {
 }
 
 function optionsSummary() {
-  const on = [$('#lv-cluster').checked && 'cluster-scoped objects', $('#lv-solo').checked && 'Solo diagnostics'].filter(Boolean);
+  const on = [$('#lv-cluster').checked && 'cluster-scoped objects', $('#lv-diagnostics').checked && 'proxy diagnostics'].filter(Boolean);
   $('#lv-options-sum').textContent = on.length === 2 ? 'Options: everything these credentials can read' :
-    on.length ? 'Options: ' + on[0] + ' on, ' + (on[0].startsWith('cluster') ? 'Solo diagnostics' : 'cluster-scoped objects') + ' off' : 'Options: namespaced objects and logs only';
+    on.length ? 'Options: ' + on[0] + ' on, ' + (on[0].startsWith('cluster') ? 'proxy diagnostics' : 'cluster-scoped objects') + ' off' : 'Options: namespaced objects and logs only';
 }
 
 function showServer() {
@@ -366,7 +367,7 @@ async function boot() {
   $('#lv-kubeconfig').onchange = () => loadContexts();
   $('#lv-context').onchange = () => { showServer(); $('#lv-plan').innerHTML = ''; updateCLI(); checkAccess(); };
   $('#lv-ns').onchange = () => checkAccess();
-  for (const id of ['#lv-cluster', '#lv-solo']) $(id).addEventListener('change', optionsSummary);
+  for (const id of ['#lv-cluster', '#lv-diagnostics']) $(id).addEventListener('change', optionsSummary);
   $('#lv-preview').onclick = previewLive;
   $('#lv-start').onclick = startLive;
   $('#fl-open').onclick = () => openFile($('#fl-path').value.trim(), false);

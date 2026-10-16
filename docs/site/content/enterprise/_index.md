@@ -6,7 +6,7 @@ description: What Flightbay Enterprise adds to the desk, how to turn it off, and
 
 # Flightbay Enterprise
 
-The collector and the desk work fully without Enterprise. Flightbay Enterprise adds three features to the desk, for Solo support and, later, licensed customers.
+The collector and the desk work fully without Enterprise. Flightbay Enterprise adds optional priorities, Agent reach and Traffic features to the desk.
 
 | Feature | Name | Adds |
 |---|---|---|

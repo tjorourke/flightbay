@@ -55,7 +55,7 @@ func InventoryMarkdown() string {
 		}
 		w("| %s | %s | %s | %s | %s | %s |\n", name, strings.Join(cats, ", "), p.ObjectDetail, p.ConfigMaps, p.Secrets, logs)
 	}
-	w("\nCluster-scoped objects (nodes, CRDs, ClusterRoles) need `--cluster-scoped`. Proxy dumps, control-plane debug output and metrics need `--solo-diagnostics` (or the categories plus `--portforward`).\n\n")
+	w("\nCluster-scoped objects (nodes, CRDs, ClusterRoles) need `--cluster-scoped`. Proxy dumps, control-plane debug output and metrics need `--diagnostics` (or the categories plus `--portforward`).\n\n")
 
 	w("## Categories\n\n| Category | What is read |\n|---|---|\n")
 	w("| objects | `list` of each selected resource type in the selected namespaces, in bounded chunks. CRD definitions of selected custom resources (names and printer columns; the schema is dropped). |\n")
@@ -63,7 +63,7 @@ func InventoryMarkdown() string {
 	w("| logs | `pods/log` for selected containers with `timestamps=true`, within the time window and per-stream byte limit. |\n")
 	w("| nodes | Node objects: conditions, capacity, versions, taints (needs `--cluster-scoped`). |\n")
 	w("| helm | Chart summaries from Helm release Secrets (needs `--secrets keys`). |\n")
-	w("| proxies, control-plane, metrics | Admin endpoints of Solo components among the selected pods, through port-forward. See below. |\n\n")
+	w("| proxies, control-plane, metrics | Admin endpoints of supported components among the selected pods, through port-forward. See below. |\n\n")
 
 	w("## Diagnostic endpoints (port-forward)\n\nRead only from pods in the selected namespaces, only when port-forward is allowed. Every response is filtered to the selected namespaces and scrubbed before it is written.\n\n")
 	w("| Component | Category | Port | Path | Skipped when excluded |\n|---|---|---|---|---|\n")
@@ -124,7 +124,7 @@ func InventoryMarkdown() string {
 	w("- `collection-log.jsonl`: every call, including failures (RBAC denied, timeouts, truncation), so a missing file never looks like a missing object.\n")
 	w("- `coverage/*.json`: per collection, what was expected and whether it completed, failed, was excluded or truncated. Attached and hubble flow files have a `flows` coverage entry each, with the detected format.\n")
 	w("- `manifest.json`: capture end, completion state and a SHA-256 for every member. `flightbay inspect` verifies them.\n")
-	w("- `manifest.sig` (last, with `--sign KEY`): your Ed25519 signature over the manifest, so Solo can check the bundle came from you unmodified. Solo only ever holds your public key.\n")
+	w("- `manifest.sig` (last, with `--sign KEY`): your Ed25519 signature over the manifest, so recipients can check the bundle came from you unmodified. Share only your public key.\n")
 	w("- The SHA-256 of the collector binary, and with `--config` the policy file's SHA-256 and who approved it (`flightbay policy sign`).\n\n")
 	w("Before sending, the Review and send page in `flightbay ui BUNDLE` (or `flightbay review BUNDLE --plan FILE` without the UI) lets you remove namespaces, resource types, objects, log streams, log lines and files and redact more, then exports a new signed bundle with `review-ledger.json`, a count of what you removed.\n\n")
 	w("The bundle is a plain tar stream compressed with zstd. Open it with standard tools: `tar --zstd -tvf BUNDLE`. With `--encrypt-to` it is wrapped in age encryption and only the holder of the matching identity can read it.\n")

@@ -6,7 +6,7 @@ import (
 	"github.com/tjorourke/flightbay/internal/solodocs"
 )
 
-// ruleDocs is the Solo docs page that helps with each rule's next step. Rules
+// ruleDocs is product documentation that helps with each rule's next step. Rules
 // about plain Kubernetes (pod status, scheduling, log signatures) and about
 // the capture itself have none.
 var ruleDocs = map[string]string{

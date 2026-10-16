@@ -644,19 +644,19 @@ func (r *Reader) Verify() error {
 
 // Path kinds.
 const (
-	PathHeader     = "header"
-	PathManifest   = "manifest"
-	PathResource   = "resource"
-	PathLog        = "log"
-	PathEvents     = "events"
-	PathCoverage   = "coverage"
-	PathDiscovery  = "discovery"
-	PathRedaction  = "redaction"
-	PathCollection = "collection-log"
-	PathSolo       = "solo"
-	PathFlows      = "flows"
-	PathSignature  = "signature"
-	PathLedger     = "ledger"
+	PathHeader      = "header"
+	PathManifest    = "manifest"
+	PathResource    = "resource"
+	PathLog         = "log"
+	PathEvents      = "events"
+	PathCoverage    = "coverage"
+	PathDiscovery   = "discovery"
+	PathRedaction   = "redaction"
+	PathCollection  = "collection-log"
+	PathDiagnostics = "diagnostics"
+	PathFlows       = "flows"
+	PathSignature   = "signature"
+	PathLedger      = "ledger"
 )
 
 // PathInfo classifies a member name.
@@ -701,13 +701,13 @@ func CoveragePath(cluster, id string) string {
 	return fmt.Sprintf("clusters/%s/coverage/%s.json", cluster, id)
 }
 
-// SoloPath is clusters/<c>/solo/<kind>/<ns>/<pod>/<file>, or
-// clusters/<c>/solo/<file> when kind is empty. kind is proxies or control-plane.
-func SoloPath(cluster, kind, ns, pod, file string) string {
+// DiagnosticsPath is clusters/<c>/diagnostics/<kind>/<ns>/<pod>/<file>, or
+// clusters/<c>/diagnostics/<file> when kind is empty. kind is proxies or control-plane.
+func DiagnosticsPath(cluster, kind, ns, pod, file string) string {
 	if kind == "" {
-		return "clusters/" + SafeID(cluster) + "/solo/" + file
+		return "clusters/" + SafeID(cluster) + "/diagnostics/" + file
 	}
-	return "clusters/" + SafeID(cluster) + "/solo/" + kind + "/" + SafeID(ns) + "/" + SafeID(pod) + "/" + file
+	return "clusters/" + SafeID(cluster) + "/diagnostics/" + kind + "/" + SafeID(ns) + "/" + SafeID(pod) + "/" + file
 }
 
 // FlowsPath is clusters/<c>/flows/<format>/<file>: a flow log file attached
@@ -789,9 +789,9 @@ func ParsePath(name string) (PathInfo, bool) {
 			return PathInfo{}, false
 		}
 		info.Kind, info.Sub, info.File = PathFlows, s[3], s[4]
-	case "solo":
-		// solo/summary.json or solo/<kind>/<ns>/<pod>/<file>
-		info.Kind = PathSolo
+	case "diagnostics", "solo":
+		// Accept the old "solo" directory for bundles created before the rename.
+		info.Kind = PathDiagnostics
 		switch len(s) {
 		case 4:
 			info.File = s[3]

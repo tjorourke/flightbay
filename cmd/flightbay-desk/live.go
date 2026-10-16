@@ -43,13 +43,13 @@ search, SQL, the Scorecard, agent reach and findings, and kubectl and k9s in the
 whose watches update as the cluster changes.
 
 It only reads. The requests it makes are get, list, watch and pods/log (plus port-forward to
-Solo components when --solo-diagnostics is given and you ask for a refresh). A guard in the
+supported components when --diagnostics is given and you ask for a refresh). A guard in the
 client refuses anything else before it leaves the process. Scope and redaction are the ones
 flightbay collect uses, with the same flags. Save as bundle writes the mirror as a normal,
 verified bundle at any moment.`,
 		Example: `  flightbay-desk live --context kind-mesh1 --namespaces kagent,istio-system
   flightbay-desk live --context prod --namespaces payments --exclude-resources configmaps,secrets
-  flightbay-desk live --context mesh1 --solo-diagnostics --max-log-streams 50
+  flightbay-desk live --context mesh1 --diagnostics --max-log-streams 50
   flightbay-desk live --context mesh1 --namespaces payments --dry-run      # the plan and the RBAC it needs
   flightbay rbac --live --namespaces payments                               # the same RBAC, without a cluster`,
 		RunE: func(cmd *cobra.Command, _ []string) error {

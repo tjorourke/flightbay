@@ -17,9 +17,9 @@ A capture reads every selected object type and every selected log stream once. O
 | List and get requests in flight | 4 (`--concurrency`) | Bounds the heavy lists running at once against the API server and etcd |
 | List and get request rate | 50 a second, burst 100 (`--qps`, `--burst`) | The same client-side limit kubectl uses |
 | Log streams in flight | 8 (`--log-concurrency`) | Bounds the load on the kubelets |
-| Solo diagnostics in flight | 4 pods at a time (at most `--concurrency`) | Each is a port-forward through the API server to a kubelet, and a proxy dump can be tens of MB |
+| Diagnostics in flight | 4 pods at a time (at most `--concurrency`) | Each is a port-forward through the API server to a kubelet, and a proxy dump can be tens of MB |
 | Log request rate | 50 a second (`--log-qps`) | Limited separately, because a log request is proxied to a kubelet rather than served from etcd or the watch cache |
-| Only reads | always | Get, list and pod logs, plus port-forward only with `--solo-diagnostics` |
+| Only reads | always | Get, list and pod logs, plus port-forward only with `--diagnostics` |
 
 On top of this, the API server's own priority and fairness queues Flightbay's requests with every other client's, and client-go honours a `429` and its `Retry-After`. A capture cannot starve the controllers or other users.
 

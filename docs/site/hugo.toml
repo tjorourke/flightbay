@@ -1,7 +1,7 @@
 # Flightbay docs. Build with: hugo --source docs/site
 # The same Markdown is embedded in flightbay-desk and served at /docs.
-baseURL = "https://flightbay.solo.io/"
-title = "Solo flightbay docs"
+baseURL = "https://tjorourke.github.io/flightbay/"
+title = "Flightbay documentation"
 languageCode = "en-gb"
 disableKinds = ["taxonomy", "term", "RSS"]
 

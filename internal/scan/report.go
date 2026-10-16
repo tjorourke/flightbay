@@ -31,8 +31,8 @@ type Failure struct {
 	Severity string       `json:"severity"`
 	Title    string       `json:"title"`
 	Detail   string       `json:"detail"`
-	Guide    string       `json:"guide"`          // the Solo field guide
-	Docs     string       `json:"docs,omitempty"` // the product documentation page (docs.solo.io)
+	Guide    string       `json:"guide"`          // a related public field guide
+	Docs     string       `json:"docs,omitempty"` // a related product documentation page
 	Item     posture.Item `json:"item"`
 	File     string       `json:"file"`
 	Line     int          `json:"line,omitempty"`
@@ -443,8 +443,8 @@ func links(guide, docs string) []string {
 		out = append(out, "Guide: "+guide)
 	}
 	if docs != "" && docs != guide {
-		label := "Solo docs: "
-		if !solodocs.IsSolo(docs) {
+		label := "Product docs: "
+		if !solodocs.IsProductDocs(docs) {
 			label = "Docs: "
 		}
 		out = append(out, label+docs)

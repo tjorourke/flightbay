@@ -152,7 +152,7 @@ type Ledger struct {
 	Kept           Counts    `json:"kept"`
 	Redacted       Redacted  `json:"redacted"`
 	// Types are always listed: a type name says nothing about the customer,
-	// and Solo needs it to mark checks as not applicable.
+	// and the desk uses them to mark checks as not applicable.
 	Types []string `json:"types,omitempty"`
 	// Namespaces, Objects, LogStreams and Files are listed only with DiscloseNames.
 	Namespaces []string `json:"namespaces,omitempty"`
@@ -908,7 +908,7 @@ func Apply(ctx context.Context, src io.Reader, dst io.Writer, p *Plan, o Options
 			out = ru.collectionLog(m.Data)
 		case info.Kind == bundle.PathRedaction:
 			out = ru.redactionReport(m.Data)
-		case info.Kind == bundle.PathSolo:
+		case info.Kind == bundle.PathDiagnostics:
 			if info.Sub != "" && (c.nsRemoved(info.Cluster, info.Namespace) || fileRemoved(p.Remove.Diagnostics, info.Cluster, info.Namespace, info.Pod, info.File)) {
 				if !c.nsRemoved(info.Cluster, info.Namespace) {
 					ru.files[m.Name] = true

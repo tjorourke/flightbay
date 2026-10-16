@@ -8,9 +8,9 @@ import (
 	"github.com/tjorourke/flightbay/internal/store"
 )
 
-// spec is a check's definition. source is the Solo field guide (a lab on
+// spec is a check's definition. source is a related field guide (a lab on
 // mastertheagent.com or masterthemesh.com); docs is the product documentation
-// page for the feature the check is about, on docs.solo.io where one exists
+// page for the feature the check is about, where one exists
 // (see docs.go). scripts/scorecard-checks reads these literals.
 type spec struct {
 	id, category, severity, title, why, fix, source, docs string

@@ -14,7 +14,7 @@ import (
 // name, hostname, proxy, uid, identity) points at a disallowed namespace is
 // dropped whole; otherwise any entry or array element that mentions one is
 // removed and the rest is kept. Mentions are recognised in the forms the
-// Solo components use: "namespace" fields, service FQDNs (.ns.svc), SPIFFE
+// Mesh components use: "namespace" fields, service FQDNs (.ns.svc), SPIFFE
 // identities (/ns/<ns>/), ztunnel uids (/Pod/<ns>/), Prometheus labels
 // (namespace="ns") and istiod proxy IDs (name.ns).
 type nsFilter struct {

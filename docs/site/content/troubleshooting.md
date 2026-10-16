@@ -25,7 +25,7 @@ In the desk, a type that failed is never shown as empty: [Resources](/desk/resou
 
 Diagnostics and Hubble flows need `pods/portforward` in the namespaces they read from. When port-forward fails (RBAC, an admission policy, a proxy in the way), each affected file is recorded as failed with the error, and the rest of the capture carries on.
 
-- Check the RBAC: `flightbay rbac --solo-diagnostics --namespaces ...` includes `pods/portforward`.
+- Check the RBAC: `flightbay rbac --diagnostics --namespaces ...` includes `pods/portforward`.
 - If port-forward is not allowed in your environment, capture without diagnostics: `--no-portforward`. The dry run then lists them under "Not collected" with the reason.
 - Port-forward tries WebSockets first and falls back to SPDY. A corporate proxy that blocks both will stop it.
 
@@ -174,7 +174,7 @@ A whole area can be "not scored" when the capture has nothing it applies to, suc
 
 ### Proxy configs is empty
 
-Diagnostics were not selected. Capture with `--solo-diagnostics`. Diagnostics are written last in a bundle, so while it is still loading they may simply not have arrived.
+Diagnostics were not selected. Capture with `--diagnostics`. Diagnostics are written last in a bundle, so while it is still loading they may simply not have arrived.
 
 ### Agent reach says "the network is flat"
 

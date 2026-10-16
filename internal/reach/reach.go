@@ -106,7 +106,7 @@ type Finding struct {
 	Items    []FindingItem `json:"items,omitempty"`
 	Fix      string        `json:"fix,omitempty"`
 	Advice   []string      `json:"advice,omitempty"` // steps that are not YAML
-	Source   string        `json:"source"`           // the Solo field guide
+	Source   string        `json:"source"`           // a related field guide
 	Docs     string        `json:"docs,omitempty"`   // the product documentation page (docs.solo.io)
 }
 

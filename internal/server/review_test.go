@@ -127,7 +127,7 @@ func TestReviewFlow(t *testing.T) {
 		t.Fatalf("export: %d %+v", code, ex)
 	}
 
-	// Solo opens the export.
+	// The recipient opens the export.
 	out := importFile(t, ex.Path, []sign.PublicKey{key.Public()})
 	tr := out.Trust()
 	if tr.Signature == nil || !tr.Signature.Valid || !tr.Signature.Trusted || len(tr.Ledger) == 0 {

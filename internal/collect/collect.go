@@ -344,7 +344,7 @@ func (pl *DryRunPlan) Print(w io.Writer, showRBAC bool) {
 	fmt.Fprintf(w, "  Resource types (%d): %s\n", len(pl.Resources), strings.Join(pl.Resources, ", "))
 	for _, c := range pl.Categories {
 		if c == "proxies" || c == "control-plane" || c == "metrics" {
-			fmt.Fprintln(w, "  Diagnostics: port-forward to Solo component pods in the selected namespaces (ztunnel, Envoy,\n"+
+			fmt.Fprintln(w, "  Diagnostics: port-forward to supported component pods in the selected namespaces (ztunnel, Envoy,\n"+
 				"    agentgateway, istiod, gateway controllers) to read their admin endpoints. Output naming other\n"+
 				"    namespaces is removed before writing; Envoy SDS secrets and controller krt snapshots are never kept.")
 			break

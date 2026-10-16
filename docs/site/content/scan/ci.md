@@ -32,7 +32,7 @@ A chart or overlay that fails to render does not stop the scan. It is listed on 
 |---|---|
 | `text` | Area scores, then each failing object as `file:line  object: detail`, grouped by check. The default. |
 | `json` | Scores, every check with its status and reason, and every failing object with its file, line and guide link. |
-| `sarif` | SARIF 2.1.0. One rule per check, with the check's title, why it matters, the fix and a `helpUri` to the Solo product docs page for it (the guide where there is none). The help text links both the field guide and the docs page. One result per failing object, located at the file and line that declares it (the template, for a Helm chart). Levels: critical and high are `error`, medium is `warning`, low is `note`. |
+| `sarif` | SARIF 2.1.0. One rule per check, with the check's title, why it matters, the fix and a `helpUri` to the relevant upstream product documentation (or the field guide where there is none). The help text links both the field guide and the docs page. One result per failing object, located at the file and line that declares it (the template, for a Helm chart). Levels: critical and high are `error`, medium is `warning`, low is `note`. |
 | `github` | GitHub workflow commands: `::error file=...,line=...::message`. Failures at the `--fail-on` severity are errors, others are warnings or notices, so they show inline on the pull request diff. |
 | `codequality` | A GitLab Code Quality report. |
 

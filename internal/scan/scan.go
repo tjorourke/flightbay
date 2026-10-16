@@ -464,7 +464,7 @@ func (s *scanner) buildChart(j helmJob) {
 	}
 	if res != nil {
 		// helm install stamps these on every object it manages; the Scorecard
-		// uses them to recognise Solo charts (controllers that legitimately
+		// uses them to recognise supported product charts (controllers that legitimately
 		// read Secrets cluster-wide, for example).
 		for _, o := range res.objects {
 			md, _ := o.obj["metadata"].(map[string]any)

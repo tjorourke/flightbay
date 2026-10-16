@@ -1,4 +1,4 @@
-package solo
+package meshdiag
 
 import (
 	"strings"

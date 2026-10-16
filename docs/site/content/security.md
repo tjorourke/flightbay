@@ -11,7 +11,7 @@ This page is for the security team that has to approve sending a bundle, and for
 ## The collector
 
 - **You choose before anything is read.** The collection policy is resolved from a profile, a config file, flags or interactive prompts before the first API call. `flightbay collect --dry-run` shows the result and the RBAC it needs, and reads API discovery only.
-- **It only reads.** The collector lists and gets objects, reads logs and events, and, only when you allow it, port-forwards to Solo components to read their admin endpoints. It never creates, changes or deletes anything in the cluster.
+- **It only reads.** The collector lists and gets objects, reads logs and events, and, only when you allow it, port-forwards to supported proxy and control-plane components to read their admin endpoints. It never creates, changes or deletes anything in the cluster.
 - **Least privilege is generated for you.** `flightbay rbac` prints Roles and bindings for exactly your policy. See [RBAC](/collect/rbac/).
 - **Redaction happens in memory.** Objects, ConfigMap data, environment variables, log lines and diagnostic output are redacted before they are written. Unredacted data is never written to disk.
 - **It writes locally.** The bundle is written to a local file, or to standard output with `-o -`. Flightbay never uploads anything.
@@ -29,7 +29,7 @@ Only what the policy selects, redacted:
 | Helm | Chart name, version, app version, status and revision per release |
 | Secrets | Name, type, labels, annotations, key names and byte lengths |
 | ConfigMaps | Data, redacted |
-| Diagnostics | Only with `--solo-diagnostics`: proxy config dumps, istiod debug output and metrics, filtered to the selected namespaces |
+| Diagnostics | Only with `--diagnostics`: proxy config dumps, istiod debug output and metrics, filtered to the selected namespaces |
 | Flow logs | Only files you attach, or Hubble flows you ask for, filtered and redacted |
 
 [Scope](/collect/scope/) explains how to narrow each of these, down to the `minimal` profile of object metadata and events.
@@ -63,7 +63,7 @@ The redaction report records how many values each rule replaced in each file, ne
 
 `manifest.json`, the last file in every bundle, holds a SHA-256 of every other file, plus the capture end time and whether collection completed. `flightbay inspect`, `flightbay extract` and the desk check every file against it. A bundle that fails verification is reported as such; the desk shows what it could read, marked as unverified, and never as verified.
 
-The manifest proves the bundle has not been damaged or altered since it was written. A signature proves who wrote it: `flightbay collect --sign KEY` (or `flightbay ui BUNDLE --sign KEY` for what you export from the Review and send page) signs the manifest with the customer's Ed25519 key, and `flightbay inspect --verify-key` and the desk check it against the customer's public key. Solo only ever holds public keys. See [Signing and approved policies](/collect/signing/).
+The manifest proves the bundle has not been damaged or altered since it was written. A signature proves who wrote it: `flightbay collect --sign KEY` (or `flightbay ui BUNDLE --sign KEY` for what you export from the Review and send page) signs the manifest with the signer's Ed25519 key, and `flightbay inspect --verify-key` and the desk check it against the public key. Only public keys need to be shared. See [Signing and approved policies](/collect/signing/).
 
 ## Approved policies
 
@@ -81,7 +81,7 @@ Each bundle records the SHA-256 of the collector binary. Release checksums are s
 
 `--encrypt-to` wraps the whole bundle in [age](https://age-encryption.org) encryption to one or more X25519 recipients. Only the holder of a matching identity can read it; without it, not even the bundle header is readable. `flightbay-desk keygen` creates an identity and prints the recipient to hand out. See [Sending a bundle](/collect/sending/).
 
-Solo does not yet publish a shared support key, so the recipient comes from your Solo contact.
+There is no built-in shared recipient key. Get the recipient from whoever will open the encrypted bundle.
 
 ## The desk
 
@@ -100,4 +100,4 @@ The Enterprise feature switches decide what the desk shows. They are not a secur
 
 ## Still to come
 
-Planned and not built yet: a hosted service for uploading bundles to Solo, which will check each bundle against the public key registered for that customer.
+Flightbay does not include a hosted upload service. Share bundles through a channel and recipient you trust.

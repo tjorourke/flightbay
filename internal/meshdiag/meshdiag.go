@@ -1,8 +1,8 @@
-// Package solo understands the diagnostic output of Solo components: Envoy,
+// Package meshdiag understands diagnostic output from Envoy,
 // ztunnel and agentgateway config dumps, istiod debug endpoints and
 // certificates. The desk's proxies view, the fbpc helper and the analyzers
 // all read dumps through it.
-package solo
+package meshdiag
 
 import (
 	"encoding/json"

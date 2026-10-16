@@ -54,7 +54,7 @@ var fixedResources = []resource{
 	{URI: scheme + "findings", Name: "findings", Title: "Findings", MimeType: "application/json",
 		Description: "Every analyzer finding with evidence, a log query and a next step."},
 	{URI: scheme + "scorecard", Name: "scorecard", Title: "Scorecard", MimeType: "application/json",
-		Description: "Solo best-practice scores per area and every check with its status, objects, reason and fix YAML."},
+		Description: "Security and operational scores per area, with each check's status, affected objects, reason and fix YAML."},
 	{URI: scheme + "coverage", Name: "coverage", Title: "Coverage", MimeType: "application/json",
 		Description: "What each collection produced, what failed or was excluded and why, the collection log and the redaction report. Read it before concluding anything is absent."},
 	{URI: scheme + "timeline", Name: "timeline", Title: "Timeline", MimeType: "application/json",

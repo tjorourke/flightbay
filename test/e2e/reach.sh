@@ -19,7 +19,7 @@ CLUSTER=${CLUSTER:-flightbay-reach}
 CTX=kind-$CLUSTER
 ISTIOCTL=${ISTIOCTL:-$HOME/.istioctl/bin/istioctl}
 [ -x "$ISTIOCTL" ] || ISTIOCTL=$(command -v istioctl)
-# The Solo istioctl defaults to private images; upstream ones need no licence.
+# The default istioctl image is private; use upstream images to avoid licence credentials.
 ISTIO_HUB=${ISTIO_HUB:-docker.io/istio}
 ISTIO_TAG=${ISTIO_TAG:-1.29.2}
 GATEWAY_API=${GATEWAY_API:-v1.4.0}

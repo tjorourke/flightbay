@@ -8,7 +8,7 @@ description: Open a bundle as a local workspace with a web UI, a terminal, SQL a
 
 `flightbay-desk` turns a bundle into a workspace on your machine. You get a web UI, a terminal where `kubectl`, `k9s` and `stern` work against the snapshot, a set of helper commands, read-only SQL, and an MCP server for AI agents. Everything runs locally. Nothing is sent anywhere.
 
-The UI opens in the dark theme, in the style of the Solo Enterprise UI for kagent. The button at the top right switches to the light theme, which follows the agentgateway Enterprise UI, and the choice is remembered in the browser.
+The UI opens in Flightbay's dark theme. The button at the top right switches to light mode, and the choice is remembered in the browser.
 
 ## Opening a bundle
 
@@ -46,7 +46,7 @@ With nothing to open, `flightbay ui` (and `flightbay-desk open` with no bundle, 
 
 | Card | What it does | The same from the command line |
 |---|---|---|
-| **Live stream a cluster** | Lists your kubeconfig contexts, current one first. Choose namespaces and excluded namespaces. Cluster-scoped objects and Solo diagnostics are on unless the context's credentials cannot use them (checked with a SelfSubjectAccessReview when you pick a context; the reason shows under **Options**). **Preview** runs the live dry run (discovery only) and shows the resource types, logs and the RBAC it needs; **Start live** opens the live mirror. | `flightbay ui --live --context CTX --namespaces NS --cluster-scoped --solo-diagnostics` |
+| **Live stream a cluster** | Lists your kubeconfig contexts, current one first. Choose namespaces and excluded namespaces. Cluster-scoped objects and proxy diagnostics are enabled when the selected credentials allow them; **Preview** shows the resource types, logs and the RBAC it needs; **Start live** opens the read-only mirror. | `flightbay ui --live --context CTX --namespaces NS --cluster-scoped --diagnostics` |
 | **Open a file** | Recent bundles in the current directory and `~/Downloads`, with case, clusters, capture time and size. **Open** investigates one; **Review before sending** opens it in review mode. Drop a file on the page, or paste a path. Encrypted bundles need the identity file. | `flightbay ui BUNDLE`, `flightbay review BUNDLE` |
 | **Open a repo** | A directory or a Git URL (cloned with `git clone --depth 1` into the workspace, with your git credentials). Values files, `--set` pairs, overlay, environment, namespace and release. **Scan and open** scans in process and opens the result; clone errors, an empty scan and charts that fail to render are shown on the page. | `flightbay scan DIR && flightbay ui .` |
 
@@ -123,8 +123,8 @@ The sidebar has every view:
 | [Log explorer](/desk/logs/) | Every log line, with a time axis |
 | [Timeline](/desk/timeline/) | Events, exits, rollouts and error spikes in order |
 | [Findings](/desk/findings/) | Rules that point at likely problems |
-| [Scorecard](/desk/scorecard/) | Solo best practices, scored |
-| [Traffic](/desk/traffic/) | Every connection and every call through agentgateway, why a connection was denied, and each agent's reach, use and lock-down on the [Agents tab](/desk/agent-reach/) (Enterprise) |
+| [Scorecard](/desk/scorecard/) | Security and operational checks, scored |
+| [Traffic](/desk/traffic/) | Connections, agentgateway calls, and each agent's reach, use and lock-down (Enterprise) |
 | [Compare](/desk/compare/) | What changed between captures |
 | [Proxy configs](/desk/proxy-configs/) | Envoy, ztunnel, agentgateway and istiod as captured |
 | [Coverage](/desk/coverage/) | What was allowed, collected and verified |

@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/tjorourke/flightbay/internal/bundle"
-	"github.com/tjorourke/flightbay/internal/solo"
+	"github.com/tjorourke/flightbay/internal/meshdiag"
 	"github.com/tjorourke/flightbay/internal/store"
 )
 
@@ -74,7 +74,7 @@ func (s *Server) diagRow(d store.Diagnostic, cov []bundle.Coverage, withCounts b
 		row.Files = []diagFile{}
 	}
 	if withCounts && len(d.Files) > 0 {
-		sum := solo.Summarise(row.Component, d.Files, s.snapshot())
+		sum := meshdiag.Summarise(row.Component, d.Files, s.snapshot())
 		row.Counts = sum.Counts
 		for _, c := range sum.Certs {
 			switch {
@@ -89,7 +89,7 @@ func (s *Server) diagRow(d store.Diagnostic, cov []bundle.Coverage, withCounts b
 	return row
 }
 
-// proxies lists every captured Solo component, including the ones whose
+// proxies lists every captured component, including the ones whose
 // collection failed or was excluded, so absence is never silent.
 func (s *Server) proxies(w http.ResponseWriter, r *http.Request) {
 	cluster := r.URL.Query().Get("cluster")
@@ -114,7 +114,7 @@ func (s *Server) proxies(w http.ResponseWriter, r *http.Request) {
 	})
 	summaries := map[string]json.RawMessage{}
 	for _, c := range s.WS.Clusters() {
-		if raw := s.WS.SoloSummary(c); raw != nil && (cluster == "" || c == cluster) {
+		if raw := s.WS.DiagnosticSummary(c); raw != nil && (cluster == "" || c == cluster) {
 			summaries[c] = raw
 		}
 	}
@@ -143,7 +143,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 	}
 	k := d.Cluster + "/" + d.Kind + "/" + d.Namespace + "/" + d.Pod
 	row := s.diagRow(*d, s.diagCoverage()[k], false)
-	writeJSON(w, 200, map[string]any{"component": row, "summary": solo.Summarise(d.Component, d.Files, s.snapshot())})
+	writeJSON(w, 200, map[string]any{"component": row, "summary": meshdiag.Summarise(d.Component, d.Files, s.snapshot())})
 }
 
 // proxyFile returns one captured file as captured (already redacted).

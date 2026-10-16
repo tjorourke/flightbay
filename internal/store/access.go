@@ -28,14 +28,14 @@ type AccessEdge struct {
 	First     time.Time `json:"first"`
 	Last      time.Time `json:"last"`
 	// Connections counts connection lines (scope access) and HTTPRequests
-	// request lines (scope http_access, Solo builds); Requests is both.
+	// request lines (scope http_access in some ztunnel builds); Requests is both.
 	Connections  int `json:"connections"`
 	HTTPRequests int `json:"httpRequests"`
 }
 
 // AccessEdges aggregates ztunnel (and waypoint) access log lines. ztunnel
 // writes one JSON line per connection (scope "access") or per HTTP request
-// (scope "http_access", Solo builds) with src.* and dst.* fields.
+// (scope "http_access" in some builds) with src.* and dst.* fields.
 func (w *Workspace) AccessEdges(cluster string) []AccessEdge {
 	rows, err := w.ldb.db.Query(`
 	  SELECT cluster,
@@ -65,7 +65,7 @@ func (w *Workspace) AccessEdges(cluster string) []AccessEdge {
 	              THEN coalesce(sum(try_cast(fields['bytes_recv'] AS BIGINT)) FILTER (WHERE fields['direction'] = 'outbound'), 0)
 	              ELSE coalesce(sum(try_cast(fields['bytes_sent'] AS BIGINT)), 0) END::BIGINT,
 	         coalesce(min(ts) FILTER (WHERE ts > 0), 0), coalesce(max(ts), 0),
-	         -- Solo ztunnel builds log a line per connection (access) and one per
+	         -- Some ztunnel builds log a line per connection (access) and one per
 	         -- HTTP request (http_access); count them apart.
 	         greatest(count(*) FILTER (WHERE scope = 'access' AND fields['direction'] = 'outbound'), count(*) FILTER (WHERE scope = 'access' AND coalesce(fields['direction'], '') <> 'outbound')),
 	         greatest(count(*) FILTER (WHERE scope = 'http_access' AND fields['direction'] = 'outbound'), count(*) FILTER (WHERE scope = 'http_access' AND coalesce(fields['direction'], '') <> 'outbound'))

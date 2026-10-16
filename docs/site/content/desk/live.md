@@ -25,7 +25,7 @@ The two meet in the middle. **Save as bundle** writes the mirror as a normal bun
 
 ## It only reads
 
-Live mode asks the API server for four things: `get`, `list`, `watch` and `pods/log`. With `--solo-diagnostics` it also opens a port-forward to a Solo component when you ask for a diagnostics refresh. Nothing else.
+Live mode asks the API server for four things: `get`, `list`, `watch` and `pods/log`. With `--diagnostics` it also opens a port-forward to a supported component when you ask for a diagnostics refresh. Nothing else.
 
 This is enforced in the client, not only by convention. Every request goes through a guard installed under client-go, which lets reads through and refuses any other method (and `exec`, `attach` and the API server proxy, which can reach a pod with a GET) before the request leaves the process. The guard counts what it passed. `/api/workspace` reports the counts under `live.requests`, and the desk prints them when it stops:
 
@@ -45,7 +45,7 @@ flightbay rbac --live --discover --context kind-mesh1 --namespaces kagent   # an
 flightbay-desk live --context kind-mesh1 --namespaces kagent --dry-run     # the plan and the RBAC together
 ```
 
-With `--namespaces` the output is a Role and RoleBinding per namespace with `get, list, watch` on the selected types and `pods/log`. The Namespace objects in scope are read by name with `get` and polled every minute, so they do not need `watch`. `pods/portforward` with `create` appears only when you pass `--solo-diagnostics`.
+With `--namespaces` the output is a Role and RoleBinding per namespace with `get, list, watch` on the selected types and `pods/log`. The Namespace objects in scope are read by name with `get` and polled every minute, so they do not need `watch`. `pods/portforward` with `create` appears only when you pass `--diagnostics`.
 
 ## Scope and redaction
 
@@ -81,11 +81,11 @@ When a container restarts, its previous log is read once, the way `kubectl logs 
 
 Lines are buffered per stream and stored about once a second. If a stream produces more than 10,000 lines between two flushes, the oldest of those are dropped and the stream's coverage record counts them. When the workspace passes `--max-log-lines`, the oldest lines go and a retention record says how many.
 
-## Solo diagnostics
+## Proxy and control-plane diagnostics
 
-Proxy dumps and control-plane debug output are not streamed. With `--solo-diagnostics`, live mode reads them once when the mirror is ready, exactly as `flightbay collect --solo-diagnostics` would: the same endpoints, the same namespace filtering, the same redaction. After that, **Refresh diagnostics** on the [Proxy configs](/desk/proxy-configs/) page reads the selected pod again over port-forward and replaces its files. The API behind it is `POST /api/live/refresh-diagnostics?pod=namespace/name`.
+Proxy dumps and control-plane debug output are not streamed. With `--diagnostics`, live mode reads them once when the mirror is ready, exactly as `flightbay collect --diagnostics` would: the same endpoints, the same namespace filtering, the same redaction. After that, **Refresh diagnostics** on the [Proxy configs](/desk/proxy-configs/) page reads the selected pod again over port-forward and replaces its files. The API behind it is `POST /api/live/refresh-diagnostics?pod=namespace/name`.
 
-Without `--solo-diagnostics` there is no port-forward at all, and the guard refuses one if anything tries.
+Without `--diagnostics` there is no port-forward at all, and the guard refuses one if anything tries.
 
 ## Save as bundle
 

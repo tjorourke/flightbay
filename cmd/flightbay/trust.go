@@ -49,7 +49,7 @@ func keygenCmd() *cobra.Command {
 	var force bool
 	c := &cobra.Command{
 		Use:   "keygen",
-		Short: "Create an Ed25519 signing key pair: sign bundles and policies with the .key, give Solo the .pub",
+		Short: "Create an Ed25519 signing key pair: sign bundles and policies with the .key, share the .pub with recipients",
 		Example: `  flightbay keygen --name "ACME platform team"                 # writes flightbay-signing.key and .pub
   flightbay keygen --name "ACME security" -o approver           # approver.key and approver.pub, for policies`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -69,11 +69,11 @@ func keygenCmd() *cobra.Command {
 			if err := os.WriteFile(pub, k.Public().MarshalPublic(), 0o644); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Key id %s for %s\n  Private key: %s (keep it; never send it)\n  Public key:  %s (give this to Solo)\nSign a capture: flightbay collect --sign %s\n", k.ID(), k.Signer, priv, pub, priv)
+			fmt.Fprintf(cmd.OutOrStdout(), "Key id %s for %s\n  Private key: %s (keep it; never send it)\n  Public key:  %s (share with recipients)\nSign a capture: flightbay collect --sign %s\n", k.ID(), k.Signer, priv, pub, priv)
 			return nil
 		},
 	}
-	c.Flags().StringVar(&name, "name", "", "who signs with this key, e.g. \"ACME platform team\" (shown to Solo when a bundle verifies)")
+	c.Flags().StringVar(&name, "name", "", "who signs with this key, e.g. \"ACME platform team\" (shown when a bundle verifies)")
 	c.Flags().StringVarP(&out, "output", "o", "flightbay-signing", "file name without extension: writes NAME.key and NAME.pub")
 	c.Flags().BoolVar(&force, "force", false, "overwrite existing key files")
 	return c
@@ -218,7 +218,7 @@ Without --plan this opens flightbay ui on the Review and send page, the same as 
 			if o.Signer != nil {
 				fmt.Fprintf(cmd.OutOrStdout(), "  Signed by %s (%s)\n", o.Signer.Signer, o.Signer.ID())
 			} else {
-				fmt.Fprintln(cmd.OutOrStdout(), "  Not signed: pass --sign KEY so Solo can verify it came from you unmodified")
+				fmt.Fprintln(cmd.OutOrStdout(), "  Not signed: pass --sign KEY so recipients can verify it came from you unmodified")
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Check it before sending: flightbay inspect %s\n", out)
 			return nil

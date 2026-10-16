@@ -63,7 +63,7 @@ type TEdge struct {
 	SrcIdentity string    `json:"srcIdentity,omitempty"`
 	DstIdentity string    `json:"dstIdentity,omitempty"`
 	Connections int       `json:"connections"` // connections, or log lines when ztunnel logs no connection lines for it
-	Requests    int       `json:"requests"`    // HTTP requests (Solo ztunnel builds log one line each)
+	Requests    int       `json:"requests"`    // HTTP requests (some ztunnel builds log one line each)
 	Denied      int       `json:"denied"`
 	HBONE       int       `json:"hbone"`
 	Plaintext   int       `json:"plaintext"`

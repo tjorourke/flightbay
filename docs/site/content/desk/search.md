@@ -10,7 +10,7 @@ Search covers every captured object of every kind: names, namespaces, labels, an
 
 ![Searching every object](/images/search.png)
 
-With an empty box the page lists every kind that has captured objects, grouped by area (Workloads, Networking, Gateway API, Istio, agentgateway and kgateway, kagent, Solo, Config, access and storage). Click one to list it.
+With an empty box the page lists every kind that has captured objects, grouped by area (Workloads, Networking, Gateway API, Istio, agentgateway and kgateway, kagent, other platform APIs, Config, access and storage). Click one to list it.
 
 ## Syntax
 

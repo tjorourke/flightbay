@@ -6,7 +6,7 @@ description: "Every flightbay-desk command and flag, generated from the command 
 
 Generated from the `flightbay-desk` command tree. Run any command with `--help` for the same text.
 
-Solo flightbay: investigate a snapshot bundle offline
+Investigate a snapshot bundle offline
 
 ## flightbay-desk activity
 
@@ -154,7 +154,7 @@ search, SQL, the Scorecard, agent reach and findings, and kubectl and k9s in the
 whose watches update as the cluster changes.
 
 It only reads. The requests it makes are get, list, watch and pods/log (plus port-forward to
-Solo components when --solo-diagnostics is given and you ask for a refresh). A guard in the
+supported components when --diagnostics is given and you ask for a refresh). A guard in the
 client refuses anything else before it leaves the process. Scope and redaction are the ones
 flightbay collect uses, with the same flags. Save as bundle writes the mirror as a normal,
 verified bundle at any moment.
@@ -168,7 +168,7 @@ Examples:
 ```bash
   flightbay-desk live --context kind-mesh1 --namespaces kagent,istio-system
   flightbay-desk live --context prod --namespaces payments --exclude-resources configmaps,secrets
-  flightbay-desk live --context mesh1 --solo-diagnostics --max-log-streams 50
+  flightbay-desk live --context mesh1 --diagnostics --max-log-streams 50
   flightbay-desk live --context mesh1 --namespaces payments --dry-run      # the plan and the RBAC it needs
   flightbay rbac --live --namespaces payments                               # the same RBAC, without a cluster
 ```
@@ -185,6 +185,7 @@ Examples:
 | `--config string` | collection config file (YAML); flags refine it, exclusions always win. A CONFIG.sig next to it is checked |
 | `--configmaps string` | omit, metadata or scrubbed |
 | `--context string` | kubeconfig context to mirror (default: current context) |
+| `--diagnostics` | add proxy dumps, control-plane debug and metrics, and allow the port-forward they need |
 | `--drop-field stringArray` | remove this path from every object before writing, e.g. 'metadata.annotations["corp.example/*"]' (repeatable) |
 | `--dry-run` | print what would be watched and the RBAC it needs; reads discovery only |
 | `--exclude-namespaces strings` | namespaces to exclude (globs allowed) |
@@ -224,7 +225,6 @@ Examples:
 | `--shell string` | shell for the terminal (default /bin/bash) |
 | `--sign string` | sign bundles exported from Review and send with this private key (flightbay keygen); the page can also choose or create one |
 | `--since string` | log window, e.g. 2h |
-| `--solo-diagnostics` | add proxy dumps, control-plane debug and metrics, and allow the port-forward they need |
 | `--workdir string` | workspace directory (default ~/.flightbay/workspaces/ws-*) |
 
 ## flightbay-desk mcp

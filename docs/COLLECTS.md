@@ -22,7 +22,7 @@ Flightbay collects only what the collection policy selects. You choose the polic
 | standard | objects, events, logs, helm | full | scrubbed | keys | current and previous streams, last 24h, up to 20 MiB per stream (newest kept) |
 | custom | none until you choose | full | scrubbed | keys | not collected |
 
-Cluster-scoped objects (nodes, CRDs, ClusterRoles) need `--cluster-scoped`. Proxy dumps, control-plane debug output and metrics need `--solo-diagnostics` (or the categories plus `--portforward`).
+Cluster-scoped objects (nodes, CRDs, ClusterRoles) need `--cluster-scoped`. Proxy dumps, control-plane debug output and metrics need `--diagnostics` (or the categories plus `--portforward`).
 
 ## Categories
 
@@ -33,7 +33,7 @@ Cluster-scoped objects (nodes, CRDs, ClusterRoles) need `--cluster-scoped`. Prox
 | logs | `pods/log` for selected containers with `timestamps=true`, within the time window and per-stream byte limit. |
 | nodes | Node objects: conditions, capacity, versions, taints (needs `--cluster-scoped`). |
 | helm | Chart summaries from Helm release Secrets (needs `--secrets keys`). |
-| proxies, control-plane, metrics | Admin endpoints of Solo components among the selected pods, through port-forward. See below. |
+| proxies, control-plane, metrics | Admin endpoints of supported components among the selected pods, through port-forward. See below. |
 
 ## Diagnostic endpoints (port-forward)
 
@@ -103,7 +103,7 @@ JSON held inside a string, such as the `kubectl.kubernetes.io/last-applied-confi
 - `collection-log.jsonl`: every call, including failures (RBAC denied, timeouts, truncation), so a missing file never looks like a missing object.
 - `coverage/*.json`: per collection, what was expected and whether it completed, failed, was excluded or truncated. Attached and hubble flow files have a `flows` coverage entry each, with the detected format.
 - `manifest.json`: capture end, completion state and a SHA-256 for every member. `flightbay inspect` verifies them.
-- `manifest.sig` (last, with `--sign KEY`): your Ed25519 signature over the manifest, so Solo can check the bundle came from you unmodified. Solo only ever holds your public key.
+- `manifest.sig` (last, with `--sign KEY`): your Ed25519 signature over the manifest, so recipients can check the bundle came from you unmodified. Share only your public key.
 - The SHA-256 of the collector binary, and with `--config` the policy file's SHA-256 and who approved it (`flightbay policy sign`).
 
 Before sending, the Review and send page in `flightbay ui BUNDLE` (or `flightbay review BUNDLE --plan FILE` without the UI) lets you remove namespaces, resource types, objects, log streams, log lines and files and redact more, then exports a new signed bundle with `review-ledger.json`, a count of what you removed.

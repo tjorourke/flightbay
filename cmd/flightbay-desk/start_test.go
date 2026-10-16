@@ -81,9 +81,9 @@ func TestHandoffCommand(t *testing.T) {
 	}
 
 	argv, _ = handoffCommand("/bin/flightbay-desk", server.StartAction{Kind: "live", Live: &server.LiveRequest{Kubeconfig: "/k/config", Context: "kind-mesh1",
-		Namespaces: "kagent,istio-*", ExcludeNamespaces: "kube-system", ClusterScoped: true, SoloDiagnostics: true}}, startOptions{workdir: wd, noTerminal: true}, "127.0.0.1:8484", token, false)
+		Namespaces: "kagent,istio-*", ExcludeNamespaces: "kube-system", ClusterScoped: true, Diagnostics: true}}, startOptions{workdir: wd, noTerminal: true}, "127.0.0.1:8484", token, false)
 	want = []string{"/bin/flightbay-desk", "live", "--listen", "127.0.0.1:8484", "--workdir", wd, "--no-browser", "--no-terminal",
-		"--kubeconfig", "/k/config", "--context", "kind-mesh1", "--namespaces", "kagent,istio-*", "--exclude-namespaces", "kube-system", "--cluster-scoped", "--solo-diagnostics"}
+		"--kubeconfig", "/k/config", "--context", "kind-mesh1", "--namespaces", "kagent,istio-*", "--exclude-namespaces", "kube-system", "--cluster-scoped", "--diagnostics"}
 	if !slices.Equal(argv, want) {
 		t.Errorf("live argv:\n got %q\nwant %q", argv, want)
 	}
@@ -95,7 +95,7 @@ func TestHandoffCommand(t *testing.T) {
 			}
 		}
 	}
-	for _, f := range []string{"kubeconfig", "context", "namespaces", "exclude-namespaces", "cluster-scoped", "solo-diagnostics"} {
+	for _, f := range []string{"kubeconfig", "context", "namespaces", "exclude-namespaces", "cluster-scoped", "diagnostics"} {
 		if liveCmd().Flags().Lookup(f) == nil {
 			t.Errorf("live has no --%s", f)
 		}

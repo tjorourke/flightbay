@@ -3,7 +3,7 @@ package reach
 import "github.com/tjorourke/flightbay/internal/solodocs"
 
 // The product documentation each finding links to, next to the field guide.
-// Base paths (and so the product versions) live in internal/solodocs.
+// Documentation base paths and product versions live in internal/solodocs.
 const (
 	docsEgressViaGateway = solodocs.AgentgatewayRoot + "integrations/agentic-mesh/egress/"
 	docsEgressOverview   = solodocs.Istio + "traffic-management/egress/overview/"
@@ -15,7 +15,7 @@ const (
 	docsBackendAuthn     = solodocs.Agentgateway + "security/backend-authn/"
 	docsJWT              = solodocs.Agentgateway + "security/jwt/setup/"
 
-	// Plain Kubernetes: no Solo page covers these.
+	// Plain Kubernetes: no product-specific page covers these.
 	docsPodSecurity     = solodocs.Kubernetes + "concepts/security/pod-security-standards/"
 	docsVolumes         = solodocs.Kubernetes + "concepts/storage/persistent-volumes/"
 	docsNetworkPolicy   = solodocs.Kubernetes + "concepts/services-networking/network-policies/"

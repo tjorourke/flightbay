@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tjorourke/flightbay/internal/solo"
+	"github.com/tjorourke/flightbay/internal/meshdiag"
 	"github.com/tjorourke/flightbay/internal/store"
 )
 
@@ -38,17 +38,17 @@ func certificates(ws *store.Workspace, cluster string) []Finding {
 	var out []Finding
 	type agg struct {
 		pods []string
-		cert solo.Cert
+		cert meshdiag.Cert
 		d    store.Diagnostic
 	}
 	expired, rootSoon := map[string]*agg{}, map[string]*agg{}
 	for _, d := range ws.Diagnostics(cluster) {
-		var certs []solo.Cert
+		var certs []meshdiag.Cert
 		switch d.Component {
 		case "ztunnel":
-			certs = solo.Summarise("ztunnel", map[string][]byte{"config_dump.json": d.Files["config_dump.json"]}, ref).Certs
+			certs = meshdiag.Summarise("ztunnel", map[string][]byte{"config_dump.json": d.Files["config_dump.json"]}, ref).Certs
 		case "envoy":
-			certs = solo.EnvoyCerts(d.Files["certs.json"], ref)
+			certs = meshdiag.EnvoyCerts(d.Files["certs.json"], ref)
 		default:
 			continue
 		}
@@ -116,7 +116,7 @@ func xds(ws *store.Workspace, cluster string) []Finding {
 		if d.Component != "istiod" {
 			continue
 		}
-		for _, r := range solo.Syncz(d.Files["syncz.json"]) {
+		for _, r := range meshdiag.Syncz(d.Files["syncz.json"]) {
 			if len(r.Stale) == 0 {
 				continue
 			}

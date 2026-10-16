@@ -1,5 +1,6 @@
 'use strict';
-// Solo flightbay desk UI. Plain JS, no framework, served from the flightbay-desk binary.
+// Flightbay desk UI. Plain JS, no framework, served from the flightbay-desk binary.
+document.querySelectorAll('.brand').forEach(a => a.setAttribute('aria-label', 'Flightbay overview'));
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
@@ -398,8 +399,8 @@ async function loadWorkspace() {
 const AGENT_VIEWS = ['traffic', 'scorecard', 'resources', 'navigator', 'logs', 'search'];
 function agentMode() {
   document.body.classList.add('agent-mode');
-  document.title = 'Solo flightbay agent';
-  const b = document.querySelector('.sidebar .brand'); if (b) { b.href = '#traffic'; b.setAttribute('aria-label', 'Solo flightbay agent: Traffic'); }
+  document.title = 'Flightbay agent';
+  const b = document.querySelector('.sidebar .brand'); if (b) { b.href = '#traffic'; b.setAttribute('aria-label', 'Flightbay agent: Traffic'); }
   if (!AGENT_VIEWS.includes(S.view)) location.replace('#traffic');
 }
 
@@ -510,7 +511,7 @@ function wireFindings() {
 }
 
 // ---------- kinds, grouped by area ----------
-const areaOrder = ['Workloads', 'Networking', 'Gateway API', 'Istio', 'agentgateway and kgateway', 'kagent', 'Solo', 'Config, access and storage', 'Other'];
+const areaOrder = ['Workloads', 'Networking', 'Gateway API', 'Istio', 'agentgateway and kgateway', 'kagent', 'Other platform APIs', 'Config, access and storage', 'Other'];
 function kindArea(t) {
   const g = t.group || '', k = t.kind || t.resource;
   if ((g === '' && ['Pod', 'ReplicationController', 'PodTemplate'].includes(k)) || ['apps', 'batch', 'autoscaling', 'policy'].includes(g)) return 'Workloads';
@@ -519,7 +520,7 @@ function kindArea(t) {
   if (g.endsWith('istio.io')) return 'Istio';
   if (/agentgateway|kgateway|gateway\.solo\.io/.test(g)) return 'agentgateway and kgateway';
   if (g.includes('kagent')) return 'kagent';
-  if (g.endsWith('solo.io')) return 'Solo';
+  if (g.endsWith('solo.io')) return 'Other platform APIs';
   if (g === '' || ['rbac.authorization.k8s.io', 'coordination.k8s.io', 'storage.k8s.io', 'apiextensions.k8s.io', 'admissionregistration.k8s.io'].includes(g)) return 'Config, access and storage';
   return 'Other';
 }
@@ -579,7 +580,7 @@ async function navigator() {
         <dt>${live ? 'Now:' : 'Snapshot:'}</dt><dd style="color:var(--amber)">${fmtDateTime(w.snapshot)}</dd>
         <dt>Connection:</dt>${conn}</dl>
       ${headKeys}
-      <div class="nv-logo"> ┌─┐ ┌─┐ ┌─┐\n │ │ │ │ │ │  solo flightbay\n │ └─┘ │ │ │  ${live ? 'live     ' : 'snapshot '}\n └─────┘ └─┘  navigator</div>
+      <div class="nv-logo"> ┌─┐ ┌─┐ ┌─┐\n │ │ │ │ │ │  flightbay\n │ └─┘ │ │ │  ${live ? 'live     ' : 'snapshot '}\n └─────┘ └─┘  navigator</div>
     </div>`;
   const cmdline = N.cmd ? `<div class="nv-cmd"><span>:</span><input id="nv-cmdline" placeholder="pods · deploy kube-system · ns kagent · ctx 2 · help   (Tab completes, Enter runs, Esc cancels)" autocomplete="off" spellcheck="false"></div>` : '';
   const help = N.help ? `<div class="nv-help" id="nv-help"><div class="row between"><strong>Keys</strong><small class="muted">Esc or ? to close</small></div><div class="nv-help-grid">${nvKeys.map(([t, ks]) => `<div><h4>${t}</h4>${ks.map(([k, d]) => `<div class="nv-help-row"><b>${esc(k)}</b><span>${esc(d)}</span></div>`).join('')}</div>`).join('')}</div></div>` : '';
@@ -824,7 +825,7 @@ const feature = name => !!(S.ws && S.ws.features && S.ws.features[name]);
 // Severity tag: coloured by weight with the Enterprise priority view, plain otherwise.
 // The field guide and the product docs page, side by side. Either may be
 // missing; a docs link that repeats the guide is shown once.
-const docsLabel = u => /^https:\/\/docs\.solo\.io\//.test(u) ? 'Solo docs' : /^https:\/\/kubernetes\.io\//.test(u) ? 'Kubernetes docs' : /^https:\/\/istio\.io\//.test(u) ? 'Istio docs' : 'Docs';
+const docsLabel = u => /^https:\/\/docs\.solo\.io\//.test(u) ? 'Product docs' : /^https:\/\/kubernetes\.io\//.test(u) ? 'Kubernetes docs' : /^https:\/\/istio\.io\//.test(u) ? 'Istio docs' : 'Docs';
 const guideLinks = (source, docs) => [
   source ? `<a href="${esc(source)}" target="_blank" rel="noopener" title="${esc(source)}">Read the guide ↗</a>` : '',
   docs && docs !== source ? `<a href="${esc(docs)}" target="_blank" rel="noopener" title="${esc(docs)}">${docsLabel(docs)} ↗</a>` : ''].filter(Boolean).join('');
@@ -840,7 +841,7 @@ const pstCatInfo = {
   'Identity': 'Credentials and who workloads run as: no literal or passed-through tokens, secret references that resolve, dedicated service accounts, RBAC without wildcards, escalation or secret reads, and a shared mesh root of trust.',
   'Isolation': 'Limiting what can reach what: egress control, network policies, Pod Security admission, host access, namespace-restricted routes, MCP servers not reachable directly, the metadata endpoint blocked.',
   'Resilience': 'Keeping things up under failure and load: replicas and HA, disruption budgets, probes, resource requests, spread, timeouts, retries, rate limits, and references and policies that actually resolve and attach.',
-  'Supply chain': 'Where the software comes from: images pinned to a digest or fixed tag, the Solo Istio distribution, agent artifacts pinned, a hardened registry, MCP selectors scoped, and extensions kept in check.',
+  'Supply chain': 'Where the software comes from: images pinned to a digest or fixed tag, a trusted Istio distribution, agent artifacts pinned, a hardened registry, MCP selectors scoped, and extensions kept in check.',
   'Workload security': 'How containers run: not privileged, no privilege escalation, dropped capabilities, running as non-root, seccomp and a read-only root filesystem.',
   'Platform': 'The cluster underneath: a supported Kubernetes version, healthy nodes, certificates not about to expire, no deprecated APIs and Helm releases in a good state.',
   'Cost': 'Spend and wasted work: LLM spend limits, rate-limit keys that cannot be spoofed, retries only on idempotent calls, and waypoints that are doing a job.',
@@ -943,7 +944,7 @@ async function posture() {
     <div class="toolbar"><div class="row wrap">${chip('status', 'attention', 'Needs attention')}${chip('status', 'fail', 'Failing')}${chip('status', 'warn', 'Warnings')}${chip('status', 'pass', 'Passing')}${chip('status', 'na', 'Not applicable')}${chip('status', 'all', 'All')}</div>
       <input id="pst-q" placeholder="Filter. Try status: severity: category: kind: ns: or text" value="${esc(P.q)}" style="min-width:340px" autocomplete="off" spellcheck="false"></div>
     <section class="panel">${rows || (P.status === 'attention' && !P.q ? '<div class="empty"><strong>Nothing needs attention</strong>Every applicable check passes. Choose Passing or All to see them.</div>' : '<div class="empty"><strong>No checks match</strong>Change the filters above.</div>')}</section>`;
-  return head('Scorecard', S.ws?.agent ? "Solo's best practices for agentgateway, kagent and MCP, scored against this snapshot. Every problem comes with its evidence and the fix." : "Solo's best practices for agentic workloads, Istio, ingress and Kubernetes, scored against this snapshot. Every problem comes with its evidence and the fix.", '<button id="pst-term">&gt;_ fbscore in terminal</button>') + `
+  return head('Scorecard', "Security and operational checks for agentic workloads, Istio, ingress and Kubernetes, scored against this snapshot. Every problem comes with its evidence and the fix.", '<button id="pst-term">&gt;_ fbscore in terminal</button>') + `
     <div class="pst-cards">${present.map(card).join('')}</div>
     ${coverage}
     ${tabs}
@@ -2442,8 +2443,8 @@ async function proxies() {
   S.px = S.px || {sel: '', tab: 'summary', file: '', q: ''};
   const comps = d.components;
   if (!comps.length) {
-    return head('Proxy configs', 'Envoy, ztunnel and agentgateway config dumps, istiod debug output and metrics.') + `<div class="panel empty"><strong>${d.selected ? 'No Solo components captured' : 'Proxy dumps, control-plane debug and metrics were not selected'}</strong>${
-      S.ws?.live ? (S.ws.canRefreshDiagnostics ? 'Live mode reads diagnostics once when the mirror is ready; they may still be arriving. Solo component pods appear here as soon as they are read.' : 'Live mode reads proxy dumps only with flightbay-desk live --solo-diagnostics.') : d.loading ? 'Diagnostics are written last in a bundle, so they may still be arriving.' : d.selected ? 'The selected namespaces held no ztunnel, Envoy, agentgateway, istiod or controller pods.' : 'The customer did not allow port-forward diagnostics for this bundle (flightbay collect --solo-diagnostics). Their absence says nothing about the proxies.'}</div>`;
+    return head('Proxy configs', 'Envoy, ztunnel and agentgateway config dumps, istiod debug output and metrics.') + `<div class="panel empty"><strong>${d.selected ? 'No matching components captured' : 'Proxy dumps, control-plane debug and metrics were not selected'}</strong>${
+      S.ws?.live ? (S.ws.canRefreshDiagnostics ? 'Live mode reads diagnostics once when the mirror is ready; they may still be arriving. Component pods appear here as soon as they are read.' : 'Live mode reads proxy dumps only with flightbay-desk live --diagnostics.') : d.loading ? 'Diagnostics are written last in a bundle, so they may still be arriving.' : d.selected ? 'The selected namespaces held no ztunnel, Envoy, agentgateway, istiod or controller pods.' : 'Port-forward diagnostics were not allowed for this bundle (flightbay collect --diagnostics). Their absence says nothing about the proxies.'}</div>`;
   }
   if (!comps.find(c => pxKey(c) === S.px.sel)) { S.px.sel = pxKey(comps[0]); S.px.file = ''; }
   const cur = comps.find(c => pxKey(c) === S.px.sel);
@@ -2516,11 +2517,14 @@ async function coverage() {
   const st = c.state;
   const rep = c.redaction || {};
   const locs = Object.entries(rep.locations || {}).sort();
-  const cov = c.coverage.filter(x => !S.cluster || x.cluster === S.cluster);
+  const allCov = c.coverage.filter(x => !S.cluster || x.cluster === S.cluster);
+  const cov = allCov.filter(x => x.type !== 'resource' || x.items > 0 || x.state !== 'complete');
+  const emptyTypes = allCov.length - cov.length;
   const target = x => x.type === 'logs' ? `logs ${x.namespace}/${x.pod}/${x.container} (${x.stream})` : x.type === 'events' ? 'events' : x.type === 'diagnostic' ? `${x.container} ${x.namespace}/${x.pod} ${x.resource}` : (x.group ? `${x.resource}.${x.group}` : x.resource);
   return head('Coverage', 'What the customer allowed, what was collected, and what the importer verified.') + `
   <div class="grid2"><div>
-    <section class="panel"><div class="panel-head"><h2>Collections</h2><small>${cov.length} records · ${cov.filter(x => x.state !== 'complete').length} not complete</small></div>
+    <section class="panel"><div class="panel-head"><h2>Collections</h2><small>${cov.length} records · ${cov.filter(x => x.state !== 'complete').length} not complete${emptyTypes ? ` · ${emptyTypes} empty resource types hidden` : ''}</small></div>
+    <p class="muted" style="font-size:12px;padding:0 16px 10px">Deployment and ReplicaSet are separate Kubernetes resource types. Deployments create ReplicaSets to manage rollout revisions.</p>
     <div class="table-scroll" style="max-height:55vh"><table><thead><tr><th>Cluster</th><th>Collection</th><th>Items</th><th>State</th><th>Reason</th></tr></thead><tbody>
     ${cov.map(x => `<tr><td><span class="tag">${esc(x.cluster)}</span></td><td class="mono">${esc(target(x))}</td><td>${num(x.items)}</td><td>${stateBadge(x.state === 'complete' ? 'complete' : x.state, x.reason)}</td><td class="muted" style="white-space:normal">${esc(x.reason || '')}</td></tr>`).join('')}
     </tbody></table></div></section>
@@ -2765,7 +2769,7 @@ async function liveRefresh() {
     $('#bundle-sub').textContent = `${w.live.context} · read-only`;
     $('#collector').textContent = w.collector || '';
     document.querySelectorAll('#cluster option').forEach(o => { if (o.value) o.textContent = o.value + '@live'; });
-    document.title = `Solo flightbay · Live · ${w.live.context}`;
+    document.title = `Flightbay · Live · ${w.live.context}`;
     const meta = document.querySelector('.terminal-meta');
     if (meta) meta.textContent = 'bash · KUBECONFIG points at the read-only live mirror · kubectl, k9s (watches update), fbsearch, fbq, fbpc, fbscore';
     renderImportStatus();
@@ -2798,7 +2802,7 @@ async function liveRefresh() {
   if (S.ws) loadWorkspace().catch(() => {});
 }
 
-// Proxy configs: Refresh diagnostics for the selected pod (live with --solo-diagnostics).
+// Proxy configs: Refresh diagnostics for the selected pod (live with --diagnostics).
 async function liveRefreshDiagnostics(podKey, btn) {
   const [, , ns, pod] = podKey.split('/');
   if (btn) { btn.disabled = true; btn.textContent = 'Refreshing…'; }

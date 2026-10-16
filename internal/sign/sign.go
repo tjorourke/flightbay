@@ -1,7 +1,7 @@
 // Package sign creates and checks the Ed25519 signatures on Flightbay bundles
 // and collection policies.
 //
-// The customer keeps the private key and gives Solo only the public key. A
+// The signer keeps the private key and shares only the public key. A
 // bundle's manifest.json already carries a SHA-256 for every member, so one
 // signature over the manifest covers the whole bundle. A collection policy
 // is signed as a detached POLICY.sig file next to it.
@@ -95,7 +95,7 @@ func (k *PrivateKey) MarshalPrivate() []byte {
 
 // MarshalPublic renders the public key file.
 func (p PublicKey) MarshalPublic() []byte {
-	return []byte(fmt.Sprintf("# Flightbay public key, key id %s. Give this to Solo so bundles can be verified.\n%s %s %s\n",
+	return []byte(fmt.Sprintf("# Flightbay public key, key id %s. Share this with bundle recipients for verification.\n%s %s %s\n",
 		p.ID(), pubTag, base64.StdEncoding.EncodeToString(p.Key), p.Signer))
 }
 

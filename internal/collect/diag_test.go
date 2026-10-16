@@ -140,23 +140,23 @@ func TestDiagnosticsCollectedScopedAndRedacted(t *testing.T) {
 			t.Fatalf("port-forward opened outside the selection: %v", f.opened)
 		}
 	}
-	zt := string(files[bundle.SoloPath("mesh1", "proxies", "istio-system", "ztunnel-a", "config_dump.json")])
+	zt := string(files[bundle.DiagnosticsPath("mesh1", "proxies", "istio-system", "ztunnel-a", "config_dump.json")])
 	if !strings.Contains(zt, "checkout-1") || !strings.Contains(zt, "spiffe://mesh1/ns/payments/sa/checkout") || !strings.Contains(zt, "xdsAddress") {
 		t.Fatalf("ztunnel dump lost in-scope data: %s", zt)
 	}
-	env := string(files[bundle.SoloPath("mesh1", "proxies", "payments", "waypoint-a", "config_dump.json")])
+	env := string(files[bundle.DiagnosticsPath("mesh1", "proxies", "payments", "waypoint-a", "config_dump.json")])
 	if strings.Contains(env, "SecretsConfigDump") || !strings.Contains(env, "checkout.payments.svc") {
 		t.Fatalf("envoy dump: %s", env)
 	}
-	cz := string(files[bundle.SoloPath("mesh1", "control-plane", "istio-system", "istiod-a", "configz.json")])
+	cz := string(files[bundle.DiagnosticsPath("mesh1", "control-plane", "istio-system", "istiod-a", "configz.json")])
 	if !strings.Contains(cz, `"allow"`) || strings.Contains(cz, `"deny"`) {
 		t.Fatalf("configz: %s", cz)
 	}
-	if _, ok := files[bundle.SoloPath("mesh1", "control-plane", "istio-system", "istiod-a", "metrics.prom")]; !ok {
+	if _, ok := files[bundle.DiagnosticsPath("mesh1", "control-plane", "istio-system", "istiod-a", "metrics.prom")]; !ok {
 		t.Fatal("istiod metrics missing")
 	}
-	var sum SoloSummary
-	if err := json.Unmarshal(files[bundle.SoloPath("mesh1", "", "", "", "summary.json")], &sum); err != nil || len(sum.Components) != 4 {
+	var sum DiagnosticSummary
+	if err := json.Unmarshal(files[bundle.DiagnosticsPath("mesh1", "", "", "", "summary.json")], &sum); err != nil || len(sum.Components) != 4 {
 		t.Fatalf("summary: %v %+v", err, sum)
 	}
 	cov := coverage(t, files)
@@ -168,17 +168,17 @@ func TestDiagnosticsCollectedScopedAndRedacted(t *testing.T) {
 		t.Fatal("manifest incomplete")
 	}
 	// Diagnostics come after objects and logs.
-	lastLog, firstSolo := -1, -1
+	lastLog, firstDiag := -1, -1
 	for i, n := range order {
 		if strings.Contains(n, "/logs/") {
 			lastLog = i
 		}
-		if strings.Contains(n, "/solo/") && firstSolo < 0 {
-			firstSolo = i
+		if strings.Contains(n, "/diagnostics/") && firstDiag < 0 {
+			firstDiag = i
 		}
 	}
-	if firstSolo < lastLog {
-		t.Fatalf("diagnostics written before logs finished (solo at %d, last log at %d)", firstSolo, lastLog)
+	if firstDiag < lastLog {
+		t.Fatalf("diagnostics written before logs finished (diagnostics at %d, last log at %d)", firstDiag, lastLog)
 	}
 }
 
@@ -192,7 +192,7 @@ func TestDiagnosticsHonourResourceExclusions(t *testing.T) {
 			t.Fatalf("endpoint exposing excluded services was requested: %s", g)
 		}
 	}
-	zt := string(files[bundle.SoloPath("mesh1", "proxies", "istio-system", "ztunnel-a", "config_dump.json")])
+	zt := string(files[bundle.DiagnosticsPath("mesh1", "proxies", "istio-system", "ztunnel-a", "config_dump.json")])
 	if strings.Contains(zt, `"services"`) || !strings.Contains(zt, `"workloads"`) {
 		t.Fatalf("services not stripped from ztunnel dump: %s", zt)
 	}
@@ -210,7 +210,7 @@ func TestDiagnosticsNeedPortForward(t *testing.T) {
 		t.Fatalf("port-forward used without permission: %v", f.opened)
 	}
 	for name := range files {
-		if strings.Contains(name, "/solo/proxies/") {
+		if strings.Contains(name, "/diagnostics/proxies/") {
 			t.Fatalf("proxy dump collected without port-forward: %s", name)
 		}
 	}
@@ -219,7 +219,7 @@ func TestDiagnosticsNeedPortForward(t *testing.T) {
 func TestOversizedJSONDiagnosticIsNotKept(t *testing.T) {
 	h, _ := diagHarness()
 	files, _, _ := run(t, diagPolicy("payments", "istio-system"), h, func(c *Collector) { c.MaxDiagBytes = 64 })
-	if _, ok := files[bundle.SoloPath("mesh1", "proxies", "istio-system", "ztunnel-a", "config_dump.json")]; ok {
+	if _, ok := files[bundle.DiagnosticsPath("mesh1", "proxies", "istio-system", "ztunnel-a", "config_dump.json")]; ok {
 		t.Fatal("a cut JSON document was archived")
 	}
 	if c := coverage(t, files)["mesh1.proxies.istio-system.ztunnel-a.config_dump"]; c.State != bundle.StateTruncated {

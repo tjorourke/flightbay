@@ -29,12 +29,12 @@ flightbay collect --context prod-eu --namespaces 'payments,checkout-*'
 
 ## The agentic stack (agentgateway, kagent, MCP servers)
 
-Capture the namespaces your agents, gateways and MCP servers run in, plus the Solo diagnostics (agentgateway config dumps and metrics). This is what [Agent reach](/desk/agent-reach/) and the agentic [Scorecard](/desk/scorecard/) checks need.
+Capture the namespaces your agents, gateways and MCP servers run in, plus proxy diagnostics (agentgateway config dumps and metrics). This is what [Agent reach](/desk/agent-reach/) and the agentic [Scorecard](/desk/scorecard/) checks need.
 
 ```bash
 flightbay collect --context prod-eu \
   --namespaces 'agentgateway-system,kagent,mcp-*,agents-*' \
-  --solo-diagnostics
+  --diagnostics
 ```
 
 To see what each agent actually called, the ztunnel access logs must be in the capture: include `istio-system` (where ztunnel runs) in `--namespaces`. See [Observed traffic](/collect/observed-traffic/).
@@ -46,13 +46,13 @@ The control plane, ztunnel and istio-cni, your application namespaces, and the p
 ```bash
 flightbay collect --context prod-eu \
   --namespaces 'istio-system,payments,checkout' \
-  --solo-diagnostics
+  --diagnostics
 ```
 
 Add `--cluster-scoped` if the problem might involve nodes, cluster-wide RBAC or CRDs. It also lets the Kubernetes checks for ClusterRoles and node health run instead of showing "not applicable".
 
 ```bash
-flightbay collect --context prod-eu --namespaces 'istio-system,payments' --solo-diagnostics --cluster-scoped
+flightbay collect --context prod-eu --namespaces 'istio-system,payments' --diagnostics --cluster-scoped
 ```
 
 ## Everything except the system namespaces
@@ -66,7 +66,7 @@ flightbay collect --context prod-eu --exclude-namespaces 'kube-*,local-path-stor
 For multicluster problems (peering, east-west gateways, the same object in two clusters), give each context. The bundle holds all of them, and [Compare](/desk/compare/) can show one object across clusters.
 
 ```bash
-flightbay collect --context mesh-eu,mesh-us --namespaces 'istio-system,payments' --solo-diagnostics
+flightbay collect --context mesh-eu,mesh-us --namespaces 'istio-system,payments' --diagnostics
 ```
 
 ## Share less
@@ -111,7 +111,7 @@ flightbay collect --context prod-eu --namespaces payments --no-logs
 
 `--max-log-bytes` takes a number of bytes. See [Logs](/collect/logs/).
 
-## Encrypt it for Solo support
+## Encrypt it for a recipient
 
 Encrypt the bundle to a public key, so only the holder of the private key can open it. Whoever receives it creates the key pair with `flightbay-desk keygen` and sends you the public part.
 
@@ -123,7 +123,7 @@ The file ends in `.tar.zst.age`. It opens with `flightbay ui FILE -i key.txt`. S
 
 ## Sign it
 
-Create a key once, send Solo the `.pub`, and sign every capture with the private key:
+Create a key once, share the `.pub` with the recipient, and sign every capture with the private key:
 
 ```bash
 flightbay keygen --name "ACME platform team"

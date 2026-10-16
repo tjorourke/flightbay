@@ -79,7 +79,7 @@ type Server struct {
 	Identities []age.Identity
 	// Review is set in review mode (flightbay review).
 	Review *ReviewSession
-	// RefreshDiagnostics re-runs the Solo diagnostics for one pod of a live
+	// RefreshDiagnostics re-runs diagnostics for one pod of a live
 	// workspace and returns how many files were captured; nil when the
 	// workspace is not live or diagnostics were not allowed.
 	RefreshDiagnostics func(ctx context.Context, namespace, pod string) (int, error)

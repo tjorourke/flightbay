@@ -69,16 +69,16 @@ type LiveRequest struct {
 	Namespaces        string `json:"namespaces,omitempty"`        // comma separated, globs allowed; empty = all
 	ExcludeNamespaces string `json:"excludeNamespaces,omitempty"` // comma separated, globs allowed
 	ClusterScoped     bool   `json:"clusterScoped,omitempty"`     // --cluster-scoped
-	SoloDiagnostics   bool   `json:"soloDiagnostics,omitempty"`   // --solo-diagnostics
+	Diagnostics       bool   `json:"diagnostics,omitempty"`       // --diagnostics
 }
 
 // LiveAccess is what the context's credentials allow of the live options.
 // A reason is set when the option is not allowed.
 type LiveAccess struct {
-	ClusterScoped      bool   `json:"clusterScoped"`
-	ClusterScopedWhy   string `json:"clusterScopedWhy,omitempty"`
-	SoloDiagnostics    bool   `json:"soloDiagnostics"`
-	SoloDiagnosticsWhy string `json:"soloDiagnosticsWhy,omitempty"`
+	ClusterScoped    bool   `json:"clusterScoped"`
+	ClusterScopedWhy string `json:"clusterScopedWhy,omitempty"`
+	Diagnostics      bool   `json:"diagnostics"`
+	DiagnosticsWhy   string `json:"diagnosticsWhy,omitempty"`
 }
 
 // ScanRequest is the Repo card's form.
@@ -116,7 +116,7 @@ func authedWith(r *http.Request, token string) bool {
 }
 
 func serveIcons(mux *http.ServeMux) {
-	for _, f := range []string{"favicon.ico", "favicon.svg", "favicon-32.png", "apple-touch-icon.png"} {
+	for _, f := range []string{"favicon.svg", "favicon-32.png", "apple-touch-icon.png"} {
 		name := f
 		mux.HandleFunc("/"+name, func(w http.ResponseWriter, r *http.Request) {
 			b, err := web.FS.ReadFile(name)

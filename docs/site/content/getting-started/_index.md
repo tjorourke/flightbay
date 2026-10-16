@@ -1,7 +1,7 @@
 ---
 title: Getting started
 weight: 10
-description: Install Flightbay, open the sample bundle, take your first capture and send it to Solo.
+description: Install Flightbay, open the sample bundle and take your first capture.
 ---
 
 # Getting started
@@ -62,7 +62,7 @@ flightbay ui
 
 It has three cards. Click one and it opens its form in place.
 
-- **Live stream a cluster.** Pick a context from your kubeconfig (`$KUBECONFIG` or `~/.kube/config`, or type the path of another file). The current context is preselected. Narrow it to some namespaces (comma separated, globs allowed) or exclude some. Cluster-scoped objects and Solo diagnostics are on by default: when you pick a context the page asks the cluster whether its credentials can list cluster-scoped objects and port-forward to pods, and turns an option off, with the reason, when they cannot. They sit under **Options** if you want to turn one off yourself. **Preview** reads API discovery only and shows what will be listed and watched and the RBAC it needs. **Start live** opens the desk on a read-only mirror of the cluster. See [Live mode](/desk/live/).
+- **Live stream a cluster.** Pick a context from your kubeconfig (`$KUBECONFIG` or `~/.kube/config`, or type the path of another file). The current context is preselected. Narrow it to namespaces (comma separated, globs allowed) or exclude some. Under **Options**, choose cluster-scoped objects and proxy diagnostics when needed. **Preview** reads API discovery only and shows what will be listed and watched and the RBAC it needs. **Start live** opens the desk on a read-only mirror of the cluster. See [Live mode](/desk/live/).
 - **Open a file.** Lists the `flightbay-*.tar.zst` and `.tar.zst.age` files in the current directory and in `~/Downloads`, newest first, with the case, clusters, capture time and size. Each has **Open**, to investigate it, and **Review before sending**, which opens it in review mode as `flightbay review` does. You can also drop a bundle on the page (it is copied into the session's workspace), or paste a path. An encrypted bundle needs the identity file that opens it. See [Reviewing before you send](/collect/review/).
 - **Open a repo.** A local directory, or a Git URL, which is cloned with `git clone --depth 1` into the workspace using your own git credentials. The scan options are the ones `flightbay scan` takes: values files, `--set` pairs, an overlay, an environment, a namespace and a release name. **Scan and open** shows the scan's progress, then opens the declared-state workspace. A URL that cannot be cloned, a directory with no manifests, or a chart that does not render is reported on the page. See [Scanning a repository](/scan/).
 
@@ -111,13 +111,13 @@ It writes `flightbay-01234567-<time>.tar.zst` in the current directory and print
 
 ```bash
 flightbay collect --context my-cluster --namespaces payments,istio-system --since 2h
-flightbay collect --context my-cluster --solo-diagnostics      # add proxy dumps, istiod debug output and metrics
+flightbay collect --context my-cluster --diagnostics           # add proxy dumps, istiod debug output and metrics
 flightbay collect --context mesh1,mesh2                         # two clusters in one bundle
 ```
 
 [Collecting a snapshot](/collect/) explains every option.
 
-## Check it and send it to Solo
+## Review and share the bundle
 
 Before you send anything, look at what is in it:
 
@@ -127,7 +127,7 @@ flightbay inspect flightbay-01234567-*.tar.zst --redactions
 
 That verifies every checksum, lists what was collected and what failed, and shows how many values the redactor replaced in each file. It never shows the values themselves.
 
-To make sure only Solo can read the file, encrypt it to the age recipient your Solo contact gives you:
+To restrict who can read the file, encrypt it to an age recipient you trust:
 
 ```bash
 flightbay collect --context my-cluster --case 01234567 --encrypt-to age1...
@@ -142,7 +142,7 @@ flightbay ui flightbay-01234567-*.tar.zst --sign flightbay-signing.key
 
 See [Reviewing before you send](/collect/review/) and [Signing](/collect/signing/).
 
-Flightbay does not upload anything. Send the file the way you normally share files with Solo support. [Sending a bundle](/collect/sending/) covers encryption, verification and the file format.
+Flightbay does not upload anything. Share the file through your chosen secure channel. [Sending a bundle](/collect/sending/) covers encryption, verification and the file format.
 
 ## Where next
 

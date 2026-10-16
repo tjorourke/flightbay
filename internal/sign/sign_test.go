@@ -35,7 +35,7 @@ func TestSignVerify(t *testing.T) {
 		t.Fatal("a bundle signature must not verify as a policy signature")
 	}
 	forged := parsed
-	forged.Signer = "Solo"
+	forged.Signer = "External signer"
 	if r := Verify(forged, PurposeBundle, data, nil); r.Valid {
 		t.Fatal("the signer name is covered by the signature")
 	}

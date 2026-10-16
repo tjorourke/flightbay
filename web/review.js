@@ -162,7 +162,7 @@ function rvSignPanel() {
   const opts = (k.keys || []).map(x => `<option value="${esc(x.path)}" ${sig && sig.path === x.path ? 'selected' : ''}>${esc(x.name || '(no name)')} · ${esc(x.keyId)} · ${esc(x.path.replace(/^.*\/(?=[^/]+\/[^/]+$)/, '…/'))}</option>`).join('');
   const created = S.rv.created;
   return `<div class="panel-head"><h2>Sign the export</h2>${sig ? `<span class="badge green">✓ ${esc(sig.name)} (${esc(sig.keyId)})</span>` : '<span class="badge amber">Not signed</span>'}</div><div class="panel-body">
-    <p class="muted" style="font-size:12px;margin:0 0 10px">A signature lets Solo check the bundle came from you and was not changed. Solo needs your public key (.pub) once; the private key (.key) stays with you.</p>
+    <p class="muted" style="font-size:12px;margin:0 0 10px">A signature lets recipients check the bundle came from you and was not changed. Share your public key (.pub) once; the private key (.key) stays with you.</p>
     <div class="row wrap"><select id="rv-key" style="min-width:320px"><option value="">Don't sign</option>${opts}${sig && !(k.keys || []).some(x => x.path === sig.path) ? `<option selected value="${esc(sig.path || '')}">${esc(sig.name)} · ${esc(sig.keyId)}</option>` : ''}</select></div>
     <div class="row wrap mt"><input id="rv-keypath" placeholder="or a key file: ~/keys/acme.key" style="min-width:260px"><button id="rv-usekey">Use this key</button></div>
     <div class="row wrap mt"><button id="rv-newkey-open" class="primary">Create a signing key…</button>${created ? `<button id="rv-showpub">Show the public key</button>` : ''}</div></div>`;
@@ -185,9 +185,9 @@ async function rvSetKey(body) {
 // refresh) can close it half way.
 function rvKeyModal() {
   const dir = S.rv.keys?.keysDir || '~/.flightbay/keys';
-  modal('Create a signing key', `<p class="muted" style="margin:0 0 12px">A signing key has two halves. The private key (.key) stays on this machine and signs what you export. The public key (.pub) goes to Solo once, so they can check your bundles came from you unmodified.</p>
+  modal('Create a signing key', `<p class="muted" style="margin:0 0 12px">A signing key has two halves. The private key (.key) stays on this machine and signs what you export. Share the public key (.pub) with anyone who needs to verify your bundles.</p>
     <label style="display:block">Who signs with it<input id="rvm-name" placeholder="ACME platform team" style="width:100%;margin-top:6px" autocomplete="off"></label>
-    <p class="muted" style="font-size:12px">Shown to Solo whenever one of your bundles verifies. Saved in <span class="mono">${esc(dir)}</span>, readable only by you.</p>
+    <p class="muted" style="font-size:12px">Shown whenever one of your bundles verifies. Saved in <span class="mono">${esc(dir)}</span>, readable only by you.</p>
     <div id="rvm-err" class="red" style="font-size:13px"></div>
     <div class="row mt" style="justify-content:flex-end"><button id="rvm-cancel">Cancel</button><button class="primary" id="rvm-create">Create and use this key</button></div>`);
   const name = $('#rvm-name'); name.focus();
@@ -208,7 +208,7 @@ function rvKeyModal() {
   name.onkeydown = e => { if (e.key === 'Enter') go(); };
 }
 function rvPubModal(c, fresh) {
-  modal(fresh ? 'Key created' : 'Your public key', `<p style="margin:0 0 8px">${fresh ? 'Exports from this page are now signed with it. ' : ''}Send this public key to Solo. It is safe to share; the private key never leaves this machine.</p>
+  modal(fresh ? 'Key created' : 'Your public key', `<p style="margin:0 0 8px">${fresh ? 'Exports from this page are now signed with it. ' : ''}Share this public key with bundle recipients. It is safe to share; the private key never leaves this machine.</p>
     <pre class="code" style="white-space:pre-wrap;word-break:break-all">${esc(c.publicKey)}</pre>
     <dl class="metadata mt" style="font-size:12px"><dt>Public key</dt><dd class="mono">${esc(c.publicPath)}</dd><dt>Private key</dt><dd class="mono">${esc(c.path)} <span class="muted">(keep it, never send it)</span></dd></dl>
     <div class="row mt" style="justify-content:flex-end"><button id="rvm-copy">Copy public key</button><button class="primary" id="rvm-done">Done</button></div>`);
@@ -241,15 +241,15 @@ function rvSummary() {
   const p = S.rv.preview, d = S.rv.data;
   if (!d) return '';
   if (S.rv.previewErr) return `<div class="notice bad"><div><strong>The plan cannot be applied</strong><br>${esc(S.rv.previewErr)}</div></div>`;
-  if (!p) return '<div class="stats"><div class="stat"><div class="eyebrow">What Solo will receive</div><div class="value">…</div><p>Reading the bundle</p></div></div>';
+  if (!p) return '<div class="stats"><div class="stat"><div class="eyebrow">What the recipient will receive</div><div class="value">…</div><p>Reading the bundle</p></div></div>';
   const k = p.kept || {}, r = p.removed || {}, x = p.redacted || {};
   const cell = (label, kept, removed) => `<div class="stat"><div class="eyebrow">${label}</div><div class="value">${num(kept)}${removed ? `<small class="amber">${num(removed)} removed</small>` : ''}</div></div>`;
   const red = [x.replacements && `${num(x.replacements)} values redacted`, x.fieldsRemoved && `${num(x.fieldsRemoved)} fields removed`, x.namesScrubbed && `${num(x.namesScrubbed)} names replaced`, r.diagnosticEntries && `${num(r.diagnosticEntries)} dump entries cut`].filter(Boolean);
   const ex = S.rv.exported;
-  return `<section class="panel"><div class="panel-head"><h2>What Solo will receive</h2><div class="row wrap">${S.rv.busy ? '<small class="blue">Updating…</small>' : ''}<button class="primary" id="rv-export" ${S.rv.busy ? 'disabled' : ''}>Export bundle</button></div></div>
+  return `<section class="panel"><div class="panel-head"><h2>What the recipient will receive</h2><div class="row wrap">${S.rv.busy ? '<small class="blue">Updating…</small>' : ''}<button class="primary" id="rv-export" ${S.rv.busy ? 'disabled' : ''}>Export bundle</button></div></div>
     <div class="stats" style="margin:0;border:0;border-radius:0;grid-template-columns:repeat(5,minmax(0,1fr))">${cell('Objects', k.objects, r.objects)}${cell('Events', k.events, r.events)}${cell('Log lines', k.logLines, r.logLines)}${cell('Diagnostic files', k.diagnosticFiles, r.diagnosticFiles)}${cell('Flow files', k.flowFiles, r.flowFiles)}</div>
     <div class="panel-body" style="border-top:1px solid var(--line)"><div class="row wrap"><span>${esc(p.summary || rvLedgerLine(p))}</span>${red.length ? `<span class="muted">· ${red.join(' · ')}</span>` : ''}</div>
-    <div class="muted" style="font-size:12px;margin-top:6px">${p.namesDisclosed ? 'The ledger lists removed namespaces, objects and streams by name.' : 'The ledger records counts only; removed names are not listed.'} Resource types you remove are always listed, so Solo can mark the checks that need them as not applicable.</div>
+    <div class="muted" style="font-size:12px;margin-top:6px">${p.namesDisclosed ? 'The ledger lists removed namespaces, objects and streams by name.' : 'The ledger records counts only; removed names are not listed.'} Resource types you remove are always listed, so Flightbay can mark checks that need them as not applicable.</div>
     ${ex ? rvExported(ex) : ''}</div></section>`;
 }
 
@@ -370,7 +370,7 @@ function rvBody() {
         <h3>Ledger</h3>
         <label class="mt" style="display:block">Reviewed by<br><input id="rv-reviewer" value="${esc(p.reviewer || '')}" placeholder="Name and team" style="width:100%"></label>
         <label class="row mt"><input type="checkbox" id="rv-disclose" ${p.discloseNames ? 'checked' : ''}> List removed namespaces, objects and streams by name</label>
-        <p class="muted" style="font-size:12px">Off: Solo sees how much was removed but not what it was called. On: Solo can tell which namespaces and objects to ask about.</p>
+        <p class="muted" style="font-size:12px">Off: recipients see how much was removed but not what it was called. On: they can tell which namespaces and objects to ask about.</p>
       </div></div>`;
     }
   }

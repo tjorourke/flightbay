@@ -255,18 +255,18 @@ func (s *Server) docs(w http.ResponseWriter, r *http.Request) {
 
 var docTmpl = template.Must(template.New("doc").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{{.Page.Title}} · Solo flightbay docs</title>
+<title>{{.Page.Title}} · Flightbay documentation</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <script>document.documentElement.dataset.theme = localStorage.getItem('flightbay-theme') || 'dark';</script>
 <style>
-:root{--bg:#0c111d;--panel:#151927;--raised:#1d2233;--line:#2a3144;--text:#e8ecf3;--muted:#8c92a4;--teal:#20b7f3;--red:#f97066;--amber:#fdb022;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--sans:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-[data-theme=light]{--bg:#f9fafb;--panel:#fff;--raised:#f2f4f7;--line:#eaecf0;--text:#222635;--muted:#475467;--teal:#0274a0}
+:root{--bg:#101820;--panel:#17232c;--raised:#202e38;--line:#31414c;--text:#e8f0f4;--muted:#9aaab4;--teal:#25bfd0;--red:#f97066;--amber:#fdb022;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--sans:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+[data-theme=light]{--bg:#f5fafb;--panel:#fff;--raised:#edf5f7;--line:#dce9ec;--text:#17272f;--muted:#647c86;--teal:#087e8b}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.65 var(--sans)}
 a{color:var(--teal);text-decoration:none}a:hover{text-decoration:underline}
 .top{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:18px;padding:12px 24px;background:var(--panel);border-bottom:1px solid var(--line)}
-.brand{font-weight:400;font-size:17px;color:var(--text);white-space:nowrap}.brand b{font-weight:700}.brand small{color:var(--muted);font-weight:500;margin-left:6px}
+.brand{font-weight:700;font-size:17px;color:var(--text);white-space:nowrap}.brand svg,.brand b{display:none}.brand::before{content:"F";display:inline-grid;place-items:center;width:22px;height:22px;margin-right:7px;border-radius:6px;background:#12313a;color:#25bfd0;font-weight:800}.brand small{color:var(--muted);font-weight:500;margin-left:6px}
 .top input{flex:1;max-width:460px;background:var(--raised);border:1px solid var(--line);color:var(--text);border-radius:6px;padding:8px 12px;font:14px var(--sans)}
 .top .sp{flex:1}.top button{background:var(--raised);border:1px solid var(--line);color:var(--text);border-radius:6px;padding:7px 11px;cursor:pointer}
 .wrap{display:grid;grid-template-columns:280px minmax(0,1fr);max-width:1400px;margin:0 auto}
@@ -311,7 +311,7 @@ main blockquote{margin:14px 0;padding:8px 16px;border-left:3px solid var(--teal)
 {{.HTML}}
 {{if .List}}<div class="cards">{{range .List}}<a href="/docs/{{.Path}}"><b>{{.Title}}</b><span>{{.Description}}</span></a>{{end}}</div>{{end}}
 <div class="pn"><div>{{with .Prev}}<a href="/docs/{{.Path}}"><small>Previous</small>{{.Title}}</a>{{end}}</div><div style="text-align:right">{{with .Next}}<a href="/docs/{{.Path}}"><small>Next</small>{{.Title}}</a>{{end}}</div></div>
-<p class="foot">Solo flightbay · <a href="{{.Source}}">Edit this page</a></p>
+<p class="foot">Flightbay · <a href="{{.Source}}">Edit this page</a></p>
 </main></div>
 <script>
 document.getElementById('theme').onclick = () => { const t = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light'; document.documentElement.dataset.theme = t; localStorage.setItem('flightbay-theme', t); };

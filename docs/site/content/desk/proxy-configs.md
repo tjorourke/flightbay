@@ -10,7 +10,7 @@ Proxy configs shows what each proxy had actually loaded when the snapshot was ta
 
 ![Proxy configs](/images/proxies.png)
 
-This page needs [Solo diagnostics](/collect/solo-diagnostics/) in the capture. Without them it says the diagnostics were not selected, and that their absence says nothing about the proxies.
+This page needs [Proxy and control-plane diagnostics](/collect/diagnostics/) in the capture. Without them it says the diagnostics were not selected, and that their absence says nothing about the proxies.
 
 ## Finding a component
 

@@ -101,7 +101,7 @@ Each tool says **allowed, called**, **allowed, not called**, or **called, not al
 
 ## Where the data comes from
 
-ztunnel access logs in the capture: `access` lines (one per connection) and, in Solo builds, `http_access` lines (one per HTTP request). A connection is counted once when both ztunnels logged it. The map uses:
+ztunnel access logs in the capture: `access` lines (one per connection) and, in builds with HTTP access-log support, `http_access` lines (one per HTTP request). A connection is counted once when both ztunnels logged it. The map uses:
 
 | What | Log fields |
 |---|---|

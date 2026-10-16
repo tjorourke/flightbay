@@ -321,7 +321,7 @@ func TestGuideSlugsExist(t *testing.T) {
 			}
 		}
 		if slug == "" {
-			// Upstream references are allowed where no Solo guide covers it.
+			// Upstream references are allowed where no field guide covers it.
 			if !strings.HasPrefix(c.Source, "https://kubernetes.io/") && !strings.HasPrefix(c.Source, "https://istio.io/") &&
 				!strings.HasPrefix(c.Source, "https://helm.sh/") && !strings.HasPrefix(c.Source, "https://cert-manager.io/") {
 				t.Errorf("%s: source %q is neither a guide link nor an upstream reference", c.ID, c.Source)

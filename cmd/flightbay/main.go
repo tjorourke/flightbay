@@ -34,7 +34,7 @@ var version = "0.1.0-dev"
 
 // newRoot builds the command tree (also used to generate the CLI reference).
 func newRoot() *cobra.Command {
-	root := &cobra.Command{Use: "flightbay", Short: "Solo flightbay: collect an offline, redacted snapshot of Kubernetes clusters", SilenceUsage: true}
+	root := &cobra.Command{Use: "flightbay", Short: "Capture an offline, redacted snapshot of Kubernetes clusters", SilenceUsage: true}
 	root.AddCommand(collectCmd(), scanCmd(), inspectCmd(), extractCmd(), rbacCmd(), docsCmd(), uiCmd(), keygenCmd(), policyCmd(), reviewCmd(), &cobra.Command{
 		Use: "version", Short: "Print the version", Run: func(*cobra.Command, []string) { fmt.Println("flightbay", version) },
 	})
@@ -96,8 +96,6 @@ func recipients(specs []string) ([]age.Recipient, error) {
 	var out []age.Recipient
 	for _, s := range specs {
 		switch {
-		case s == "solo-support":
-			return nil, fmt.Errorf("no Solo support key is built into this development build; pass the age recipient (age1...) or @file")
 		case strings.HasPrefix(s, "@"):
 			f, err := os.Open(strings.TrimPrefix(s, "@"))
 			if err != nil {
@@ -383,7 +381,7 @@ func collectCmd() *cobra.Command {
 	kf.register(c)
 	c.Flags().StringVarP(&out, "out", "o", ".", "output directory or file; - streams the bundle to stdout")
 	c.Flags().StringSliceVar(&encryptTo, "encrypt-to", nil, "age recipients (age1...) or @file; the bundle becomes .tar.zst.age")
-	c.Flags().StringVar(&signKey, "sign", "", "sign the bundle with this private key (flightbay keygen); Solo verifies it with your public key")
+	c.Flags().StringVar(&signKey, "sign", "", "sign the bundle with this private key (flightbay keygen); recipients can verify it with your public key")
 	c.Flags().IntVar(&window, "window-size", 0, "zstd window in bytes (default 8 MiB, max 128 MiB for stock tools)")
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "print what would be collected and the RBAC it needs; reads discovery only")
 	c.Flags().BoolVar(&jsonOut, "json", false, "print the dry-run plan as JSON")

@@ -27,7 +27,7 @@ It prints, per cluster:
 - anything that will **not** be collected and why, for example "helm: release summaries are read from Secret data, which needs secrets=keys";
 - the log window, streams and byte limit;
 - every resource type that will be listed;
-- whether diagnostics will port-forward to Solo components;
+- whether diagnostics will port-forward to supported components;
 - attached or Hubble flow sources;
 - the RBAC the run needs.
 
@@ -56,7 +56,7 @@ Exclusions always win. If you exclude a resource type, no collector reads it, in
 | Secrets | Name, type, labels, annotations, key names and byte lengths. Never values. |
 | ConfigMaps | Data kept, with credentials replaced by the redactor. |
 
-Not collected unless you ask: cluster-scoped objects such as nodes and CRDs (`--cluster-scoped`), and proxy dumps, control-plane debug output and metrics (`--solo-diagnostics`).
+Not collected unless you ask: cluster-scoped objects such as nodes and CRDs (`--cluster-scoped`), and proxy dumps, control-plane debug output and metrics (`--diagnostics`).
 
 ## Useful commands
 
@@ -64,7 +64,7 @@ Not collected unless you ask: cluster-scoped objects such as nodes and CRDs (`--
 flightbay collect --context mesh1 --dry-run                     # what it would read, and the RBAC it needs
 flightbay collect --context mesh1                               # the standard profile
 flightbay collect --context mesh1 --namespaces payments,istio-system --since 2h --case 01234567
-flightbay collect --context mesh1 --solo-diagnostics            # add proxy dumps, istiod debug output and metrics
+flightbay collect --context mesh1 --diagnostics                 # add proxy dumps, istiod debug output and metrics
 flightbay collect --context mesh1,mesh2                         # several clusters in one bundle
 flightbay collect --interactive                                 # answer questions, preview, confirm
 flightbay inspect flightbay-*.tar.zst --redactions              # check it before you send it
@@ -78,7 +78,7 @@ flightbay docs collects                                         # the full list 
 | [Scope](/collect/scope/) | Profiles, contexts, namespaces, resource types, label selectors, config files |
 | [Logs](/collect/logs/) | Time window, byte limits, streams, pod and container filters |
 | [Secrets and redaction](/collect/secrets-and-redaction/) | What never leaves, and how credentials are replaced |
-| [Solo diagnostics](/collect/solo-diagnostics/) | Envoy, ztunnel, agentgateway and istiod admin endpoints |
+| [Proxy and control-plane diagnostics](/collect/diagnostics/) | Envoy, ztunnel, agentgateway and istiod admin endpoints |
 | [Observed traffic](/collect/observed-traffic/) | Access logs and flow logs for who called whom |
 | [RBAC](/collect/rbac/) | Least-privilege permissions for your policy |
 | [Reviewing before you send](/collect/review/) | Remove namespaces, types, objects, logs and files in the UI, redact more, export a signed bundle |

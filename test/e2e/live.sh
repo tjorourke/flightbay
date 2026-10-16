@@ -192,7 +192,7 @@ n=$(oapi "/api/objects?resource=pods&namespace=demo" | jq '.rows | length')
 kill "$OPEN_PID" 2>/dev/null || true; wait "$OPEN_PID" 2>/dev/null || true; OPEN_PID=""
 pass "flightbay-desk open shows the $n pods and the crash log from the saved bundle"
 
-step "Solo diagnostics on demand (--solo-diagnostics)"
+step "Proxy diagnostics on demand (--diagnostics)"
 # A stand-in ztunnel: busybox httpd serving the two admin endpoints the
 # collector reads from ztunnel. Detection is by image name.
 mkdir -p "$WORK/zt"
@@ -214,7 +214,7 @@ spec:
 POD
 k -n demo wait --for=condition=Ready pod/ztunnel-e2e --timeout=60s >/dev/null || fail "stand-in ztunnel not ready"
 "$BIN/flightbay-desk" live --kubeconfig "$KCFG" --context "$CTX" --namespaces demo --no-browser --listen 127.0.0.1:0 \
-  --workdir "$WORK/ws3" --solo-diagnostics --no-logs >"$WORK/diag.log" 2>&1 &
+  --workdir "$WORK/ws3" --diagnostics --no-logs >"$WORK/diag.log" 2>&1 &
 OPEN_PID=$!
 until_ok 30 test -s "$WORK/ws3/desk.json" || fail "diagnostics desk did not start"
 DURL=$(jq -r .url "$WORK/ws3/desk.json"); DTOKEN=$(jq -r .token "$WORK/ws3/desk.json")
@@ -226,7 +226,7 @@ r=$(curl -sf -X POST -H "Authorization: Bearer $DTOKEN" "$DURL/api/live/refresh-
 [ "$(jq -r .files <<<"$r")" -ge 2 ] || fail "refresh captured too little: $r"
 dapi "/api/proxy/file?cluster=$CTX&kind=proxies&namespace=demo&pod=ztunnel-e2e&file=config_dump.json" | grep -q talker || fail "config_dump not served after refresh"
 bad=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $DTOKEN" "$DURL/api/live/refresh-diagnostics?pod=demo/$newpod")
-[ "$bad" = 400 ] || fail "refresh of a non-Solo pod should be refused ($bad)"
+[ "$bad" = 400 ] || fail "refresh of an unsupported pod should be refused ($bad)"
 # The live state is republished once a second.
 pfcounted() { dapi /api/workspace | jq -e '.live.requests.portforward >= 2' >/dev/null; }
 until_ok 10 pfcounted || fail "port-forward not counted by the guard: $(dapi /api/workspace | jq -c .live.requests)"

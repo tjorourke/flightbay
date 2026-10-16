@@ -133,7 +133,7 @@ func run(deskBin, chromeBin, sample, mesh, out, only string) error {
 		return errors.New("nothing to take")
 	}
 
-	// A signed bundle with the payments namespace removed, for the Solo-side view.
+	// A signed bundle with the payments namespace removed, for the coverage view.
 	key, _ := sign.Generate("ACME platform team")
 	pub := filepath.Join(tmp, "acme.pub")
 	if err := os.WriteFile(pub, key.Public().MarshalPublic(), 0o644); err != nil {

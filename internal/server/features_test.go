@@ -37,7 +37,7 @@ func TestPriorityViewIsGated(t *testing.T) {
 	if code := get(t, srv, "/api/posture?top=3", &on); code != 200 {
 		t.Fatalf("posture with Enterprise: %d", code)
 	}
-	if on.Priorities == nil || len(on.Priorities) > 3 {
+	if len(on.Priorities) > 3 {
 		t.Fatalf("want up to 3 priorities, got %+v", on.Priorities)
 	}
 	for i, p := range on.Priorities {

@@ -1,14 +1,14 @@
 ---
 title: Sending a bundle
 weight: 70
-description: Review and sign a bundle, encrypt it so only Solo can read it, verify it before you send it, and unpack or stream it with standard tools.
+description: Review and sign a bundle, encrypt it for a trusted recipient, verify it before you share it, and unpack or stream it with standard tools.
 ---
 
 # Sending a bundle
 
 A capture produces one file. This page covers making sure only the right person can read it, checking it has not been changed, and what is inside.
 
-Flightbay does not upload anything. You send the file however you normally share files with Solo.
+Flightbay does not upload anything. You share the file through a channel you trust.
 
 ## The usual order
 
@@ -34,15 +34,15 @@ flightbay collect --context mesh1 --case 01234567 --encrypt-to age1ql3z7hjy54pw3
 | `--encrypt-to age1...,age1...` | Several recipients; any one of them can open it |
 | `--encrypt-to @recipients.txt` | Recipients from a file, one per line |
 
-Solo does not yet publish a shared support key, so ask your Solo contact for the recipient to use.
+There is no built-in shared recipient key. Get the recipient from whoever will open the encrypted bundle.
 
-### Creating a key pair (Solo side)
+### Creating a recipient key pair
 
 ```bash
 flightbay-desk keygen -o ~/.flightbay/support.key
 ```
 
-It writes the private identity to the file (mode 0600) and prints the public recipient. Give the customer the `age1...` recipient; keep the file. It refuses to overwrite an existing key.
+It writes the private identity to the file (mode 0600) and prints the public recipient. Share the `age1...` recipient with the sender and keep the private file secure. It refuses to overwrite an existing key.
 
 ### Opening an encrypted bundle
 

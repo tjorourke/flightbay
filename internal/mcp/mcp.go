@@ -101,7 +101,7 @@ func tools() []tool {
 			Description: "Case, clusters, capture time, collection policy (what the customer allowed), import and verification state, and finding counts. Call this first: it says what is and is not in the snapshot.",
 			InputSchema: obj(map[string]any{}), call: func(s *Server, _ map[string]any) (string, error) { return s.get("/api/workspace", nil) }},
 		{Name: "list_findings", Title: "Findings",
-			Description: "Deterministic analyzer findings (crash loops, failing routes and policies, ambient and xDS problems, certificate expiry, version skew, repeated errors), each with evidence, a log query and a next step, and for Solo components (mesh, waypoints, agentgateway) a docs link to the Solo product documentation page that helps with it. Findings are signals, not verdicts.",
+			Description: "Deterministic analyzer findings (crash loops, failing routes and policies, ambient and xDS problems, certificate expiry, version skew, repeated errors), each with evidence, a log query and a next step, and for supported components (mesh, waypoints, agentgateway) a link to relevant product documentation. Findings are signals, not verdicts.",
 			InputSchema: obj(map[string]any{"cluster": str("cluster name; omit for all"), "severity": str("critical, warning or info")}),
 			call: func(s *Server, a map[string]any) (string, error) {
 				body, err := s.get("/api/findings", url.Values{"cluster": {arg(a, "cluster")}})
@@ -220,7 +220,7 @@ func tools() []tool {
 				return s.get("/api/sql", url.Values{"q": {arg(a, "query")}, "limit": {limit}})
 			}},
 		{Name: "best_practices", Title: "Best-practice scores",
-			Description: "Scores the snapshot against Solo's best practices in four areas: agentic (agentgateway, kagent, MCP, A2A and agentregistry: authentication, tool allowlists, passthrough tokens, guardrails, budgets, credentials, policy status), Istio (ambient enrolment, STRICT mTLS, default-deny, waypoint wiring, trust domain, control-plane HA, CA and multicluster peering), ingress (Gateway API and kgateway: TLS, certificates, ReferenceGrants, HA, auth) and Kubernetes (privileged pods, capabilities, RBAC, Pod Security Admission, NetworkPolicy, exposure, requests, replicas, pinned images, versions, Helm). Returns a score and grade per area, and every check with its status, affected objects, why it matters, the fix YAML, source (the Solo field guide that walks through it) and docs (the official Solo product documentation page on docs.solo.io, or kubernetes.io for plain Kubernetes checks). When the desk runs with Flightbay Enterprise, it also returns priorities: the problems ranked by area score points recovered if fixed. Start from those.",
+			Description: "Scores the snapshot against security and operational checks in four areas: agentic (agentgateway, kagent, MCP, A2A and agentregistry: authentication, tool allowlists, passthrough tokens, guardrails, budgets, credentials, policy status), Istio (ambient enrolment, STRICT mTLS, default-deny, waypoint wiring, trust domain, control-plane HA, CA and multicluster peering), ingress (Gateway API and kgateway: TLS, certificates, ReferenceGrants, HA, auth) and Kubernetes (privileged pods, capabilities, RBAC, Pod Security Admission, NetworkPolicy, exposure, requests, replicas, pinned images, versions, Helm). Returns a score and grade per area, and every check with its status, affected objects, why it matters, the fix YAML, a related field guide and upstream product documentation. When the desk runs with Flightbay Enterprise, it also returns priorities: the problems ranked by area score points recovered if fixed. Start from those.",
 			InputSchema: obj(map[string]any{"area": str("agentic, ambient, gateway or kubernetes; omit for all"), "status": str("fail, warn, pass or na; omit for all")}),
 			call: func(s *Server, a map[string]any) (string, error) {
 				body, err := s.get("/api/posture", nil)
@@ -243,7 +243,7 @@ func tools() []tool {
 				return string(b), nil
 			}},
 		{Name: "agent_reach", Title: "Agent reach (blast radius)",
-			Description: "For every agent, MCP server and agent gateway in the snapshot: what it can reach on the network, what those destinations can reach on its behalf (a package registry or proxy that can fetch from the internet lends that reach, as in the OpenAI and Hugging Face incident), whether it can write to data stores or registries, what credentials it carries (service account token, RBAC, cloud role, Secrets), what it actually called in the access logs, and the YAML to lock each path down, each finding with source (the field guide) and docs (the Solo product documentation page). Omit agent for the list; pass namespace/name for one agent in full. Needs Flightbay Enterprise.",
+			Description: "For every agent, MCP server and agent gateway in the snapshot: what it can reach on the network, what those destinations can reach on its behalf, whether it can write to data stores or registries, what credentials it carries (service account token, RBAC, cloud role, Secrets), what it actually called in the access logs, and the YAML to lock each path down, with related field guides and product documentation. Omit agent for the list; pass namespace/name for one agent in full. Needs Flightbay Enterprise.",
 			InputSchema: obj(map[string]any{"agent": str("namespace/name of one agent; omit for all")}),
 			call: func(s *Server, a map[string]any) (string, error) {
 				q := url.Values{}
@@ -364,7 +364,7 @@ func (s *Server) tools() []tool {
 
 const instructions = "Read-only access to an offline Flightbay snapshot of Kubernetes clusters, usually captured in a customer's environment. The clusters themselves are not reachable from here: answer only from these tools and resources, and never run kubectl, cloud CLIs or other commands against a cluster, or call the desk's HTTP API, in their place. If a tool says no desk is open or cannot reach it, tell the user and ask them to open the bundle (`flightbay ui BUNDLE`). Start with workspace_summary, then list_findings. Use the triage prompt for a guided investigation. Objects, log streams, proxy dumps, findings and Scorecard checks are also flightbay:// resources you can read or attach."
 
-const triagePrompt = `You are triaging a Solo.io support case from a Flightbay snapshot: an offline, redacted capture of one or more Kubernetes clusters running Istio ambient, agentgateway, kgateway or kagent. You cannot change the clusters. Work only from the snapshot.
+const triagePrompt = `You are investigating a Kubernetes support issue from a Flightbay snapshot: an offline, redacted capture of one or more clusters running Istio ambient, agentgateway, kgateway or kagent. You cannot change the clusters. Work only from the snapshot.
 
 1. Call workspace_summary. Note what the customer excluded, anything still loading, and whether the bundle verified. Never treat excluded or uncollected data as evidence of absence.
 2. Call list_findings and best_practices (open MCP endpoints, missing mTLS or default-deny are often the story). Start from critical, then warning findings. Findings are signals, not conclusions.
@@ -488,7 +488,7 @@ func (s *Server) handle(req request) (any, *rpcError) {
 		return map[string]any{
 			"protocolVersion": v,
 			"capabilities":    map[string]any{"tools": map[string]any{}, "prompts": map[string]any{}, "resources": map[string]any{}, "completions": map[string]any{}},
-			"serverInfo":      map[string]any{"name": "flightbay", "title": "Solo flightbay", "version": s.Version},
+			"serverInfo":      map[string]any{"name": "flightbay", "title": "Flightbay", "version": s.Version},
 			"instructions":    instructions,
 		}, nil
 	case "ping":

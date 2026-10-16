@@ -39,7 +39,7 @@ func category(kind string) string {
 		return "logs"
 	case bundle.PathEvents:
 		return "events"
-	case bundle.PathSolo:
+	case bundle.PathDiagnostics:
 		return "diagnostics"
 	case bundle.PathFlows:
 		return "flows"
@@ -259,10 +259,10 @@ func apply(ws *store.Workspace, m *bundle.Member, r *bundle.Reader) error {
 		if _, err := ws.ImportFlowFile(info.Cluster, info.File, bytes.NewReader(m.Data), info.Sub, store.OriginBundle); err != nil {
 			ws.AddCollectionLog([]json.RawMessage{mustJSON(map[string]string{"cluster": info.Cluster, "operation": "import-flows", "target": info.File, "result": "failed", "error": err.Error()})})
 		}
-	case bundle.PathSolo:
+	case bundle.PathDiagnostics:
 		if info.Sub == "" {
 			if info.File == "summary.json" {
-				ws.SetSoloSummary(info.Cluster, json.RawMessage(m.Data))
+				ws.SetDiagnosticSummary(info.Cluster, json.RawMessage(m.Data))
 			}
 			return nil
 		}

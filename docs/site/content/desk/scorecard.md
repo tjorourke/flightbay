@@ -1,16 +1,16 @@
 ---
 title: Scorecard
 weight: 80
-description: Score a snapshot against Solo's best practices for agentic workloads, Istio, ingress and Kubernetes, with the evidence and the fix for every problem.
+description: Score a snapshot against security and operational checks for agentic workloads, Istio, ingress and Kubernetes, with the evidence and fix for every problem.
 ---
 
 # Scorecard
 
-The Scorecard checks the snapshot against Solo's best practices and says what to change. Findings tell you what is broken; the Scorecard tells you what is risky or fragile even when everything works: MCP endpoints anyone can call, namespaces without STRICT mTLS, privileged pods, a single istiod.
+The Scorecard checks the snapshot against security and operational guidance and says what to change. Findings tell you what is broken; the Scorecard tells you what is risky or fragile even when everything works: MCP endpoints anyone can call, namespaces without STRICT mTLS, privileged pods, a single istiod.
 
 ![Scorecard summary](/images/scorecard-summary.png)
 
-The checks are drawn from the Solo field guides, the agentgateway, kagent, Istio and kgateway source, and Kubernetes hardening guidance. There are 130 of them, plus five more built on [Agent reach](/desk/agent-reach/) when that Enterprise feature is on. Every check is listed in [Scorecard checks](/desk/scorecard-checks/).
+The checks draw on public field guides, agentgateway, kagent, Istio and kgateway source, and Kubernetes hardening guidance. There are 129 of them, plus five more built on [Agent reach](/desk/agent-reach/) when that Enterprise feature is on. Every check is listed in [Scorecard checks](/desk/scorecard-checks/).
 
 ## The four areas
 
@@ -86,7 +86,7 @@ Every check belongs to one category. A category bar on an area card is that area
 | Identity | Credentials and who workloads run as: no literal or passed-through tokens, secret references that resolve, dedicated service accounts, RBAC without wildcards, escalation or secret reads, and a shared mesh root of trust. |
 | Isolation | What can reach what: egress control, network policies, Pod Security admission, host access, namespace-restricted routes, MCP servers not reachable directly, the cloud metadata endpoint blocked. |
 | Resilience | Staying up under failure and load: replicas and HA, disruption budgets, probes, resource requests, spread, timeouts, retries, rate limits, and references and policies that resolve and attach. |
-| Supply chain | Where the software comes from: images pinned to a digest or fixed tag, the Solo Istio distribution, agent artifacts pinned, a hardened registry, MCP selectors scoped, extensions kept in check. |
+| Supply chain | Where the software comes from: images pinned to a digest or fixed tag, a trusted Istio distribution, agent artifacts pinned, a hardened registry, MCP selectors scoped, extensions kept in check. |
 | Workload security | How containers run: not privileged, no privilege escalation, dropped capabilities, non-root, seccomp and a read-only root filesystem. |
 | Platform | The cluster underneath: a supported Kubernetes version, healthy nodes, certificates not about to expire, no deprecated APIs, Helm releases in a good state. |
 | Cost | Spend and wasted work: LLM spend limits, rate-limit keys that cannot be spoofed, retries only on idempotent calls, waypoints that are doing a job. |
@@ -146,7 +146,7 @@ Click a check to open it. You get:
 - every object it looked at, with its status and what was found (click an object to open it);
 - **How to fix**: the YAML to apply, with **Copy YAML**;
 - **Read the guide**: the matching lab or article on mastertheagent.com or masterthemesh.com;
-- **Solo docs**: the page of the official Solo product documentation on docs.solo.io for the feature the check is about. A few checks on plain Kubernetes link to kubernetes.io instead (**Kubernetes docs**).
+- **Product docs**: upstream product documentation for the feature the check is about. A few checks on plain Kubernetes link to kubernetes.io instead (**Kubernetes docs**).
 
 ## From the terminal
 

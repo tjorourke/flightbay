@@ -66,7 +66,7 @@ Reply with the cause, the evidence and the fix.`+evidenceRules, a["namespace"], 
 Reply with the rule that decided, the evidence, and the smallest policy change that allows the call without widening access for anything else.`+evidenceRules, a["from"], a["to"], a["from"], a["to"])
 			}},
 		{Name: "security_review", Title: "Security review",
-			Description: "Reviews the snapshot against Solo's best practices and turns the failing checks into a ranked list of fixes.",
+			Description: "Reviews the snapshot against security and operational checks and turns failing checks into a ranked list of fixes.",
 			text: func(map[string]string) string {
 				return `Review this snapshot's security posture.
 

@@ -1,10 +1,10 @@
 ---
-title: Solo diagnostics
+title: Proxy and control-plane diagnostics
 weight: 40
 description: Add Envoy, ztunnel and agentgateway config dumps, istiod debug output and metrics to a capture, filtered to the namespaces you chose.
 ---
 
-# Solo diagnostics
+# Proxy and control-plane diagnostics
 
 Objects tell you what was configured. Diagnostics tell you what the proxies actually loaded: the listeners, routes, clusters and certificates each Envoy had, the workloads and policies ztunnel knew about, which proxies istiod thought were in sync. Most mesh and gateway cases turn on the difference between the two.
 
@@ -13,19 +13,19 @@ These endpoints are only reachable on each pod's localhost admin port, so Flight
 ## Turning them on
 
 ```bash
-flightbay collect --context mesh1 --solo-diagnostics
+flightbay collect --context mesh1 --diagnostics
 ```
 
-`--solo-diagnostics` adds three categories (`proxies`, `control-plane` and `metrics`) and allows the port-forward they need. You can also pick them one at a time:
+`--diagnostics` adds three categories (`proxies`, `control-plane` and `metrics`) and allows the port-forward they need. You can also pick them one at a time:
 
 ```bash
 flightbay collect --collect objects,events,logs,proxies --portforward
-flightbay collect --solo-diagnostics --no-proxy-dumps      # control plane and metrics, no proxy dumps
+flightbay collect --diagnostics --no-proxy-dumps           # control plane and metrics, no proxy dumps
 ```
 
 | Flag | Effect |
 |---|---|
-| `--solo-diagnostics` | Adds `proxies`, `control-plane`, `metrics` and allows port-forward |
+| `--diagnostics` | Adds `proxies`, `control-plane`, `metrics` and allows port-forward |
 | `--portforward` | Allows port-forward for whichever diagnostic categories you selected |
 | `--no-portforward` | Never port-forward. Diagnostic categories become "not collected" with the reason. |
 | `--no-proxy-dumps` | Drops the `proxies` category |

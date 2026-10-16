@@ -39,7 +39,7 @@ jobs:
           V=${GITHUB_REF_NAME#v}
           CGO_ENABLED=1 go build -trimpath -ldflags "-s -w -X main.version=$V" -o dist/flightbay-desk ./cmd/flightbay-desk
           A=flightbay-desk_${V}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz
-          tar -czf "$A" -C dist flightbay-desk -C .. README.md
+          tar -czf "$A" -C dist flightbay-desk -C .. README.md LICENSE NOTICE
           shasum -a 256 "$A" > "$A.sha256"
           cosign sign-blob --yes --output-signature "$A.sig" --output-certificate "$A.pem" "$A"
           gh release upload "$GITHUB_REF_NAME" "$A" "$A.sha256" "$A.sig" "$A.pem" --clobber

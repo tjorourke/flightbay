@@ -458,7 +458,7 @@ func (p *Policy) RBACFor(discovered []APIResource, live bool) string {
 		clusterRules.add("", "nodes")
 	}
 	if p.PortForward && (p.Has(CatProxies) || p.Has(CatControlPlane) || p.Has(CatMetrics)) {
-		nsRules.add("", "pods") // to find the Solo components among the selected pods
+		nsRules.add("", "pods") // to find supported components among the selected pods
 		pfRules.add("", "pods/portforward")
 	}
 	namespaces := p.ExplicitNamespaces()

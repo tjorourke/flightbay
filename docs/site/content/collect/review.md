@@ -1,7 +1,7 @@
 ---
 title: Reviewing before you send
 weight: 65
-description: Open your capture in the UI, take out what you do not want to send, redact more, check what Solo will receive, and export a signed bundle with a ledger of what you removed.
+description: Open your capture in the UI, remove data you do not want to share, redact more, preview the export, and sign the reviewed bundle with a ledger of what changed.
 ---
 
 # Reviewing before you send
@@ -24,8 +24,8 @@ The page is not there when the desk was fed a stream (`flightbay collect -o - | 
 
 | Option on `flightbay ui` | Does |
 |---|---|
-| `--sign KEY` | Sign what you export with your private key, so Solo can check it came from you unmodified. See [Signing](/collect/signing/). Without it the export is unsigned. |
-| `--encrypt-to age1...` | Encrypt what you export to Solo's recipient |
+| `--sign KEY` | Sign what you export with your private key, so recipients can check it came from you unmodified. See [Signing](/collect/signing/). Without it the export is unsigned. |
+| `--encrypt-to age1...` | Encrypt what you export to the chosen recipient |
 | `--reviewer "Jane Smith, platform"` | Who reviewed it, recorded in the ledger (also editable on the Redact tab) |
 | `--review` | Open on the Review and send page instead of the Overview |
 | `--review-out FILE` | Where the export goes |
@@ -41,7 +41,7 @@ Everything is selected to start with. The **What to send** panel at the top has 
 | Objects | Every resource type |
 | Logs | Every container log stream |
 | Events | Every Kubernetes event |
-| Proxy and control-plane dumps | Every Solo diagnostics file |
+| Proxy and control-plane dumps | Every diagnostics file |
 | Flow logs | Every attached flow log file |
 
 Untick one to leave that content out, or use **Deselect all** and tick back only what you want to send. **Select all** puts everything back, including objects and lines you removed one at a time. A tickbox shows as partly ticked when you have picked some of it in the tabs below, with a count such as "12 of 19 container log streams selected".
@@ -81,17 +81,17 @@ data.license
 
 A path cannot remove an object's `kind`, `apiVersion`, name or namespace; remove the object instead. The rules also apply inside `kubectl.kubernetes.io/last-applied-configuration`, which holds a full copy of the object.
 
-## What Solo will receive
+## Preview the export
 
 The panel at the top updates as you choose. It shows what is kept and what is removed for objects, events, log lines, diagnostic files and flow files, plus how many values were redacted, fields removed and names replaced. It runs the real export into nowhere, so the numbers are exactly what the export will do.
 
 ## Signing the export
 
-The **Sign the export** panel chooses the key the export is signed with. A signature lets Solo check the bundle came from you and was not changed since.
+The **Sign the export** panel chooses the key the export is signed with. A signature lets recipients check the bundle came from you and was not changed since.
 
 - **Choose a key** from the list: Flightbay finds signing keys in `~/.flightbay/keys`, in the directory you started from, and next to a key you used before.
 - **Use a key file** anywhere else by typing its path.
-- **Create a signing key…** opens a dialog. Type who signs (for example "ACME platform team") and choose **Create and use this key**. The private key is saved in `~/.flightbay/keys`, readable only by you, exports are signed with it straight away, and the next dialog shows the public key with **Copy public key**. **Show the public key** brings it back later. Send the public key (the `.pub` file) to Solo once; never send the `.key`.
+- **Create a signing key…** opens a dialog. Type who signs (for example "ACME platform team") and choose **Create and use this key**. The private key is saved in `~/.flightbay/keys`, readable only by you, exports are signed with it straight away, and the next dialog shows the public key with **Copy public key**. **Show the public key** brings it back later. Share the public key (the `.pub` file) with recipients; never share the `.key`.
 - **Don't sign** turns signing off for this export.
 
 `flightbay ui BUNDLE --sign KEY` (or `--live --sign KEY`) starts with that key chosen. The page can change it at any time.
@@ -111,7 +111,7 @@ flightbay inspect flightbay-01234567-20260928T1012Z-reviewed.tar.zst
 flightbay ui flightbay-01234567-20260928T1012Z-reviewed.tar.zst
 ```
 
-Opening the reviewed bundle yourself is the surest way to see exactly what Solo will see.
+Opening the reviewed bundle yourself is the surest way to see exactly what the recipient will receive.
 
 The export reads the original from start to finish and checks every file against its manifest. If the original is damaged, the export fails; a damaged capture is never signed again.
 
@@ -127,9 +127,9 @@ Every reviewed bundle carries `review-ledger.json`. It records:
 
 It never records your redaction patterns or field paths, which could describe what they hide.
 
-Names of removed namespaces, objects and streams are left out by default, and so are the collection records inside removed namespaces, which would name them. Turn on **List removed namespaces, objects and streams by name** on the Redact tab (or `--disclose-names` with a plan) if you would rather Solo knew what to ask about.
+Names of removed namespaces, objects and streams are left out by default, and so are the collection records inside removed namespaces, which would name them. Turn on **List removed namespaces, objects and streams by name** on the Redact tab (or `--disclose-names` with a plan) if you want the recipient to know what to ask about.
 
-Resource type names are always listed. Solo's desk uses them to mark the checks that need a removed type as not applicable, rather than failing them for data you chose not to send.
+Resource type names are always listed. Flightbay uses them to mark checks that need a removed type as not applicable, rather than failing them for data you chose not to share.
 
 ## Repeatable reviews with a plan
 

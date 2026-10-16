@@ -1408,53 +1408,6 @@ func ambientExtra(e env) []Check {
 		}
 	})
 
-	add(spec{"mesh.solo-distribution", "Supply chain", "high", "Mesh components run Solo's Istio build",
-		"Multicluster peering, service scope and the Solo features depend on the Solo distribution of istiod, ztunnel and the CNI, and on images that are patched and signed.",
-		"# Helm\nglobal:\n  hub: us-docker.pkg.dev/soloio-img/istio\n  tag: 1.30.4-solo", meshBase + "istio-ambient-poc-eks/", solodocs.Istio + "about/images/"}, func(c *Check) {
-		if !detailOK {
-			na(c, detailWhy)
-			return
-		}
-		mc, why := x.multicluster()
-		for _, w := range sortedObjs(append(append([]*store.Object{}, e.list("apps", "deployments")...), e.list("apps", "daemonsets")...)) {
-			kind := istioSystemWorkload(w)
-			if kind != "istiod" && kind != "ztunnel" && kind != "istio-cni" {
-				continue
-			}
-			var bad []string
-			var img string
-			for _, ct := range containers(podSpec(w)) {
-				if ct.kind != "container" {
-					continue
-				}
-				img = s(ct.c["image"])
-				if !strings.Contains(mxImageTag(img), "-solo") {
-					bad = append(bad, img)
-				}
-			}
-			switch {
-			case len(bad) == 0:
-				c.Items = append(c.Items, e.item(w, Pass, img))
-			case mc:
-				c.Items = append(c.Items, e.item(w, Fail, strings.Join(bad, ", ")+" is not a -solo build, and this cluster is multicluster ("+why+")"))
-			default:
-				note := ""
-				if v := podTemplateLabels(w)["app.kubernetes.io/version"]; strings.Contains(v, "-solo") {
-					note = " (the chart is " + v + ", but the image comes from another registry)"
-				}
-				c.Items = append(c.Items, e.item(w, Warn, strings.Join(bad, ", ")+" is not a -solo build"+note))
-			}
-		}
-		for _, smc := range e.list("operator.gloo.solo.io", "servicemeshcontrollers") {
-			if v, _ := path(smc.Obj, "spec", "repository", "insecureSkipVerify").(bool); v {
-				c.Items = append(c.Items, e.item(smc, Fail, "spec.repository.insecureSkipVerify is true: images are pulled without TLS verification"))
-			}
-		}
-		if len(c.Items) == 0 {
-			na(c, "no istiod, ztunnel or istio-cni workloads in the capture")
-		}
-	})
-
 	add(spec{"mesh.plugged-in-ca", "Identity", "high", "The mesh uses a plugged-in CA",
 		"Without cacerts istiod makes a self-signed root that lives only in this cluster. It cannot be rotated from a real PKI, and clusters that must trust each other will not.",
 		"kubectl create secret generic cacerts -n istio-system \\\n  --from-file=ca-cert.pem --from-file=ca-key.pem \\\n  --from-file=root-cert.pem --from-file=cert-chain.pem",
@@ -1749,7 +1702,7 @@ func ambientExtra(e env) []Check {
 			case !peered:
 				c.Items = append(c.Items, e.item(sv, Warn, "global"+where+" with no ALLOW policy; no east-west or remote Gateway yet, so no peer can reach it, but it will be open once peering is added"))
 			case solo:
-				c.Items = append(c.Items, e.item(sv, Warn, "global"+where+" with no ALLOW policy; published by the Solo chart "+chart+", so restrict callers rather than removing the scope"))
+				c.Items = append(c.Items, e.item(sv, Warn, "global"+where+" with no ALLOW policy; published by the chart "+chart+", so restrict callers rather than removing the scope"))
 			default:
 				c.Items = append(c.Items, e.item(sv, Fail, "global"+where+" with no ALLOW policy that constrains callers: any peer can call it"))
 			}

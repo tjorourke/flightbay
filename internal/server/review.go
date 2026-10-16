@@ -23,7 +23,7 @@ import (
 )
 
 // ReviewSession is review mode (flightbay review): the customer decides what
-// to send to Solo and exports a trimmed, signed bundle.
+// to share and exports a trimmed, signed bundle.
 type ReviewSession struct {
 	Source  string         // the original bundle file
 	Out     string         // where the export goes

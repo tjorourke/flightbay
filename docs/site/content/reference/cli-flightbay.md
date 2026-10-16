@@ -6,7 +6,7 @@ description: "Every flightbay command and flag, generated from the command tree.
 
 Generated from the `flightbay` command tree. Run any command with `--help` for the same text.
 
-Solo flightbay: collect an offline, redacted snapshot of Kubernetes clusters
+Capture an offline, redacted snapshot of Kubernetes clusters
 
 ## flightbay collect
 
@@ -41,6 +41,7 @@ Examples:
 | `--config string` | collection config file (YAML); flags refine it, exclusions always win. A CONFIG.sig next to it is checked |
 | `--configmaps string` | omit, metadata or scrubbed |
 | `--context strings` | kubeconfig contexts to collect (default: current context) |
+| `--diagnostics` | add proxy dumps, control-plane debug and metrics, and allow the port-forward they need |
 | `--drop-field stringArray` | remove this path from every object before writing, e.g. 'metadata.annotations["corp.example/*"]' (repeatable) |
 | `--dry-run` | print what would be collected and the RBAC it needs; reads discovery only |
 | `--encrypt-to strings` | age recipients (age1...) or @file; the bundle becomes .tar.zst.age |
@@ -74,9 +75,8 @@ Examples:
 | `--resources strings` | resource allowlist, e.g. pods,deployments.apps,httproutes.gateway.networking.k8s.io |
 | `--save-config string` | write the resolved policy to this file for repeatable runs |
 | `--secrets string` | omit, metadata or keys (values are never collected) |
-| `--sign string` | sign the bundle with this private key (flightbay keygen); Solo verifies it with your public key |
+| `--sign string` | sign the bundle with this private key (flightbay keygen); recipients can verify it with your public key |
 | `--since string` | log window, e.g. 2h |
-| `--solo-diagnostics` | add proxy dumps, control-plane debug and metrics, and allow the port-forward they need |
 | `--window-size int` | zstd window in bytes (default 8 MiB, max 128 MiB for stock tools) |
 | `-y, --yes` | do not ask for confirmation in --interactive mode |
 
@@ -122,7 +122,7 @@ flightbay inspect BUNDLE [flags]
 
 ## flightbay keygen
 
-Create an Ed25519 signing key pair: sign bundles and policies with the .key, give Solo the .pub
+Create an Ed25519 signing key pair: sign bundles and policies with the .key, share the .pub with recipients
 
 ```text
 flightbay keygen [flags]
@@ -138,7 +138,7 @@ Examples:
 | Flag | Description |
 |---|---|
 | `--force` | overwrite existing key files |
-| `--name string` | who signs with this key, e.g. "ACME platform team" (shown to Solo when a bundle verifies) |
+| `--name string` | who signs with this key, e.g. "ACME platform team" (shown when a bundle verifies) |
 | `-o, --output string` | file name without extension: writes NAME.key and NAME.pub (default "flightbay-signing") |
 
 ## flightbay policy
@@ -203,6 +203,7 @@ Examples:
 | `--config string` | collection config file (YAML); flags refine it, exclusions always win. A CONFIG.sig next to it is checked |
 | `--configmaps string` | omit, metadata or scrubbed |
 | `--context strings` | kubeconfig contexts to collect (default: current context) |
+| `--diagnostics` | add proxy dumps, control-plane debug and metrics, and allow the port-forward they need |
 | `--discover` | use cluster discovery to list resources explicitly instead of a wildcard |
 | `--drop-field stringArray` | remove this path from every object before writing, e.g. 'metadata.annotations["corp.example/*"]' (repeatable) |
 | `--exclude-namespaces strings` | namespaces to exclude (globs allowed) |
@@ -232,7 +233,6 @@ Examples:
 | `--resources strings` | resource allowlist, e.g. pods,deployments.apps,httproutes.gateway.networking.k8s.io |
 | `--secrets string` | omit, metadata or keys (values are never collected) |
 | `--since string` | log window, e.g. 2h |
-| `--solo-diagnostics` | add proxy dumps, control-plane debug and metrics, and allow the port-forward they need |
 
 ## flightbay review
 

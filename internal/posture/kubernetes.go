@@ -103,7 +103,7 @@ func strList(v any) []string {
 
 func capName(c string) string { return strings.TrimPrefix(strings.ToUpper(c), "CAP_") }
 
-// sysComponent names the Istio or Solo component a container belongs to,
+// sysComponent names the Istio or supported mesh component a container belongs to,
 // for the documented exceptions. It matches the workload and the container
 // name, never the namespace alone.
 func sysComponent(o *store.Object, k ktr) string {
@@ -171,21 +171,21 @@ func templateAnnotations(o *store.Object) map[string]any {
 	return m(path(o.Obj, "spec", "template", "metadata", "annotations"))
 }
 
-// soloReleases are Helm release names of Istio and Solo components whose
+// managedReleases are Helm release names of Istio and supported mesh components whose
 // RBAC and settings come from the chart.
-var soloReleases = map[string]bool{"istiod": true, "istio-base": true, "istio-cni": true, "ztunnel": true, "kgateway": true, "agentgateway": true,
+var managedReleases = map[string]bool{"istiod": true, "istio-base": true, "istio-cni": true, "ztunnel": true, "kgateway": true, "agentgateway": true,
 	"enterprise-agentgateway": true, "kagent": true, "agentregistry": true, "gloo-operator": true, "cert-manager": true, "gloo-platform": true, "management": true}
 
 var soloCharts = []string{"istiod-", "base-", "cni-", "ztunnel-", "kgateway", "enterprise-kgateway", "agentgateway", "enterprise-agentgateway", "kagent", "kmcp",
 	"agentregistry", "gloo-platform", "gloo-operator", "cert-manager", "management-"}
 
-// soloManaged reports whether an object was created by an Istio or Solo
+// soloManaged reports whether an object was created by an Istio or supported
 // chart or controller.
 func soloManaged(o *store.Object) bool {
 	if o == nil {
 		return false
 	}
-	if soloReleases[s(annotations(o)["meta.helm.sh/release-name"])] {
+	if managedReleases[s(annotations(o)["meta.helm.sh/release-name"])] {
 		return true
 	}
 	lb := labels(o)
@@ -965,7 +965,7 @@ func kubernetesChecks(e env) []Check {
 			case !reads:
 				c.Items = append(c.Items, e.item(b, Pass, "no Secret read for "+who))
 			case soloManaged(b) || soloManaged(role):
-				c.Items = append(c.Items, e.item(b, Pass, "Istio or Solo controller "+who+" reads Secrets "+scope+" by design"))
+				c.Items = append(c.Items, e.item(b, Pass, "Istio or a mesh controller "+who+" reads Secrets "+scope+" by design"))
 			case b.Kind == "ClusterRoleBinding":
 				c.Items = append(c.Items, e.item(b, Fail, who+" can read every Secret in the cluster via "+role.Kind+" "+role.Name))
 			default:
@@ -1073,7 +1073,7 @@ func kubernetesChecks(e env) []Check {
 				}
 				switch {
 				case len(refs) > 0 && solo:
-					v.add(Pass, k.label()+" reads "+strings.Join(refs, ", ")+" into env as the Istio or Solo chart sets it")
+					v.add(Pass, k.label()+" reads "+strings.Join(refs, ", ")+" into env as the chart sets it")
 				case len(refs) > 0:
 					v.add(Warn, k.label()+" reads "+strings.Join(refs, ", ")+" into env")
 				}
@@ -1461,7 +1461,7 @@ func kubernetesChecks(e env) []Check {
 				case !rp && !sp:
 					v.add(Fail, k.label()+" has no readiness or startup probe")
 				case rp && !lp && chart:
-					v.add(Pass, "readiness probe only, as the Istio or Solo chart or controller sets it")
+					v.add(Pass, "readiness probe only, as the chart or controller sets it")
 				case rp && !lp:
 					v.add(Warn, k.label()+" has a readiness probe but no liveness probe")
 				}
@@ -1724,7 +1724,7 @@ func kubernetesChecks(e env) []Check {
 	}
 
 	add(spec{"k8s.version-supported", "Platform", "high", "Kubernetes is a supported release",
-		"An end-of-life release gets no security fixes. Istio and Solo releases also support only recent Kubernetes versions.",
+		"An end-of-life release gets no security fixes. Istio and vendor releases also support only recent Kubernetes versions.",
 		"# plan the upgrade one minor version at a time\nkubectl version", "https://kubernetes.io/releases/", solodocs.KubernetesSite + "releases/"}, false, func(c *Check) {
 		if e.runtimeNA(c, "the cluster version") {
 			return

@@ -188,7 +188,7 @@ func ExportWorkspace(ws *store.Workspace, dst io.Writer, o ExportOptions) error 
 	// Diagnostics as captured.
 	for _, cluster := range ws.Clusters() {
 		for _, d := range ws.Diagnostics(cluster) {
-			dir := bundle.SoloPath(cluster, d.Kind, d.Namespace, d.Pod, "")
+			dir := bundle.DiagnosticsPath(cluster, d.Kind, d.Namespace, d.Pod, "")
 			if err := w.AddJSON(dir+"meta.json", DiagMeta{Component: d.Component, Container: d.Container, Image: d.Image, Version: d.Version, Node: d.Node}); err != nil {
 				return err
 			}
@@ -203,8 +203,8 @@ func ExportWorkspace(ws *store.Workspace, dst io.Writer, o ExportOptions) error 
 				}
 			}
 		}
-		if s := ws.SoloSummary(cluster); len(s) > 0 {
-			if err := w.Add(bundle.SoloPath(cluster, "", "", "", "summary.json"), s); err != nil {
+		if s := ws.DiagnosticSummary(cluster); len(s) > 0 {
+			if err := w.Add(bundle.DiagnosticsPath(cluster, "", "", "", "summary.json"), s); err != nil {
 				return err
 			}
 		}

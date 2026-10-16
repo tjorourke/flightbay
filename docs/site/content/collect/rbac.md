@@ -49,7 +49,7 @@ flightbay rbac --discover --context mesh1 --exclude-resources secrets,configmaps
 | Logs | `get, list` on `pods` and `pods/log` |
 | Nodes | `get, list` on `nodes` (needs `--cluster-scoped`) |
 | Helm | Read on `secrets`, because release summaries are decoded from Secret data (values are never kept) |
-| `--solo-diagnostics` or `--portforward` | `get, list` on `pods` and `create` on `pods/portforward` in the selected namespaces |
+| `--diagnostics` or `--portforward` | `get, list` on `pods` and `create` on `pods/portforward` in the selected namespaces |
 | `--hubble-flows` | A Role in `kube-system`: `get, list` on `pods` and `create` on `pods/portforward`, for `hubble-relay` |
 | `--secrets metadata` | Secret metadata through the metadata API. RBAC still says `get, list` on `secrets`, but the body is never requested. |
 | `--secrets omit` or `--exclude-resources secrets` | Nothing on Secrets with `--discover`; the wildcard version warns instead |

@@ -1,6 +1,6 @@
-# Solo flightbay
+# Flightbay
 
-Flightbay takes a redacted snapshot of a Kubernetes cluster and lets you investigate it offline as if it were live. You can browse every object, search every log line, run `kubectl` and `k9s` against it, read the Envoy, ztunnel and agentgateway config dumps, and get findings that know about Istio ambient, agentgateway and kgateway.
+Flightbay is a Kubernetes troubleshooting desk. Connect to a cluster read-only or capture a redacted snapshot to investigate offline. Browse resources with a k9s-style navigator, search logs in an OpenSearch-style explorer, inspect proxy state, and review Kubernetes, Istio and agentic best practices. Before sharing a capture with a support provider, review it, sign it with your key and encrypt it to their age recipient. Flightbay never uploads data.
 
 ![Overview of a snapshot](docs/images/overview.png)
 
@@ -25,6 +25,39 @@ make install                  # installs flightbay and flightbay-desk into $(go 
 ```
 
 Make sure `$(go env GOPATH)/bin` is on your `PATH`. Release builds (Homebrew, `kubectl flightbay` through krew, and a container image) are set up in `.goreleaser.yaml` and `.github/workflows/release.yml`.
+
+## Download and capture selected namespaces
+
+After the release is published, download the matching `flightbay_<version>_<os>_<arch>` archive from the [GitHub Releases page](https://github.com/tjorourke/flightbay/releases/latest): `.tar.gz` for macOS and Linux, `.zip` for Windows. Extract it beside your kubeconfig. On macOS or Linux, check the binary and preview the capture plan:
+
+```bash
+./flightbay version
+./flightbay collect \
+  --context my-cluster \
+  --namespaces payments,istio-system \
+  --collect objects \
+  --no-logs \
+  --no-portforward \
+  --dry-run
+```
+
+If the plan is right, run the same command without `--dry-run`, adding an output file and then inspect the result before sharing it:
+
+```bash
+./flightbay collect \
+  --context my-cluster \
+  --namespaces payments,istio-system \
+  --collect objects \
+  --no-logs \
+  --no-portforward \
+  --out flightbay-objects.tar.zst
+
+./flightbay inspect flightbay-objects.tar.zst --contents --redactions
+```
+
+`--namespaces` accepts one or more comma-separated namespaces (globs are also allowed). `--collect objects` excludes events, logs, Helm summaries and proxy diagnostics; `--no-logs` and `--no-portforward` make the no-logs, no-diagnostics choice explicit. The bundle stores Kubernetes objects in their JSON API representation, not as separate `.yaml` files. To capture every resource type the collector allows in the selected namespaces, leave out `--resources` and `--exclude-resources`.
+
+In PowerShell, use `\.\flightbay.exe` instead of `./flightbay`; the flags are the same. Flightbay writes a verified `.tar.zst` bundle, which the recipient can inspect with the same binary or open with `flightbay-desk`.
 
 ## Try it with the sample
 
@@ -51,7 +84,7 @@ Things to try:
 flightbay collect --context mesh1 --dry-run            # what it would read, and the RBAC it needs; reads nothing else
 flightbay collect --context mesh1                      # capture everything the default profile allows
 flightbay collect --context mesh1 --namespaces payments,istio-system --since 2h --case 01234567
-flightbay collect --context mesh1 --solo-diagnostics   # add proxy config dumps, istiod debug output and metrics
+flightbay collect --context mesh1 --diagnostics        # add proxy config dumps, istiod debug output and metrics
 flightbay inspect flightbay-*.tar.zst --redactions     # check what's in it before you share it
 ```
 
@@ -61,13 +94,13 @@ The default `standard` profile collects objects, events, the last 24 hours of lo
 |---|---|
 | `--namespaces`, `--exclude-namespaces` | Limit the capture (globs work: `team-*`) |
 | `--since 2h`, `--max-log-bytes 10485760`, `--no-logs` | Control log volume |
-| `--exclude-resources configmaps,secrets` | Never read these types |
+| `--exclude-resources configmaps,secrets` | Never read these types. For example, exclude Deployment and ReplicaSet objects with `--exclude-resources deployments.apps,replicasets.apps` |
 | `--concurrency 4`, `--log-concurrency 8`, `--log-qps 50` | How much is read in parallel; lower them on a busy production cluster ([Large clusters](docs/site/content/collect/large-clusters.md)) |
 | `--include-resources pods,httproutes.gateway.networking.k8s.io` | Read only these types (exclusions still win) |
 | `--drop-field 'metadata.annotations["corp.example/*"]'` | Remove a field from every object before writing |
 | `--sign flightbay-signing.key` | Sign the bundle with your key (`flightbay keygen`) |
 | `--config policy.yaml --policy-key approver.pub` | Only run with a policy your security team signed (`flightbay policy sign`) |
-| `--solo-diagnostics` | Also read the admin endpoints of ztunnel, Envoy, agentgateway, istiod and gateway controllers through port-forward |
+| `--diagnostics` | Also read the admin endpoints of ztunnel, Envoy, agentgateway, istiod and gateway controllers through port-forward |
 | `--cluster-scoped` | Also capture nodes, CRDs and other cluster-wide objects |
 | `--profile minimal` | Object metadata and events only |
 | `--encrypt-to age1...` | Encrypt the bundle so only the matching key can open it |
@@ -75,6 +108,8 @@ The default `standard` profile collects objects, events, the last 24 hours of lo
 | `-o -` | Stream to stdout, e.g. `flightbay collect -o - \| flightbay-desk open -` |
 
 `flightbay rbac` prints least-privilege RBAC for the same options, so the collector can run with only what it needs.
+
+To leave out resource types while collecting, use `--exclude-resources`, for example `--exclude-resources deployments.apps,replicasets.apps`. Deployments and ReplicaSets are separate Kubernetes resources, so exclude both if neither is wanted. For a bundle you already captured, open **Review and send → Objects**, filter by resource type, then choose **Deselect all**; the bulk action applies only to filtered rows and changes the exported copy, not the original.
 
 ### What is and isn't collected
 
@@ -85,11 +120,11 @@ When you limit namespaces, proxy and control-plane dumps are filtered as well. z
 ### Decide what to send, and sign it
 
 ```bash
-flightbay keygen --name "ACME platform team"                     # flightbay-signing.key stays with you; send Solo the .pub
+flightbay keygen --name "ACME platform team"                     # flightbay-signing.key stays with you; share the .pub with the recipient
 flightbay ui flightbay-*.tar.zst --sign flightbay-signing.key --encrypt-to age1...
 ```
 
-Every bundle you open in the UI has a **Review and send** page, and a **Remove from the bundle** button on each object. Take out whole namespaces, resource types, single objects, log streams or lines, proxy dumps and flow files, add redaction patterns, and see exactly what Solo will receive before you export. The export is a new bundle, signed with your key, with `review-ledger.json` counting what was removed (names only if you choose to list them). Solo's desk shows "Signed by ACME platform team, unmodified" and marks checks that need removed data as not applicable instead of failing them. `flightbay review BUNDLE --plan review.yaml` runs the same removals without the UI. See [Reviewing before you send](docs/site/content/collect/review.md) and [Signing and approved policies](docs/site/content/collect/signing.md).
+Every bundle you open in the UI has a **Review and send** page, and a **Remove from the bundle** button on each object. Take out whole namespaces, resource types, single objects, log streams or lines, proxy dumps and flow files, add redaction patterns, and see exactly what the recipient will receive before you export. The export is a new bundle, signed with your key, with `review-ledger.json` counting what was removed (names only if you choose to list them). Flightbay verifies the signature and marks checks that need removed data as not applicable instead of failing them. `flightbay review BUNDLE --plan review.yaml` runs the same removals without the UI. See [Reviewing before you send](docs/site/content/collect/review.md) and [Signing and approved policies](docs/site/content/collect/signing.md).
 
 One thing is deliberately left out. The agentgateway and kgateway controllers are built on a library called krt, which keeps an in-memory copy of every Kubernetes object the controller watches. That includes Gateways, routes and policies, but also the Secrets it reads, such as TLS keys and API keys for LLM providers. The controller's admin port can dump all of that as one large JSON document. It would be useful for debugging the controller, but it covers every namespace and contains Secret values, so it can't respect "only these namespaces" or "never Secret values". Flightbay collects the controllers' logs, metrics and the objects themselves instead.
 
@@ -127,7 +162,7 @@ level:error ns:payments "timed out"    pod:checkout*    trace_id:a4e98f02    sta
 
 ![Findings](docs/images/findings.png)
 
-**Scorecard** scores the snapshot against Solo's best practices: 130 checks (135 with Agent reach) drawn from the Solo field guides, the agentgateway, kagent, Istio and kgateway source, and Kubernetes hardening guidance, in four areas:
+**Scorecard** scores the snapshot against security and operational checks: 129 checks (134 with Agent reach) drawn from public field guides, agentgateway, kagent, Istio and kgateway source, and Kubernetes hardening guidance, in four areas:
 
 - **Agentic**: MCP and A2A endpoints without authentication, optional API-key modes, client tokens passed through to MCP servers, missing tool allowlists, code mode without limits, guardrails that fail open, LLM spend without a budget, credentials held inline or pointing at Secrets that don't exist, policies that weren't accepted, and agents that bypass the gateway.
 - **Istio**: namespace enrolment, pods ztunnel isn't capturing, STRICT mTLS, default-deny, principals in the wrong trust domain, L7 policy that nothing enforces, ingress that skips the waypoint, istiod HA, plugged-in CA, multicluster peering and remote secrets, and exposed control-plane ports.
@@ -244,7 +279,7 @@ The MCP server only talks to your local workspace. Snapshot data reaches a model
 make build                                    # ./bin/flightbay and ./bin/flightbay-desk
 make test                                     # unit tests
 test/e2e/e2e.sh                               # kind cluster with planted faults: collector, UI, kubectl, k9s, search, SQL
-MESH_CONTEXT=kind-mesh1 test/e2e/mesh.sh      # Solo diagnostics against an existing ambient cluster (read-only)
+MESH_CONTEXT=kind-mesh1 test/e2e/mesh.sh      # proxy diagnostics against an existing ambient cluster (read-only)
 test/e2e/reach.sh                             # agent reach on kind + Istio ambient: applies the generated fixes, proves traffic blocked (make e2e-reach)
 FLIGHTBAY_SCALE=10000000 go test ./internal/store -run TestScale -v -timeout 60m
 docker build -t flightbay-desk .              # UI image with kubectl, k9s, istioctl, stern, jq and yq
@@ -253,4 +288,8 @@ go run ./scripts/screenshots -mesh BUNDLE     # retake docs/images from the samp
 
 ## Status
 
-Early and unreleased. Still to decide: the licence, and who owns the key customers encrypt bundles to.
+Flightbay is in active development. Hosted deployments still need a key-management plan for recipients of encrypted bundles.
+
+## Licence
+
+Flightbay is licensed under the Apache License 2.0. See [LICENSE](LICENSE).

@@ -12,7 +12,7 @@ The page has two tabs over the same objects. **Browse** (this page) is for the m
 
 ## The type list
 
-Down the left are the types that have captured objects, grouped by area (Workloads, Networking, Gateway API, Istio, agentgateway and kgateway, kagent, Solo, and Config, access and storage), each with its object count and a dot for its collection state. Types with no captured objects are hidden; the note at the bottom says how many, and links to [Coverage](/desk/coverage/) for types that were excluded or failed.
+Down the left are the types that have captured objects, grouped by area (Workloads, Networking, Gateway API, Istio, agentgateway and kgateway, kagent, other platform APIs, and Config, access and storage), each with its object count and a dot for its collection state. Types with no captured objects are hidden; the note at the bottom says how many, and links to [Coverage](/desk/coverage/) for types that were excluded or failed.
 
 When the same kind exists in two API groups (for example `Gateway` in Gateway API and in Istio), the group is shown next to the name.
 

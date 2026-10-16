@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Solo diagnostics against an existing mesh cluster (read-only: lists,
+# Proxy diagnostics against an existing mesh cluster (read-only: lists,
 # log reads and port-forwards to admin ports; nothing is changed).
 #
 #   MESH_CONTEXT=kind-mesh1 test/e2e/mesh.sh
@@ -27,14 +27,14 @@ step "Build"
 (cd "$ROOT" && CGO_ENABLED=0 go build -o bin/ ./cmd/flightbay && go build -o bin/ ./cmd/flightbay-desk)
 pass "built"
 
-step "Collect $NS from $CTX with --solo-diagnostics"
-"$BIN/flightbay" collect --context "$CTX" --namespaces "$NS" --solo-diagnostics --case MESH-E2E --since 30m -o "$WORK" -q
+step "Collect $NS from $CTX with --diagnostics"
+"$BIN/flightbay" collect --context "$CTX" --namespaces "$NS" --diagnostics --case MESH-E2E --since 30m -o "$WORK" -q
 B=$(ls "$WORK"/flightbay-MESH-E2E-*.tar.zst)
 members=$(zstd -dc "$B" | tar -tf -)
-grep -q "/solo/proxies/.*/ztunnel-.*/config_dump.json" <<<"$members" || fail "no ztunnel config_dump"
-grep -q "/solo/control-plane/.*/istiod-.*/syncz.json" <<<"$members" || fail "no istiod syncz"
-grep -q "/solo/summary.json" <<<"$members" || fail "no solo summary"
-pass "ztunnel, istiod and the Solo summary are in the bundle ($(grep -c /solo/ <<<"$members") diagnostic members)"
+grep -q "/diagnostics/proxies/.*/ztunnel-.*/config_dump.json" <<<"$members" || fail "no ztunnel config_dump"
+grep -q "/diagnostics/control-plane/.*/istiod-.*/syncz.json" <<<"$members" || fail "no istiod syncz"
+grep -q "/diagnostics/summary.json" <<<"$members" || fail "no diagnostics summary"
+pass "ztunnel, istiod and the diagnostics summary are in the bundle ($(grep -c /diagnostics/ <<<"$members") diagnostic members)"
 if grep -q "krt" <<<"$members"; then fail "a controller krt snapshot was collected"; fi
 pass "no controller krt snapshot"
 
@@ -44,7 +44,7 @@ others=$(kubectl --context "$CTX" get ns -o jsonpath='{.items[*].metadata.name}'
 leaks=""
 for ns in $others; do
   # Only data forms count: a namespace field, a service FQDN or a SPIFFE identity.
-  if grep -rqE "\"namespace\": \"$ns\"|\.$ns\.svc|/ns/$ns/" "$WORK/x/clusters"/*/solo 2>/dev/null; then leaks="$leaks $ns"; fi
+  if grep -rqE "\"namespace\": \"$ns\"|\.$ns\.svc|/ns/$ns/" "$WORK/x/clusters"/*/diagnostics 2>/dev/null; then leaks="$leaks $ns"; fi
 done
 [ -z "$leaks" ] || fail "namespaces outside the selection found in diagnostics:$leaks"
 pass "no workloads, services or identities from $(wc -w <<<"$others" | tr -d ' ') unselected namespaces"

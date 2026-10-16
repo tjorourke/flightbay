@@ -35,7 +35,7 @@ archives:
     format_overrides:
       - goos: windows
         formats: [zip]
-    files: [README.md, docs/COLLECTS.md]
+    files: [README.md, LICENSE, NOTICE, docs/COLLECTS.md]
 
 checksum:
   name_template: checksums-flightbay.txt
@@ -70,7 +70,7 @@ krews:
     short_description: Capture a redacted, offline Kubernetes snapshot
     description: |
       kubectl flightbay collect writes a redacted tar.zst bundle of the objects,
-      logs, events and (optionally) Solo proxy and control-plane diagnostics you
+      logs, events and (optionally) proxy and control-plane diagnostics you
       choose. Secret values are never collected. Open it with flightbay-desk.
     caveats: |
       Review a bundle before sending it:
@@ -80,5 +80,5 @@ release:
   github: {owner: tjorourke, name: flightbay}
   extra_files:
     - glob: dist/binaries-flightbay.sha256
-  draft: true
+  draft: false
   mode: keep-existing

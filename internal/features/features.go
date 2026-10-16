@@ -1,6 +1,6 @@
 // Package features gates Flightbay Enterprise features.
 //
-// Every feature is on by default. Turn them off with:
+// These optional features are enabled by default. Turn them off with:
 //
 //	FLIGHTBAY_ENTERPRISE=0                  every Enterprise feature off
 //	FLIGHTBAY_FEATURES=-reach               just this one off

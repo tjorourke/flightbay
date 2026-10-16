@@ -42,7 +42,7 @@ Filter by severity with the menu at the top. Clicking a bar in **Findings by rul
 | `logs.error-signature` | info | The same error (numbers, addresses and IDs removed) appears three or more times in one container |
 | `collection.gap` | info | A collection failed, so the data is missing rather than absent |
 
-The `xds.*` and `cert.*` rules need [Solo diagnostics](/collect/solo-diagnostics/) in the capture.
+The `xds.*` and `cert.*` rules need [Proxy and control-plane diagnostics](/collect/diagnostics/) in the capture.
 
 ## Never a finding on missing data
 

@@ -1419,7 +1419,7 @@ func (m *logManager) fetchPrevious(ctx context.Context, ref streamRef) {
 
 // ---------- diagnostics on demand ----------
 
-var errNoDiagnostics = errors.New("diagnostics are off: start flightbay-desk live with --solo-diagnostics")
+var errNoDiagnostics = errors.New("diagnostics are off: start flightbay-desk live with --diagnostics")
 
 // RefreshDiagnostics runs the collector's diagnostics for one pod now, over
 // port-forward, and replaces that pod's diagnostic files in the workspace.
@@ -1436,7 +1436,7 @@ func (l *Live) RefreshDiagnostics(ctx context.Context, ns, pod string) (int, err
 	}
 	p := parsePod(o.Obj)
 	if len(detect(p)) == 0 {
-		return 0, fmt.Errorf("%s/%s is not a Solo component (ztunnel, Envoy, agentgateway, istiod or a gateway controller)", ns, pod)
+		return 0, fmt.Errorf("%s/%s is not a supported diagnostic component (ztunnel, Envoy, agentgateway, istiod or a gateway controller)", ns, pod)
 	}
 	return l.diagnose(ctx, []podInfo{p}, false)
 }
@@ -1498,10 +1498,10 @@ func (l *Live) diagnose(ctx context.Context, pods []podInfo, summary bool) (int,
 			continue
 		}
 		switch info.Kind {
-		case bundle.PathSolo:
+		case bundle.PathDiagnostics:
 			if info.Sub == "" {
 				if summary && info.File == "summary.json" {
-					l.WS.SetSoloSummary(l.cluster, json.RawMessage(m.Data))
+					l.WS.SetDiagnosticSummary(l.cluster, json.RawMessage(m.Data))
 				}
 				continue
 			}

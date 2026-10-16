@@ -106,13 +106,13 @@ func capture(t *testing.T, signer *sign.PrivateKey) []byte {
 	cov(bundle.Coverage{ID: "logs.secret.model", Type: bundle.CoverageLogs, Namespace: "secret-project", Pod: "model", Container: "srv", Stream: "current", Chunks: []string{secLog}, Items: 1, State: bundle.StateComplete})
 
 	// A ztunnel dump in shop that knows about workloads in both namespaces.
-	dump := bundle.SoloPath(cl, "proxies", "shop", "ztunnel-1", "config_dump.json")
+	dump := bundle.DiagnosticsPath(cl, "proxies", "shop", "ztunnel-1", "config_dump.json")
 	add(dump, map[string]any{"workloads": []any{
 		map[string]any{"uid": "mesh1//Pod/shop/web", "namespace": "shop", "name": "web"},
 		map[string]any{"uid": "mesh1//Pod/secret-project/model", "namespace": "secret-project", "name": "model"},
 	}, "services": map[string]any{"web.shop.svc.cluster.local": map[string]any{}, "model.secret-project.svc.cluster.local": map[string]any{}}})
 	cov(bundle.Coverage{ID: "diag.ztunnel", Type: bundle.CoverageDiagnostic, Namespace: "shop", Pod: "ztunnel-1", Resource: "config_dump.json", Chunks: []string{dump}, Items: 1, State: bundle.StateComplete})
-	secDump := bundle.SoloPath(cl, "proxies", "secret-project", "waypoint-1", "config_dump.json")
+	secDump := bundle.DiagnosticsPath(cl, "proxies", "secret-project", "waypoint-1", "config_dump.json")
 	add(secDump, `{"x":1}`)
 	cov(bundle.Coverage{ID: "diag.waypoint", Type: bundle.CoverageDiagnostic, Namespace: "secret-project", Pod: "waypoint-1", Resource: "config_dump.json", Chunks: []string{secDump}, Items: 1, State: bundle.StateComplete})
 

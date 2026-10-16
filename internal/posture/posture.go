@@ -1,7 +1,7 @@
-// Package posture scores a snapshot against Solo's best practices for the
-// agentic stack (agentgateway, kagent, agentregistry, MCP) and for Istio
-// ambient, and says what to change. The checks follow the defence-in-depth
-// guidance in the Solo field guides: authenticate every MCP and LLM route,
+// Package posture scores a snapshot against security and operational checks
+// for the agentic stack (agentgateway, kagent, agentregistry, MCP) and Istio
+// ambient, and says what to change. The checks follow defence-in-depth
+// guidance: authenticate every MCP and LLM route,
 // authorise per tool, rate-limit and guard AI traffic, keep workloads in the
 // mesh with STRICT mTLS and default-deny, and make L7 policy actually run.
 //
@@ -50,8 +50,8 @@ type Check struct {
 	Title    string  `json:"title"`
 	Why      string  `json:"why"`
 	Fix      string  `json:"fix"`
-	Source   string  `json:"source"`         // the Solo field guide
-	Docs     string  `json:"docs,omitempty"` // the product documentation page (docs.solo.io)
+	Source   string  `json:"source"`         // a related public field guide
+	Docs     string  `json:"docs,omitempty"` // a related product documentation page
 	Status   Status  `json:"status"`
 	Reason   string  `json:"reason,omitempty"`
 	Items    []Item  `json:"items"`

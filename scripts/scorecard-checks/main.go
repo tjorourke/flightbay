@@ -27,7 +27,7 @@ type check struct {
 
 func main() {
 	dir := flag.String("dir", "internal/posture", "posture package directory")
-	docsDir := flag.String("docs-dir", "internal/solodocs", "solodocs package directory (base paths of the Solo docs)")
+	docsDir := flag.String("docs-dir", "internal/solodocs", "product documentation link definitions")
 	out := flag.String("out", "docs/site/content/desk/scorecard-checks.md", "page to write")
 	list := flag.Bool("list", false, "print a tab-separated list instead of writing the page")
 	flag.Parse()
@@ -255,7 +255,7 @@ func render(checks []check) string {
 	b.WriteString(`---
 title: Scorecard checks
 weight: 85
-description: Every Scorecard check, with its ID, area, category, severity, title and links to the matching guide and Solo docs.
+description: Every Scorecard check, with its ID, area, category, severity, title and links to related field guides and product documentation.
 ---
 
 # Scorecard checks
@@ -278,7 +278,7 @@ This is every check the [Scorecard](/desk/scorecard/) runs, grouped by area. It 
 			fmt.Fprintf(&b, "| %s | %d |\n", a, n)
 		}
 	}
-	b.WriteString("\nIn the desk, filter the Scorecard with `id:` to find one check, for example `id:agentic.mcp-auth-required`. Each check in the desk has the explanation, the objects it looked at, the fix YAML, a link to the matching field guide and a link to the relevant page of the Solo product documentation.\n\n")
+	b.WriteString("\nIn the desk, filter the Scorecard with `id:` to find one check, for example `id:agentic.mcp-auth-required`. Each check in the desk has the explanation, the objects it looked at, the fix YAML, a link to a related field guide and upstream product documentation.\n\n")
 	b.WriteString("Severity weights: critical 10, high 6, medium 3, low 1. See [how the score works](/desk/scorecard/).\n")
 	for _, a := range order {
 		cs := by[a]
@@ -296,7 +296,7 @@ This is every check the [Scorecard](/desk/scorecard/) runs, grouped by area. It 
 				guide = link("Guide", c.source)
 			}
 			if c.docs != "" {
-				label := "Solo docs"
+				label := "Product docs"
 				if host(c.docs) != "docs.solo.io" {
 					label = host(c.docs)
 				}

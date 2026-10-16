@@ -40,7 +40,7 @@ type PolicyFlags struct {
 	labelSelector, since, configMaps, secrets     string
 	objectDetail, compression                     string
 	clusterScoped, portForward, noPortForward     bool
-	noLogs, noProxyDumps, soloDiagnostics         bool
+	noLogs, noProxyDumps, diagnostics             bool
 	maxLogBytes, maxBundleBytes                   int64
 	qps, logQPS                                   float32
 	burst, concurrency, logConcurrency            int
@@ -92,7 +92,7 @@ func (f *PolicyFlags) Register(fs *pflag.FlagSet) {
 	fs.StringVar(&f.secrets, "secrets", "", "omit, metadata or keys (values are never collected)")
 	fs.BoolVar(&f.portForward, "portforward", false, "allow port-forward based diagnostics")
 	fs.BoolVar(&f.noPortForward, "no-portforward", false, "never use port-forward")
-	fs.BoolVar(&f.soloDiagnostics, "solo-diagnostics", false, "add proxy dumps, control-plane debug and metrics, and allow the port-forward they need")
+	fs.BoolVar(&f.diagnostics, "diagnostics", false, "add proxy dumps, control-plane debug and metrics, and allow the port-forward they need")
 	fs.BoolVar(&f.noProxyDumps, "no-proxy-dumps", false, "do not collect proxy config dumps")
 	fs.StringVar(&f.compression, "compression", "", "best, better, default or fastest")
 	fs.Int64Var(&f.maxBundleBytes, "max-bundle-bytes", 0, "stop collecting once the compressed bundle reaches this size")
@@ -150,7 +150,7 @@ func (f *PolicyFlags) Resolve(fs *pflag.FlagSet) (*policy.Policy, error) {
 			p.Categories = append(p.Categories, policy.Category(strings.TrimSpace(c)))
 		}
 	}
-	if f.soloDiagnostics {
+	if f.diagnostics {
 		for _, c := range []policy.Category{policy.CatProxies, policy.CatControlPlane, policy.CatMetrics} {
 			if !p.Has(c) {
 				p.Categories = append(p.Categories, c)
@@ -716,9 +716,9 @@ func ProxyConfig(w io.Writer, base, token string, o ProxyConfigOptions) error {
 	if o.Pod == "" {
 		if len(list.Components) == 0 {
 			if !list.Selected {
-				fmt.Fprintln(w, "Proxy dumps were not selected by the customer for this bundle (flightbay collect --solo-diagnostics).")
+				fmt.Fprintln(w, "Proxy dumps were not selected for this bundle (flightbay collect --diagnostics).")
 			} else {
-				fmt.Fprintln(w, "No Solo components were captured in the selected namespaces.")
+				fmt.Fprintln(w, "No matching components were captured in the selected namespaces.")
 			}
 			return nil
 		}
@@ -1048,11 +1048,10 @@ func Posture(w io.Writer, base, token, area string, all bool, top int) error {
 	return nil
 }
 
-// docsLabel names a docs link: the Solo product docs, or the upstream site
-// for the few Kubernetes-only checks the Solo docs do not cover.
+// docsLabel names a documentation link for the relevant product or platform.
 func docsLabel(u string) string {
-	if solodocs.IsSolo(u) {
-		return "Solo docs:"
+	if solodocs.IsProductDocs(u) {
+		return "Product docs:"
 	}
 	return "Docs:"
 }

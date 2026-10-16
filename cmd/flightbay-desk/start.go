@@ -213,8 +213,8 @@ func liveArgs(r server.LiveRequest) []string {
 	if r.ClusterScoped {
 		a = append(a, "--cluster-scoped")
 	}
-	if r.SoloDiagnostics {
-		a = append(a, "--solo-diagnostics")
+	if r.Diagnostics {
+		a = append(a, "--diagnostics")
 	}
 	return a
 }
@@ -312,7 +312,7 @@ func livePlan(ctx context.Context, r server.LiveRequest) (json.RawMessage, error
 
 // liveAccess asks the API server (SelfSubjectAccessReview) what the context's
 // credentials allow: listing cluster-scoped objects, and port-forwarding to
-// pods in the namespaces in scope, which Solo diagnostics need.
+// pods in the namespaces in scope, which proxy diagnostics need.
 func liveAccess(ctx context.Context, r server.LiveRequest) (server.LiveAccess, error) {
 	rules := clientcmd.NewDefaultClientConfigLoadingRules()
 	if r.Kubeconfig != "" {
@@ -361,13 +361,13 @@ func liveAccess(ctx context.Context, r server.LiveRequest) (server.LiveAccess, e
 	if err != nil {
 		return a, err
 	}
-	a.SoloDiagnostics = pf
+	a.Diagnostics = pf
 	if !pf {
 		where := "in the namespaces in scope"
 		if ns != "" {
 			where = "in " + ns
 		}
-		a.SoloDiagnostics, a.SoloDiagnosticsWhy = false, "these credentials cannot port-forward to pods "+where+", which proxy and control-plane diagnostics need"
+		a.Diagnostics, a.DiagnosticsWhy = false, "these credentials cannot port-forward to pods "+where+", which proxy and control-plane diagnostics need"
 	}
 	return a, nil
 }

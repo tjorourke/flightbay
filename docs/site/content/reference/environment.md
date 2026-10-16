@@ -41,7 +41,7 @@ These are read by the test suite and the end-to-end scripts in `test/e2e`, not b
 | `FLIGHTBAY_SCALE` | `go test ./internal/store -run TestScale` | Number of log lines for the scale test, e.g. `10000000` |
 | `FLIGHTBAY_POSTURE_BUNDLE` | `go test ./internal/posture` | A real bundle to run the Scorecard against |
 | `FLIGHTBAY_REACH_BUNDLE`, `FLIGHTBAY_REACH_JSON` | `go test ./internal/reach` | A real bundle to run Agent reach against, and a file to write the report to |
-| `MESH_CONTEXT`, `MESH_NAMESPACES` | `test/e2e/mesh.sh` | The existing ambient cluster to test Solo diagnostics against, read-only |
+| `MESH_CONTEXT`, `MESH_NAMESPACES` | `test/e2e/mesh.sh` | The existing ambient cluster for read-only proxy diagnostics tests |
 | `KEEP=1` | `test/e2e/reach.sh` | Keep the kind cluster afterwards; a rerun reuses it |
 | `CLUSTER` | `test/e2e/reach.sh` | kind cluster name (default `flightbay-reach`) |
 | `REACH_KUBECONFIG` | `test/e2e/reach.sh` | The kubeconfig file the test creates and uses |

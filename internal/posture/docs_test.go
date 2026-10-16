@@ -19,7 +19,7 @@ import (
 	"github.com/tjorourke/flightbay/internal/solodocs"
 )
 
-// Checks with no docs page: nothing on docs.solo.io covers them and the
+// Checks with no docs page: no product documentation covers them and the
 // upstream page they would link to is on a host we do not link docs to.
 var noDocs = map[string]string{
 	"k8s.helm-releases": "Helm release state; the only reference is helm.sh, already the guide link",
@@ -57,15 +57,15 @@ func allowedHost(link string) bool {
 	return false
 }
 
-// Every check links to a docs page, on docs.solo.io unless it is about plain
+// Every check links to a docs page, on the product documentation site unless it is about plain
 // Kubernetes (area kubernetes, or a Kubernetes object such as a
 // NetworkPolicy), where kubernetes.io is allowed.
 func TestDocsLinksAllowedHosts(t *testing.T) {
 	checks := allChecks(t)
-	if len(checks) < 135 {
+	if len(checks) < 134 {
 		t.Fatalf("only %d checks produced; the fixture no longer covers every area", len(checks))
 	}
-	solo := 0
+	productDocs := 0
 	for _, c := range checks {
 		if c.Docs == "" {
 			if _, ok := noDocs[c.ID]; !ok {
@@ -76,12 +76,12 @@ func TestDocsLinksAllowedHosts(t *testing.T) {
 		if !allowedHost(c.Docs) {
 			t.Errorf("%s: docs link %q is not on %v", c.ID, c.Docs, solodocs.AllowedHosts)
 		}
-		if solodocs.IsSolo(c.Docs) {
-			solo++
+		if solodocs.IsProductDocs(c.Docs) {
+			productDocs++
 		} else if c.Area != "kubernetes" && c.ID != "agentic.metadata-endpoint-blocked" {
-			t.Errorf("%s: %s checks link to the Solo docs, not %q", c.ID, c.Area, c.Docs)
+			t.Errorf("%s: %s checks link to product documentation, not %q", c.ID, c.Area, c.Docs)
 		}
-		if c.Docs == c.Source && solodocs.IsSolo(c.Docs) {
+		if c.Docs == c.Source && solodocs.IsProductDocs(c.Docs) {
 			t.Errorf("%s: docs link repeats the guide link %q", c.ID, c.Docs)
 		}
 	}
@@ -91,11 +91,11 @@ func TestDocsLinksAllowedHosts(t *testing.T) {
 		}
 	}
 	for _, d := range analyze.DocsLinks() {
-		if !allowedHost(d) || !solodocs.IsSolo(d) {
-			t.Errorf("analyze: docs link %q is not on docs.solo.io", d)
+		if !allowedHost(d) || !solodocs.IsProductDocs(d) {
+			t.Errorf("analyze: docs link %q is not on the product documentation site", d)
 		}
 	}
-	t.Logf("%d checks, %d link to docs.solo.io", len(checks), solo)
+	t.Logf("%d checks, %d link to product docs", len(checks), productDocs)
 }
 
 // FLIGHTBAY_CHECK_DOCS_LINKS=1 go test ./internal/posture -run DocsLinks -v

@@ -1,14 +1,14 @@
 ---
 title: Signing and approved policies
 weight: 68
-description: Sign bundles with your own key so Solo can prove they came from you unmodified, have your security team sign the collection policy, and check the collector binary itself.
+description: Sign bundles with your own key so recipients can verify they came from you unmodified, have your security team sign the collection policy, and check the collector binary itself.
 ---
 
 # Signing and approved policies
 
-The manifest in every bundle proves the file has not been damaged. A signature proves who wrote it. With both, Solo can tell you the bundle it opened is exactly the one you sent, and your security team can require that captures only ever run with the policy they approved.
+The manifest in every bundle proves the file has not been damaged. A signature proves who wrote it. With both, a recipient can verify the bundle is exactly the one you sent, and your security team can require that captures only ever run with the policy they approved.
 
-You keep the private keys. Solo only ever gets public keys.
+You keep the private keys. Share only public keys.
 
 ## Create a signing key
 
@@ -19,12 +19,12 @@ flightbay keygen --name "ACME platform team"
 ```text
 Key id fb:2c5e7e25308477c5 for ACME platform team
   Private key: flightbay-signing.key (keep it; never send it)
-  Public key:  flightbay-signing.pub (give this to Solo)
+  Public key:  flightbay-signing.pub (share with recipients)
 ```
 
-The key is Ed25519. The name is shown to Solo when a bundle verifies. `-o NAME` changes the file names, and it refuses to overwrite an existing key unless you pass `--force`. The private key is written with mode 0600, and Flightbay refuses to sign with a private key that other users can read.
+The key is Ed25519. The name is shown when a bundle verifies. `-o NAME` changes the file names, and it refuses to overwrite an existing key unless you pass `--force`. The private key is written with mode 0600, and Flightbay refuses to sign with a private key that other users can read.
 
-Send `flightbay-signing.pub` to your Solo contact once. It is safe to share.
+Share `flightbay-signing.pub` with anyone who needs to verify your bundles. It is safe to share.
 
 ## Sign a capture
 
@@ -60,7 +60,7 @@ With `--verify-key`, inspect fails unless the bundle is signed by one of the key
 
 A bundle whose files do not match its manifest fails verification whatever its signature says.
 
-## On the Solo side
+## On the recipient's machine
 
 Put each customer's public key in `~/.flightbay/trusted-keys/` (any name ending in `.pub`), or pass `--verify-key` to `flightbay-desk open`. The desk header shows the result once the bundle has been read to the end:
 
@@ -73,7 +73,7 @@ Put each customer's public key in `~/.flightbay/trusted-keys/` (any name ending 
 
 When the key is trusted, the name shown is the one in your trusted key file, not the one inside the bundle.
 
-![A signed, reviewed bundle on the Solo side](/images/coverage-origin.png)
+![A signed, reviewed bundle in Flightbay](/images/coverage-origin.png)
 
 The [Coverage](/desk/coverage/) page repeats the signature under **Origin**, with the approved policy file and the collector build.
 
@@ -137,5 +137,5 @@ The desk archives are signed the same way, each with its own `.sig`, `.pem` and 
 ## Key handling
 
 - Keep private keys out of the cluster and out of the bundle directory you share.
-- One key per team is easier to manage than one per person; the name on the key is what Solo sees.
-- If a private key leaks, make a new one, send Solo the new `.pub` and ask them to remove the old one from their trusted keys.
+- One key per team is easier to manage than one per person; the name on the key identifies the signer.
+- If a private key leaks, make a new one, share the new `.pub` with recipients and remove the old key from their trusted keys.

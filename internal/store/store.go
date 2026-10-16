@@ -95,35 +95,35 @@ type typeKey struct{ cluster, group, resource string }
 
 // Workspace is one opened bundle.
 type Workspace struct {
-	mu         sync.RWMutex
-	header     *bundle.Header
-	policy     *policy.Policy
-	manifest   *bundle.Manifest
-	objects    map[string]*Object
-	byType     map[typeKey][]*Object
-	resources  map[string]map[string]bundle.APIResource
-	versions   map[string]json.RawMessage
-	coverage   map[string]bundle.Coverage
-	events     []Event
-	ldb        *logDB
-	streamSeq  map[string]int // lines loaded per container stream
-	collection []json.RawMessage
-	redaction  json.RawMessage
-	state      ImportState
-	rev        int64
-	nextID     int64
-	subs       map[int]chan struct{}
-	subID      int
-	chunks     map[string]bool
-	crds       map[string]map[string]map[string]any // cluster -> crd name -> slim CRD
-	logEnd     time.Time                            // newest log timestamp, the "now" for since: queries
-	logStart   time.Time                            // oldest log timestamp, the histogram's left edge
-	diags      map[string]*Diagnostic               // cluster/kind/ns/pod -> captured diagnostics
-	soloSum    map[string]json.RawMessage           // cluster -> solo/summary.json
-	trust      Trust                                // signature and review ledger
+	mu                sync.RWMutex
+	header            *bundle.Header
+	policy            *policy.Policy
+	manifest          *bundle.Manifest
+	objects           map[string]*Object
+	byType            map[typeKey][]*Object
+	resources         map[string]map[string]bundle.APIResource
+	versions          map[string]json.RawMessage
+	coverage          map[string]bundle.Coverage
+	events            []Event
+	ldb               *logDB
+	streamSeq         map[string]int // lines loaded per container stream
+	collection        []json.RawMessage
+	redaction         json.RawMessage
+	state             ImportState
+	rev               int64
+	nextID            int64
+	subs              map[int]chan struct{}
+	subID             int
+	chunks            map[string]bool
+	crds              map[string]map[string]map[string]any // cluster -> crd name -> slim CRD
+	logEnd            time.Time                            // newest log timestamp, the "now" for since: queries
+	logStart          time.Time                            // oldest log timestamp, the histogram's left edge
+	diags             map[string]*Diagnostic               // cluster/kind/ns/pod -> captured diagnostics
+	diagnosticSummary map[string]json.RawMessage           // cluster -> diagnostic summary
+	trust             Trust                                // signature and review ledger
 }
 
-// Diagnostic is one Solo component's captured admin output.
+// Diagnostic is one component's captured admin output.
 type Diagnostic struct {
 	Cluster   string            `json:"cluster"`
 	Kind      string            `json:"kind"` // proxies or control-plane
@@ -156,7 +156,7 @@ func Open(path string) (*Workspace, error) {
 	return &Workspace{ldb: ldb, streamSeq: map[string]int{}, objects: map[string]*Object{}, byType: map[typeKey][]*Object{}, resources: map[string]map[string]bundle.APIResource{},
 		versions: map[string]json.RawMessage{}, coverage: map[string]bundle.Coverage{},
 		subs: map[int]chan struct{}{}, state: ImportState{Phase: PhaseWaiting}, chunks: map[string]bool{},
-		crds: map[string]map[string]map[string]any{}, diags: map[string]*Diagnostic{}, soloSum: map[string]json.RawMessage{}}, nil
+		crds: map[string]map[string]map[string]any{}, diags: map[string]*Diagnostic{}, diagnosticSummary: map[string]json.RawMessage{}}, nil
 }
 
 // commit must be called with the write lock held.
@@ -338,19 +338,19 @@ func (w *Workspace) Diagnostic(cluster, kind, ns, pod string) *Diagnostic {
 	return nil
 }
 
-// SetSoloSummary records solo/summary.json for a cluster.
-func (w *Workspace) SetSoloSummary(cluster string, raw json.RawMessage) {
+// SetDiagnosticSummary records the summary of detected diagnostic components.
+func (w *Workspace) SetDiagnosticSummary(cluster string, raw json.RawMessage) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.soloSum[cluster] = raw
+	w.diagnosticSummary[cluster] = raw
 	w.commit()
 }
 
-// SoloSummary returns solo/summary.json for a cluster.
-func (w *Workspace) SoloSummary(cluster string) json.RawMessage {
+// DiagnosticSummary returns the diagnostic component summary for a cluster.
+func (w *Workspace) DiagnosticSummary(cluster string) json.RawMessage {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	return w.soloSum[cluster]
+	return w.diagnosticSummary[cluster]
 }
 
 // AddCRD records a collected CustomResourceDefinition (schema stripped).

@@ -95,7 +95,7 @@ var envoyEndpoints = []endpoint{
 	{cat: policy.CatMetrics, port: 15020, path: "/stats/prometheus", file: "metrics.prom", lines: true},
 }
 
-// detect classifies a pod's containers into collectable Solo components.
+// detect classifies a pod's containers into supported diagnostic components.
 func detect(p podInfo) []component {
 	var out []component
 	for _, ct := range p.containers {
@@ -146,8 +146,8 @@ type DiagMeta struct {
 	Node      string `json:"node,omitempty"`
 }
 
-// SoloSummary is solo/summary.json: which Solo components the collector saw.
-type SoloSummary struct {
+// DiagnosticSummary records which components the collector detected.
+type DiagnosticSummary struct {
 	Components []SummaryComponent `json:"components"`
 }
 
@@ -174,7 +174,7 @@ func (c *Collector) refAllowed(r resRef) bool {
 }
 
 // collectDiagnostics reads proxy dumps, control-plane debug output and
-// metrics from the Solo components among the selected pods.
+// metrics from supported components among the selected pods.
 func (c *Collector) collectDiagnostics(ctx context.Context, cluster string, cl Clients, pods []podInfo, kinds map[string]string) error {
 	summary := map[string]*SummaryComponent{}
 	var work []diagJob
@@ -211,7 +211,7 @@ func (c *Collector) collectDiagnostics(ctx context.Context, cluster string, cl C
 		return err
 	}
 	if len(summary) > 0 {
-		var s SoloSummary
+		var s DiagnosticSummary
 		for _, v := range summary {
 			sort.Strings(v.Pods)
 			s.Components = append(s.Components, *v)
@@ -222,7 +222,7 @@ func (c *Collector) collectDiagnostics(ctx context.Context, cluster string, cl C
 			}
 			return s.Components[i].Image < s.Components[j].Image
 		})
-		if err := c.Writer.AddJSON(bundle.SoloPath(cluster, "", "", "", "summary.json"), s); err != nil {
+		if err := c.Writer.AddJSON(bundle.DiagnosticsPath(cluster, "", "", "", "summary.json"), s); err != nil {
 			return err
 		}
 	}
@@ -282,7 +282,7 @@ func (c *Collector) diagPod(ctx context.Context, cluster string, cl Clients, p p
 		return nil
 	}
 	for _, comp := range comps {
-		dir := bundle.SoloPath(cluster, comp.kind, p.ns, p.name, "")
+		dir := bundle.DiagnosticsPath(cluster, comp.kind, p.ns, p.name, "")
 		_ = c.Writer.AddJSON(dir+"meta.json", DiagMeta{Component: comp.name, Container: comp.container, Image: p.images[comp.container], Version: imageTag(p.images[comp.container]), Node: p.node})
 		for _, ep := range comp.endpoints {
 			if err := ctx.Err(); err != nil {
@@ -331,7 +331,7 @@ func (c *Collector) collectEndpoint(ctx context.Context, cluster string, sess Fo
 	if err != nil {
 		return c.diagCoverage(cluster, p, comp, ep, bundle.StateFailed, err.Error(), "", 0)
 	}
-	loc := bundle.SoloPath(cluster, comp.kind, p.ns, p.name, ep.file)
+	loc := bundle.DiagnosticsPath(cluster, comp.kind, p.ns, p.name, ep.file)
 	filter := &nsFilter{allowed: c.Policy.NamespaceAllowed}
 	scoped := len(c.Policy.Namespaces) > 0 || len(c.Policy.ExcludeNamespaces) > 0
 	var notes []string

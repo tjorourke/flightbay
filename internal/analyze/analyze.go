@@ -42,7 +42,7 @@ type Finding struct {
 	Evidence    []string `json:"evidence,omitempty"`
 	LogQuery    string   `json:"logQuery,omitempty"`
 	NextStep    string   `json:"nextStep,omitempty"`
-	Docs        string   `json:"docs,omitempty"` // the Solo docs page for the next step
+	Docs        string   `json:"docs,omitempty"` // product documentation for the next step
 	Count       int      `json:"count,omitempty"`
 	Provisional bool     `json:"provisional"`
 }
