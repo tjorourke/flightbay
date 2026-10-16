@@ -246,6 +246,9 @@ func Investigate(ws *store.Workspace, c, ns, name, routeName string) (*Investiga
 			allowed := false
 			unknown := false
 			for _, v := range L(Path(wp.Obj, "spec", "listeners")) {
+				if S(M(v)["protocol"]) != "HBONE" {
+					continue
+				}
 				ar := M(M(v)["allowedRoutes"])
 				n := M(ar["namespaces"])
 				switch defaultString(S(n["from"]), "Same") {
@@ -291,6 +294,16 @@ func Investigate(ws *store.Workspace, c, ns, name, routeName string) (*Investiga
 	if found == 0 {
 		add(r, "routes", "HTTPRoute selection", "unknown", "No related HTTPRoute was found. An HTTPRoute is optional for ordinary ambient traffic; select a route explicitly if its intended Service is ambiguous.")
 	}
+	sidecars := 0
+	for _, p := range pods {
+		for _, ct := range L(Path(p.Obj, "spec", "containers")) {
+			if S(M(ct)["name"]) == "istio-proxy" {
+				sidecars++
+				break
+			}
+		}
+	}
+	sidecarOnly := len(pods) > 0 && sidecars == len(pods)
 	for _, p := range ws.List(c, "security.istio.io", "authorizationpolicies", ns, nil) {
 		selector := M(Path(p.Obj, "spec", "selector", "matchLabels"))
 		targets := L(Path(p.Obj, "spec", "targetRefs"))
@@ -306,7 +319,11 @@ func Investigate(ws *store.Workspace, c, ns, name, routeName string) (*Investiga
 		}
 		policyStatus(r, p)
 		if len(targets) == 0 && hasL7(Path(p.Obj, "spec", "rules")) {
-			add(r, "policy-"+p.Name, "Policy "+p.Name, "fail", "L7 attributes on a workload-selector policy cannot be enforced by ztunnel. Istio fails closed for unsupported L7 rules; attach an L7 policy to the appropriate Service/waypoint instead.", evidence(p, "spec", p.Obj["spec"]))
+			state, detail := "fail", "L7 attributes on a workload-selector policy cannot be enforced by ztunnel. Istio fails closed for unsupported L7 rules; attach an L7 policy to the appropriate Service/waypoint instead."
+			if sidecarOnly {
+				state, detail = "warning", "All selected captured Pods have sidecars. Selector-based L7 rules can be valid there; confirm the actual dataplane before diagnosing this as a ztunnel policy failure."
+			}
+			add(r, "policy-"+p.Name, "Policy "+p.Name, state, detail, evidence(p, "spec", p.Obj["spec"]))
 		} else {
 			add(r, "policy-"+p.Name, "Policy "+p.Name, "warning", "Policy is relevant to this Service. Check its allow/deny rules and enforcement point; attachment alone does not prove a request is allowed.", evidence(p, "spec.targetRefs", targets))
 		}
@@ -346,7 +363,11 @@ func Investigate(ws *store.Workspace, c, ns, name, routeName string) (*Investiga
 			}
 		}
 		if disabled {
-			add(r, "mtls-"+p.Name, "Ambient mTLS mode", "fail", "DISABLE is not supported by ambient ztunnel. Use STRICT to require mesh mTLS, or remove the unsupported setting rather than assuming plaintext is enabled.", evidence(p, "spec", p.Obj["spec"]))
+			state, detail := "fail", "DISABLE is not supported by ambient ztunnel. Use STRICT to require mesh mTLS, or remove the unsupported setting rather than assuming plaintext is enabled."
+			if sidecarOnly {
+				state, detail = "warning", "Selected Pods have sidecars, where DISABLE has different semantics. Check the actual dataplane; do not interpret this as a valid ztunnel plaintext setting."
+			}
+			add(r, "mtls-"+p.Name, "Ambient mTLS mode", state, detail, evidence(p, "spec", p.Obj["spec"]))
 		}
 	}
 	ready, seen := 0, 0

@@ -232,3 +232,15 @@ func TestIngressGatewayIsNotAnAmbientWaypoint(t *testing.T) {
 		t.Fatal("ingress Gateway passed as a waypoint")
 	}
 }
+func TestCrossNamespaceWaypointUsesHBONEPermission(t *testing.T) {
+	ws := fixture(t)
+	svc := ws.Get("c", "", "services", "app", "front")
+	M(svc.Obj["metadata"])["labels"] = map[string]any{"istio.io/use-waypoint": "shared", "istio.io/use-waypoint-namespace": "infra"}
+	gw := object("Gateway", "shared", map[string]any{"gatewayClassName": "istio-waypoint", "listeners": []any{map[string]any{"name": "mesh", "protocol": "HBONE", "port": 15008}, map[string]any{"name": "http", "protocol": "HTTP", "port": 80, "allowedRoutes": map[string]any{"namespaces": map[string]any{"from": "All"}}}}})
+	M(gw["metadata"])["namespace"] = "infra"
+	put(ws, GatewayGroup, "gateways", "Gateway", gw)
+	r, _ := Investigate(ws, "c", "app", "front", "")
+	if findStep(t, r, "waypoint-namespace").State != "fail" {
+		t.Fatal("an unrelated HTTP listener granted cross-namespace HBONE access")
+	}
+}
