@@ -66,6 +66,23 @@ var shots = []shot{
 	{name: "reach-graph", desk: "mesh", hash: "reach?agent=kagent/demo-agent", theme: "dark", setup: `document.querySelector('#rc-detail').scrollIntoView({block: 'start'})`},
 	{name: "reach-external", desk: "mesh", hash: "reach?agent=kagent/demo-agent", theme: "dark",
 		setup: `document.querySelector('[data-rctab=external]').click(); new Promise(r => setTimeout(r, 800)).then(() => document.querySelector('#rc-detail').scrollIntoView({block: 'start'}))`},
+	{name: "agent-mode", desk: "agent", hash: "traffic", theme: "dark"},
+	{name: "agent-mode-select", desk: "agent", hash: "traffic", theme: "dark", setup: `S.tf.focus = 'w:kagent/demo-agent'; S.tf.sel = S.tf.focus; render()`},
+	{name: "traffic-findings", desk: "mesh", hash: "traffic", theme: "dark"},
+	{name: "traffic-stats", desk: "mesh", hash: "traffic", theme: "dark"},
+	{name: "traffic-map", desk: "mesh", hash: "traffic", theme: "dark", setup: `document.querySelector('#tf-q').scrollIntoView({block: 'start'})`},
+	{name: "traffic-focus", desk: "mesh", hash: "traffic", theme: "dark", setup: `S.tf.focus = 'w:kagent/demo-agent'; S.tf.sel = S.tf.focus; render().then(() => document.querySelector('#tf-q').scrollIntoView({block: 'start'}))`},
+	{name: "traffic-tools", desk: "mesh", hash: "traffic", theme: "dark", setup: `S.tf.tab = 'tools'; render().then(() => document.querySelector('#tf-q').scrollIntoView({block: 'start'}))`},
+	{name: "traffic-explain", desk: "mesh", hash: "traffic", theme: "dark", setup: `S.tf.tab = 'explain'; S.tf.exFrom = 'kagent/demo-agent'; S.tf.exTo = 'kagent/github-mcp'; render().then(() => new Promise(r => setTimeout(r, 1200))).then(() => document.querySelector('#tf-exform').scrollIntoView({block: 'start'}))`},
+	{name: "activity-map", desk: "mesh", hash: "traffic", theme: "dark", setup: `S.tf.layer = 'gateway'; S.tf.found = 'agentgateway'; render().then(() => document.querySelector('#tf-q').scrollIntoView({block: 'start'}))`},
+	{name: "activity-caller", desk: "mesh", hash: "traffic", theme: "dark", setup: `S.tf.tab = 'calls'; render().then(() => document.querySelector('#tf-q').scrollIntoView({block: 'start'}))`},
+	{name: "tool-map", desk: "mesh", hash: "traffic", theme: "dark", setup: `S.tf.layer = 'gateway'; S.tf.found = 'agentgateway'; S.tf.focus = 'w:kagent/demo-agent'; render().then(() => document.querySelector('#tf-q').scrollIntoView({block: 'start'}))`},
+	{name: "tool-access", desk: "mesh", hash: "reach?agent=kagent/demo-agent", theme: "dark", setup: `S.reach.dtab = 'tools'; render().then(() => document.querySelector('#rc-detail').scrollIntoView({block: 'start'}))`},
+	{name: "agents-tools", desk: "mesh", hash: "reach?agent=kagent/demo-agent", theme: "dark", setup: `document.querySelector('[data-rctab=tools]').click(); new Promise(r => setTimeout(r, 800)).then(() => document.querySelector('#rc-detail').scrollIntoView({block: 'start'}))`},
+	{name: "reach-layers", desk: "mesh", hash: "reach?agent=kagent/demo-agent", theme: "dark", setup: `document.querySelector('#rc-detail').scrollIntoView({block: 'start'})`},
+	{name: "reach-used", desk: "mesh", hash: "reach?agent=kagent/demo-agent", theme: "dark", setup: `document.querySelector('[data-rglayer=used]').click(); new Promise(r => setTimeout(r, 800)).then(() => document.querySelector('#rc-detail').scrollIntoView({block: 'start'}))`},
+	{name: "reach-timeline", desk: "mesh", hash: "reach?agent=kagent/tom-demo", theme: "dark", setup: `document.querySelector('[data-rctab=usage]').click(); new Promise(r => setTimeout(r, 800)).then(() => document.querySelector('#rc-detail').scrollIntoView({block: 'start'}))`},
+	{name: "reach-lockdown", desk: "mesh", hash: "reach?agent=kagent/demo", theme: "light", setup: `document.querySelector('[data-rctab=lockdown]').click(); new Promise(r => setTimeout(r, 800)).then(() => document.querySelector('#rc-detail').scrollIntoView({block: 'start'}))`},
 }
 
 func main() {
@@ -122,7 +139,7 @@ func run(deskBin, chromeBin, sample, mesh, out, only string) error {
 		if len(want) > 0 && !want[s.name] {
 			continue
 		}
-		if s.desk == "mesh" && mesh == "" {
+		if (s.desk == "mesh" || s.desk == "agent") && mesh == "" {
 			fmt.Printf("skip %s: needs -mesh\n", s.name)
 			continue
 		}
@@ -131,6 +148,23 @@ func run(deskBin, chromeBin, sample, mesh, out, only string) error {
 	}
 	if len(todo) == 0 {
 		return errors.New("nothing to take")
+	}
+	// A new documentation image must also have a reproducible capture here.
+	// Otherwise a full refresh silently leaves an old, potentially branded image.
+	if only == "" {
+		known := map[string]bool{}
+		for _, s := range shots {
+			known[s.name+".png"] = true
+		}
+		files, err := filepath.Glob(filepath.Join(out, "*.png"))
+		if err != nil {
+			return err
+		}
+		for _, file := range files {
+			if !known[filepath.Base(file)] {
+				return fmt.Errorf("%s has no screenshot definition", filepath.Base(file))
+			}
+		}
 	}
 
 	// A signed bundle with the payments namespace removed, for the coverage view.
@@ -202,6 +236,11 @@ func run(deskBin, chromeBin, sample, mesh, out, only string) error {
 	}
 	if needed["mesh"] {
 		if err := start("mesh", mesh, []string{"FLIGHTBAY_ENTERPRISE=1"}); err != nil {
+			return err
+		}
+	}
+	if needed["agent"] {
+		if err := start("agent", mesh, []string{"FLIGHTBAY_ENTERPRISE=1", "FLIGHTBAY_AGENT=1"}); err != nil {
 			return err
 		}
 	}

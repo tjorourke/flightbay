@@ -69,7 +69,7 @@ The **Tools and models** tab of the Traffic page lists, per MCP server, every to
 | Allowed for | agentgateway MCP authorization rules (`backend.mcp.authorization`, OSS and Enterprise): each `\|\|` clause that names tools (`mcp.tool.name in [...]` or `== "..."`), with the caller it names (`source.identity.serviceAccount`, with `source.identity.namespace` when given, or `jwt.sub`). The server is the MCP target of the backend the rule targets, and a tool spelt with the target prefix (`github_list_issues`) counts as the same tool. |
 | Configured on | Not an enforcement: the agent's own list only filters what the model is offered. A declarative kagent Agent's `toolNames`, and an `ALLOWED_TOOLS` variable (a JSON list) on a BYO agent. With several servers in its `MCP_SERVERS_CONFIG`, a tool goes on the one server known to offer it, or under "(server not known)". |
 
-![GitHub's tools: called, allowed per service account by an allowlist, and configured on an agent](/images/traffic-tools.png)
+![Tools and models from the captured gateway calls](/images/traffic-tools.png)
 
 **MCP servers** chooses which servers to list: a searchable list with a tick per server (most called first, with its tool count), and **Select all** and **Clear**. The first time, the servers with calls are ticked. Beside it, a line per server says where its tools come from; with more than three ticked, a summary does.
 
@@ -129,7 +129,7 @@ Calls are compared only when the baseline's logs have some tool or model calls; 
 
 On the [Traffic](/desk/traffic/) page, choose **Gateway calls** (or leave **Both** on). The chips choose which kinds of target to draw: tools, models, agents (A2A), MCP sessions, and other HTTP routes (off by default). Line width follows the number of calls. Click a caller, a target or a line for its detail underneath: a caller's identity, JWT subjects and every call it made; a target's description, routes and gateways; or one caller-target pair's statuses, reasons, tokens, first and last time, and a logged error. **Log lines** opens the Log explorer on the requests behind a pair.
 
-![A caller's detail](/images/activity-caller.png)
+![Captured gateway calls by caller and destination](/images/activity-caller.png)
 
 The **Calls**, **Tools and models**, **Refused** and **Tool changes** tabs of the Traffic page are the same data as tables. A caller that is an agent has **Open on Agents**; a refusal at an agentgateway waypoint has a **Why?** link to the mesh checks between the caller and the Service, and the agentgateway policy listed with it is checked after them.
 

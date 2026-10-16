@@ -3,7 +3,6 @@
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.65 var(--sans)}
 a{color:var(--teal);text-decoration:none}a:hover{text-decoration:underline}
 .top{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:18px;padding:12px 24px;background:var(--panel);border-bottom:1px solid var(--line)}
-.top .brand svg,.top .brand b{display:none}
 .top .brand::before{content:"F";display:inline-grid;place-items:center;width:22px;height:22px;margin-right:7px;border-radius:6px;background:#12313a;color:#25bfd0;font-weight:800}
 .brand{font-weight:400;font-size:17px;color:var(--text);white-space:nowrap}.brand b{font-weight:700}.brand small{color:var(--muted);font-weight:500;margin-left:6px}
 .top input{flex:1;max-width:460px;background:var(--raised);border:1px solid var(--line);color:var(--text);border-radius:6px;padding:8px 12px;font:14px var(--sans)}

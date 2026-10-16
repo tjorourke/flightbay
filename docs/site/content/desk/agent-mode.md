@@ -37,7 +37,7 @@ Traffic opens with every source on the left, the Services they reached in the mi
 
 Click an agent and the map redraws with only what that agent reaches: its destinations and the tools it called or may call, with the column headers counting just those. The other sources stay on the left, so the next agent is one click away. Click the agent again, click the background, or press Esc for the whole map. A newly deployed agent shows the MCP servers and tools its configuration names straight away, with dashed lines until it calls them.
 
-![kagent/demo-agent selected: its two MCP Services and the two tools it called, which the captured allowlists do not allow](/images/agent-mode-select.png)
+![Agent mode with kagent/demo-agent selected](/images/agent-mode-select.png)
 
 The panel under the map has the agent's connections and gateway calls, and **Show only its traffic**, which follows it: every tool it has access to on each MCP server, called or not. The **Agents** tab has each agent's reach, the policy that would lock it down, and its findings. See [Traffic](/desk/traffic/#what-a-caller-may-call) and [Agents tab](/desk/agent-reach/).
 

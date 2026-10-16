@@ -294,7 +294,7 @@ Nothing is faded when no flow source covers the agent. Without flow logs there i
 
 ![Both layers: the used namespaces stand out, the rest is faded](/images/reach-layers.png)
 
-![Used: three Services and one host outside the cluster](/images/reach-used.png)
+![The Used layer shows destinations observed in this capture](/images/reach-used.png)
 
 Hover a box to trace its lines, or click it to keep them lit (click another box or close its panel to move on). Hover a line for what went over it: connections and whether they were mutual TLS, calls through agentgateway, the tools called and the tokens used. Click a box for the same under the graph, with a **Why?** button that opens the [Traffic](/desk/traffic/) explainer for the agent and that Service. The **Traffic** button in the agent's header opens the Traffic page following the agent.
 
@@ -337,7 +337,7 @@ The **Lock down** tab proposes the least privilege the capture supports:
 
 Flightbay then runs Agent reach again with the proposal in place of the agent's egress policies, and shows radius, internet, direct and total reach, write access and critical and high findings before and after. It checks that every Service the agent used is still reachable, and lists anything that would be cut. Hosts outside the cluster it called directly are listed as breaking: the policy has no rule for them, and the page says to route them through agentgateway.
 
-![Before and after, what it keeps and removes, and the YAML](/images/reach-lockdown.png)
+![The proposed policy's before-and-after scores and the destinations it keeps and removes](/images/reach-lockdown.png)
 
 Nothing is applied; copy or download the YAML. The proposal is only as complete as the log window: something the agent does rarely may not be in it.
 

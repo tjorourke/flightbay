@@ -97,7 +97,7 @@ func agenticChecks(e env) []Check {
 
 	add(spec{"agentic.mcp-auth-required", "Authentication", "critical", "MCP endpoints require authentication",
 		"A stock MCP server's only control is the token it holds upstream. Without JWT validation at the gateway, anyone who reaches the listener gets every tool under one shared identity.",
-		"apiVersion: agentgateway.dev/v1alpha1   # or enterpriseagentgateway.solo.io/v1alpha1 EnterpriseAgentgatewayPolicy\nkind: AgentgatewayPolicy\nmetadata: {name: mcp-jwt, namespace: <route namespace>}\nspec:\n  targetRefs:\n  - {group: gateway.networking.k8s.io, kind: HTTPRoute, name: <mcp route>}\n  traffic:\n    jwtAuthentication:\n      mode: Strict\n      providers:\n      - issuer: https://idp.example.com/realms/solo\n        audiences: [mcp]\n        jwks: {remote: {jwksPath: /protocol/openid-connect/certs, backendRef: {name: keycloak, namespace: auth, kind: Service, port: 8080}}}",
+		"apiVersion: agentgateway.dev/v1alpha1   # or enterpriseagentgateway.solo.io/v1alpha1 EnterpriseAgentgatewayPolicy\nkind: AgentgatewayPolicy\nmetadata: {name: mcp-jwt, namespace: <route namespace>}\nspec:\n  targetRefs:\n  - {group: gateway.networking.k8s.io, kind: HTTPRoute, name: <mcp route>}\n  traffic:\n    jwtAuthentication:\n      mode: Strict\n      providers:\n      - issuer: https://idp.example.com/realms/platform\n        audiences: [mcp]\n        jwks: {remote: {jwksPath: /protocol/openid-connect/certs, backendRef: {name: keycloak, namespace: auth, kind: Service, port: 8080}}}",
 		kbBase + "agentgateway-mcp-controls/", solodocs.Agentgateway + "mcp/auth/setup/"}, func(c *Check) { authCheck(c, exposedMCP, "MCP") })
 
 	add(spec{"agentic.llm-auth-required", "Authentication", "critical", "LLM routes require caller authentication",
@@ -130,7 +130,7 @@ func agenticChecks(e env) []Check {
 
 	add(spec{"agentic.jwt-issuer-audience-pinned", "Authentication", "high", "JWT providers pin the issuer and audience",
 		"Without an audience, a token minted for another service by the same issuer can be replayed here (confused deputy). Inline JWKS never rotate with the IdP.",
-		"providers:\n- issuer: https://idp.example.com/realms/solo\n  audiences: [github-mcp]\n  jwks: {remote: {jwksPath: /protocol/openid-connect/certs, backendRef: {...}}}", kbBase + "securing-mcp-agentic-systems/", solodocs.Agentgateway + "security/jwt/setup/"}, func(c *Check) {
+		"providers:\n- issuer: https://idp.example.com/realms/platform\n  audiences: [github-mcp]\n  jwks: {remote: {jwksPath: /protocol/openid-connect/certs, backendRef: {...}}}", kbBase + "securing-mcp-agentic-systems/", solodocs.Agentgateway + "security/jwt/setup/"}, func(c *Check) {
 		if !policiesKnown {
 			na(c, polWhy)
 			return

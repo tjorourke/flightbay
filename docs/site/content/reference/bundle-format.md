@@ -47,7 +47,7 @@ clusters/<context>/
   resources/<group or core>/<version>/<resource>/part-000001.json
   events/part-000001.json
   logs/<namespace>/<pod>/<container>/<current|previous>/part-000001.log
-  solo/
+  diagnostics/
     summary.json                                  components found, versions and pods
     proxies/<namespace>/<pod>/meta.json           component, container, image, version, node
     proxies/<namespace>/<pod>/config_dump.json    and clusters.json, listeners.json, certs.json, stats.txt, metrics.prom ...

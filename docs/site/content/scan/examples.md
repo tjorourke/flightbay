@@ -4,7 +4,7 @@ weight: 5
 description: "Worked examples: plain YAML, Helm charts with values, published charts, Kustomize overlays, environments, Argo CD and Flux, then reading the result."
 ---
 
-Each example below was run against a real repository or chart, and the output shown is what `flightbay scan` printed. The same commands work on your own repository. See [Scanning a repository](/scan/) for every flag.
+These examples were run against real repositories and charts. Local paths and repository names are generalised below; scores and findings are from those runs. The same commands work on your own repository. See [Scanning a repository](/scan/) for every flag.
 
 A scan never talks to a cluster. It reads files, renders them the way your deployment tool would, and scores what comes out. You don't need kubectl access or a kubeconfig.
 
@@ -13,12 +13,12 @@ A scan never talks to a cluster. It reads files, renders them the way your deplo
 Point it at a directory. Every `.yaml`, `.yml` and `.json` file under it is read, multi-document files and `kind: List` included. Files that aren't Kubernetes objects (no `apiVersion` and `kind`) are skipped and listed in coverage.
 
 ```bash
-flightbay scan ~/code/solo/solo-demos/sovereign-ai-uk-eks --root ~/code/solo/solo-demos
+flightbay scan ~/code/labs/sovereign-ai-uk-eks --root ~/code/labs
 ```
 
 ```text
-Scanned solo: 103 objects of 27 kinds from 45 inputs (0 failed) in 159ms
-Declared state from solo at commit 91d7b6a3eb7c
+Scanned labs: 103 objects of 27 kinds from 45 inputs (0 failed) in 159ms
+Declared state from labs at commit 91d7b6a3eb7c
   Agentic (agentgateway, kagent, MCP)            70  C  (12 pass, 4 warn, 9 fail, 28 not applicable)
   Kubernetes (workload and platform hygiene)     73  C  (6 pass, 9 warn, 5 fail, 9 not applicable)
 
@@ -43,7 +43,7 @@ flightbay scan labs/agentgateway-virtual-keys labs/agentic-tool-privilege-kind l
 Any directory with a `Chart.yaml` is rendered with the Helm Go SDK, the same way `helm template --include-crds` renders it. Subcharts in `charts/` are rendered with their parent. You don't need the `helm` binary.
 
 ```bash
-flightbay scan ~/code/solo/agentgateway/controller/install/helm/agentgateway --namespace agentgateway-system
+flightbay scan ~/code/agentgateway/controller/install/helm/agentgateway --namespace agentgateway-system
 ```
 
 ```text

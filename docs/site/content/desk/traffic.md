@@ -19,7 +19,7 @@ For one agent at a time (what it may reach, what it used, and the policy that wo
 
 Traffic is part of [Flightbay Enterprise](/enterprise/). It is on by default; `FLIGHTBAY_FEATURES=-traffic` turns it off (`activity`, the name of the gateway layer's old page, still works as a name). `AGENT=1` opens the desk on this page in [agent mode](/desk/agent-mode/).
 
-![Both layers: the GitHub tools behind each Service; behind mcp-demo, run_code and get_tool, and the allowed tools that may have run inside run_code in amber](/images/traffic-map.png)
+![Traffic from the captured network connections and gateway calls](/images/traffic-map.png)
 
 ## Findings
 
@@ -72,7 +72,7 @@ Click a source on the left and the map redraws with only what it reaches: its de
 
 **Show only its traffic** in an agent's panel follows it. The map then draws a box for every tool it has access to on each MCP server it uses: called tools first (green; red when the captured allowlist would not allow it), then tools in its own configuration, then the rest it is allowed and did not call (faded). A server with more than 16 such tools folds the unused ones into one box; click it to open it up. The Services it may reach on the network and did not use are behind **Show Services it may reach and did not use** in the bar above the map.
 
-![Following nick-demo: the GitHub tool it called, the twelve it may call and did not, and kagent-tool-server folded](/images/tool-map.png)
+![Gateway calls with an agent selected](/images/tool-map.png)
 
 Clicking a tool box, or a caller's line to a Service, shows the same as a table under the map, **Tools … may call**.
 
@@ -95,7 +95,7 @@ A clause with no `mcp.tool.name` test gives its callers every tool of the server
 
 Each tool says **allowed, called**, **allowed, not called**, or **called, not allowed** (called although the captured allowlist does not give it to this caller: the policy may be newer than the calls), with the calls and whether the agent's own configuration lists it.
 
-![Every GitHub tool nick-demo has access to, and the one it called](/images/tool-access.png)
+![An agent's tools and models from the captured configuration and calls](/images/tool-access.png)
 
 ![The gateway layer: callers and the tools, models and agents they called](/images/activity-map.png)
 
@@ -148,7 +148,7 @@ Pick an edge on the map or the Edges tab, or use the **Why? Explain a connection
 
 Each step shows **allowed**, **denied**, **unknown** (the data was not captured), or **nothing applies**, with links to the policies. A Service with several pods is checked pod by pod until one admits the caller.
 
-![Refused at ztunnel authorization, with the fix](/images/traffic-explain.png)
+![Explaining the connection from an agent to an MCP Service](/images/traffic-explain.png)
 
 Under the checks:
 
@@ -202,7 +202,7 @@ The page shows what is running now. A caller whose workload no longer exists is 
 
 For an agent, the map then also draws what policy allows it to reach and it did not use, faded and dashed and folded by namespace. Click a namespace to open it up, and a Service to explain why it is allowed. The bar above the map counts both, and links to the agent on the Agents page.
 
-![One agent: four destinations used, the rest allowed and unused](/images/traffic-focus.png)
+![The traffic map focused on an agent](/images/traffic-focus.png)
 
 ## In the terminal and over MCP
 

@@ -1,6 +1,15 @@
 # Flightbay
 
-Flightbay is a Kubernetes troubleshooting desk. Connect to a cluster read-only or capture a redacted snapshot to investigate offline. Browse resources with a k9s-style navigator, search logs in an OpenSearch-style explorer, inspect proxy state, and review Kubernetes, Istio and agentic best practices. Before sharing a capture with a support provider, review it, sign it with your key and encrypt it to their age recipient. Flightbay never uploads data.
+Flightbay helps platform teams and support engineers investigate Kubernetes problems without needing ongoing access to the affected cluster. A customer captures the namespaces they want to share into a redacted `.tar.zst` file, sends that file through their usual support channel, and the recipient opens it locally to investigate offline.
+
+Browse captured resources with `kubectl` or a k9s-style navigator, search logs in an OpenSearch-style explorer, inspect proxy configuration, and check Kubernetes, Istio and agentic workloads for security and operational problems. You can also connect read-only to a live cluster or scan deployment manifests before they are deployed. Flightbay does not upload captures; you choose what to collect and how to share it.
+
+## What Flightbay solves
+
+- **Troubleshooting without cluster access.** Give a support engineer the resources and diagnostics needed to investigate, without sharing kubeconfig credentials or granting access to the cluster.
+- **Keeping the evidence.** Open a point-in-time capture after a pod has restarted or the cluster has changed, and compare it with another capture.
+- **Controlling what leaves the cluster.** Select namespaces and resource types, redact credentials during collection, and review or remove data before sending it. Signing and encryption are optional.
+- **Finding related problems.** Search objects and logs, inspect traffic and proxy state, and follow findings to their evidence and suggested fixes.
 
 ![Overview of a snapshot](docs/images/overview.png)
 
@@ -26,22 +35,13 @@ make install                  # installs flightbay and flightbay-desk into $(go 
 
 Make sure `$(go env GOPATH)/bin` is on your `PATH`. Release builds (Homebrew, `kubectl flightbay` through krew, and a container image) are set up in `.goreleaser.yaml` and `.github/workflows/release.yml`.
 
-## Download and capture selected namespaces
+## Capture a file to send to support
 
-After the release is published, download the matching `flightbay_<version>_<os>_<arch>` archive from the [GitHub Releases page](https://github.com/tjorourke/flightbay/releases/latest): `.tar.gz` for macOS and Linux, `.zip` for Windows. Extract it beside your kubeconfig. On macOS or Linux, check the binary and preview the capture plan:
+The customer needs only the `flightbay` collector and their existing kubeconfig access. Download the matching `flightbay_<version>_<os>_<arch>` archive from [GitHub Releases](https://github.com/tjorourke/flightbay/releases/latest): `.tar.gz` for macOS and Linux, `.zip` for Windows. Extract it into a working directory; Flightbay uses the normal kubeconfig location or `$KUBECONFIG`.
 
-```bash
-./flightbay version
-./flightbay collect \
-  --context my-cluster \
-  --namespaces payments,istio-system \
-  --collect objects \
-  --no-logs \
-  --no-portforward \
-  --dry-run
-```
+### On the customer's machine
 
-If the plan is right, run the same command without `--dry-run`, adding an output file and then inspect the result before sharing it:
+Replace `my-cluster` with the kubeconfig context and `payments,istio-system` with the namespaces to share. This command creates the file:
 
 ```bash
 ./flightbay collect \
@@ -51,13 +51,31 @@ If the plan is right, run the same command without `--dry-run`, adding an output
   --no-logs \
   --no-portforward \
   --out flightbay-objects.tar.zst
+```
 
+Send **`flightbay-objects.tar.zst`** through your agreed support channel. It is a zstd-compressed tar archive; there is no need to unpack it or send a kubeconfig. Collection reads the cluster and writes the archive locally, without changing cluster resources.
+
+`--namespaces` accepts comma-separated names or globs. This example collects Kubernetes objects in those namespaces, with credentials redacted and Secret values omitted. It excludes logs, events, Helm summaries, proxy dumps and cluster-wide resources such as Nodes. API discovery, metadata for the selected Namespaces, and selected CRD definitions (without schemas) are retained so the desk can interpret the objects. Objects are stored as JSON API representations, rather than individual YAML files. For a capture that also includes logs and events, omit `--collect objects` and `--no-logs`; proxy diagnostics still require `--diagnostics`.
+
+To preview the plan without creating a file, add `--dry-run` to the collection command. To check a completed archive before sending it, optionally run:
+
+```bash
 ./flightbay inspect flightbay-objects.tar.zst --contents --redactions
 ```
 
-`--namespaces` accepts one or more comma-separated namespaces (globs are also allowed). `--collect objects` excludes events, logs, Helm summaries and proxy diagnostics; `--no-logs` and `--no-portforward` make the no-logs, no-diagnostics choice explicit. The bundle stores Kubernetes objects in their JSON API representation, not as separate `.yaml` files. To capture every resource type the collector allows in the selected namespaces, leave out `--resources` and `--exclude-resources`.
+`inspect` verifies the archive. `--contents` lists its files; `--redactions` shows replacement counts by location and rule, never the original values. Redaction happens automatically during collection: this flag only displays the report and does not create or change the archive. Object names, labels and other non-credential information remain in the capture; use **Review and send** if you need to remove more before sharing.
 
-In PowerShell, use `\.\flightbay.exe` instead of `./flightbay`; the flags are the same. Flightbay writes a verified `.tar.zst` bundle, which the recipient can inspect with the same binary or open with `flightbay-desk`.
+In PowerShell, use `.\flightbay.exe` instead of `./flightbay` and put the command on one line.
+
+### On the recipient's machine
+
+Install `flightbay-desk` for your OS and architecture from the same release, then open the file you received:
+
+```bash
+flightbay-desk open flightbay-objects.tar.zst
+```
+
+The desk verifies and opens the archive in a local browser UI. It needs no access to the customer's cluster. With both binaries installed, `flightbay ui flightbay-objects.tar.zst` opens the same desk. An objects-only capture supports resource browsing, search and checks based on the captured objects; log and proxy views need those categories to have been collected.
 
 ## Try it with the sample
 
