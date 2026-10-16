@@ -9,12 +9,16 @@ brew tap tjorourke/flightbay https://github.com/tjorourke/flightbay
 brew install flightbay
 ```
 
+If Homebrew asks you to trust this third-party formula (Homebrew 7), run `brew trust --formula tjorourke/flightbay/flightbay`, then repeat `brew install flightbay`.
+
 This installs both `flightbay` and `flightbay-desk`. To update them later:
 
 ```bash
 brew update
 brew upgrade flightbay
 ```
+
+If source-install symlinks already occupy `/opt/homebrew/bin/flightbay` and `flightbay-desk`, use `brew link --overwrite flightbay` after installation to switch those links to Homebrew. The source-built binaries in `~/go/bin` remain there.
 
 For Linux and Windows, or to install without Homebrew, download the matching archives from [GitHub Releases](https://github.com/tjorourke/flightbay/releases/latest). The collector is `flightbay`; the UI is the separate `flightbay-desk` archive (macOS and Linux). macOS downloads are labelled `darwin`, Apple Silicon is `arm64`, and Intel/AMD is `amd64`.
 

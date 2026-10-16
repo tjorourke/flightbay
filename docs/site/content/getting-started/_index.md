@@ -17,6 +17,8 @@ brew tap tjorourke/flightbay https://github.com/tjorourke/flightbay
 brew install flightbay
 ```
 
+If Homebrew reports that the formula is untrusted, run `brew trust --formula tjorourke/flightbay/flightbay`, then repeat the install. Homebrew 7 requires this for third-party formulae.
+
 The formula installs the collector and the desk. To upgrade both:
 
 ```bash
