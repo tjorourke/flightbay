@@ -1,0 +1,195 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: flightbay-ambient-e2e
+  labels:
+    istio.io/dataplane-mode: ambient
+    app.kubernetes.io/managed-by: flightbay-e2e
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: waypoint
+  namespace: flightbay-ambient-e2e
+  labels:
+    istio.io/waypoint-for: service
+spec:
+  gatewayClassName: istio-waypoint
+  listeners:
+  - name: mesh
+    port: 15008
+    protocol: HBONE
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stable
+  namespace: flightbay-ambient-e2e
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: stable}
+  template:
+    metadata:
+      labels: {app: stable, ha: test}
+    spec:
+      containers:
+      - name: http
+        image: nginx:1.27-alpine
+        command: [/bin/sh, -c]
+        args:
+        - "printf 'server { listen 8080; location / { return 200 \"stable\\n\"; } }' > /etc/nginx/conf.d/default.conf; exec nginx -g 'daemon off;'"
+        ports: [{containerPort: 8080}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: canary
+  namespace: flightbay-ambient-e2e
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: canary}
+  template:
+    metadata:
+      labels: {app: canary}
+    spec:
+      containers:
+      - name: http
+        image: nginx:1.27-alpine
+        command: [/bin/sh, -c]
+        args:
+        - "printf 'server { listen 8080; location / { return 200 \"canary\\n\"; } }' > /etc/nginx/conf.d/default.conf; exec nginx -g 'daemon off;'"
+        ports: [{containerPort: 8080}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: failing
+  namespace: flightbay-ambient-e2e
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: failing}
+  template:
+    metadata:
+      labels: {app: failing, ha: test}
+    spec:
+      containers:
+      - name: http
+        image: nginx:1.27-alpine
+        command: [/bin/sh, -c]
+        args:
+        - "printf 'server { listen 8080; location / { return 503 \"failing\\n\"; } }' > /etc/nginx/conf.d/default.conf; exec nginx -g 'daemon off;'"
+        ports: [{containerPort: 8080}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: slow
+  namespace: flightbay-ambient-e2e
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: slow}
+  template:
+    metadata:
+      labels: {app: slow}
+    spec:
+      containers:
+      - name: http
+        image: python:3.12-alpine
+        command: [python, -u, -c]
+        args:
+        - |
+          from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+          import time
+          class Handler(BaseHTTPRequestHandler):
+              def do_GET(self):
+                  time.sleep(2)
+                  self.send_response(200)
+                  self.end_headers()
+                  self.wfile.write(b'slow\n')
+          ThreadingHTTPServer(('0.0.0.0', 8080), Handler).serve_forever()
+        ports: [{containerPort: 8080}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: caller
+  namespace: flightbay-ambient-e2e
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: caller}
+  template:
+    metadata:
+      labels: {app: caller}
+    spec:
+      containers:
+      - name: curl
+        image: curlimages/curl:8.12.1
+        command: [sleep, "36000"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: front
+  namespace: flightbay-ambient-e2e
+  labels: {istio.io/use-waypoint: waypoint}
+spec:
+  selector: {app: stable}
+  ports: [{name: http, port: 8080, targetPort: 8080, appProtocol: http}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: stable, namespace: flightbay-ambient-e2e}
+spec:
+  selector: {app: stable}
+  ports: [{name: http, port: 8080, targetPort: 8080, appProtocol: http}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: canary, namespace: flightbay-ambient-e2e}
+spec:
+  selector: {app: canary}
+  ports: [{name: http, port: 8080, targetPort: 8080, appProtocol: http}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: direct, namespace: flightbay-ambient-e2e}
+spec:
+  selector: {app: canary}
+  ports: [{name: http, port: 8080, targetPort: 8080, appProtocol: http}]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: slow
+  namespace: flightbay-ambient-e2e
+  labels: {istio.io/use-waypoint: waypoint}
+spec:
+  selector: {app: slow}
+  ports: [{name: http, port: 8080, targetPort: 8080, appProtocol: http}]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ha
+  namespace: flightbay-ambient-e2e
+  labels: {istio.io/use-waypoint: waypoint}
+spec:
+  selector: {ha: test}
+  ports: [{name: http, port: 8080, targetPort: 8080, appProtocol: http}]
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: wrong-parent, namespace: flightbay-ambient-e2e}
+spec:
+  parentRefs:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: waypoint
+    sectionName: missing-listener
+  rules:
+  - backendRefs: [{name: stable, port: 8080}]

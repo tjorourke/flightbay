@@ -124,6 +124,7 @@ func parseSize(s string) (int64, error) {
 }
 
 func openCmd() *cobra.Command {
+	var testKubeconfig string
 	var listen, workdir, throttle, shell, baseline string
 	var identities, deferCats, flowFiles []string
 	var noBrowser, noTerminal, allowRemote, keep bool
@@ -240,7 +241,7 @@ func openCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			srv := &server.Server{WS: ws, Token: deskToken(), WorkDir: workdir, BaseURL: base, Terminal: !noTerminal, Shell: shell, DeskBinary: exe,
+			srv := &server.Server{WS: ws, Token: deskToken(), WorkDir: workdir, BaseURL: base, Terminal: !noTerminal, Shell: shell, DeskBinary: exe, AmbientKubeconfig: testKubeconfig,
 				KubeURL: "https://" + kln.Addr().String(), KubeCA: caPEM}
 			ks := &http.Server{Handler: srv.KubeHandler(), TLSConfig: tlsCfg, ReadHeaderTimeout: 10 * time.Second}
 			go func() { _ = ks.ServeTLS(kln, "", "") }()
@@ -393,6 +394,7 @@ func openCmd() *cobra.Command {
 	c.Flags().StringVar(&baseline, "baseline", "", "an earlier bundle from the same customer to compare against (Compare view)")
 	c.Flags().StringSliceVar(&verifyKeys, "verify-key", nil, "public keys to check the bundle's signature against (default: ~/.flightbay/trusted-keys/*.pub)")
 	c.Flags().BoolVar(&reviewMode, "review", false, "open on the Review and send page (removing objects and exporting works from any bundle file without it)")
+	c.Flags().StringVar(&testKubeconfig, "test-kubeconfig", "", "kubeconfig for explicit Ambient wizard test actions (default normal local kubeconfig; context is chosen in the wizard)")
 	c.Flags().StringVar(&signKey, "sign", "", "sign bundles exported from the Review and send page with this private key (flightbay keygen)")
 	c.Flags().StringSliceVar(&encryptTo, "encrypt-to", nil, "encrypt bundles exported from the Review and send page to these age recipients (age1...) or @file")
 	c.Flags().StringVar(&reviewer, "reviewer", "", "who is removing things, recorded in the exported bundle's ledger")

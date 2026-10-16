@@ -23,8 +23,8 @@ file (recent bundles here and in ~/Downloads are listed), or scan a repo. Flags 
 --no-browser, --workdir, --keep and -i carry over to whatever you open from it.
 
 With a bundle it opens that bundle, with a directory the newest flightbay-*.tar.zst in it, and with
---live it mirrors a cluster read-only. --agent (or AGENT=1) opens agent mode: only Traffic, the agentic
-Scorecard, Resources and the Log explorer. Everything else after ui is passed to flightbay-desk.`,
+--live it mirrors a cluster read-only. --agent (or AGENT=1) opens agent mode: Traffic, the agentic
+Scorecard, Resources, the Log explorer and Ambient. Everything else after ui is passed to flightbay-desk.`,
 		Example: `  flightbay ui                                   # the start page
   flightbay ui .                                 # the newest bundle here
   flightbay ui flightbay-DEMO-20260927T1842Z.tar.zst

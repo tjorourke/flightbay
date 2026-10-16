@@ -159,6 +159,10 @@ client refuses anything else before it leaves the process. Scope and redaction a
 flightbay collect uses, with the same flags. Save as bundle writes the mirror as a normal,
 verified bundle at any moment.
 
+The Ambient configuration wizard is separate from this read-only mirror. Only explicit
+dry-run and apply-for-testing actions use a separately selected real kubeconfig context
+to create owned test configuration; the mirror transport and snapshot API remain read-only.
+
 ```text
 flightbay-desk live [flags]
 ```
@@ -291,6 +295,7 @@ Examples:
 | `--reviewer string` | who is removing things, recorded in the exported bundle's ledger |
 | `--shell string` | shell for the terminal (default /bin/bash) |
 | `--sign string` | sign bundles exported from the Review and send page with this private key (flightbay keygen) |
+| `--test-kubeconfig string` | kubeconfig for explicit Ambient wizard test actions (default normal local kubeconfig; context is chosen in the wizard) |
 | `--throttle string` | limit import speed, e.g. 512KiB (rehearse slow uploads) |
 | `--verify-key strings` | public keys to check the bundle's signature against (default: ~/.flightbay/trusted-keys/*.pub) |
 | `--workdir string` | workspace directory (default ~/.flightbay/workspaces/ws-*) |

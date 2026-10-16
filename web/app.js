@@ -58,6 +58,7 @@ function parseHash() {
   if (view === 'posture' || view === 'bestpractices') { location.replace('#scorecard' + (query ? '?' + query : '')); }
   if ((view === 'scorecard' || view === 'posture') && p.has('tab')) S.pst.tab = p.get('tab');
   if (view === 'resources' && p.has('resource')) { S.res.resource = p.get('resource'); S.res.group = p.get('group') || ''; }
+  if (view === 'ambient' && p.has('service') && S.ambient) { S.ambient.key = JSON.stringify([p.get('cluster') || S.cluster, p.get('namespace') || '', p.get('service')]); S.ambient.route = p.get('route') || ''; }
   if (view === 'reach') { location.replace('#traffic?tab=agents' + (p.get('agent') ? '&agent=' + encodeURIComponent(p.get('agent')).replace(/%2F/gi, '/') : '')); S.view = 'traffic'; return; }
   // Activity is now the gateway layer of Traffic; keep old links working.
   if (view === 'activity') { location.replace('#traffic?layer=gateway' + (p.get('caller') ? '&caller=' + encodeURIComponent(p.get('caller')) : '')); S.view = 'traffic'; return; }
@@ -79,7 +80,7 @@ async function render() {
   const seq = ++S.renderSeq;
   const navView = S.view === 'navigator' ? 'resources' : S.view;
   document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('active', a.dataset.view === navView));
-  const views = {navigator, search, overview, scorecard: posture, reach, resources, logs, timeline, findings, compare, proxies, coverage, ...(typeof reviewPage === 'function' ? {review: reviewPage} : {}), ...(typeof trafficPage === 'function' ? {traffic: trafficPage} : {})};
+  const views = {navigator, search, overview, scorecard: posture, reach, resources, logs, timeline, findings, compare, proxies, coverage, ...(typeof reviewPage === 'function' ? {review: reviewPage} : {}), ...(typeof trafficPage === 'function' ? {traffic: trafficPage} : {}), ...(typeof ambientPage === 'function' ? {ambient: ambientPage} : {})};
   const fn = views[S.view] || overview;
   $('#crumb').textContent = S.ws ? `Workspace / ${S.ws.case ? 'Case ' + S.ws.case : 'Snapshot'} / ${S.view}` : 'Workspace';
   try {
@@ -142,7 +143,7 @@ function morphKids(cur, next) {
 
 // Each view links to its page in the built-in documentation.
 const docPages = {overview: 'desk/overview/', search: 'desk/search/', navigator: 'desk/navigator/', resources: 'desk/resources/', logs: 'desk/logs/', timeline: 'desk/timeline/',
-  findings: 'desk/findings/', scorecard: 'desk/scorecard/', traffic: 'desk/traffic/', compare: 'desk/compare/', proxies: 'desk/proxy-configs/', coverage: 'desk/coverage/', review: 'collect/review/'};
+  findings: 'desk/findings/', scorecard: 'desk/scorecard/', ambient: 'desk/ambient/', traffic: 'desk/traffic/', compare: 'desk/compare/', proxies: 'desk/proxy-configs/', coverage: 'desk/coverage/', review: 'collect/review/'};
 function head(title, sub, actions = '') {
   const doc = docPages[S.view];
   const help = doc ? `<a class="help-link" href="/docs/${doc}" target="_blank" rel="noopener" title="How to use ${esc(title)}">? Docs</a>` : '';
@@ -396,7 +397,7 @@ async function loadWorkspace() {
 
 // Agent mode (AGENT=1): only the views about agents. Links to any other
 // view land on Traffic.
-const AGENT_VIEWS = ['traffic', 'scorecard', 'resources', 'navigator', 'logs', 'search', 'review'];
+const AGENT_VIEWS = ['traffic', 'scorecard', 'resources', 'navigator', 'logs', 'search', 'review', 'ambient'];
 function agentMode() {
   document.body.classList.add('agent-mode');
   document.title = 'Flightbay agent';
@@ -1946,6 +1947,7 @@ async function openObject(ref, tab = 'summary') {
     const dc = $('#d-compare'); if (dc) dc.onclick = () => { S.compare = {group: o.group, resource: o.resource, namespace: o.namespace, name: o.name, kind: o.kind}; closeDrawer(); nav('compare'); };
     const cp = $('#d-copy'); if (cp) cp.onclick = () => navigator.clipboard.writeText(d.yaml).then(() => toast('YAML copied'), () => toast('Clipboard unavailable'));
     if (typeof rvWireObject === 'function') rvWireObject();
+    if (typeof ambientWireObject === 'function') ambientWireObject(o);
   };
   draw();
 }
@@ -2555,7 +2557,7 @@ function closeModal() { $('#modal-root').innerHTML = ''; }
 
 function openSearch() {
   modal('Jump to an object or view', `<input id="gs" style="width:100%" placeholder="Any object: name, label, image, hostname. Try kind: ns: label:" autocomplete="off"><div id="gs-res" class="search-results"></div>`);
-  const views = ['navigator', 'search', 'overview', 'scorecard', ...(feature('traffic') || feature('reach') ? ['traffic'] : []), 'resources', 'logs', 'timeline', 'findings', 'compare', 'proxies', 'coverage'].filter(v => !S.ws?.agent || AGENT_VIEWS.includes(v));
+  const views = ['navigator', 'search', 'overview', 'scorecard', 'ambient', ...(feature('traffic') || feature('reach') ? ['traffic'] : []), 'resources', 'logs', 'timeline', 'findings', 'compare', 'proxies', 'coverage'].filter(v => !S.ws?.agent || AGENT_VIEWS.includes(v));
   let hits = [], sel = 0;
   const draw = () => {
     $('#gs-res').innerHTML = hits.map((h, i) => `<button class="${i === sel ? 'sel' : ''}" data-i="${i}">${h.all ? `<span class="green">⌕</span> Search everything for “${esc(h.all)}”<small>Search page</small>` : h.view ? `<span class="green">↗</span> ${esc(h.view)}<small>view</small>` : `<span class="badge">${esc(h.kind)}</span>${esc(h.namespace ? h.namespace + '/' : '')}${esc(h.name)}${h.snippet ? ` <span class="muted mono" style="font-size:10px">…${esc(h.snippet.slice(0, 70))}…</span>` : ''}<small>${esc(h.cluster)}</small>`}</button>`).join('');
@@ -2726,7 +2728,7 @@ async function liveRefresh() {
   if (S.view === 'compare') return;
   // Review and send works on a frozen copy of the mirror: redrawing it would
   // only lose what you are in the middle of choosing.
-  if (S.view === 'review') return;
+  if (S.view === 'review' || S.view === 'ambient') return;
   // Patch the page in place rather than rebuilding it, so scroll positions,
   // text selections, open panels and zoom survive new data.
   const main = $('#main'), top = main?.scrollTop || 0, wy = scrollY;

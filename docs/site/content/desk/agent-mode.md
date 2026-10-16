@@ -22,7 +22,7 @@ flightbay ui --agent flightbay-DEMO-20260927T1842Z.tar.zst
 
 | | Agent mode |
 |---|---|
-| Navigation | **Traffic**, **Scorecard**, **Resources** and **Log explorer**, in that order. The other pages are gone from the sidebar, and a link or bookmark to one of them lands on Traffic. |
+| Navigation | **Traffic**, **Scorecard**, **Resources**, **Log explorer** and **Ambient**. Other investigation pages are hidden from the sidebar. Review remains accessible through the top-bar button for opened bundles. |
 | First page | [Traffic](/desk/traffic/), instead of the Overview. The brand reads **flightbay agent** and links to Traffic. |
 | Scorecard | Only the agentic area: agentgateway, kagent, MCP, A2A and Agent Registry. The fix-first list keeps only agentic problems and is numbered from 1 again. See [Scorecard](/desk/scorecard/). |
 | Live mirror | **Save as bundle** and **Export and sign** are hidden. The mirror is read-only either way. |

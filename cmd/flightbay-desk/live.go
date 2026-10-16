@@ -46,7 +46,11 @@ It only reads. The requests it makes are get, list, watch and pods/log (plus por
 supported components when --diagnostics is given and you ask for a refresh). A guard in the
 client refuses anything else before it leaves the process. Scope and redaction are the ones
 flightbay collect uses, with the same flags. Save as bundle writes the mirror as a normal,
-verified bundle at any moment.`,
+verified bundle at any moment.
+
+The Ambient configuration wizard is separate from this read-only mirror. Only explicit
+dry-run and apply-for-testing actions use a separately selected real kubeconfig context
+to create owned test configuration; the mirror transport and snapshot API remain read-only.`,
 		Example: `  flightbay-desk live --context kind-mesh1 --namespaces kagent,istio-system
   flightbay-desk live --context prod --namespaces payments --exclude-resources configmaps,secrets
   flightbay-desk live --context mesh1 --diagnostics --max-log-streams 50
@@ -180,7 +184,7 @@ verified bundle at any moment.`,
 			if err != nil {
 				return err
 			}
-			srv := &server.Server{WS: ws, Token: deskToken(), WorkDir: workdir, BaseURL: base, Terminal: !noTerminal, Shell: shell, DeskBinary: exe,
+			srv := &server.Server{WS: ws, Token: deskToken(), WorkDir: workdir, BaseURL: base, Terminal: !noTerminal, Shell: shell, DeskBinary: exe, AmbientKubeconfig: kubeconfig,
 				KubeURL: "https://" + kln.Addr().String(), KubeCA: caPEM}
 			if live.DiagnosticsEnabled() {
 				srv.RefreshDiagnostics = live.RefreshDiagnostics

@@ -8,7 +8,7 @@ S.rv = {data: null, plan: null, preview: null, previewErr: '', busy: false, tab:
 async function apiPost(path, body) {
   const r = await fetch(path, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json', Accept: 'application/json'}, body: JSON.stringify(body)});
   const out = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(out.error || r.statusText);
+  if (!r.ok) { const err = new Error(out.error || r.statusText); err.body = out; err.status = r.status; throw err; }
   return out;
 }
 

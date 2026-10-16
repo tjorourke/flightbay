@@ -43,6 +43,7 @@ flightbay ui .                              # open the newest capture here in yo
 | Choose what is collected | [Collecting a snapshot](/collect/), [Scope](/collect/scope/), [Logs](/collect/logs/) |
 | What is never collected, and how redaction works | [Secrets and redaction](/collect/secrets-and-redaction/) |
 | Proxy dumps, istiod debug output and metrics | [Proxy and control-plane diagnostics](/collect/diagnostics/) |
+| Ambient route attachment, L4/L7 configuration and test application | [Ambient investigation and configuration](/desk/ambient/) |
 | Who called whom: access logs and flow logs | [Observed traffic](/collect/observed-traffic/) |
 | Least-privilege RBAC for the collector | [RBAC](/collect/rbac/) |
 | Decide what to send, and take out the rest | [Reviewing before you send](/collect/review/) |

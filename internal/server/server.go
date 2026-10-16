@@ -95,6 +95,11 @@ type Server struct {
 	// Signer signs reviewed exports of a live mirror (--sign); the Review
 	// and send page can choose or create another.
 	Signer *sign.PrivateKey
+	// AmbientKubeconfig is used only by explicit wizard dry-run/apply actions,
+	// never by the read-only snapshot API or live mirror transport.
+	AmbientKubeconfig string
+	AmbientStateDir   string
+	ambientS          ambientState
 
 	once   sync.Once
 	api    http.Handler
@@ -284,6 +289,13 @@ func (s *Server) Handler() http.Handler {
 	api("/api/logs/search", s.logSearch)
 	api("/api/logs/context", s.logContext)
 	api("/api/findings", s.findings)
+	api("/api/ambient", s.ambientInventory)
+	api("/api/ambient/investigate", s.ambientInvestigation)
+	api("/api/ambient/capabilities", s.ambientCapabilities)
+	api("/api/ambient/plan", s.ambientPlan)
+	api("/api/ambient/contexts", s.ambientContexts)
+	api("/api/ambient/test", s.ambientTest)
+	api("/api/ambient/tests", s.ambientTests)
 	api("/api/timeline", s.timeline)
 	api("/api/diff", s.diff)
 	api("/api/search", s.search)

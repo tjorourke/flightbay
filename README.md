@@ -36,6 +36,7 @@ Browse captured resources with `kubectl` or a k9s-style navigator, search logs i
 - **Keeping the evidence.** Open a point-in-time capture after a pod has restarted or the cluster has changed, and compare it with another capture.
 - **Controlling what leaves the cluster.** Select namespaces and resource types, redact credentials during collection, and review or remove data before sending it. Signing and encryption are optional.
 - **Finding related problems.** Search objects and logs, inspect traffic and proxy state, and follow findings to their evidence and suggested fixes.
+- **Ambient attachment and configuration.** Follow Service-to-waypoint attachment, explain rejected route parents and controller status, then generate supported L4/L7 YAML. The Ambient wizard can separately dry-run, apply and clean up a test plan in an explicitly selected real cluster.
 
 ![Overview of a snapshot](docs/images/overview.png)
 
@@ -324,6 +325,7 @@ make test                                     # unit tests
 test/e2e/e2e.sh                               # kind cluster with planted faults: collector, UI, kubectl, k9s, search, SQL
 MESH_CONTEXT=kind-mesh1 test/e2e/mesh.sh      # proxy diagnostics against an existing ambient cluster (read-only)
 test/e2e/reach.sh                             # agent reach on kind + Istio ambient: applies the generated fixes, proves traffic blocked (make e2e-reach)
+python3 test/e2e/ambient.py --context kind-mesh1 # ambient investigation, generated policies/routing/rate limits, live traffic and cleanup in a dedicated namespace
 FLIGHTBAY_SCALE=10000000 go test ./internal/store -run TestScale -v -timeout 60m
 docker build -t flightbay-desk .              # UI image with kubectl, k9s, istioctl, stern, jq and yq
 go run ./scripts/screenshots -mesh BUNDLE     # retake docs/images from the sample bundle and a capture with agents (own headless Chrome)

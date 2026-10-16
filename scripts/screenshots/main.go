@@ -46,6 +46,8 @@ type shot struct {
 }
 
 var shots = []shot{
+	{name: "ambient-investigation", desk: "ambient", hash: "ambient", theme: "dark", setup: `(async () => { const a = S.ambient.inventory.services.find(s => s.namespace === 'flightbay-ambient-e2e' && s.name === 'front'); if (!a) throw new Error('needs the ambient e2e capture'); S.ambient.key = amKey(a); S.ambient.route = 'wrong-parent'; await render(); })()`},
+	{name: "ambient-wizard", desk: "ambient", hash: "ambient", theme: "dark", setup: `(async () => { const a = S.ambient.inventory.services.find(s => s.namespace === 'flightbay-ambient-e2e' && s.name === 'front'); if (!a) throw new Error('needs the ambient e2e capture'); S.ambient.key = amKey(a); S.ambient.tab = 'wizard'; S.ambient.tasks = {'weighted-routing':true}; S.ambient.settings = {port:8080,backends:[{name:'stable',port:8080,weight:90},{name:'canary',port:8080,weight:10}]}; await render(); S.ambient.plan = await apiPost('api/ambient/plan',amRead()); await render(); document.querySelector('#am-plan').scrollIntoView({block:'start'}); })()`},
 	{name: "start", desk: "start", hash: "", theme: "dark", setup: `document.querySelector('[data-card=file]').click()`},
 	{name: "overview", desk: "sample", hash: "overview", theme: "dark"},
 	{name: "search", desk: "sample", hash: "search", theme: "dark"},
@@ -91,10 +93,11 @@ func main() {
 	chrome := flag.String("chrome", defaultChrome(), "Chrome or Chromium binary")
 	sample := flag.String("sample", filepath.Join(root, "examples/sample-bundle.tar.zst"), "the sample bundle")
 	mesh := flag.String("mesh", "", "a capture with kagent agents, for Agent reach, Navigator and the Scorecard summary (FLIGHTBAY_ENTERPRISE is set for it)")
+	ambient := flag.String("ambient", "", "the capture produced by test/e2e/ambient.py, for ambient investigation and wizard images")
 	out := flag.String("out", filepath.Join(root, "docs/images"), "where the PNGs go")
 	only := flag.String("only", "", "comma-separated shot names")
 	flag.Parse()
-	if err := run(*desk, *chrome, *sample, *mesh, *out, *only); err != nil {
+	if err := run(*desk, *chrome, *sample, *mesh, *ambient, *out, *only); err != nil {
 		fmt.Fprintln(os.Stderr, "screenshots:", err)
 		os.Exit(1)
 	}
@@ -112,7 +115,7 @@ func defaultChrome() string {
 	return "google-chrome"
 }
 
-func run(deskBin, chromeBin, sample, mesh, out, only string) error {
+func run(deskBin, chromeBin, sample, mesh, ambient, out, only string) error {
 	tmp, err := os.MkdirTemp("", "fb-shots-")
 	if err != nil {
 		return err
@@ -141,6 +144,10 @@ func run(deskBin, chromeBin, sample, mesh, out, only string) error {
 		}
 		if (s.desk == "mesh" || s.desk == "agent") && mesh == "" {
 			fmt.Printf("skip %s: needs -mesh\n", s.name)
+			continue
+		}
+		if s.desk == "ambient" && ambient == "" {
+			fmt.Printf("skip %s: needs -ambient\n", s.name)
 			continue
 		}
 		needed[s.desk] = true
@@ -241,6 +248,11 @@ func run(deskBin, chromeBin, sample, mesh, out, only string) error {
 	}
 	if needed["agent"] {
 		if err := start("agent", mesh, []string{"FLIGHTBAY_ENTERPRISE=1", "FLIGHTBAY_AGENT=1"}); err != nil {
+			return err
+		}
+	}
+	if needed["ambient"] {
+		if err := start("ambient", ambient, nil); err != nil {
 			return err
 		}
 	}
