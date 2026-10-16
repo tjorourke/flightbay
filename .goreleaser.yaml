@@ -52,15 +52,8 @@ signs:
     args: ["sign-blob", "--yes", "--output-signature=${signature}", "--output-certificate=${certificate}", "${artifact}"]
     artifacts: checksum
 
-homebrew_casks:
-  - name: flightbay
-    ids: [flightbay]
-    # Published only when TAP_GITHUB_TOKEN (a token that can push to the tap) is set.
-    repository: {owner: tjorourke, name: homebrew-tap, token: "{{ .Env.TAP_GITHUB_TOKEN }}"}
-    skip_upload: '{{ if .Env.TAP_GITHUB_TOKEN }}false{{ else }}true{{ end }}'
-    homepage: https://github.com/tjorourke/flightbay
-    description: Capture an offline, redacted snapshot of Kubernetes clusters
-
+# Formula/flightbay.rb is updated by the release workflow after both binaries
+# are published. This repo is also the tap, so no cross-repository token is needed.
 krews:
   - name: flightbay
     ids: [flightbay]

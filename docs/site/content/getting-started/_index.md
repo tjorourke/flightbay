@@ -10,6 +10,20 @@ This page takes you from nothing to an open workspace in a few minutes: install 
 
 ## Install
 
+### Homebrew on macOS
+
+```bash
+brew tap tjorourke/flightbay https://github.com/tjorourke/flightbay
+brew install flightbay
+```
+
+The formula installs the collector and the desk. To upgrade both:
+
+```bash
+brew update
+brew upgrade flightbay
+```
+
 ### From source
 
 You need Go 1.27, and a C compiler for `flightbay-desk`, because it embeds DuckDB through cgo. The collector (`flightbay`) is pure Go and builds without one.
@@ -25,17 +39,26 @@ If you only need to capture a cluster, `flightbay` on its own is enough. `flight
 
 ### Release binaries
 
-Release builds are set up (`.goreleaser.yaml` and `.github/workflows/release.yml`) but nothing has been published yet. When a release is cut it will include:
+Download published binaries from [GitHub Releases](https://github.com/tjorourke/flightbay/releases/latest):
 
 | Artefact | What it is |
 |---|---|
-| `flightbay_<version>_<os>_<arch>.tar.gz` | The collector for Linux, macOS and Windows on amd64 and arm64, with a signed checksum file and an SBOM |
-| Homebrew cask `flightbay` | The collector, from the `tjorourke/homebrew-tap` tap |
-| krew plugin `flightbay` | The collector as `kubectl flightbay` |
-| `flightbay-desk` | Built natively per platform, because of cgo |
+| `flightbay_<version>_<os>_<arch>.tar.gz` | The collector for Linux and macOS on amd64 and arm64, with checksums and an SBOM |
+| `flightbay_<version>_windows_<arch>.zip` | The Windows collector |
+| Homebrew formula `flightbay` | The collector and desk, from this repository's tap |
+| `flightbay-desk_<version>_<os>_<arch>.tar.gz` | The desk for macOS and Linux, built natively per platform because of cgo |
 | `ghcr.io/tjorourke/flightbay-desk` | A container image of the desk (see below) |
 
-Until then, build from source.
+For direct macOS and Linux installations from version 0.2.5, upgrade in place:
+
+```bash
+flightbay upgrade --check
+flightbay upgrade
+```
+
+The command verifies release SHA-256 checksums, preserves installation symlinks and updates a desk installed beside the collector. Use `--collector-only` to leave the desk alone, or `--version v0.2.5` to choose a published stable version. Homebrew installations use `brew upgrade flightbay`; Windows installations download and replace the binaries manually. Restart a running desk after an upgrade.
+
+An earlier release needs a one-time download or a Homebrew install to get the upgrade command. A push to `main` alone does not publish binaries; a new version tag runs the release workflow and updates the Homebrew formula.
 
 ### Container image
 

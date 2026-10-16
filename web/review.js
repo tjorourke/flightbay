@@ -44,6 +44,8 @@ function onWorkspace(w) {
   if (el) el.innerHTML = trustBadge(w);
   const link = document.querySelector('.nav a[data-view="review"]');
   if (link) link.classList.toggle('hidden', !w.exportable);
+  const save = $('#review-save');
+  if (save) save.classList.toggle('hidden', !w.exportable || !!w.live);
   if (w.reviewLanding && !rvStarted) {
     rvStarted = true;
     if (!location.hash || location.hash === '#overview') location.hash = 'review';

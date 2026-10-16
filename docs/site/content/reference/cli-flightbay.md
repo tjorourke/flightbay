@@ -344,6 +344,34 @@ Examples:
   AGENT=1 flightbay ui --live --context kind-mesh1                # the same
 ```
 
+## flightbay upgrade
+
+Download the latest published stable release, verify its SHA-256 checksums, and replace
+flightbay in place. A flightbay-desk installed beside it is upgraded too. Symlinks are preserved.
+Downloads are verified and staged before either binary is replaced. Requires a writable install
+directory. Supports macOS and Linux. Homebrew installations should use brew upgrade flightbay.
+
+A push to main does not publish binaries. A new version tag runs the release workflow.
+
+```text
+flightbay upgrade [flags]
+```
+
+Examples:
+
+```bash
+  flightbay upgrade --check
+  flightbay upgrade
+  flightbay upgrade --version v0.2.5
+  flightbay upgrade --collector-only
+```
+
+| Flag | Description |
+|---|---|
+| `--check` | show the installed collector version and available release without changing files |
+| `--collector-only` | upgrade only flightbay, leaving a sibling desk unchanged |
+| `--version string` | published stable version to install (default latest) |
+
 ## flightbay version
 
 Print the version

@@ -1,5 +1,27 @@
 # Flightbay
 
+## Install
+
+On macOS, add the tap once and install:
+
+```bash
+brew tap tjorourke/flightbay https://github.com/tjorourke/flightbay
+brew install flightbay
+```
+
+This installs both `flightbay` and `flightbay-desk`. To update them later:
+
+```bash
+brew update
+brew upgrade flightbay
+```
+
+For Linux and Windows, or to install without Homebrew, download the matching archives from [GitHub Releases](https://github.com/tjorourke/flightbay/releases/latest). The collector is `flightbay`; the UI is the separate `flightbay-desk` archive (macOS and Linux). macOS downloads are labelled `darwin`, Apple Silicon is `arm64`, and Intel/AMD is `amd64`.
+
+For a direct macOS or Linux installation, `flightbay upgrade` installs the latest published stable release in place and also updates a desk installed beside it. `flightbay upgrade --check` checks the available release without installing. Homebrew-managed binaries are updated with `brew upgrade flightbay` instead. Restart a running desk after upgrading. Versions before 0.2.5 need a one-time download or a Homebrew installation to get the upgrade command.
+
+## About Flightbay
+
 Flightbay helps platform teams and support engineers investigate Kubernetes problems without needing ongoing access to the affected cluster. A customer captures the namespaces they want to share into a redacted `.tar.zst` file, sends that file through their usual support channel, and the recipient opens it locally to investigate offline.
 
 Browse captured resources with `kubectl` or a k9s-style navigator, search logs in an OpenSearch-style explorer, inspect proxy configuration, and check Kubernetes, Istio and agentic workloads for security and operational problems. You can also connect read-only to a live cluster or scan deployment manifests before they are deployed. Flightbay does not upload captures; you choose what to collect and how to share it.
@@ -24,20 +46,9 @@ Run `flightbay ui` with no arguments and it opens a start page instead, with thr
 
 ![The start page](docs/images/start.png)
 
-## Install
-
-From source (Go 1.27, and a C compiler for the UI, which embeds DuckDB):
-
-```bash
-git clone https://github.com/tjorourke/flightbay && cd flightbay
-make install                  # installs flightbay and flightbay-desk into $(go env GOPATH)/bin
-```
-
-Make sure `$(go env GOPATH)/bin` is on your `PATH`. Release builds (Homebrew, `kubectl flightbay` through krew, and a container image) are set up in `.goreleaser.yaml` and `.github/workflows/release.yml`.
-
 ## Capture a file to send to support
 
-The customer needs only the `flightbay` collector and their existing kubeconfig access. Download the matching `flightbay_<version>_<os>_<arch>` archive from [GitHub Releases](https://github.com/tjorourke/flightbay/releases/latest): `.tar.gz` for macOS and Linux, `.zip` for Windows. Extract it into a working directory; Flightbay uses the normal kubeconfig location or `$KUBECONFIG`.
+The customer needs only the `flightbay` collector and their existing kubeconfig access. Install with Homebrew above, or download the matching `flightbay_<version>_<os>_<arch>` archive from [GitHub Releases](https://github.com/tjorourke/flightbay/releases/latest): `.tar.gz` for macOS and Linux, `.zip` for Windows. Extract it into a working directory; Flightbay uses the normal kubeconfig location or `$KUBECONFIG`. The examples below use `./flightbay` for an extracted binary; use `flightbay` for a Homebrew installation.
 
 ### On the customer's machine
 
@@ -292,6 +303,16 @@ The MCP server only talks to your local workspace. Snapshot data reaches a model
 - **The UI** (`flightbay-desk`) stores logs, objects and events in DuckDB in a temporary workspace. It keeps about 90 bytes per log line on disk: 10 million lines is 0.8 GB and loads in about 35 seconds. Searching 10 million lines takes 20–250 ms for structured queries and under a second for free text. It also serves a read-only Kubernetes API, which is what `kubectl` and `k9s` talk to.
 
 ## Development
+
+Building from source needs Go 1.27 and a C compiler for the desk, which embeds DuckDB:
+
+```bash
+git clone https://github.com/tjorourke/flightbay
+cd flightbay
+make install
+```
+
+This installs both binaries into `$(go env GOPATH)/bin`; make sure that directory is on your `PATH`. Run `make install` again to install changes from your local checkout. Publishing a new `vX.Y.Z` tag builds release archives and updates the Homebrew formula; pushing to `main` alone does not publish a new binary.
 
 ```bash
 make build                                    # ./bin/flightbay and ./bin/flightbay-desk

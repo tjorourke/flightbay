@@ -26,6 +26,7 @@ flightbay ui --agent flightbay-DEMO-20260927T1842Z.tar.zst
 | First page | [Traffic](/desk/traffic/), instead of the Overview. The brand reads **flightbay agent** and links to Traffic. |
 | Scorecard | Only the agentic area: agentgateway, kagent, MCP, A2A and Agent Registry. The fix-first list keeps only agentic problems and is numbered from 1 again. See [Scorecard](/desk/scorecard/). |
 | Live mirror | **Save as bundle** and **Export and sign** are hidden. The mirror is read-only either way. |
+| Opened bundle | **Review and save…** in the top bar opens review and exports a new copy, without needing `--review`. |
 
 The object search at the top of the page, the terminal, the helpers and SQL are unchanged.
 

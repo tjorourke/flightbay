@@ -396,7 +396,7 @@ async function loadWorkspace() {
 
 // Agent mode (AGENT=1): only the views about agents. Links to any other
 // view land on Traffic.
-const AGENT_VIEWS = ['traffic', 'scorecard', 'resources', 'navigator', 'logs', 'search'];
+const AGENT_VIEWS = ['traffic', 'scorecard', 'resources', 'navigator', 'logs', 'search', 'review'];
 function agentMode() {
   document.body.classList.add('agent-mode');
   document.title = 'Flightbay agent';

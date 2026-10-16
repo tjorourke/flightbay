@@ -45,6 +45,26 @@ jobs:
           gh release upload "$GITHUB_REF_NAME" "$A" "$A.sha256" "$A.sig" "$A.pem" --clobber
         env: {GH_TOKEN: "${{ github.token }}"}
 
+  homebrew:
+    needs: [collector, desk]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: main, fetch-depth: 0}
+      - name: update formula from published archives
+        run: |
+          python3 scripts/update-homebrew.py --version "$GITHUB_REF_NAME"
+          git add Formula/flightbay.rb
+          if ! git diff --cached --quiet; then
+            git commit -m "Homebrew: publish $GITHUB_REF_NAME"
+            git push origin HEAD:main
+          fi
+        env:
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+
   image:
     needs: collector
     runs-on: ubuntu-24.04

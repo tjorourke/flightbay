@@ -35,3 +35,5 @@ jobs:
         with: {hugo-version: "0.160.0", extended: true}
       - name: build documentation site
         run: hugo --source docs/site --destination /tmp/flightbay-docs
+      - name: validate Homebrew formula
+        run: ruby -c Formula/flightbay.rb

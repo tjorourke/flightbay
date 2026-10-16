@@ -15,12 +15,14 @@ The collection policy decides what Flightbay reads. Review is the second look, a
 Capture without `--encrypt-to` (you need to be able to read the bundle to review it), then open it as usual:
 
 ```bash
-flightbay ui flightbay-01234567-20260928T1012Z.tar.zst --sign flightbay-signing.key
+flightbay ui flightbay-01234567-20260928T1012Z.tar.zst
 ```
 
 Any bundle opened from a file has a **Review and send** page in the sidebar, and a **Remove from the bundle** button on every object. Every other page works as normal, so you can search, read logs and open objects to decide what should go, then remove it where you found it. Nothing is removed until you choose to.
 
-The page is not there when the desk was fed a stream (`flightbay collect -o - | flightbay-desk open -`) or is mirroring a live cluster, because there is no file to export from. A live mirror can be saved as a bundle first.
+Choose **Review and save…** in the top bar to make your choices and **Export bundle** to save a new `NAME-reviewed.tar.zst` next to the original. No `--review` flag is needed; that flag only opens this page first. The original file is never overwritten. Signing is optional and can be chosen on the page.
+
+The page is not there when the desk was fed a stream (`flightbay collect -o - | flightbay-desk open -`), because there is no file to export from. In live mode, **Export and sign…** freezes a copy of the mirror for review.
 
 | Option on `flightbay ui` | Does |
 |---|---|
