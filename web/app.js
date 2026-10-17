@@ -2661,7 +2661,7 @@ function boot() {
   const es = new EventSource('api/state/stream');
   es.addEventListener('state', e => onState(JSON.parse(e.data)));
 }
-boot();
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot,{once:true});else boot();
 
 // ---------- live mode ----------
 // flightbay-desk live mirrors a running cluster. The server says so in
