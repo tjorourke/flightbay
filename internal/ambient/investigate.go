@@ -37,6 +37,7 @@ type Step struct {
 	Title    string        `json:"title"`
 	State    string        `json:"state"` // pass, fail, warning, unknown, na
 	Detail   string        `json:"detail"`
+	NextStep string        `json:"nextStep,omitempty"`
 	Evidence []Evidence    `json:"evidence,omitempty"`
 	FixYAML  string        `json:"fixYaml,omitempty"`
 	Actions  []Remediation `json:"actions,omitempty"`

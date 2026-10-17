@@ -172,7 +172,7 @@ function amWirePicker() {
 }
 after.ambient = () => {
   const A = S.ambient; amWirePicker();
-  document.querySelectorAll('.am-check').forEach((el,i)=>el.querySelector('.panel-body')?.insertAdjacentHTML('beforeend',amOfficial(A.result.steps[i].docs)));
+  document.querySelectorAll('.am-check').forEach((el,i)=>{const step=A.result.steps[i];if(step.nextStep)el.querySelector('.panel-body>p')?.insertAdjacentHTML('afterend',`<div class="notice info"><div><strong>Suggested next step</strong><p>${esc(step.nextStep)}</p></div></div>`);el.querySelector('.panel-body')?.insertAdjacentHTML('beforeend',amOfficial(step.docs));});
   document.querySelectorAll('.am-task-card').forEach(el=>{const id=el.querySelector('[data-amtask]')?.dataset.amtask;const holder=document.createElement('article');holder.className='am-task-option';el.replaceWith(holder);holder.appendChild(el);holder.insertAdjacentHTML('beforeend',amTaskLinks([id]));});
   document.querySelectorAll('.am-unavailable>div').forEach(el=>{const task=A.capabilities?.find(c=>c.title===el.querySelector('strong')?.textContent);if(task)el.insertAdjacentHTML('beforeend',amTaskLinks([task.id]));});
   if(A.tab==='wizard'&&A.phase===3) $('#am-plan .panel-body')?.insertAdjacentHTML('beforeend',amTaskLinks(A.mode?[A.mode]:Object.keys(A.tasks).filter(k=>A.tasks[k])));

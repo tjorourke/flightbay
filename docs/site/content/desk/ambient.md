@@ -85,6 +85,8 @@ Existing edits produce before/after field previews and scoped merge snippets rat
 
 ## From a failed step to a remedy
 
+Genuine waypoint listener failures include a **Suggested next step**, a **Review waypoint fix** button and the matching official waypoint guide. The button opens waypoint selection/deployment and a binding preview; it does not immediately edit the Gateway. When agentgateway's generated Service lacks port 15008, the guidance points to controller reconciliation rather than manually modifying that managed Service. Missing capture evidence prompts a refresh or collection before making changes.
+
 Known actionable checks offer a wizard button. For example, **Ready endpoints → Investigate and fix endpoints** shows collection state, matching Pods, readiness, declared ports and matching Deployments.
 
 ![Evidence-aware endpoint recovery](/images/ambient-recovery.png)

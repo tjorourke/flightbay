@@ -119,6 +119,16 @@ func NewView(ws *store.Workspace, c, kind, ns, name, route string) (*View, error
 			switch {
 			case s.ID == "waypoint" && (s.State == "fail" || s.State == "warning" || s.State == "unknown"):
 				s.Actions = append(s.Actions, Remediation{"waypoint", "Set up or select a waypoint", "Bind this Service, its namespace, or selected shared namespaces.", nil})
+			case s.ID == "waypoint-listener" && s.State == "fail":
+				s.NextStep = "Check the selected GatewayClass and its listener configuration against the official waypoint guide below. You can choose a working waypoint or deploy a replacement, then review the Service or namespace binding change before applying it."
+				for _, ev := range s.Evidence {
+					if ev.Ref.Kind == "Service" {
+						s.NextStep = "The declared agentgateway HTTP mesh listener is valid, but its generated Service is missing port 15008. Check Gateway status and controller reconciliation using the official guide below, then refresh inventory. Do not add the port directly to the controller-managed Service. If needed, review binding to a working or replacement waypoint."
+					}
+				}
+				s.Actions = append(s.Actions, Remediation{"waypoint", "Review waypoint fix", "Choose a working waypoint or deploy a replacement, then review the binding change. Opening the wizard does not apply anything.", nil})
+			case s.ID == "waypoint-listener" && s.State == "unknown":
+				s.NextStep = "Refresh inventory in live mode, or collect the selected Gateway and its generated Service in the waypoint namespace. The HTTP mesh listener on 15088 can be valid; confirm the generated Service exposes HBONE on 15008 before changing configuration."
 			case s.ID == "endpoints" && (s.State == "fail" || s.State == "unknown"):
 				s.Actions = append(s.Actions, Remediation{"endpoints", "Investigate and fix endpoints", "Check collection scope, intended workload selector, replica count and target port before choosing a configuration change.", nil})
 			}
