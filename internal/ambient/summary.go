@@ -16,10 +16,14 @@ type ServiceSummary struct {
 	WaypointClass  string `json:"waypointClass,omitempty"`
 	Routes         int    `json:"routes"`
 	Infrastructure bool   `json:"infrastructure"`
+	Scope          string `json:"scope,omitempty"`
+	Takeover       bool   `json:"takeover"`
 }
 
 func summariseService(ws *store.Workspace, svc *store.Object) ServiceSummary {
 	r := ServiceSummary{Ref: reference(svc), State: "unknown"}
+	r.Scope = svc.Labels()["solo.io/service-scope"]
+	r.Takeover = svc.Labels()["solo.io/service-takeover"] == "true"
 	r.Infrastructure = svc.Labels()["gateway.networking.k8s.io/gateway-name"] != ""
 	for _, ep := range ws.List(svc.Cluster, "discovery.k8s.io", "endpointslices", svc.Namespace, nil) {
 		if ep.Labels()["kubernetes.io/service-name"] != svc.Name {

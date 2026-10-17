@@ -11,7 +11,7 @@ const amOpts = (xs, value) => xs.map(x => { const v = typeof x === 'object' ? x.
 const amInput = (id, label, value, type = 'text') => `<label>${label}<input id="am-${id}" type="${type}" value="${esc(value ?? '')}"></label>`;
 function amInvalidate() { S.ambient.plan = null; S.ambient.validation = null; $('#am-plan')?.replaceChildren(); }
 function amResetDraft() {const A=S.ambient;Object.assign(A,{route:'',tasks:{},settings:{},mode:'',edit:null,repairRef:null,error:'',message:'',context:'',phase:1,previewTab:'summary'});amInvalidate();}
-function amChoose(o) { const A = S.ambient; amResetDraft(); A.key = amKey(o); A.kind=o.kind; A.serviceFilter=''; history.replaceState(null,'','#ambient'); render(); }
+function amChoose(o) { const A = S.ambient; amResetDraft(); A.key = amKey(o); A.kind=o.kind; A.serviceFilter=''; history.replaceState(null,'','#ambient'); if(S.cluster&&S.cluster!==o.cluster){A.clusterScope=o.cluster;setCluster(o.cluster);}else render(); }
 function amClear(wizard=false){const A=S.ambient;amResetDraft();A.key='';A.kind='';A.result=null;A.serviceFilter='';if(wizard)A.tab='wizard';history.replaceState(null,'','#ambient');render().then(()=>$('#am-object-search')?.focus());}
 function ambientObjectButton(o) { return ['Service', 'Namespace', 'Pod', 'Gateway', 'HTTPRoute', 'ServiceEntry'].includes(o.kind) ? '<button id="d-ambient">Investigate ambient →</button>' : ''; }
 function ambientWireObject(o) { if (!$('#d-ambient')) $('#d-describe')?.insertAdjacentHTML('afterend', ambientObjectButton(o)); const b = $('#d-ambient'); if (b) b.onclick = () => { amResetDraft();S.ambient.key = amKey(o);S.ambient.kind=o.kind;S.ambient.tab='investigate';closeDrawer();nav('ambient'); }; }
@@ -32,11 +32,11 @@ async function ambientPage() {
   const picker = amPicker(A.objects, target);
   const tabs = `<nav class="pst-tabs am-tabs">${[['investigate', 'Investigate'], ['map', 'Attachment map'], ['wizard', 'Configure']].map(([id, label]) => `<button class="pst-tab ${A.tab === id ? 'on' : ''}" data-amtab="${id}">${label}</button>`).join('')}</nav>`;
   if (A.tab === 'wizard') { if (!A.contexts) A.contexts = await api('api/ambient/contexts').catch(e => { A.error = e.message; return []; }); A.tests = await api('api/ambient/tests').catch(() => A.tests); }
-  let body = amLanding();
+  let body = A.tab==='map'?amClusterCanvas(null):amLanding();
   if (target) {
     A.result = await api('api/ambient/investigate', amQuery());
     if (A.tab === 'investigate') body = amInvestigation(target);
-    else if (A.tab === 'map') body = amGraph(target);
+    else if (A.tab === 'map') body = amClusterCanvas(target) + (target.kind==='Namespace'||target.kind==='Gateway'?'':amGraph(target));
     else if(A.phase===3&&A.plan)body=amPlanPanel();
     else if (A.mode === 'waypoint' || A.mode === 'enrol-namespace') body = amWaypoint(target);
     else if (svc && ['endpoints', 'route-parent'].includes(A.mode)) body = amRecovery(svc);
@@ -172,6 +172,7 @@ function amWirePicker() {
 }
 after.ambient = () => {
   const A = S.ambient; amWirePicker();
+  amWireClusterCanvas();
   document.querySelectorAll('.am-check').forEach((el,i)=>{const step=A.result.steps[i];if(step.nextStep)el.querySelector('.panel-body>p')?.insertAdjacentHTML('afterend',`<div class="notice info"><div><strong>Suggested next step</strong><p>${esc(step.nextStep)}</p></div></div>`);el.querySelector('.panel-body')?.insertAdjacentHTML('beforeend',amOfficial(step.docs));});
   document.querySelectorAll('.am-task-card').forEach(el=>{const id=el.querySelector('[data-amtask]')?.dataset.amtask;const holder=document.createElement('article');holder.className='am-task-option';el.replaceWith(holder);holder.appendChild(el);holder.insertAdjacentHTML('beforeend',amTaskLinks([id]));});
   document.querySelectorAll('.am-unavailable>div').forEach(el=>{const task=A.capabilities?.find(c=>c.title===el.querySelector('strong')?.textContent);if(task)el.insertAdjacentHTML('beforeend',amTaskLinks([task.id]));});

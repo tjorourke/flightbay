@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/tjorourke/flightbay/internal/store"
@@ -93,7 +92,6 @@ func Capabilities(ws *store.Workspace, c, ns, service string) []Task {
 	security := hasResource(ws, c, "security.istio.io", "authorizationpolicies")
 	dr := hasResource(ws, c, "networking.istio.io", "destinationrules")
 	selector := len(M(Path(svc.Obj, "spec", "selector"))) > 0
-	l7reason := "Needs a selected waypoint of a supported class and the relevant collected API type. The target API server validates its installed schema before applying."
 	out := []Task{
 		{"l4-default-deny", "Deny by default for the selected workload", "L4 ztunnel", security && selector, "Creates an empty ALLOW policy on the Service's workload selector. Other ALLOW policies are additive; this does not override them."},
 		{"l4-allow-namespace", "Allow calls from a namespace", "L4 ztunnel", security && selector && wpName == "", "For direct ambient traffic without a selected waypoint. Behind a waypoint, ztunnel sees the waypoint identity; use an L7 policy for original callers."},
@@ -109,13 +107,54 @@ func Capabilities(ws *store.Workspace, c, ns, service string) []Task {
 		{"global-rate-limit", "Shared/global rate limit", "L7 capability-dependent", false, "Requires a controller-specific rate-limit service, its backend and descriptors. Not generated without that integration's configuration."},
 	}
 	for i := range out {
-		if !out[i].Supported {
-			if strings.HasPrefix(out[i].Layer, "L7") {
-				out[i].Reason += " " + l7reason
+		if out[i].Supported {
+			continue
+		}
+		why := ""
+		switch out[i].ID {
+		case "service-failover":
+			why = "Not implemented in Flightbay. Enabling this task requires a tested generator for the selected controller's priority-failover API; installing more CRDs or changing weights will not enable it."
+		case "global-rate-limit":
+			why = "Not implemented in Flightbay. This needs both a configured external rate-limit service and a tested Flightbay integration for its backend and descriptors. Installing the service alone will not enable this task."
+		case "l4-allow-namespace":
+			if wpName != "" {
+				why = "This direct-path template is disabled because a waypoint is selected. For this topology, use a waypoint policy that checks the original caller; Flightbay does not generate that namespace rule here. Do not remove the waypoint just to enable this card."
+			}
+		case "methods", "load-balancing", "endpoint-failover", "locality-failover":
+			if !istio {
+				why = "This Flightbay generator requires an Istio/Envoy waypoint. To use this template, select or deploy a supported Istio waypoint and review the binding change. Keeping agentgateway requires a tested agentgateway-specific generator in Flightbay; installing Istio CRDs alone is not enough."
+			} else if out[i].ID == "methods" {
+				why = "AuthorizationPolicy was not found in captured API discovery. Confirm the supported Istio security API is installed, then refresh inventory or collect that API."
+			} else if !dr {
+				why = "DestinationRule was not found in captured API discovery. Confirm the supported Istio networking API is installed, then refresh inventory or collect that API."
 			} else {
-				out[i].Reason += " Needs a captured workload selector and the corresponding API type."
+				why = "Fewer than two endpoint regions were established. Provide healthy endpoints in at least two regions, label their Nodes with topology.kubernetes.io/region, and capture Nodes plus EndpointSlices."
+			}
+		case "weighted-routing", "timeouts":
+			if !istio && !agent {
+				why = "No supported waypoint controller was established for this Service. Select or deploy a supported waypoint and capture its Gateway and GatewayClass before using this template."
+			} else {
+				why = "HTTPRoute was not found in captured API discovery. Confirm the controller's supported Gateway API CRDs are installed, then refresh inventory or collect that API."
+			}
+		case "rate-limit":
+			if !agent {
+				why = "This Flightbay template requires an agentgateway waypoint. Select or deploy a supported agentgateway waypoint and review the binding change; Flightbay has no equivalent local-rate-limit generator for an Istio/Envoy waypoint."
+			} else {
+				why = "The policy API matching the selected agentgateway controller was not captured. Confirm that edition's policy CRD is installed and refresh inventory. An OSS policy CRD does not substitute for the Enterprise policy CRD, or vice versa."
 			}
 		}
+		if why == "" {
+			if !selector {
+				why = "This Service has no captured workload selector. This template needs an explicitly selected workload; inspect the intended Service and collect its full spec before configuring a workload policy."
+			} else {
+				api := "AuthorizationPolicy"
+				if out[i].ID == "strict-mtls" {
+					api = "PeerAuthentication"
+				}
+				why = api + " was not found in captured API discovery. Confirm the supported Istio security API is installed, then refresh inventory or collect that API."
+			}
+		}
+		out[i].Reason += " " + why
 	}
 	return out
 }

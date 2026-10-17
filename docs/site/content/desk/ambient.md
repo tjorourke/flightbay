@@ -71,9 +71,17 @@ Agentgateway waypoint controllers can declare an HTTP mesh listener on port 1508
 
 The **Attachment map** tab shows namespace defaults, selected waypoints, routes, backend Services, policies and selected workloads. Cards open the captured objects. Backend weights and calculated percentages are shown per route rule; a 90/10 split on one rule is not added to weights on another rule. This is a configuration relationship diagram, not observed traffic.
 
-For a **Namespace** or **Gateway**, the map opens a compact Service overview with the total captured count and a filter. All captured Services are included, including gateway infrastructure. Cards show ready/eligible endpoint counts, the selected waypoint and related-route count. **Explore connections** opens the individual Service map; **Configure** starts its wizard. A Service with missing endpoint evidence says so explicitly, rather than receiving a generic Unknown badge by default.
+The map opens a **cluster canvas** with a labelled box for every context in the capture, including contexts with no matching Services. The header distinguishes the kubeconfig context from the captured mesh cluster/network identity. A selected object's namespace limits the Service cards by default; **All namespaces** expands the scope. The map can also be opened without selecting an object to inspect the whole capture. The canvas includes all captured contexts even when the workspace filter selects one cluster.
 
-![Namespace overview with all captured Services and real endpoint counts](/images/ambient-namespace.png)
+Drag a cluster header to move its whole box, or a card's handle to move that card inside its cluster. Focus a handle and use arrow keys for keyboard movement; Shift increases the step. Drag empty canvas space to pan, scroll to explore, or use **− / +**, Ctrl/Command plus mouse wheel, **Fit**, and **Reset layout**. Layout changes stay in the current browser session and do not modify Kubernetes resources. They survive navigation within the desk, but not a page reload.
+
+All captured Services in the scope are included, including gateway infrastructure. Cards show endpoint counts, waypoint selection and related-route counts; a filter narrows by Service name or namespace. **Connections** opens the individual Service relationships below the canvas; **Configure** starts its wizard. Missing endpoint evidence is explained explicitly. Global-scope and local-name takeover labels are shown when captured; these labels alone do not prove remote membership or working cross-cluster traffic.
+
+Captured `istio-eastwest` and `istio-remote` Gateways have distinct transport/peer cards with listener ports, addresses and current Programmed status. Remote mesh identities resolve to context names only when the captured identity uniquely matches. An unresolved peer stays labelled as such. The map does not invent gateway resources, merge same-named Services, or infer peering merely because two contexts are present. These cards describe configuration and controller status; active traffic verification remains separate.
+
+![Cluster canvas showing captured mesh1 and mesh2 contexts, filtered to reviews Services](/images/ambient-clusters.png)
+
+Namespace setup in the Configure tab also retains the compact Service overview with endpoint counts.
 
 ![Service attachment map with routes, policies and backend weights](/images/ambient-map.png)
 
@@ -133,6 +141,8 @@ For logs and proxy configuration, use a normal capture with `--diagnostics` inst
 ## Configuration wizard
 
 Choose a deployed Service and open **Configure**. Capabilities depend on the selected waypoint class and the API types visible in the capture. Unavailable tasks are grouped under an expandable explanation.
+
+Each unavailable task explains its actual blocker and the next step: a different waypoint implementation, a missing captured API, insufficient region evidence, a caller-identity limitation, or a generator not yet implemented in Flightbay. An unavailable template is not a claim that the product lacks the feature. Installing more CRDs alone does not make an Istio/Envoy template work with agentgateway, and installing a global rate-limit service alone does not add a Flightbay generator.
 
 The Configure tab follows **Target → Task → Configure → Review**. Supported tasks appear as short cards with official documentation links. Unavailable tasks are kept under **Other tasks · why unavailable?** rather than filling the main screen. Back preserves your choices. The review opens on a concise change summary; **Generated YAML** is a separate tab. Cluster testing is an optional expandable section after review.
 

@@ -152,6 +152,29 @@ func TestPolicyCRDsAloneDoNotEstablishActiveEdition(t *testing.T) {
 	}
 }
 
+func TestCapabilityGuidanceIdentifiesControllerAndRegionBlockers(t *testing.T) {
+	ws := fixture(t)
+	wp := Target(ws, "c", "Gateway", "app", "wp")
+	M(wp.Obj["spec"])["gatewayClassName"] = "enterprise-agentgateway-waypoint"
+	for _, task := range Capabilities(ws, "c", "app", "front") {
+		if task.ID == "methods" && (task.Supported || !strings.Contains(task.Reason, "Istio/Envoy waypoint") || !strings.Contains(task.Reason, "generator in Flightbay")) {
+			t.Fatalf("controller mismatch did not explain the template limitation: %+v", task)
+		}
+		if task.ID == "l4-allow-namespace" && (task.Supported || !strings.Contains(task.Reason, "original caller")) {
+			t.Fatalf("waypoint topology did not explain the caller-identity limitation: %+v", task)
+		}
+	}
+	M(wp.Obj["spec"])["gatewayClassName"] = "istio-waypoint"
+	for _, task := range Capabilities(ws, "c", "app", "front") {
+		if task.ID == "methods" && !task.Supported {
+			t.Fatalf("matching waypoint did not enable the existing method template: %+v", task)
+		}
+		if task.ID == "locality-failover" && (task.Supported || !strings.Contains(task.Reason, "topology.kubernetes.io/region")) {
+			t.Fatalf("missing region evidence was mistaken for a controller problem: %+v", task)
+		}
+	}
+}
+
 // Opt-in network check: ordinary unit tests remain offline and deterministic.
 func TestAmbientOfficialLinksLive(t *testing.T) {
 	if os.Getenv("FLIGHTBAY_CHECK_AMBIENT_DOCS") != "1" {

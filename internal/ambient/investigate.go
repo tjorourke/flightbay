@@ -65,6 +65,7 @@ type Service struct {
 	Regions []string `json:"regions"`
 }
 type Inventory struct {
+	Topology       Topology         `json:"topology"`
 	Environments   []Environment    `json:"environments"`
 	Objects        []Ref            `json:"objects"`
 	Waypoints      []WaypointChoice `json:"waypoints"`
@@ -146,6 +147,7 @@ func List(ws *store.Workspace) Inventory {
 		return a.Cluster+"/"+a.Namespace+"/"+a.Name < b.Cluster+"/"+b.Namespace+"/"+b.Name
 	})
 	expandInventory(ws, &r)
+	r.Topology = capturedTopology(ws)
 	return r
 }
 
