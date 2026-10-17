@@ -2683,13 +2683,20 @@ function renderLiveBanner() {
   if (badge) {
     const up = lv.connected !== false;
     badge.className = `badge ${up ? 'green' : 'amber'}`;
-    badge.title = up ? `Connected to ${lv.server || lv.context}. Read-only: get, list, watch and pods/log only.` : `Reconnecting to ${lv.server || lv.context} (${lv.reconnects} reconnects so far). The mirror shows the last state received.`;
-    badge.innerHTML = `<span class="dot"></span> Live · ${esc(lv.context)} · ${num(lv.objectsWatched)} objects · ${num(lv.logStreams)}${lv.logStreamsTotal > lv.logStreams ? ' of ' + num(lv.logStreamsTotal) : ''} log streams · last change ${esc(liveAgo(lv.lastEvent))}${up ? '' : ' · reconnecting'}`;
+    badge.title = up ? `Connected to ${lv.server || lv.context}. Read-only: get, list, watch and pods/log only.` : `Some cluster connections or resource streams are retrying (${lv.reconnects} retries so far). Open connection details; healthy streams continue updating.`;
+    badge.innerHTML = `<span class="dot"></span> Live · ${esc(lv.context)} · ${num(lv.objectsWatched)} objects · ${num(lv.logStreams)}${lv.logStreamsTotal > lv.logStreams ? ' of ' + num(lv.logStreamsTotal) : ''} log streams · last change ${esc(liveAgo(lv.lastEvent))}${up ? '' : ' · some streams retrying'}`;
   }
   const t = $('#snapshot-time');
   if (t) t.innerHTML = `<span class="muted">Read-only mirror${lv.logLinesDropped ? ` · ${num(lv.logLinesDropped)} old log lines dropped` : ''}</span> <button id="live-save" class="ghost" title="Write the mirror as it is now to a normal, verified bundle">${LIVE.saving ? 'Saving…' : 'Save as bundle'}</button> <button id="live-review" class="primary" title="Choose what to send, sign it and export it">Export and sign…</button>`;
   const b = $('#live-save'); if (b) b.onclick = liveSave;
   const rv = $('#live-review'); if (rv) rv.onclick = () => nav('review');
+  let fleet=$('#live-cluster-status');
+  if(lv.clusters?.length){
+    if(!fleet){fleet=document.createElement('details');fleet.id='live-cluster-status';document.querySelector('#snapshot-bar')?.appendChild(fleet);}
+    const summary=`<summary>${lv.clusters.filter(c=>c.phase==='live').length}/${lv.clusters.length} clusters initially synced · connection details</summary>`;
+    const rows=lv.clusters.map(c=>`<div><strong>${esc(c.context)}</strong> <span class="badge ${c.phase==='live'&&c.connected?'green':'amber'}">${esc(c.phase==='live'?(c.connected?'Watching':'Watching · some streams retrying'):c.phase==='failed'?'Retrying connection':'Initial sync')}</span><small>${esc(c.server)} · ${num(c.objectsWatched)} objects · ${num(c.watches)} watches · ${num(c.logStreams)} log streams${c.retryingStreams?' · '+num(c.retryingStreams)+' resource streams retrying':''}${c.error?' · '+esc(c.error):''}</small></div>`).join('');
+    const html=summary+rows;if(fleet.innerHTML!==html){const open=fleet.open;fleet.innerHTML=html;fleet.open=open;}
+  }
 }
 
 async function liveSave() {
@@ -2728,7 +2735,11 @@ async function liveRefresh() {
   if (S.view === 'compare') return;
   // Review and send works on a frozen copy of the mirror: redrawing it would
   // only lose what you are in the middle of choosing.
-  if (S.view === 'review' || S.view === 'ambient') return;
+  if (S.view === 'review') return;
+  if(S.view==='ambient'){
+    if(S.ambient.tab==='map'&&!document.querySelector('.am-dragging,.am-panning')){S.ambient.inventory=null;await render();}
+    return;
+  }
   // Patch the page in place rather than rebuilding it, so scroll positions,
   // text selections, open panels and zoom survive new data.
   const main = $('#main'), top = main?.scrollTop || 0, wy = scrollY;
@@ -2806,10 +2817,10 @@ async function liveRefresh() {
 
 // Proxy configs: Refresh diagnostics for the selected pod (live with --diagnostics).
 async function liveRefreshDiagnostics(podKey, btn) {
-  const [, , ns, pod] = podKey.split('/');
+  const [cluster, , ns, pod] = podKey.split('/');
   if (btn) { btn.disabled = true; btn.textContent = 'Refreshing…'; }
   try {
-    const r = await fetch('api/live/refresh-diagnostics?' + new URLSearchParams({pod: `${ns}/${pod}`}), {method: 'POST', credentials: 'same-origin'});
+    const r = await fetch('api/live/refresh-diagnostics?' + new URLSearchParams({cluster,pod: `${ns}/${pod}`}), {method: 'POST', credentials: 'same-origin'});
     const body = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(body.error || r.statusText);
     toast(`Refreshed ${ns}/${pod}: ${body.files} files`);

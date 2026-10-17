@@ -191,6 +191,25 @@ func TestFindingsReadinessForLiveAndBundleWorkspaces(t *testing.T) {
 	}
 }
 
+func TestLiveFindingsTrackTheirOwnClusterReadiness(t *testing.T) {
+	ws := workspace(t, true)
+	defer ws.Close()
+	h := ws.Header()
+	h.Source = store.SourceLive
+	ws.SetHeader(h)
+	for _, phase := range []string{store.PhaseLoading, store.PhaseLive} {
+		ws.SetState(func(s *store.ImportState) {
+			s.Phase = store.PhaseLive
+			s.Live = &store.LiveState{Live: true, Clusters: []store.LiveClusterState{{LiveState: store.LiveState{Context: "mesh1"}, Phase: phase}, {LiveState: store.LiveState{Context: "mesh2"}, Phase: store.PhaseFailed}}}
+		})
+		for _, f := range Run(ws) {
+			if f.Cluster == "mesh1" && f.Provisional != (phase != store.PhaseLive) {
+				t.Fatalf("wrong provisional status for %s during %s", f.Rule, phase)
+			}
+		}
+	}
+}
+
 func TestAmbientWithoutZtunnel(t *testing.T) {
 	ws := store.New()
 	p, _ := policy.Profile("standard")

@@ -25,7 +25,7 @@
   <div class="start-cards" id="cards">
     <button class="start-card" data-card="live" aria-expanded="false" aria-controls="form-live">
       <span class="start-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.2"/><path d="M8.2 15.8a5.4 5.4 0 0 1 0-7.6M15.8 8.2a5.4 5.4 0 0 1 0 7.6M5.3 18.7a9.5 9.5 0 0 1 0-13.4M18.7 5.3a9.5 9.5 0 0 1 0 13.4"/></svg></span>
-      <strong>Live stream a cluster</strong>
+      <strong>Live stream clusters</strong>
       <span class="muted">Mirror a cluster you can reach with kubectl, read-only.</span>
     </button>
     <button class="start-card" data-card="file" aria-expanded="false" aria-controls="form-file">
@@ -39,16 +39,20 @@
       <span class="muted">Check manifests, Helm charts and Kustomize overlays before they are deployed.</span>
     </button>
 
-    <section class="start-form hidden" id="form-live" data-for="live" aria-label="Live stream a cluster">
+    <section class="start-form hidden" id="form-live" data-for="live" aria-label="Live stream selected clusters">
       <div class="start-grid">
         <label><span class="lbl">Kubeconfig</span>
-          <span class="row"><input id="lv-kubeconfig" placeholder="$KUBECONFIG or ~/.kube/config" spellcheck="false"><button id="lv-reload" title="Read the kubeconfig again">Reload</button></span>
+          <span class="row"><textarea id="lv-kubeconfig" rows="2" placeholder="One kubeconfig path per line; blank uses $KUBECONFIG or ~/.kube/config" spellcheck="false"></textarea><button id="lv-reload" title="Read contexts from all listed kubeconfig files">Load contexts</button></span>
           <small id="lv-files" class="muted"></small>
+          <span><button type="button" id="lv-choose-configs">Choose kubeconfig files…</button><input id="lv-config-files" type="file" multiple class="hidden"></span>
+          <small class="muted">Choose multiple self-contained files, or enter local paths above, one per line, to retain relative certificate references. Files stay in this local session and are not exported.</small>
         </label>
-        <label><span class="lbl">Context</span>
-          <select id="lv-context"></select>
+        <div class="start-context-picker"><span class="lbl">Contexts</span>
+          <input id="lv-context-filter" placeholder="Filter contexts by name or API server…" aria-label="Filter kubeconfig contexts">
+          <span class="row"><button type="button" id="lv-select-all">Select visible</button><button type="button" id="lv-select-none">Clear selection</button><span id="lv-selected-count" aria-live="polite"></span></span>
+          <div id="lv-context" class="start-contexts" role="group" aria-label="Kubeconfig contexts"></div>
           <small id="lv-server" class="muted"></small>
-        </label>
+        </div>
         <label><span class="lbl">Namespaces</span>
           <input id="lv-ns" placeholder="all namespaces; e.g. kagent,istio-*" spellcheck="false">
           <small class="muted">Comma separated, globs allowed. Empty reads every namespace.</small>

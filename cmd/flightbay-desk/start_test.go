@@ -125,6 +125,13 @@ func TestDeskTokenFromEnvironment(t *testing.T) {
 	}
 }
 
+func TestLiveArgsPreservesMultipleContextAndConfigSelections(t *testing.T) {
+	a := liveArgs(server.LiveRequest{Contexts: []string{"mesh1", "mesh2"}, Kubeconfigs: []string{"/tmp/one", "/tmp/two"}})
+	if flagValue(a, "--context") != "mesh1,mesh2" || flagValue(a, "--kubeconfig") != "/tmp/one"+string(os.PathListSeparator)+"/tmp/two" {
+		t.Fatalf("multiple selections lost during handoff: %v", a)
+	}
+}
+
 // fakeAPIServer serves just enough discovery for a dry run.
 func fakeAPIServer(t *testing.T) *httptest.Server {
 	t.Helper()

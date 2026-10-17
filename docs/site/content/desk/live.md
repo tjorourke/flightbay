@@ -1,7 +1,7 @@
 ---
 title: Live mode
 weight: 15
-description: Mirror a running cluster into the desk, read-only, and keep it up to date. Objects are watched, events and logs arrive as they happen, and Save as bundle turns the mirror into a normal capture.
+description: Stream selected Kubernetes contexts into one read-only workspace, track each connection independently, and export a multicluster bundle.
 ---
 
 # Live mode
@@ -11,7 +11,31 @@ Most of the time the desk opens a bundle: a capture taken earlier, possibly by s
 ```bash
 flightbay-desk live --context kind-mesh1 --namespaces kagent,istio-system
 flightbay ui --live --context kind-mesh1 --namespaces kagent,istio-system   # the same, from the collector binary
+flightbay-desk live --context kind-mesh1,kind-mesh2 --namespaces bookinfo,istio-system --cluster-scoped
 ```
+
+## Select multiple kubeconfigs and contexts
+
+On the start page, open **Live stream clusters**. Tick the contexts you want; **Filter contexts**, **Select visible** and **Clear selection** work on the list. All selected contexts stream into the same workspace.
+
+To use several kubeconfig files, select them together with **Choose kubeconfig files…**, or enter their local paths one per line and press **Load contexts**. Blank uses the normal `$KUBECONFIG` or `~/.kube/config`. Uploaded files stay private to the local session and are not exported. Uploads need self-contained credential/certificate data or absolute file references; use local paths for configs with relative file references. Context, cluster and user entry names must be unique across files: ambiguous duplicates are refused rather than silently selecting the first definition. Files and credentials are not rewritten in your source kubeconfigs, and your current context is not changed.
+
+![Select mesh1 and mesh2 together on the Live page](/images/live-multicluster-select.png)
+
+Choose namespaces and options once for the session. **Preview** shows each cluster's discovery plan and RBAC. The access check evaluates each context; shared options default off if a selected context cannot use them. **Start live** hands over on the same URL. One unreachable context retries independently and does not stop healthy readers.
+
+The command-line equivalent accepts comma-separated or repeated `--context` values. Multiple kubeconfig paths use the OS path-list separator (`:` on macOS/Linux, `;` on Windows), or the normal `$KUBECONFIG` mechanism:
+
+```bash
+flightbay-desk live --kubeconfig "$HOME/.kube/mesh1:$HOME/.kube/mesh2" \
+  --context kind-mesh1,kind-mesh2 --namespaces bookinfo,istio-system --cluster-scoped
+```
+
+Objects, logs and events retain their cluster identity even when names match. **All clusters** combines them; the cluster filter scopes other views. The Ambient Attachment map shows a separate box for each context, and refreshes its inventory as the live mirror changes while preserving layout and viewport position.
+
+Expand **connection details** in the banner for initial-sync status, API server, object/watch/log-stream counts and retry errors per cluster. A partial watch failure is distinguished from an initial connection failure. Findings remain provisional for a cluster until its initial lists finish; missing collection coverage still blocks absence-based rules.
+
+![Both selected clusters watching with independent status and stream counts](/images/live-multicluster-status.png)
 
 ## Live or a capture?
 
@@ -61,7 +85,7 @@ Live mode takes the scope flags of `flightbay collect`, registered the same way,
 | `--profile`, `--config`, `--collect` | the starting profile, a policy file, the categories |
 | `--since`, `--log-streams`, `--log-pods`, `--log-containers`, `--no-logs` | which logs are followed and how far back they start |
 | `--redact-extra` | extra redaction patterns |
-| `--qps`, `--burst` | the client's request rate; the initial list is faster with a higher rate |
+| `--qps`, `--burst` | each cluster client's request rate; the initial list is faster with a higher rate |
 
 Every object, event and log line goes through the collector's redactor before it enters the workspace. Secret values never survive it: in `metadata` mode Secrets are read through the metadata API and their data never arrives; in `keys` mode the redactor keeps key names and lengths and drops the values before anything is stored.
 
@@ -71,7 +95,7 @@ For each running pod in scope the desk follows the current container of every co
 
 | Flag | Default | What it does |
 |---|---|---|
-| `--max-log-streams` | 100 | streams followed at once |
+| `--max-log-streams` | 100 | streams followed per cluster |
 | `--log-tail` | 500 | history per stream when following starts |
 | `--max-log-lines` | 1,000,000 | lines kept in the workspace; the oldest are dropped first |
 
@@ -83,7 +107,7 @@ Lines are buffered per stream and stored about once a second. If a stream produc
 
 ## Proxy and control-plane diagnostics
 
-Proxy dumps and control-plane debug output are not streamed. With `--diagnostics`, live mode reads them once when the mirror is ready, exactly as `flightbay collect --diagnostics` would: the same endpoints, the same namespace filtering, the same redaction. After that, **Refresh diagnostics** on the [Proxy configs](/desk/proxy-configs/) page reads the selected pod again over port-forward and replaces its files. The API behind it is `POST /api/live/refresh-diagnostics?pod=namespace/name`.
+Proxy dumps and control-plane debug output are not streamed. With `--diagnostics`, each reader collects them once when ready, with the same scope and redaction as the collector. **Refresh diagnostics** on the [Proxy configs](/desk/proxy-configs/) page refreshes the selected pod in its cluster. The API is `POST /api/live/refresh-diagnostics?cluster=CONTEXT&pod=namespace/name`; a cluster is required when several are connected.
 
 Without `--diagnostics` there is no port-forward at all, and the guard refuses one if anything tries.
 
@@ -96,7 +120,7 @@ flightbay inspect flightbay-live-kind-mesh1-20260928T170412Z.tar.zst
 flightbay-desk open flightbay-live-kind-mesh1-20260928T170412Z.tar.zst
 ```
 
-Nothing is asked of the cluster when you save. What is in the bundle is what the mirror held, redacted on the way in. The API is `POST /api/live/save`.
+Nothing is asked of the cluster when you save. The bundle contains all selected contexts, their captured objects, logs, events, diagnostics and coverage, redacted on the way in. Initial discovery failures are retained in coverage. A live export is not a distributed atomic snapshot of the Kubernetes API servers. The API is `POST /api/live/save`.
 
 ## Export and sign
 
@@ -110,7 +134,7 @@ The banner that says **Offline snapshot** for a bundle reads, in live mode:
 ● Live · kind-mesh1 · 199 objects · 16 log streams · last change 3s ago     Save as bundle   Export and sign…
 ```
 
-It is green while every watch is connected and amber while any is reconnecting. A watch that drops resumes from the last resourceVersion it saw. A watch whose version has expired (410 Gone) lists again and reconciles, so a missed deletion is still applied.
+It is green while every watch is connected and amber while any is reconnecting. A watch that drops resumes from the last resourceVersion it saw. A watch whose version has expired (410 Gone) lists again and reconciles, so a missed deletion is still applied. APIs which advertise list but not watch, such as Kubernetes componentstatuses, are polled every 30 seconds rather than repeatedly attempting an unsupported watch.
 
 Pages refresh themselves when the mirror changes, at most once every three seconds. A refresh updates the page in place: only what changed is redrawn, so where you have scrolled to (in the page, a table or a YAML block), open findings, graph zoom and the tab you are on stay put. Refreshes wait while you are typing, while you have text selected on the page, while a drawer or dialog is open, and while the tab is hidden. The Log explorer keeps its own **Follow incoming data** switch: off, it tells you how many new lines match; on, it keeps the newest in view.
 
@@ -118,7 +142,7 @@ Ages in tables, certificate lifetimes and `since:` in log queries count from now
 
 ## Terminal, kubectl and k9s
 
-The kubeconfig the desk writes has one context, `<context>@live`, pointing at the desk's read-only API. That API serves the mirror, and its watches deliver `ADDED`, `MODIFIED` and `DELETED` as the mirror changes, so:
+The kubeconfig the desk writes has a `<context>@live` entry per selected context, pointing at the desk's read-only API. It contains the mirror's session credentials, not the source cluster credentials. Select the desired mirror context explicitly when several are present. Its watches deliver `ADDED`, `MODIFIED` and `DELETED` as the mirror changes:
 
 ```bash
 kubectl get pods -n demo -w          # new pods, status changes and deletions scroll past
@@ -131,7 +155,7 @@ The `fb*` helpers work the same way: `fbq` searches the logs as they arrive, `fb
 
 ## Limits
 
-- One cluster per desk. Run a second `flightbay-desk live` on another port for a second cluster.
+- Scope flags apply to every selected cluster; separate per-cluster namespace policies are not configured by this form.
 - The initial list reads every selected type once in each namespace in scope. On a cluster with a lot of CRDs, narrow `--resources` or raise `--qps` to reach the live phase sooner.
 - Only running containers are followed, and only regular containers. Init and ephemeral containers are not followed.
 - Previous logs are read once per restart and appended, so `--previous` shows every previous container seen since live mode started, oldest first.

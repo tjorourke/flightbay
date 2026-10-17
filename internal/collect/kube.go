@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -22,11 +24,70 @@ import (
 	"github.com/tjorourke/flightbay/internal/policy"
 )
 
-// RestConfig loads one kubeconfig context with the policy's rate limits.
-func RestConfig(kubeconfig, context string, p *policy.Policy, userAgent string) (*rest.Config, error) {
+// KubeconfigRules loads one or more local files without ambiguous name merging.
+func KubeconfigRules(kubeconfig string) (*clientcmd.ClientConfigLoadingRules, error) {
 	rules := clientcmd.NewDefaultClientConfigLoadingRules()
 	if kubeconfig != "" {
-		rules.ExplicitPath = kubeconfig
+		paths := strings.FieldsFunc(kubeconfig, func(r rune) bool { return r == rune(os.PathListSeparator) || r == '\n' })
+		rules.Precedence = nil
+		seen := map[string]bool{}
+		for _, path := range paths {
+			path = strings.TrimSpace(path)
+			if strings.HasPrefix(path, "~/") {
+				h, err := os.UserHomeDir()
+				if err != nil {
+					return nil, err
+				}
+				path = filepath.Join(h, path[2:])
+			}
+			if _, err := os.Stat(path); err != nil {
+				return nil, err
+			}
+			if !seen[path] {
+				rules.Precedence = append(rules.Precedence, path)
+				seen[path] = true
+			}
+		}
+		if len(rules.Precedence) == 0 {
+			return nil, fmt.Errorf("no kubeconfig paths supplied")
+		}
+	}
+	// client-go merges names with first-file-wins semantics. Refuse ambiguous
+	// names across files rather than silently connecting to a different cluster.
+	owners := map[string]string{}
+	for _, path := range rules.GetLoadingPrecedence() {
+		raw, err := clientcmd.LoadFromFile(path)
+		if os.IsNotExist(err) && kubeconfig == "" {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		keys := []string{}
+		for name := range raw.Contexts {
+			keys = append(keys, "context "+name)
+		}
+		for name := range raw.Clusters {
+			keys = append(keys, "cluster "+name)
+		}
+		for name := range raw.AuthInfos {
+			keys = append(keys, "user "+name)
+		}
+		for _, key := range keys {
+			if previous, ok := owners[key]; ok && previous != path {
+				return nil, fmt.Errorf("duplicate kubeconfig %s in %s and %s; use uniquely named context, cluster and user entries", key, previous, path)
+			}
+			owners[key] = path
+		}
+	}
+	return rules, nil
+}
+
+// RestConfig loads one kubeconfig context with the policy's rate limits.
+func RestConfig(kubeconfig, context string, p *policy.Policy, userAgent string) (*rest.Config, error) {
+	rules, err := KubeconfigRules(kubeconfig)
+	if err != nil {
+		return nil, err
 	}
 	cfg, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, &clientcmd.ConfigOverrides{CurrentContext: context}).ClientConfig()
 	if err != nil {
@@ -41,9 +102,9 @@ func RestConfig(kubeconfig, context string, p *policy.Policy, userAgent string) 
 // ResolveContexts returns the requested contexts, or the current one, after
 // checking that each exists in the kubeconfig.
 func ResolveContexts(kubeconfig string, contexts []string) ([]string, error) {
-	rules := clientcmd.NewDefaultClientConfigLoadingRules()
-	if kubeconfig != "" {
-		rules.ExplicitPath = kubeconfig
+	rules, err := KubeconfigRules(kubeconfig)
+	if err != nil {
+		return nil, err
 	}
 	raw, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, &clientcmd.ConfigOverrides{}).RawConfig()
 	if err != nil {

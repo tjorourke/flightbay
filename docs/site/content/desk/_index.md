@@ -46,7 +46,7 @@ With nothing to open, `flightbay ui` (and `flightbay-desk open` with no bundle, 
 
 | Card | What it does | The same from the command line |
 |---|---|---|
-| **Live stream a cluster** | Lists your kubeconfig contexts, current one first. Choose namespaces and excluded namespaces. Cluster-scoped objects and proxy diagnostics are enabled when the selected credentials allow them; **Preview** shows the resource types, logs and the RBAC it needs; **Start live** opens the read-only mirror. | `flightbay ui --live --context CTX --namespaces NS --cluster-scoped --diagnostics` |
+| **Live stream clusters** | Select one or more contexts using checkboxes, from the default kubeconfig or multiple selected files. Preview each cluster's resource types and RBAC, then stream them into a shared workspace with per-cluster connection status. | `flightbay ui --live --context CTX1,CTX2 --namespaces NS --cluster-scoped --diagnostics` |
 | **Open a file** | Recent bundles in the current directory and `~/Downloads`, with case, clusters, capture time and size. **Open** investigates one; **Review before sending** opens it in review mode. Drop a file on the page, or paste a path. Encrypted bundles need the identity file. | `flightbay ui BUNDLE`, `flightbay review BUNDLE` |
 | **Open a repo** | A directory or a Git URL (cloned with `git clone --depth 1` into the workspace, with your git credentials). Values files, `--set` pairs, overlay, environment, namespace and release. **Scan and open** scans in process and opens the result; clone errors, an empty scan and charts that fail to render are shown on the page. | `flightbay scan DIR && flightbay ui .` |
 

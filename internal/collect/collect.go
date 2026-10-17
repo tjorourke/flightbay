@@ -258,7 +258,7 @@ func (c *Collector) discover(cluster string, cl Clients) ([]bundle.APIResource, 
 				continue // collected by the events category
 			}
 			ar := bundle.APIResource{Group: gv.Group, Version: gv.Version, Resource: r.Name, Kind: r.Kind, Namespaced: r.Namespaced,
-				SingularName: r.SingularName, ShortNames: r.ShortNames, Categories: r.Categories}
+				SingularName: r.SingularName, ShortNames: r.ShortNames, Categories: r.Categories, Verbs: r.Verbs}
 			seen[key] = true
 			out = append(out, ar)
 		}

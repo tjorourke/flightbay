@@ -43,7 +43,8 @@ function sh(a) {
 function tilde(p) { return ST.home && p.startsWith(ST.home + '/') ? '~' + p.slice(ST.home.length) : p; }
 
 function liveForm() {
-  return {kubeconfig: $('#lv-kubeconfig').value.trim(), context: $('#lv-context').value, namespaces: $('#lv-ns').value.trim(),
+  const kubeconfigs=$('#lv-kubeconfig').value.trim().split(/\n/).map(p=>p.trim()).filter(Boolean);
+  return {kubeconfigs,kubeconfig:kubeconfigs.join(ST.info?.pathListSeparator||':'), contexts:[...document.querySelectorAll('[data-live-context]:checked')].map(e=>e.value), namespaces: $('#lv-ns').value.trim(),
     excludeNamespaces: $('#lv-exns').value.trim(), clusterScoped: $('#lv-cluster').checked, diagnostics: $('#lv-diagnostics').checked};
 }
 
@@ -58,7 +59,7 @@ function cliFor() {
     const f = liveForm();
     a.push('ui', '--live');
     if (f.kubeconfig) a.push('--kubeconfig', f.kubeconfig);
-    if (f.context) a.push('--context', f.context);
+    if (f.contexts.length) a.push('--context', f.contexts.join(','));
     if (f.namespaces) a.push('--namespaces', list(f.namespaces).join(','));
     if (f.excludeNamespaces) a.push('--exclude-namespaces', list(f.excludeNamespaces).join(','));
     if (f.clusterScoped) a.push('--cluster-scoped');
@@ -114,18 +115,24 @@ function openCard(name) {
 // ---------- live ----------
 async function loadContexts() {
   const sel = $('#lv-context');
-  const kc = $('#lv-kubeconfig').value.trim();
-  sel.innerHTML = '<option>Reading the kubeconfig…</option>';
+  const kc = liveForm().kubeconfig;
+  const previous=liveForm().contexts;
+  const seq=ST.contextSeq=(ST.contextSeq||0)+1;
+  sel.textContent = 'Reading the kubeconfigs…';
   try {
     const j = await call('/api/start/contexts' + (kc ? '?kubeconfig=' + encodeURIComponent(kc) : ''));
+    if(seq!==ST.contextSeq)return;
     ST.contexts = j;
     $('#lv-files').textContent = j.files?.length ? 'Read ' + j.files.map(tilde).join(', ') : '';
     if (j.error) { sel.innerHTML = ''; status('#lv-status', j.error, 'red'); updateCLI(); return; }
     status('#lv-status', j.current ? '' : 'The kubeconfig has no current context; pick one.');
-    sel.innerHTML = j.contexts.map(c => `<option value="${esc(c.name)}"${c.name === j.current ? ' selected' : ''}>${esc(c.name)}${c.name === j.current ? ' (current)' : ''}</option>`).join('');
+    sel.innerHTML = j.contexts.map(c => `<label class="start-context" data-context-search="${esc((c.name+' '+c.server).toLowerCase())}"><input type="checkbox" data-live-context value="${esc(c.name)}" ${(previous.length?previous.includes(c.name):c.name===j.current)?'checked':''}><span><strong>${esc(c.name)}</strong>${c.name===j.current?' <small>(current)</small>':''}<small>${esc(c.server||'API server not configured')}${c.namespace?' · '+esc(c.namespace):''}</small></span></label>`).join('');
+    sel.querySelectorAll('[data-live-context]').forEach(e=>e.onchange=contextsChanged);
+    filterContexts();
     showServer();
     checkAccess();
   } catch (e) {
+    if(seq!==ST.contextSeq)return;
     sel.innerHTML = '';
     status('#lv-status', e.message, 'red');
   }
@@ -137,7 +144,7 @@ async function loadContexts() {
 async function checkAccess() {
   const f = liveForm();
   const seq = ++ST.accessSeq;
-  if (!f.context) return;
+  if (!f.contexts.length) return;
   for (const [id, why] of [['#lv-cluster', '#lv-cluster-why'], ['#lv-diagnostics', '#lv-diagnostics-why']]) { $(id).checked = true; $(why).textContent = ''; }
   try {
     const a = await call('/api/start/live-access', f);
@@ -161,15 +168,20 @@ function optionsSummary() {
 }
 
 function showServer() {
-  const c = ST.contexts?.contexts?.find(x => x.name === $('#lv-context').value);
-  $('#lv-server').textContent = c ? [c.server, c.namespace && 'namespace ' + c.namespace].filter(Boolean).join(' · ') : '';
+  const selected=liveForm().contexts;
+  $('#lv-server').textContent = selected.length?'Each selected context streams into the same workspace. Connection and sync status are tracked independently.':'Select one or more contexts.';
+  $('#lv-selected-count').textContent=selected.length+' selected';
 }
 
+function contextsChanged(){++ST.accessSeq;showServer();status('#lv-status','');$('#lv-plan').innerHTML='';updateCLI();checkAccess();}
+function filterContexts(){const q=$('#lv-context-filter').value.toLowerCase();document.querySelectorAll('[data-context-search]').forEach(e=>e.hidden=!e.dataset.contextSearch.includes(q));}
+
 function renderPlan(j) {
-  const p = j.plan || {};
+  const plans=j.plan?.clusters||[j.plan||{}];
+  $('#lv-plan').innerHTML=plans.map((p,index)=>{
   const res = p.resources || [];
   const diag = (p.categories || []).some(c => ['proxies', 'control-plane', 'metrics'].includes(c));
-  $('#lv-plan').innerHTML = `
+  return `
     <div class="start-plan">
       <dl class="metadata">
         <dt>Cluster</dt><dd class="mono">${esc(p.cluster)}</dd>
@@ -180,16 +192,17 @@ function renderPlan(j) {
         ${(p.unavailable || []).map(u => `<dt>Not read</dt><dd>${esc(u)}</dd>`).join('')}
         <dt>Requests</dt><dd>get, list, watch and pods/log only${diag ? ', plus pods/portforward for diagnostics' : ''}. Anything else is refused inside the process. Secret values are never kept.</dd>
       </dl>
-      <div class="row between start-rbac-head"><h3>RBAC it needs</h3><button class="ghost" id="lv-copy-rbac">Copy</button></div>
+      <div class="row between start-rbac-head"><h3>RBAC it needs</h3><button class="ghost" data-copy-rbac="${index}">Copy</button></div>
       <pre class="code start-rbac">${esc(p.rbac)}</pre>
     </div>`;
-  $('#lv-copy-rbac').onclick = () => { navigator.clipboard?.writeText(p.rbac || ''); toast('RBAC copied'); };
+  }).join('');
+  document.querySelectorAll('[data-copy-rbac]').forEach(b=>b.onclick=()=>{navigator.clipboard?.writeText(plans[Number(b.dataset.copyRbac)].rbac||'');toast('RBAC copied');});
 }
 
 async function previewLive() {
   const f = liveForm();
-  if (!f.context) { status('#lv-status', 'Pick a context first.', 'red'); return; }
-  status('#lv-status', 'Reading discovery from ' + f.context + '…');
+  if (!f.contexts.length) { status('#lv-status', 'Pick at least one context first.', 'red'); return; }
+  status('#lv-status', 'Reading discovery from ' + f.contexts.join(', ') + '…');
   $('#lv-preview').disabled = true;
   try {
     const j = await call('/api/start/live-plan', f);
@@ -205,10 +218,10 @@ async function previewLive() {
 
 async function startLive() {
   const f = liveForm();
-  if (!f.context) { status('#lv-status', 'Pick a context first.', 'red'); return; }
+  if (!f.contexts.length) { status('#lv-status', 'Pick at least one context first.', 'red'); return; }
   try {
     await call('/api/start/live', f);
-    opening('Starting live mode on ' + f.context, 'Listing every selected type, then watching. The desk opens as soon as it is connected.');
+    opening('Starting live mode on ' + f.contexts.join(', '), 'Connecting each context independently, then listing and watching into one workspace.');
   } catch (e) { status('#lv-status', e.message, 'red'); }
 }
 
@@ -365,7 +378,15 @@ async function boot() {
   for (const b of document.querySelectorAll('.start-card')) b.onclick = () => openCard(b.dataset.card);
   $('#lv-reload').onclick = () => loadContexts();
   $('#lv-kubeconfig').onchange = () => loadContexts();
-  $('#lv-context').onchange = () => { showServer(); $('#lv-plan').innerHTML = ''; updateCLI(); checkAccess(); };
+  $('#lv-context-filter').oninput=filterContexts;
+  $('#lv-choose-configs').onclick=()=>$('#lv-config-files').click();
+  $('#lv-config-files').onchange=async e=>{
+    const files=[...e.target.files];if(!files.length)return;
+    const data=new FormData();files.forEach(f=>data.append('files',f));
+    try {status('#lv-status','Reading selected kubeconfig files…');const response=await fetch('/api/start/kubeconfigs',{method:'POST',credentials:'same-origin',body:data});const result=await response.json();if(!response.ok)throw new Error(result.error||response.statusText);$('#lv-kubeconfig').value=[$('#lv-kubeconfig').value.trim(),...result.files].filter(Boolean).join('\n');await loadContexts();}catch(err){status('#lv-status',err.message,'red');}finally{e.target.value='';}
+  };
+  $('#lv-select-all').onclick=()=>{document.querySelectorAll('.start-context:not([hidden]) [data-live-context]').forEach(e=>e.checked=true);contextsChanged();};
+  $('#lv-select-none').onclick=()=>{document.querySelectorAll('[data-live-context]').forEach(e=>e.checked=false);contextsChanged();};
   $('#lv-ns').onchange = () => checkAccess();
   for (const id of ['#lv-cluster', '#lv-diagnostics']) $(id).addEventListener('change', optionsSummary);
   $('#lv-preview').onclick = previewLive;

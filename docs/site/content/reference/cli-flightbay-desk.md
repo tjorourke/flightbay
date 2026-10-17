@@ -147,7 +147,7 @@ flightbay-desk keygen [flags]
 
 ## flightbay-desk live
 
-Live mode connects to a cluster with your kubeconfig and keeps a workspace in step with it:
+Live mode connects to selected kubeconfig contexts and keeps one workspace in step with them:
 an initial list of every selected resource type, then watches; events as they happen; and
 container logs followed as kubectl logs -f would. Everything in the desk works on it: the UI,
 search, SQL, the Scorecard, agent reach and findings, and kubectl and k9s in the terminal,
@@ -170,6 +170,7 @@ flightbay-desk live [flags]
 Examples:
 
 ```bash
+  flightbay-desk live --context kind-mesh1,kind-mesh2 --namespaces bookinfo,istio-system
   flightbay-desk live --context kind-mesh1 --namespaces kagent,istio-system
   flightbay-desk live --context prod --namespaces payments --exclude-resources configmaps,secrets
   flightbay-desk live --context mesh1 --diagnostics --max-log-streams 50
@@ -188,7 +189,7 @@ Examples:
 | `--concurrency int` | list and get requests in flight at once (default 4); still bounded by --qps |
 | `--config string` | collection config file (YAML); flags refine it, exclusions always win. A CONFIG.sig next to it is checked |
 | `--configmaps string` | omit, metadata or scrubbed |
-| `--context string` | kubeconfig context to mirror (default: current context) |
+| `--context strings` | kubeconfig contexts to mirror, comma-separated or repeated (default: current context) |
 | `--diagnostics` | add proxy dumps, control-plane debug and metrics, and allow the port-forward they need |
 | `--drop-field stringArray` | remove this path from every object before writing, e.g. 'metadata.annotations["corp.example/*"]' (repeatable) |
 | `--dry-run` | print what would be watched and the RBAC it needs; reads discovery only |
@@ -198,7 +199,7 @@ Examples:
 | `--include-resources strings` | allowlist: read only these resource types (same as --resources); --exclude-resources still wins |
 | `--json` | print the dry-run plan as JSON |
 | `--keep` | keep the workspace directory (DuckDB file, kubeconfig) after stopping |
-| `--kubeconfig string` | kubeconfig file (default: $KUBECONFIG or ~/.kube/config) |
+| `--kubeconfig string` | kubeconfig paths separated by the OS path-list separator (default: $KUBECONFIG or ~/.kube/config) |
 | `--label-selector string` | only collect namespaced objects matching this label selector |
 | `--listen string` | loopback address for the UI and API (default "127.0.0.1:8484") |
 | `--log-concurrency int` | log streams read at once (default 8) |
@@ -210,7 +211,7 @@ Examples:
 | `--max-bundle-bytes int` | stop collecting once the compressed bundle reaches this size |
 | `--max-log-bytes int` | per-stream log limit in bytes (keeps the newest lines) |
 | `--max-log-lines int` | log lines kept in the workspace; the oldest are dropped first (default 1000000) |
-| `--max-log-streams int` | container log streams followed at once; beyond it unhealthy pods come first and the rest take turns (default 100) |
+| `--max-log-streams int` | container log streams followed per cluster; beyond it unhealthy pods come first and the rest take turns (default 100) |
 | `--namespaces strings` | namespaces to include (globs allowed); default all |
 | `--no-browser` | do not open a browser |
 | `--no-logs` | do not collect container logs |
@@ -438,7 +439,7 @@ Examples:
 ## flightbay-desk start
 
 The start page is what flightbay ui and flightbay-desk open show when they are given nothing to open.
-It has three cards: Live stream a cluster (pick a kubeconfig context, preview what will be read and the
+It has three cards: Live stream clusters (pick one or more kubeconfig contexts, preview what will be read and the
 RBAC it needs, then start live mode), Open a file (recent bundles here and in ~/Downloads, drag and drop
 or a path; open it, or review it before you send it), and Open a repo (a directory or a Git URL, scanned
 in process with the scan options).

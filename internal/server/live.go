@@ -43,7 +43,7 @@ func (s *Server) liveRefreshDiagnostics(w http.ResponseWriter, r *http.Request) 
 		jerr(w, http.StatusForbidden, "cross-origin request refused")
 		return
 	}
-	if s.RefreshDiagnostics == nil || !s.WS.IsLive() {
+	if (s.RefreshDiagnostics == nil && s.RefreshClusterDiagnostics == nil) || !s.WS.IsLive() {
 		jerr(w, http.StatusConflict, "diagnostics refresh needs flightbay-desk live --diagnostics")
 		return
 	}
@@ -54,7 +54,13 @@ func (s *Server) liveRefreshDiagnostics(w http.ResponseWriter, r *http.Request) 
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
 	defer cancel()
-	n, err := s.RefreshDiagnostics(ctx, ns, pod)
+	var n int
+	var err error
+	if s.RefreshClusterDiagnostics != nil {
+		n, err = s.RefreshClusterDiagnostics(ctx, r.URL.Query().Get("cluster"), ns, pod)
+	} else {
+		n, err = s.RefreshDiagnostics(ctx, ns, pod)
+	}
 	if err != nil {
 		jerr(w, http.StatusBadRequest, err.Error())
 		return

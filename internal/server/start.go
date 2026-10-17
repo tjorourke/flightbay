@@ -26,6 +26,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/tjorourke/flightbay/internal/bundle"
+	"github.com/tjorourke/flightbay/internal/collect"
 	"github.com/tjorourke/flightbay/internal/scan"
 	"github.com/tjorourke/flightbay/web"
 )
@@ -64,21 +65,30 @@ type StartServer struct {
 
 // LiveRequest is the Live card's form.
 type LiveRequest struct {
-	Kubeconfig        string `json:"kubeconfig,omitempty"`
-	Context           string `json:"context"`
-	Namespaces        string `json:"namespaces,omitempty"`        // comma separated, globs allowed; empty = all
-	ExcludeNamespaces string `json:"excludeNamespaces,omitempty"` // comma separated, globs allowed
-	ClusterScoped     bool   `json:"clusterScoped,omitempty"`     // --cluster-scoped
-	Diagnostics       bool   `json:"diagnostics,omitempty"`       // --diagnostics
+	Contexts          []string `json:"contexts,omitempty"`
+	Kubeconfigs       []string `json:"kubeconfigs,omitempty"`
+	Kubeconfig        string   `json:"kubeconfig,omitempty"`
+	Context           string   `json:"context"`
+	Namespaces        string   `json:"namespaces,omitempty"`        // comma separated, globs allowed; empty = all
+	ExcludeNamespaces string   `json:"excludeNamespaces,omitempty"` // comma separated, globs allowed
+	ClusterScoped     bool     `json:"clusterScoped,omitempty"`     // --cluster-scoped
+	Diagnostics       bool     `json:"diagnostics,omitempty"`       // --diagnostics
 }
 
 // LiveAccess is what the context's credentials allow of the live options.
 // A reason is set when the option is not allowed.
 type LiveAccess struct {
-	ClusterScoped    bool   `json:"clusterScoped"`
-	ClusterScopedWhy string `json:"clusterScopedWhy,omitempty"`
-	Diagnostics      bool   `json:"diagnostics"`
-	DiagnosticsWhy   string `json:"diagnosticsWhy,omitempty"`
+	Clusters         []LiveAccessResult `json:"clusters,omitempty"`
+	ClusterScoped    bool               `json:"clusterScoped"`
+	ClusterScopedWhy string             `json:"clusterScopedWhy,omitempty"`
+	Diagnostics      bool               `json:"diagnostics"`
+	DiagnosticsWhy   string             `json:"diagnosticsWhy,omitempty"`
+}
+
+type LiveAccessResult struct {
+	Context string `json:"context"`
+	LiveAccess
+	Error string `json:"error,omitempty"`
 }
 
 // ScanRequest is the Repo card's form.
@@ -192,6 +202,7 @@ func (s *StartServer) Handler() http.Handler {
 	}
 	api("/api/start", false, s.info)
 	api("/api/start/contexts", false, s.contexts)
+	api("/api/start/kubeconfigs", true, s.uploadKubeconfigs)
 	api("/api/start/recent", false, s.recent)
 	api("/api/start/live-plan", true, s.livePlan)
 	api("/api/start/live", true, s.live)
@@ -208,7 +219,7 @@ func (s *StartServer) info(w http.ResponseWriter, _ *http.Request) {
 	cwd, _ := os.Getwd()
 	home, _ := os.UserHomeDir()
 	writeJSON(w, 200, map[string]any{"start": true, "workdir": s.WorkDir, "cwd": cwd, "home": home, "dirs": s.recentDirs(),
-		"identities": len(s.Identities), "maxUpload": s.maxUpload(), "version": s.Version})
+		"identities": len(s.Identities), "maxUpload": s.maxUpload(), "version": s.Version, "pathListSeparator": string(os.PathListSeparator)})
 }
 
 func (s *StartServer) maxUpload() int64 {
@@ -219,6 +230,78 @@ func (s *StartServer) maxUpload() int64 {
 }
 
 // ---- Live ----
+
+// Uploaded kubeconfigs stay private to this local session. They are not bundle
+// members. Paths can instead be supplied for configs with relative references.
+func (s *StartServer) uploadKubeconfigs(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 8<<20)
+	if err := r.ParseMultipartForm(8 << 20); err != nil {
+		jerr(w, 400, "choose kubeconfig files totalling no more than 8 MiB")
+		return
+	}
+	defer r.MultipartForm.RemoveAll()
+	files := r.MultipartForm.File["files"]
+	if len(files) == 0 || len(files) > 16 {
+		jerr(w, 400, "choose between one and sixteen kubeconfig files")
+		return
+	}
+	if err := os.MkdirAll(s.WorkDir, 0700); err != nil {
+		jerr(w, 500, err.Error())
+		return
+	}
+	dir, err := os.MkdirTemp(s.WorkDir, "kubeconfigs-")
+	if err != nil {
+		jerr(w, 500, err.Error())
+		return
+	}
+	keep := false
+	defer func() {
+		if !keep {
+			_ = os.RemoveAll(dir)
+		}
+	}()
+	paths := []string{}
+	for i, file := range files {
+		f, err := file.Open()
+		if err != nil {
+			jerr(w, 400, err.Error())
+			return
+		}
+		b, err := io.ReadAll(io.LimitReader(f, (1<<20)+1))
+		f.Close()
+		if err != nil || len(b) > 1<<20 {
+			jerr(w, 400, "each kubeconfig must be at most 1 MiB")
+			return
+		}
+		raw, err := clientcmd.Load(b)
+		if err != nil || len(raw.Contexts) == 0 {
+			jerr(w, 400, file.Filename+": not a kubeconfig containing contexts")
+			return
+		}
+		for _, cl := range raw.Clusters {
+			if cl.CertificateAuthority != "" && !filepath.IsAbs(cl.CertificateAuthority) {
+				jerr(w, 400, "use local paths for kubeconfigs with relative certificate files")
+				return
+			}
+		}
+		for _, auth := range raw.AuthInfos {
+			for _, p := range []string{auth.ClientCertificate, auth.ClientKey, auth.TokenFile} {
+				if p != "" && !filepath.IsAbs(p) {
+					jerr(w, 400, "use local paths for kubeconfigs with relative credential files")
+					return
+				}
+			}
+		}
+		path := filepath.Join(dir, fmt.Sprintf("%02d-%s", i, unsafeName.ReplaceAllString(filepath.Base(file.Filename), "_")))
+		if err := os.WriteFile(path, b, 0600); err != nil {
+			jerr(w, 500, err.Error())
+			return
+		}
+		paths = append(paths, path)
+	}
+	keep = true
+	writeJSON(w, 200, map[string]any{"files": paths})
+}
 
 type kubeContext struct {
 	Name      string `json:"name"`
@@ -231,15 +314,13 @@ type kubeContext struct {
 // KubeContexts lists the contexts in a kubeconfig ("" = $KUBECONFIG or
 // ~/.kube/config), the files read and the current context.
 func KubeContexts(kubeconfig string) (ctxs []kubeContext, current string, files []string, err error) {
-	rules := clientcmd.NewDefaultClientConfigLoadingRules()
-	if kubeconfig != "" {
-		rules.ExplicitPath = expandHome(kubeconfig)
-		files = []string{rules.ExplicitPath}
-	} else {
-		for _, f := range rules.GetLoadingPrecedence() {
-			if _, err := os.Stat(f); err == nil {
-				files = append(files, f)
-			}
+	rules, err := collect.KubeconfigRules(kubeconfig)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	for _, f := range rules.GetLoadingPrecedence() {
+		if _, err := os.Stat(f); err == nil {
+			files = append(files, f)
 		}
 	}
 	raw, err := rules.Load()
@@ -279,7 +360,10 @@ func (s *StartServer) readLive(w http.ResponseWriter, r *http.Request) (*LiveReq
 		return nil, false
 	}
 	req.Context = strings.TrimSpace(req.Context)
-	req.Kubeconfig = expandHome(strings.TrimSpace(req.Kubeconfig))
+	if len(req.Kubeconfigs) > 0 {
+		req.Kubeconfig = strings.Join(req.Kubeconfigs, string(os.PathListSeparator))
+	}
+	req.Kubeconfig = strings.TrimSpace(req.Kubeconfig)
 	req.Namespaces = normaliseList(req.Namespaces)
 	req.ExcludeNamespaces = normaliseList(req.ExcludeNamespaces)
 	ctxs, cur, _, err := KubeContexts(req.Kubeconfig)
@@ -287,16 +371,31 @@ func (s *StartServer) readLive(w http.ResponseWriter, r *http.Request) (*LiveReq
 		jerr(w, 400, "cannot read the kubeconfig: "+err.Error())
 		return nil, false
 	}
-	if req.Context == "" {
-		req.Context = cur
+	if len(req.Contexts) == 0 {
+		if req.Context == "" {
+			req.Context = cur
+		}
+		req.Contexts = []string{req.Context}
 	}
+	valid, seen := map[string]bool{}, map[string]bool{}
 	for _, c := range ctxs {
-		if c.Name == req.Context {
-			return &req, true
+		valid[c.Name] = true
+	}
+	names := []string{}
+	for _, name := range req.Contexts {
+		name = strings.TrimSpace(name)
+		if !valid[name] {
+			jerr(w, 400, fmt.Sprintf("context %q is not in the kubeconfig", name))
+			return nil, false
+		}
+		if !seen[name] {
+			names = append(names, name)
+			seen[name] = true
 		}
 	}
-	jerr(w, 400, fmt.Sprintf("context %q is not in the kubeconfig", req.Context))
-	return nil, false
+	req.Contexts = names
+	req.Context = names[0]
+	return &req, true
 }
 
 // normaliseList turns "a, b ,c" or one per line into "a,b,c".
@@ -340,10 +439,27 @@ func (s *StartServer) liveAccess(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
-	a, err := s.LiveAccess(ctx, *req)
-	if err != nil {
-		jerr(w, 502, fmt.Sprintf("%s: %v", req.Context, err))
-		return
+	a := LiveAccess{ClusterScoped: true, Diagnostics: true}
+	for _, name := range req.Contexts {
+		one := *req
+		one.Context = name
+		one.Contexts = nil
+		result, err := s.LiveAccess(ctx, one)
+		row := LiveAccessResult{Context: name, LiveAccess: result}
+		if err != nil {
+			row.Error = err.Error()
+			result.ClusterScopedWhy = err.Error()
+			result.DiagnosticsWhy = err.Error()
+		}
+		a.Clusters = append(a.Clusters, row)
+		a.ClusterScoped = a.ClusterScoped && result.ClusterScoped
+		a.Diagnostics = a.Diagnostics && result.Diagnostics
+		if !result.ClusterScoped {
+			a.ClusterScopedWhy += name + ": " + result.ClusterScopedWhy + "; "
+		}
+		if !result.Diagnostics {
+			a.DiagnosticsWhy += name + ": " + result.DiagnosticsWhy + "; "
+		}
 	}
 	writeJSON(w, 200, a)
 }

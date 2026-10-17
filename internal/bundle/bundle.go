@@ -114,9 +114,10 @@ func (h *Header) Declared() bool { return h != nil && h.Source == SourceRepo }
 
 // Coverage types and states.
 const (
-	CoverageResource = "resource"
-	CoverageLogs     = "logs"
-	CoverageEvents   = "events"
+	CoverageResource  = "resource"
+	CoverageLogs      = "logs"
+	CoverageEvents    = "events"
+	CoverageDiscovery = "discovery"
 	// CoverageDiagnostic is a proxy dump, control-plane debug output or metrics scrape.
 	CoverageDiagnostic = "diagnostic"
 	// CoverageFlows is a flow log file attached to the bundle (Hubble, Calico,
@@ -809,6 +810,7 @@ func ParsePath(name string) (PathInfo, bool) {
 // APIResource describes a collected resource type. It is written to
 // clusters/<name>/discovery/apiresources.json so the desk can serve discovery.
 type APIResource struct {
+	Verbs        []string `json:"verbs,omitempty"`
 	Group        string   `json:"group"`
 	Version      string   `json:"version"`
 	Resource     string   `json:"resource"`

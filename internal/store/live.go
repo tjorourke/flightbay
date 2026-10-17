@@ -18,22 +18,30 @@ const SourceLive = "live"
 
 // LiveState describes the connection behind a live workspace.
 type LiveState struct {
-	Live            bool             `json:"live"`
-	Context         string           `json:"context"`
-	Server          string           `json:"server"`
-	Connected       bool             `json:"connected"`
-	LastEvent       time.Time        `json:"lastEvent"`
-	Reconnects      int64            `json:"reconnects"`
-	Watches         int              `json:"watches"`
-	ObjectsWatched  int              `json:"objectsWatched"`
-	LogStreams      int              `json:"logStreams"`
-	LogStreamsTotal int              `json:"logStreamsTotal"`
-	LogLinesDropped int64            `json:"logLinesDropped"`
-	MaxLogStreams   int              `json:"maxLogStreams"`
-	MaxLogLines     int              `json:"maxLogLines"`
-	Diagnostics     bool             `json:"diagnostics"`
-	Requests        map[string]int64 `json:"requests,omitempty"` // requests made to the cluster, by verb
-	Refused         int64            `json:"refused"`            // requests the read-only guard refused
+	Clusters        []LiveClusterState `json:"clusters,omitempty"`
+	Live            bool               `json:"live"`
+	Context         string             `json:"context"`
+	Server          string             `json:"server"`
+	Connected       bool               `json:"connected"`
+	LastEvent       time.Time          `json:"lastEvent"`
+	Reconnects      int64              `json:"reconnects"`
+	RetryingStreams int64              `json:"retryingStreams"`
+	Watches         int                `json:"watches"`
+	ObjectsWatched  int                `json:"objectsWatched"`
+	LogStreams      int                `json:"logStreams"`
+	LogStreamsTotal int                `json:"logStreamsTotal"`
+	LogLinesDropped int64              `json:"logLinesDropped"`
+	MaxLogStreams   int                `json:"maxLogStreams"`
+	MaxLogLines     int                `json:"maxLogLines"`
+	Diagnostics     bool               `json:"diagnostics"`
+	Requests        map[string]int64   `json:"requests,omitempty"` // requests made to the cluster, by verb
+	Refused         int64              `json:"refused"`            // requests the read-only guard refused
+}
+
+type LiveClusterState struct {
+	LiveState
+	Phase string `json:"phase"`
+	Error string `json:"error,omitempty"`
 }
 
 // IsLive reports whether the workspace mirrors a running cluster, as opposed

@@ -54,4 +54,6 @@ function amWireClusterCanvas(){
     handle.onkeydown=e=>{const d={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]}[e.key];if(!d)return;e.preventDefault();const step=e.shiftKey?40:10;move(node,id,node.offsetLeft+d[0]*step,node.offsetTop+d[1]*step);};
   });
   resize();
+  viewport.scrollLeft=layout.scrollLeft||0;viewport.scrollTop=layout.scrollTop||0;
+  viewport.onscroll=()=>{layout.scrollLeft=viewport.scrollLeft;layout.scrollTop=viewport.scrollTop;};
 }

@@ -28,6 +28,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/tjorourke/flightbay/internal/ambient"
+	"github.com/tjorourke/flightbay/internal/collect"
 	"github.com/tjorourke/flightbay/internal/store"
 )
 
@@ -157,9 +158,9 @@ func (s *Server) ambientConnect(name string) (ambientConnection, error) {
 	if s.ambientS.connect != nil {
 		return s.ambientS.connect(name)
 	}
-	rules := clientcmd.NewDefaultClientConfigLoadingRules()
-	if s.AmbientKubeconfig != "" {
-		rules.ExplicitPath = expandHome(s.AmbientKubeconfig)
+	rules, err := collect.KubeconfigRules(s.AmbientKubeconfig)
+	if err != nil {
+		return ambientConnection{}, err
 	}
 	raw, err := rules.Load()
 	if err != nil {

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tjorourke/flightbay/internal/bundle"
 	"github.com/tjorourke/flightbay/internal/logs"
 	"github.com/tjorourke/flightbay/internal/store"
 )
@@ -123,6 +124,14 @@ func Run(ws *store.Workspace) []Finding {
 	for i := range out {
 		out[i].ID = fmt.Sprintf("f%d", i+1)
 		out[i].Provisional = provisional
+		if ws.IsLive() && st.Live != nil && out[i].Cluster != "" {
+			for _, cluster := range st.Live.Clusters {
+				if bundle.SafeID(cluster.Context) == out[i].Cluster {
+					out[i].Provisional = cluster.Phase != store.PhaseLive
+					break
+				}
+			}
+		}
 		if out[i].Docs == "" {
 			out[i].Docs = DocsFor(out[i])
 		}

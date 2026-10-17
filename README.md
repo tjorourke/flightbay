@@ -51,7 +51,7 @@ flightbay collect --context my-cluster      # capture: writes flightbay-<time>.t
 flightbay ui .                              # open the newest capture here in your browser
 ```
 
-Run `flightbay ui` with no arguments and it opens a start page instead, with three cards: **Live stream a cluster** (pick a kubeconfig context, preview what will be read and the RBAC it needs, then mirror it read-only), **Open a file** (captures in this directory and `~/Downloads` are listed; open one, or review it before you send it; drag and drop works too) and **Open a repo** (a directory or a Git URL, scanned for manifests, Helm charts and Kustomize overlays). The footer shows the command line for whatever you pick, so you can skip the page next time.
+Run `flightbay ui` with no arguments and it opens a start page instead, with three cards: **Live stream clusters** (select contexts from one or more kubeconfig files, preview the reads and RBAC per cluster, then mirror them into one workspace), **Open a file** (captures in this directory and `~/Downloads` are listed; open one, or review it before you send it; drag and drop works too) and **Open a repo** (a directory or a Git URL, scanned for manifests, Helm charts and Kustomize overlays). The footer shows the command line for whatever you pick, so you can skip the page next time.
 
 ![The start page](docs/images/start.png)
 

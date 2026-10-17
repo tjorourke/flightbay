@@ -24,6 +24,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/tjorourke/flightbay/internal/cli"
+	"github.com/tjorourke/flightbay/internal/collect"
 	"github.com/tjorourke/flightbay/internal/review"
 	"github.com/tjorourke/flightbay/internal/server"
 )
@@ -67,7 +68,7 @@ func startCmd() *cobra.Command {
 		Use:   "start",
 		Short: "Show the start page: live stream a cluster, open a bundle, or scan a repo (what flightbay ui runs with no arguments)",
 		Long: `The start page is what flightbay ui and flightbay-desk open show when they are given nothing to open.
-It has three cards: Live stream a cluster (pick a kubeconfig context, preview what will be read and the
+It has three cards: Live stream clusters (pick one or more kubeconfig contexts, preview what will be read and the
 RBAC it needs, then start live mode), Open a file (recent bundles here and in ~/Downloads, drag and drop
 or a path; open it, or review it before you send it), and Open a repo (a directory or a Git URL, scanned
 in process with the scan options).
@@ -198,6 +199,12 @@ func runStart(cmd *cobra.Command, o startOptions) error {
 // liveArgs turns the Live card's form into flightbay-desk live flags.
 func liveArgs(r server.LiveRequest) []string {
 	var a []string
+	if len(r.Kubeconfigs) > 0 {
+		r.Kubeconfig = strings.Join(r.Kubeconfigs, string(os.PathListSeparator))
+	}
+	if len(r.Contexts) > 0 {
+		r.Context = strings.Join(r.Contexts, ",")
+	}
 	if r.Kubeconfig != "" {
 		a = append(a, "--kubeconfig", r.Kubeconfig)
 	}
@@ -314,9 +321,9 @@ func livePlan(ctx context.Context, r server.LiveRequest) (json.RawMessage, error
 // credentials allow: listing cluster-scoped objects, and port-forwarding to
 // pods in the namespaces in scope, which proxy diagnostics need.
 func liveAccess(ctx context.Context, r server.LiveRequest) (server.LiveAccess, error) {
-	rules := clientcmd.NewDefaultClientConfigLoadingRules()
-	if r.Kubeconfig != "" {
-		rules.ExplicitPath = r.Kubeconfig
+	rules, err := collect.KubeconfigRules(r.Kubeconfig)
+	if err != nil {
+		return server.LiveAccess{}, err
 	}
 	cfg, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, &clientcmd.ConfigOverrides{CurrentContext: r.Context}).ClientConfig()
 	if err != nil {

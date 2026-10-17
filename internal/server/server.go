@@ -82,7 +82,8 @@ type Server struct {
 	// RefreshDiagnostics re-runs diagnostics for one pod of a live
 	// workspace and returns how many files were captured; nil when the
 	// workspace is not live or diagnostics were not allowed.
-	RefreshDiagnostics func(ctx context.Context, namespace, pod string) (int, error)
+	RefreshDiagnostics        func(ctx context.Context, namespace, pod string) (int, error)
+	RefreshClusterDiagnostics func(ctx context.Context, cluster, namespace, pod string) (int, error)
 	// SaveBundle writes the live mirror as a bundle and returns its path;
 	// nil when the workspace is not live.
 	SaveBundle func() (string, error)
@@ -375,7 +376,7 @@ func (s *Server) workspace(w http.ResponseWriter, r *http.Request) {
 		if s.WS.IsLive() {
 			// The Navigator and the banner read S.ws.live.
 			out["source"], out["live"] = h.Source, s.WS.State().Live
-			out["canSave"], out["canRefreshDiagnostics"] = s.SaveBundle != nil, s.RefreshDiagnostics != nil
+			out["canSave"], out["canRefreshDiagnostics"] = s.SaveBundle != nil, s.RefreshDiagnostics != nil || s.RefreshClusterDiagnostics != nil
 		}
 	}
 	out["trust"] = s.WS.Trust()

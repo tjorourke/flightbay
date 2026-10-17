@@ -43,6 +43,8 @@ type LiveOptions struct {
 	Rotate        time.Duration  // over the stream cap, how often the lower-priority streams take turns (default 5m)
 	Guard         *ReadOnlyGuard // counts requests; nil if the caller did not install one
 	Progress      func(string)
+	// State lets a fleet coordinator own the workspace header and aggregate status.
+	State func(string, *store.LiveState, string)
 }
 
 func (o *LiveOptions) defaults() {
@@ -86,6 +88,7 @@ type Live struct {
 	watches     atomic.Int64
 	lastPublish atomic.Int64
 	logs        *logManager
+	phase       string
 	diagMu      sync.Mutex
 
 	covMu  sync.Mutex
@@ -127,13 +130,20 @@ func (l *Live) Run(ctx context.Context) error {
 		planned = append(planned, string(cat))
 	}
 	start := time.Now().UTC()
-	l.WS.SetHeader(&bundle.Header{Case: p.Case, Collector: "flightbay-desk live " + l.O.Version, CaptureStart: start,
-		Contexts: []string{l.O.Context}, Policy: pol, Planned: planned, Unavailable: plan.Unavailable, Source: store.SourceLive})
+	if l.O.State == nil {
+		l.WS.SetHeader(&bundle.Header{Case: p.Case, Collector: "flightbay-desk live " + l.O.Version, CaptureStart: start,
+			Contexts: []string{l.O.Context}, Policy: pol, Planned: planned, Unavailable: plan.Unavailable, Source: store.SourceLive})
+	}
 	ls := l.liveState(true)
-	l.WS.SetState(func(s *store.ImportState) {
-		s.Phase, s.Source, s.Started = store.PhaseLoading, "live:"+l.O.Context, start
-		s.Live = ls
-	})
+	l.phase = store.PhaseLoading
+	if l.O.State != nil {
+		l.O.State(l.phase, ls, "")
+	} else {
+		l.WS.SetState(func(s *store.ImportState) {
+			s.Phase, s.Source, s.Started = store.PhaseLoading, "live:"+l.O.Context, start
+			s.Live = ls
+		})
+	}
 	l.progress("discovery")
 	if v, err := l.CL.Discovery.ServerVersion(); err == nil {
 		b, _ := json.Marshal(v)
@@ -143,9 +153,13 @@ func (l *Live) Run(ctx context.Context) error {
 	}
 	all, err := l.C.discover(l.cluster, l.CL)
 	if err != nil {
-		l.WS.SetState(func(s *store.ImportState) {
-			s.Phase, s.Error = store.PhaseFailed, "cannot reach the cluster: "+err.Error()
-		})
+		if l.O.State != nil {
+			l.O.State(store.PhaseFailed, l.liveState(false), "cannot reach the cluster: "+err.Error())
+		} else {
+			l.WS.SetState(func(s *store.ImportState) {
+				s.Phase, s.Error = store.PhaseFailed, "cannot reach the cluster: "+err.Error()
+			})
+		}
 		return err
 	}
 	l.kinds = map[string]string{}
@@ -223,10 +237,15 @@ waitInit:
 		}
 	}
 	ls = l.liveState(true)
-	l.WS.SetState(func(s *store.ImportState) {
-		s.Phase, s.Finished = store.PhaseLive, time.Now().UTC()
-		s.Live = ls
-	})
+	l.phase = store.PhaseLive
+	if l.O.State != nil {
+		l.O.State(l.phase, ls, "")
+	} else {
+		l.WS.SetState(func(s *store.ImportState) {
+			s.Phase, s.Finished = store.PhaseLive, time.Now().UTC()
+			s.Live = ls
+		})
+	}
 	l.progress("live: initial list complete in %s", time.Since(start).Round(time.Millisecond))
 	if plan.Selected(policy.CatLogs) {
 		go l.logs.run(ctx)
@@ -274,12 +293,15 @@ func (l *Live) flushCollectionLog() {
 
 func (l *Live) liveState(connected bool) *store.LiveState {
 	st := &store.LiveState{Live: true, Context: l.O.Context, Server: l.O.Server, Connected: connected && l.failing.Load() == 0,
-		Reconnects: l.reconnects.Load(), Watches: int(l.watches.Load()), MaxLogStreams: l.O.MaxLogStreams, MaxLogLines: l.O.MaxLogLines,
+		RetryingStreams: l.failing.Load(),
+		Reconnects:      l.reconnects.Load(), Watches: int(l.watches.Load()), MaxLogStreams: l.O.MaxLogStreams, MaxLogLines: l.O.MaxLogLines,
 		Diagnostics: l.DiagnosticsEnabled()}
 	if t := l.lastEvent.Load(); t > 0 {
 		st.LastEvent = time.Unix(0, t).UTC()
 	}
-	st.ObjectsWatched = l.WS.State().Objects
+	for _, r := range l.WS.RegisteredResources(l.cluster) {
+		st.ObjectsWatched += len(l.WS.List(l.cluster, r.Group, r.Resource, "", nil))
+	}
 	if l.logs != nil {
 		st.LogStreams, st.LogStreamsTotal, st.LogLinesDropped = l.logs.counts()
 	}
@@ -295,6 +317,15 @@ func (l *Live) liveState(connected bool) *store.LiveState {
 func (l *Live) publish(force bool) {
 	st := l.liveState(true)
 	cur := l.WS.State().Live
+	if l.O.State != nil && cur != nil {
+		for _, cluster := range cur.Clusters {
+			if cluster.Context == l.O.Context {
+				copy := cluster.LiveState
+				cur = &copy
+				break
+			}
+		}
+	}
 	same := cur != nil && cur.Connected == st.Connected && cur.Reconnects == st.Reconnects && cur.Watches == st.Watches &&
 		cur.ObjectsWatched == st.ObjectsWatched && cur.LogStreams == st.LogStreams && cur.LogStreamsTotal == st.LogStreamsTotal &&
 		cur.LogLinesDropped == st.LogLinesDropped && cur.Refused == st.Refused && cur.LastEvent.Equal(st.LastEvent) &&
@@ -303,7 +334,11 @@ func (l *Live) publish(force bool) {
 		return
 	}
 	l.lastPublish.Store(time.Now().UnixNano())
-	l.WS.SetState(func(s *store.ImportState) { s.Live = st })
+	if l.O.State != nil {
+		l.O.State(l.phase, st, "")
+	} else {
+		l.WS.SetState(func(s *store.ImportState) { s.Live = st })
+	}
 }
 
 func sumRequests(m map[string]int64) int64 {
@@ -442,6 +477,7 @@ type feed struct {
 	ns       string
 	label    string // label selector (namespaced objects only)
 	metadata bool   // read through the metadata client
+	pollOnly bool   // discovery advertises list but not watch
 	name     string // for coverage and logs
 
 	initial             func(items []map[string]any) // the first successful list
@@ -454,6 +490,7 @@ type feed struct {
 
 func (l *Live) objectFeed(r bundle.APIResource, ns string, keep, pods bool) *feed {
 	f := &feed{r: r, ns: ns, metadata: l.C.clientFor(r) == "metadata", name: r.Name()}
+	f.pollOnly = len(r.Verbs) > 0 && !hasVerb(r.Verbs, "watch")
 	if r.Namespaced {
 		f.label = l.C.Policy.LabelSelector
 	}
@@ -535,8 +572,12 @@ func (l *Live) objectFeed(r bundle.APIResource, ns string, keep, pods bool) *fee
 	if keep {
 		id := fmt.Sprintf("%s.resource.%s.%s.%s", l.cluster, groupName(r.Group), r.Version, r.Resource)
 		f.listed = func(n int, err error) {
+			reason := "watched live"
+			if f.pollOnly {
+				reason = "live polling every 30s; this API does not advertise watch"
+			}
 			l.coverage(bundle.Coverage{ID: id, Cluster: l.cluster, Type: bundle.CoverageResource, Group: r.Group, Version: r.Version, Resource: r.Resource,
-				Kind: r.Kind, Namespaced: r.Namespaced, State: bundle.StateComplete, Reason: "watched live"}, ns, n, err)
+				Kind: r.Kind, Namespaced: r.Namespaced, State: bundle.StateComplete, Reason: reason}, ns, n, err)
 		}
 	}
 	return f
@@ -832,6 +873,15 @@ func (l *Live) runFeed(ctx context.Context, f *feed) {
 			rv = v
 			ok()
 			backoff = time.Second
+		}
+		if f.pollOnly {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(30 * time.Second):
+				rv = ""
+				continue
+			}
 		}
 		w, err := l.openWatch(ctx, f, rv)
 		if err != nil {

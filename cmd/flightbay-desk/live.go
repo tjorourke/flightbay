@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,13 +31,14 @@ import (
 func liveCmd() *cobra.Command {
 	var pf cli.PolicyFlags
 	var kubeconfig, kctx, listen, workdir, shell, saveDir, signKey string
+	var selectedContexts []string
 	var noBrowser, noTerminal, allowRemote, keep, dryRun, jsonOut bool
 	var maxStreams, maxLines int
 	var logTail int64
 	c := &cobra.Command{
 		Use:   "live",
-		Short: "Mirror a running cluster into the desk, read-only, and keep it up to date",
-		Long: `Live mode connects to a cluster with your kubeconfig and keeps a workspace in step with it:
+		Short: "Mirror selected clusters into one desk, read-only, and keep them up to date",
+		Long: `Live mode connects to selected kubeconfig contexts and keeps one workspace in step with them:
 an initial list of every selected resource type, then watches; events as they happen; and
 container logs followed as kubectl logs -f would. Everything in the desk works on it: the UI,
 search, SQL, the Scorecard, agent reach and findings, and kubectl and k9s in the terminal,
@@ -51,7 +53,8 @@ verified bundle at any moment.
 The Ambient configuration wizard is separate from this read-only mirror. Only explicit
 dry-run and apply-for-testing actions use a separately selected real kubeconfig context
 to create owned test configuration; the mirror transport and snapshot API remain read-only.`,
-		Example: `  flightbay-desk live --context kind-mesh1 --namespaces kagent,istio-system
+		Example: `  flightbay-desk live --context kind-mesh1,kind-mesh2 --namespaces bookinfo,istio-system
+  flightbay-desk live --context kind-mesh1 --namespaces kagent,istio-system
   flightbay-desk live --context prod --namespaces payments --exclude-resources configmaps,secrets
   flightbay-desk live --context mesh1 --diagnostics --max-log-streams 50
   flightbay-desk live --context mesh1 --namespaces payments --dry-run      # the plan and the RBAC it needs
@@ -62,47 +65,65 @@ to create owned test configuration; the mirror transport and snapshot API remain
 			if err != nil {
 				return err
 			}
-			var want []string
-			if kctx != "" {
-				want = []string{kctx}
-			}
-			ctxs, err := collect.ResolveContexts(kubeconfig, want)
+			ctxs, err := collect.ResolveContexts(kubeconfig, selectedContexts)
 			if err != nil {
 				return err
 			}
-			kctx = ctxs[0]
+			kctx = strings.Join(ctxs, ",")
 			p.Contexts = ctxs
 			rd, err := redact.New(p.RedactExtra)
 			if err != nil {
 				return err
 			}
-			cfg, err := collect.RestConfig(kubeconfig, kctx, p, "flightbay-desk-live/"+version)
-			if err != nil {
-				return err
-			}
 			diagnostics := p.PortForward && (p.Has(policy.CatProxies) || p.Has(policy.CatControlPlane) || p.Has(policy.CatMetrics))
-			guard := &collect.ReadOnlyGuard{AllowPortForward: diagnostics}
-			guard.Wrap(cfg)
-			cl, err := collect.NewClients(cfg)
-			if err != nil {
-				return err
-			}
-			if !diagnostics {
-				cl.Forward = nil
-			}
-			col := &collect.Collector{Policy: p, Redactor: rd, Version: version, Live: true}
-			if dryRun {
-				pl, err := col.DryRun(cmd.Context(), kctx, cl)
+			live := &collect.LiveGroup{}
+			for _, contextName := range ctxs {
+				cfg, err := collect.RestConfig(kubeconfig, contextName, p, "flightbay-desk-live/"+version)
 				if err != nil {
-					return fmt.Errorf("%s: %w", kctx, err)
+					return err
+				}
+				guard := &collect.ReadOnlyGuard{AllowPortForward: diagnostics}
+				guard.Wrap(cfg)
+				cl, err := collect.NewClients(cfg)
+				if err != nil {
+					return err
+				}
+				if !diagnostics {
+					cl.Forward = nil
+				}
+				name := contextName
+				live.Readers = append(live.Readers, &collect.Live{C: &collect.Collector{Policy: p, Redactor: rd, Version: version, Live: true}, CL: cl, O: collect.LiveOptions{Context: name, Server: cfg.Host, Version: version, MaxLogStreams: maxStreams, LogTail: logTail, MaxLogLines: maxLines, Guard: guard, Progress: func(s string) { fmt.Fprintf(errOut, "  [%s] %s\n", name, s) }}})
+			}
+			requestSummary := func() string {
+				parts := []string{}
+				for _, r := range live.Readers {
+					parts = append(parts, r.O.Context+": "+r.O.Guard.Summary())
+				}
+				return strings.Join(parts, "; ")
+			}
+			if dryRun {
+				out := cmd.OutOrStdout()
+				plans := []any{}
+				for _, reader := range live.Readers {
+					pl, err := reader.C.DryRun(cmd.Context(), reader.O.Context, reader.CL)
+					if err != nil {
+						return fmt.Errorf("%s: %w", reader.O.Context, err)
+					}
+					plans = append(plans, pl)
+					if !jsonOut {
+						pl.Print(out, false)
+						fmt.Fprintf(out, "\nRequired RBAC (live adds watch):\n%s\n", pl.RBAC)
+					}
 				}
 				if jsonOut {
-					b, _ := json.MarshalIndent(pl, "", "  ")
-					fmt.Fprintln(cmd.OutOrStdout(), string(b))
+					var result any = map[string]any{"clusters": plans}
+					if len(plans) == 1 {
+						result = plans[0]
+					}
+					b, _ := json.MarshalIndent(result, "", "  ")
+					fmt.Fprintln(out, string(b))
 					return nil
 				}
-				out := cmd.OutOrStdout()
-				pl.Print(out, false)
 				fmt.Fprintf(out, "  Live: every type above is listed once, then watched. Events are watched. Logs are followed for up to\n"+
 					"    %d container streams at once (--max-log-streams), starting from the last %d lines within --since; a restarted\n"+
 					"    container's previous log is read once. At most %d lines are kept (--max-log-lines); the oldest go first.\n", maxStreams, logTail, maxLines)
@@ -110,7 +131,6 @@ to create owned test configuration; the mirror transport and snapshot API remain
 					fmt.Fprintln(out, "  Diagnostics: read once when the mirror is ready, then only when you press Refresh diagnostics.")
 				}
 				fmt.Fprintln(out, "  Requests: get, list, watch and pods/log only"+map[bool]string{true: ", plus pods/portforward for diagnostics.", false: "."}[diagnostics])
-				fmt.Fprintf(out, "\nRequired RBAC (live adds watch):\n%s\n", pl.RBAC)
 				return nil
 			}
 			if !loopback(listen) && !allowRemote {
@@ -152,17 +172,24 @@ to create owned test configuration; the mirror transport and snapshot API remain
 			if len(p.ExcludeNamespaces) > 0 {
 				ns += " (excluding " + strings.Join(p.ExcludeNamespaces, ", ") + ")"
 			}
-			fmt.Fprintf(errOut, "Flightbay live: READ-ONLY mirror of %s (%s)\n", kctx, cfg.Host)
+			fmt.Fprintf(errOut, "Flightbay live: READ-ONLY mirror of %s\n", kctx)
+			for _, r := range live.Readers {
+				fmt.Fprintf(errOut, "  %s: %s\n", r.O.Context, r.O.Server)
+				r.WS = ws
+			}
 			fmt.Fprintf(errOut, "  Scope: %s; categories %s\n", ns, strings.Join(categories(p), ", "))
 			fmt.Fprintf(errOut, "  Requests: get, list, watch and pods/log only%s. Anything else is refused inside this process.\n",
 				map[bool]string{true: ", plus pods/portforward for diagnostics you ask for", false: ""}[diagnostics])
 			fmt.Fprintf(errOut, "  Logs: up to %d streams followed, %d lines kept. Redaction: as flightbay collect; Secret values are never kept.\n", maxStreams, maxLines)
 
-			live := &collect.Live{C: col, WS: ws, CL: cl, O: collect.LiveOptions{Context: kctx, Server: cfg.Host, Version: version,
-				MaxLogStreams: maxStreams, LogTail: logTail, MaxLogLines: maxLines, Guard: guard,
-				Progress: func(s string) { fmt.Fprintf(errOut, "  %s\n", s) }}}
 			liveDone := make(chan error, 1)
-			go func() { liveDone <- live.Run(ctx) }()
+			liveFinished := make(chan struct{})
+			liveCtx, cancelLive := context.WithCancel(ctx)
+			go func(result chan<- error) { defer close(liveFinished); result <- live.Run(liveCtx) }(liveDone)
+			defer func() {
+				cancelLive()
+				<-liveFinished
+			}()
 
 			ln, err := net.Listen("tcp", listen)
 			if err != nil && strings.HasSuffix(listen, ":8484") {
@@ -187,7 +214,7 @@ to create owned test configuration; the mirror transport and snapshot API remain
 			srv := &server.Server{WS: ws, Token: deskToken(), WorkDir: workdir, BaseURL: base, Terminal: !noTerminal, Shell: shell, DeskBinary: exe, AmbientKubeconfig: kubeconfig,
 				KubeURL: "https://" + kln.Addr().String(), KubeCA: caPEM}
 			if live.DiagnosticsEnabled() {
-				srv.RefreshDiagnostics = live.RefreshDiagnostics
+				srv.RefreshClusterDiagnostics = live.RefreshDiagnostics
 			}
 			srv.SaveBundle = func() (string, error) { return saveLive(ws, saveDir, kctx, p.Compression) }
 			srv.FreezeBundle = func(dir string) (string, error) { return saveLive(ws, dir, kctx, "fastest") }
@@ -224,8 +251,12 @@ to create owned test configuration; the mirror transport and snapshot API remain
 				fmt.Fprintf(errOut, "warning: could not record the open workspace for helpers: %v\n", err)
 			}
 			url := base + "/?token=" + srv.Token
-			fmt.Fprintf(errOut, "\nFlightbay desk is mirroring %s live.\n  UI:          %s\n  kubectl:     export KUBECONFIG=%s   (context %s@live, read-only, on %s)\n  Shell:       flightbay-desk shell   (kubectl, k9s, stern, fbq, fbsearch, fbsql, fbfind, fbpc, fbflows)\n  Press Ctrl+C to stop; nothing is kept unless you use Save as bundle or --keep.\n\n",
-				kctx, url, srv.KubeconfigPath(), bundle.SafeID(kctx), srv.KubeURL)
+			mirrorContexts := []string{}
+			for _, name := range ctxs {
+				mirrorContexts = append(mirrorContexts, bundle.SafeID(name)+"@live")
+			}
+			fmt.Fprintf(errOut, "\nFlightbay desk is mirroring %s live.\n  UI:          %s\n  kubectl:     export KUBECONFIG=%s   (contexts %s, read-only, on %s)\n  Shell:       flightbay-desk shell   (kubectl, k9s, stern, fbq, fbsearch, fbsql, fbfind, fbpc, fbflows)\n  Press Ctrl+C to stop; nothing is kept unless you use Save as bundle or --keep.\n\n",
+				kctx, url, srv.KubeconfigPath(), strings.Join(mirrorContexts, ", "), srv.KubeURL)
 			if !noBrowser {
 				openBrowser(url)
 			}
@@ -244,18 +275,18 @@ to create owned test configuration; the mirror transport and snapshot API remain
 						announced = true
 						_ = srv.Prepare()
 						fmt.Fprintf(errOut, "Live: %d objects, %d events; watching (%s since start). Requests so far: %s\n",
-							st.Objects, st.Events, time.Since(st.Started).Round(time.Millisecond), guard.Summary())
+							st.Objects, st.Events, time.Since(st.Started).Round(time.Millisecond), requestSummary())
 					}
 				case <-ctx.Done():
-					fmt.Fprintf(errOut, "Stopping. Requests made to %s: %s\n", kctx, guard.Summary())
+					fmt.Fprintf(errOut, "Stopping. Requests made to %s: %s\n", kctx, requestSummary())
 					return nil
 				}
 			}
 		},
 	}
 	pf.Register(c.Flags())
-	c.Flags().StringVar(&kubeconfig, "kubeconfig", "", "kubeconfig file (default: $KUBECONFIG or ~/.kube/config)")
-	c.Flags().StringVar(&kctx, "context", "", "kubeconfig context to mirror (default: current context)")
+	c.Flags().StringVar(&kubeconfig, "kubeconfig", "", "kubeconfig paths separated by the OS path-list separator (default: $KUBECONFIG or ~/.kube/config)")
+	c.Flags().StringSliceVar(&selectedContexts, "context", nil, "kubeconfig contexts to mirror, comma-separated or repeated (default: current context)")
 	c.Flags().StringVar(&listen, "listen", "127.0.0.1:8484", "loopback address for the UI and API")
 	c.Flags().StringVar(&workdir, "workdir", "", "workspace directory (default ~/.flightbay/workspaces/ws-*)")
 	c.Flags().BoolVar(&noBrowser, "no-browser", false, "do not open a browser")
@@ -263,7 +294,7 @@ to create owned test configuration; the mirror transport and snapshot API remain
 	c.Flags().BoolVar(&keep, "keep", false, "keep the workspace directory (DuckDB file, kubeconfig) after stopping")
 	c.Flags().BoolVar(&allowRemote, "allow-remote", false, "allow a non-loopback --listen (for containers); the token is still required")
 	c.Flags().StringVar(&shell, "shell", "", "shell for the terminal (default /bin/bash)")
-	c.Flags().IntVar(&maxStreams, "max-log-streams", 100, "container log streams followed at once; beyond it unhealthy pods come first and the rest take turns")
+	c.Flags().IntVar(&maxStreams, "max-log-streams", 100, "container log streams followed per cluster; beyond it unhealthy pods come first and the rest take turns")
 	c.Flags().Int64Var(&logTail, "log-tail", 500, "lines of history per stream when following starts (within --since)")
 	c.Flags().IntVar(&maxLines, "max-log-lines", 1_000_000, "log lines kept in the workspace; the oldest are dropped first")
 	c.Flags().StringVar(&saveDir, "save-dir", ".", "directory Save as bundle and Review and send write to")
