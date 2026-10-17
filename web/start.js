@@ -145,14 +145,14 @@ async function checkAccess() {
   const f = liveForm();
   const seq = ++ST.accessSeq;
   if (!f.contexts.length) return;
-  for (const [id, why] of [['#lv-cluster', '#lv-cluster-why'], ['#lv-diagnostics', '#lv-diagnostics-why']]) { $(id).checked = true; $(why).textContent = ''; }
+  for (const [id, why] of [['#lv-cluster', '#lv-cluster-why'], ['#lv-diagnostics', '#lv-diagnostics-why']]) { if(!ST.optionChoices?.has(id))$(id).checked = true; $(why).textContent = ''; }
   try {
     const a = await call('/api/start/live-access', f);
     if (seq !== ST.accessSeq) return;
-    $('#lv-cluster').checked = a.clusterScoped;
-    $('#lv-cluster-why').textContent = a.clusterScopedWhy ? 'Off: ' + a.clusterScopedWhy + '.' : '';
-    $('#lv-diagnostics').checked = a.diagnostics;
-    $('#lv-diagnostics-why').textContent = a.diagnosticsWhy ? 'Off: ' + a.diagnosticsWhy + '.' : '';
+    if(!ST.optionChoices?.has('#lv-cluster'))$('#lv-cluster').checked = a.clusterScoped;
+    $('#lv-cluster-why').textContent = a.clusterScopedWhy ? 'Access check: ' + a.clusterScopedWhy : '';
+    if(!ST.optionChoices?.has('#lv-diagnostics'))$('#lv-diagnostics').checked = a.diagnostics;
+    $('#lv-diagnostics-why').textContent = a.diagnosticsWhy ? 'Access check: ' + a.diagnosticsWhy : '';
   } catch (e) {
     // Unreachable or no access review allowed: leave both on; live mode
     // records anything it is refused.
@@ -388,7 +388,7 @@ async function boot() {
   $('#lv-select-all').onclick=()=>{document.querySelectorAll('.start-context:not([hidden]) [data-live-context]').forEach(e=>e.checked=true);contextsChanged();};
   $('#lv-select-none').onclick=()=>{document.querySelectorAll('[data-live-context]').forEach(e=>e.checked=false);contextsChanged();};
   $('#lv-ns').onchange = () => checkAccess();
-  for (const id of ['#lv-cluster', '#lv-diagnostics']) $(id).addEventListener('change', optionsSummary);
+  for (const id of ['#lv-cluster', '#lv-diagnostics']) $(id).addEventListener('change', ()=>{ST.optionChoices ||= new Set();ST.optionChoices.add(id);optionsSummary();updateCLI();});
   $('#lv-preview').onclick = previewLive;
   $('#lv-start').onclick = startLive;
   $('#fl-open').onclick = () => openFile($('#fl-path').value.trim(), false);
