@@ -26,22 +26,43 @@ type Backend struct {
 	Weight int    `json:"weight"`
 }
 type Request struct {
-	Cluster         string    `json:"cluster"`
-	Namespace       string    `json:"namespace"`
-	Service         string    `json:"service"`
-	Port            int       `json:"port"`
-	Tasks           []string  `json:"tasks"`
-	Backends        []Backend `json:"backends,omitempty"`
-	SourceNamespace string    `json:"sourceNamespace,omitempty"`
-	Methods         []string  `json:"methods,omitempty"`
-	Requests        int       `json:"requests,omitempty"`
-	Unit            string    `json:"unit,omitempty"`
-	Algorithm       string    `json:"algorithm,omitempty"`
-	Timeout         string    `json:"timeout,omitempty"`
-	FromRegion      string    `json:"fromRegion,omitempty"`
-	ToRegion        string    `json:"toRegion,omitempty"`
+	TargetKind         string            `json:"targetKind,omitempty"`
+	TargetName         string            `json:"targetName,omitempty"`
+	TrafficMode        string            `json:"trafficMode,omitempty"`
+	RelativeWeights    bool              `json:"relativeWeights,omitempty"`
+	MTLSMode           string            `json:"mtlsMode,omitempty"`
+	MethodAction       string            `json:"methodAction,omitempty"`
+	Burst              *int              `json:"burst,omitempty"`
+	BackendTimeout     string            `json:"backendTimeout,omitempty"`
+	FailureThreshold   int               `json:"failureThreshold,omitempty"`
+	EjectionInterval   string            `json:"ejectionInterval,omitempty"`
+	EjectionDuration   string            `json:"ejectionDuration,omitempty"`
+	MaxEjectionPercent int               `json:"maxEjectionPercent,omitempty"`
+	Waypoint           *WaypointRequest  `json:"waypoint,omitempty"`
+	Selector           map[string]string `json:"selector,omitempty"`
+	SelectedPod        string            `json:"selectedPod,omitempty"`
+	Workload           string            `json:"workload,omitempty"`
+	Replicas           int               `json:"replicas,omitempty"`
+	TargetPort         int               `json:"targetPort,omitempty"`
+	Route              string            `json:"route,omitempty"`
+	Edit               *EditTarget       `json:"edit,omitempty"`
+	Cluster            string            `json:"cluster"`
+	Namespace          string            `json:"namespace"`
+	Service            string            `json:"service"`
+	Port               int               `json:"port"`
+	Tasks              []string          `json:"tasks"`
+	Backends           []Backend         `json:"backends,omitempty"`
+	SourceNamespace    string            `json:"sourceNamespace,omitempty"`
+	Methods            []string          `json:"methods,omitempty"`
+	Requests           int               `json:"requests,omitempty"`
+	Unit               string            `json:"unit,omitempty"`
+	Algorithm          string            `json:"algorithm,omitempty"`
+	Timeout            string            `json:"timeout,omitempty"`
+	FromRegion         string            `json:"fromRegion,omitempty"`
+	ToRegion           string            `json:"toRegion,omitempty"`
 }
 type Plan struct {
+	Changes    []Change         `json:"changes,omitempty"`
 	ID         string           `json:"id"`
 	Request    Request          `json:"request"`
 	ServiceUID string           `json:"serviceUid"`
@@ -103,6 +124,12 @@ func Capabilities(ws *store.Workspace, c, ns, service string) []Task {
 }
 
 func Generate(ws *store.Workspace, req Request) (*Plan, error) {
+	if contains(req.Tasks, "waypoint") || contains(req.Tasks, "enrol-namespace") {
+		return generateWaypoint(ws, req)
+	}
+	if contains(req.Tasks, "service-selector") || contains(req.Tasks, "scale-workload") || contains(req.Tasks, "service-port") || contains(req.Tasks, "route-parent") {
+		return generateRepair(ws, req)
+	}
 	svc := ws.Get(req.Cluster, "", "services", req.Namespace, req.Service)
 	if svc == nil {
 		return nil, fmt.Errorf("select a Service in this workspace")
@@ -147,7 +174,7 @@ func Generate(ws *store.Workspace, req Request) (*Plan, error) {
 	sum := sha256.Sum256(encoded)
 	id := hex.EncodeToString(sum[:])[:16]
 	name := "flightbay-test-" + id
-	p := &Plan{ID: id, Request: req, ServiceUID: S(Path(svc.Obj, "metadata", "uid")), Objects: []map[string]any{}, Notes: []string{"Generated from this workspace. Validate against the explicitly selected real kubeconfig context before applying.", "Only Flightbay-named test resources are created. Existing resources are never overwritten. Cleanup deletes only the recorded UIDs.", "Policies and routes can change real traffic. Existing ALLOW policies are additive and existing routes may take precedence."}, Evidence: []Evidence{evidence(svc, "spec", svc.Obj["spec"])}}
+	p := &Plan{ID: id, Request: req, ServiceUID: S(Path(svc.Obj, "metadata", "uid")), Objects: []map[string]any{}, Notes: []string{"Generated from this workspace. Validate against the explicitly selected real kubeconfig context before applying.", "New traffic resources use owned names and cannot overwrite existing objects. Existing edits are shown as scoped field changes with undo.", "Policies and routes can change real traffic. Existing ALLOW policies are additive and existing routes may take precedence."}, Evidence: []Evidence{evidence(svc, "spec", svc.Obj["spec"])}}
 	if selected["l4-default-deny"] || selected["l4-allow-namespace"] || selected["strict-mtls"] {
 		p.Notes = append(p.Notes, "L4 workload-selector policies affect every Service targeting those Pods, not only the selected Service VIP.")
 	}
@@ -168,7 +195,11 @@ func Generate(ws *store.Workspace, req Request) (*Plan, error) {
 		obj("security.istio.io/v1", "AuthorizationPolicy", "-allow", map[string]any{"selector": sel, "action": "ALLOW", "rules": []any{map[string]any{"from": []any{map[string]any{"source": map[string]any{"namespaces": []string{req.SourceNamespace}}}}}}})
 	}
 	if selected["strict-mtls"] {
-		obj("security.istio.io/v1", "PeerAuthentication", "-mtls", map[string]any{"selector": sel, "mtls": map[string]any{"mode": "STRICT"}})
+		mode := defaultString(req.MTLSMode, "STRICT")
+		if mode != "STRICT" && mode != "PERMISSIVE" {
+			return nil, fmt.Errorf("ambient mTLS mode must be STRICT or PERMISSIVE")
+		}
+		obj("security.istio.io/v1", "PeerAuthentication", "-mtls", map[string]any{"selector": sel, "mtls": map[string]any{"mode": mode}})
 	}
 	target := []any{map[string]any{"group": "", "kind": "Service", "name": req.Service}}
 	if selected["methods"] {
@@ -184,11 +215,19 @@ func Generate(ws *store.Workspace, req Request) (*Plan, error) {
 				return nil, fmt.Errorf("unsupported HTTP method %q", m)
 			}
 		}
-		obj("security.istio.io/v1", "AuthorizationPolicy", "-methods", map[string]any{"targetRefs": target, "action": "ALLOW", "rules": []any{map[string]any{"to": []any{map[string]any{"operation": map[string]any{"methods": req.Methods}}}}}})
+		action := defaultString(req.MethodAction, "ALLOW")
+		if action != "ALLOW" && action != "DENY" {
+			return nil, fmt.Errorf("method action must be ALLOW or DENY")
+		}
+		obj("security.istio.io/v1", "AuthorizationPolicy", "-methods", map[string]any{"targetRefs": target, "action": action, "rules": []any{map[string]any{"to": []any{map[string]any{"operation": map[string]any{"methods": req.Methods}}}}}})
 	}
 	if selected["weighted-routing"] || selected["timeouts"] {
 		backends := []any{map[string]any{"name": req.Service, "port": req.Port, "weight": 100}}
 		if selected["weighted-routing"] {
+			mode := defaultString(req.TrafficMode, "weighted")
+			if mode != "weighted" && mode != "equal" && mode != "default" {
+				return nil, fmt.Errorf("routing mode must be default, equal or weighted")
+			}
 			if len(req.Backends) < 2 || len(req.Backends) > 8 {
 				return nil, fmt.Errorf("choose two to eight backend Services")
 			}
@@ -197,24 +236,39 @@ func Generate(ws *store.Workspace, req Request) (*Plan, error) {
 			backends = nil
 			for _, b := range req.Backends {
 				o := ws.Get(req.Cluster, "", "services", req.Namespace, b.Name)
-				if o == nil || !hasPort(o, b.Port) || b.Weight < 0 || b.Weight > 100 || seen[b.Name] {
+				limit := 100
+				if req.RelativeWeights {
+					limit = 1000000
+				}
+				if o == nil || !hasPort(o, b.Port) || b.Weight < 0 || b.Weight > limit || seen[b.Name] {
 					return nil, fmt.Errorf("backend %q must be a distinct Service in the same namespace, with a valid Service port and weight 0–100", b.Name)
 				}
 				seen[b.Name] = true
 				total += b.Weight
-				backends = append(backends, map[string]any{"name": b.Name, "port": b.Port, "weight": b.Weight})
+				ref := map[string]any{"name": b.Name, "port": b.Port}
+				if mode == "weighted" {
+					ref["weight"] = b.Weight
+				}
+				backends = append(backends, ref)
 			}
-			if total != 100 {
+			if mode == "weighted" && ((!req.RelativeWeights && total != 100) || (req.RelativeWeights && total <= 0)) {
 				return nil, fmt.Errorf("backend weights must add up to 100")
 			}
 		}
 		rule := map[string]any{"backendRefs": backends}
 		if selected["timeouts"] {
 			d, e := time.ParseDuration(req.Timeout)
-			if e != nil || d <= 0 || d > 5*time.Minute {
-				return nil, fmt.Errorf("request timeout must be a positive duration up to 5m")
+			if e != nil || d < 0 || d > 5*time.Minute {
+				return nil, fmt.Errorf("request timeout must be between 0s (disabled) and 5m")
 			}
 			rule["timeouts"] = map[string]any{"request": req.Timeout}
+			if req.BackendTimeout != "" {
+				bd, e := time.ParseDuration(req.BackendTimeout)
+				if e != nil || bd < 0 || bd > 5*time.Minute || (d > 0 && (bd == 0 || bd > d)) {
+					return nil, fmt.Errorf("backend timeout must fit within the request timeout")
+				}
+				M(rule["timeouts"])["backendRequest"] = req.BackendTimeout
+			}
 		}
 		obj("gateway.networking.k8s.io/v1", "HTTPRoute", "-route", map[string]any{"parentRefs": []any{map[string]any{"group": "", "kind": "Service", "name": req.Service, "port": req.Port}}, "rules": []any{rule}})
 		for _, r := range ws.List(req.Cluster, GatewayGroup, "httproutes", req.Namespace, nil) {
@@ -226,13 +280,32 @@ func Generate(ws *store.Workspace, req Request) (*Plan, error) {
 	if selected["load-balancing"] || selected["endpoint-failover"] || selected["locality-failover"] {
 		policy := map[string]any{}
 		if selected["load-balancing"] {
-			if req.Algorithm != "ROUND_ROBIN" && req.Algorithm != "LEAST_REQUEST" && req.Algorithm != "RANDOM" {
+			if req.Algorithm != "DEFAULT" && req.Algorithm != "ROUND_ROBIN" && req.Algorithm != "LEAST_REQUEST" && req.Algorithm != "RANDOM" {
 				return nil, fmt.Errorf("choose ROUND_ROBIN, LEAST_REQUEST or RANDOM")
 			}
-			policy["loadBalancer"] = map[string]any{"simple": req.Algorithm}
+			if req.Algorithm != "DEFAULT" {
+				policy["loadBalancer"] = map[string]any{"simple": req.Algorithm}
+			} else {
+				p.Notes = append(p.Notes, "Default load balancing leaves the algorithm unspecified. No algorithm override is generated.")
+			}
 		}
 		if selected["endpoint-failover"] || selected["locality-failover"] {
-			policy["outlierDetection"] = map[string]any{"consecutive5xxErrors": 3, "interval": "5s", "baseEjectionTime": "30s", "maxEjectionPercent": 100}
+			threshold := req.FailureThreshold
+			if threshold == 0 {
+				threshold = 3
+			}
+			percent := req.MaxEjectionPercent
+			if percent == 0 {
+				percent = 100
+			}
+			interval := defaultString(req.EjectionInterval, "5s")
+			duration := defaultString(req.EjectionDuration, "30s")
+			iv, ie := time.ParseDuration(interval)
+			dv, de := time.ParseDuration(duration)
+			if threshold < 1 || threshold > 100000 || percent < 1 || percent > 100 || ie != nil || de != nil || iv <= 0 || iv > 5*time.Minute || dv <= 0 || dv > time.Hour {
+				return nil, fmt.Errorf("choose valid outlier thresholds, interval up to 5m, ejection duration up to 1h and percentage 1–100")
+			}
+			policy["outlierDetection"] = map[string]any{"consecutive5xxErrors": threshold, "interval": interval, "baseEjectionTime": duration, "maxEjectionPercent": percent}
 			p.Notes = append(p.Notes, "Outlier ejection is based on observed failures and is per proxy. This configuration does not generate load or prove failover has occurred.")
 		}
 		if selected["locality-failover"] {
@@ -247,10 +320,12 @@ func Generate(ws *store.Workspace, req Request) (*Plan, error) {
 			lb["localityLbSetting"] = map[string]any{"enabled": true, "failover": []any{map[string]any{"from": req.FromRegion, "to": req.ToRegion}}}
 			policy["loadBalancer"] = lb
 		}
-		obj("networking.istio.io/v1", "DestinationRule", "-destination", map[string]any{"host": req.Service, "trafficPolicy": policy})
+		if len(policy) > 0 || req.Edit != nil {
+			obj("networking.istio.io/v1", "DestinationRule", "-destination", map[string]any{"host": req.Service, "trafficPolicy": policy})
+		}
 		for _, r := range ws.List(req.Cluster, "networking.istio.io", "destinationrules", req.Namespace, nil) {
 			host := S(Path(r.Obj, "spec", "host"))
-			if host == req.Service || strings.HasPrefix(host, req.Service+".") {
+			if serviceHost(host, svc) {
 				p.Notes = append(p.Notes, "Existing DestinationRule "+r.Name+" may conflict. Inspect the effective rule before testing.")
 			}
 		}
@@ -268,8 +343,21 @@ func Generate(ws *store.Workspace, req Request) (*Plan, error) {
 		if enterprise {
 			api, kind = "enterpriseagentgateway.solo.io/v1alpha1", "EnterpriseAgentgatewayPolicy"
 		}
-		obj(api, kind, "-rate", map[string]any{"targetRefs": target, "traffic": map[string]any{"rateLimit": map[string]any{"local": []any{map[string]any{"requests": req.Requests, "unit": req.Unit, "burst": req.Requests}}}}})
+		burst := req.Requests
+		if req.Burst != nil {
+			burst = *req.Burst
+		}
+		if burst < 0 || burst > 1000000 {
+			return nil, fmt.Errorf("burst must be between 0 and 1000000")
+		}
+		obj(api, kind, "-rate", map[string]any{"targetRefs": target, "traffic": map[string]any{"rateLimit": map[string]any{"local": []any{map[string]any{"requests": req.Requests, "unit": req.Unit, "burst": burst}}}}})
 		p.Notes = append(p.Notes, "The rate limit is local to each agentgateway proxy. Multiple replicas do not share a global counter.")
+	}
+	if req.Edit != nil {
+		if err := editGenerated(ws, p); err != nil {
+			return nil, err
+		}
+		return finishPlan(p)
 	}
 	// Keep objects in Kubernetes' JSON-compatible unstructured representation.
 	data, _ := json.Marshal(p.Objects)
@@ -285,6 +373,9 @@ func Generate(ws *store.Workspace, req Request) (*Plan, error) {
 			p.YAML += "---\n"
 		}
 		p.YAML += string(b)
+	}
+	if len(p.Objects) == 0 {
+		return finishPlan(p)
 	}
 	return p, nil
 }

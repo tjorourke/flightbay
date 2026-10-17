@@ -12,7 +12,9 @@ Open a capture normally, then choose **Ambient** in the sidebar, or open a Servi
 flightbay ui ~/Downloads/flightbay-objects.tar.zst
 ```
 
-Choose the cluster and Service. The **Guided investigation** tab traces the configuration for Service-addressed traffic. Choose a particular HTTPRoute if its intended Service is ambiguous, or leave **Related routes** selected.
+Use the searchable dropdown to choose a Namespace, Service, Pod, Gateway, HTTPRoute or ServiceEntry. Type a name, namespace, cluster or kind; arrow keys and Enter work, and the object-type filter narrows the suggestions. Ambient enrolment is not limited to Services: namespaces provide defaults, Pods can have dataplane/waypoint overrides, Gateways provide waypoint infrastructure, and ServiceEntries describe external destinations.
+
+The **Guided investigation** tab adapts to the object type. Service investigations trace Service-addressed traffic. Pod investigations distinguish workload/Pod-IP waypoint handling from Service traffic, and ServiceEntries are not diagnosed using Kubernetes EndpointSlice readiness. Related-object buttons let you move between these scopes. Choose a particular HTTPRoute if its intended Service is ambiguous, or leave **Related routes** selected.
 
 ![Guided ambient attachment investigation](/images/ambient-investigation.png)
 
@@ -51,6 +53,50 @@ For a route pointing to the selected waypoint Gateway, Flightbay offers a downlo
 
 Resource acceptance is not proof of delivered proxy configuration or successful traffic. If diagnostics were collected, follow **Inspect delivered proxy config** to compare the waypoint's actual configuration and xDS state. Without them this part of the investigation is unknown. Root-namespace policies and configuration outside the capture can also affect traffic.
 
+## Attachment map and existing configuration
+
+The **Attachment map** tab shows namespace defaults, selected waypoints, routes, backend Services, policies and selected workloads. Cards open the captured objects. Backend weights and calculated percentages are shown per route rule; a 90/10 split on one rule is not added to weights on another rule. This is a configuration relationship diagram, not observed traffic.
+
+![Service attachment map with routes, policies and backend weights](/images/ambient-map.png)
+
+The map and its companion table have **Edit in wizard** actions for supported existing HTTPRoute rules, DestinationRule settings, single-operation method policies and local request-rate buckets. The wizard loads the actual captured values. Route edits preserve other rules, matches, filters, annotations and attachment references. Unsupported shapes remain evidence-only, with an explanation; they are not flattened into a different configuration.
+
+![Existing route weights loaded into the appropriate editor](/images/ambient-edit.png)
+
+Existing edits produce before/after field previews and scoped merge snippets rather than a competing new route. Test application updates the original resource using its UID and an atomic resourceVersion check. Undo preserves unrelated changes and refuses to overwrite a field edited outside the test.
+
+## From a failed step to a remedy
+
+Known actionable checks offer a wizard button. For example, **Ready endpoints → Investigate and fix endpoints** shows collection state, matching Pods, readiness, declared ports and matching Deployments.
+
+![Evidence-aware endpoint recovery](/images/ambient-recovery.png)
+
+Choose an appropriate action:
+
+- **Missing capture data:** copy a narrowly scoped capture command. No fake EndpointSlice or speculative workload configuration is generated.
+- **Incorrect selector:** explicitly choose the intended captured Pod, review stable selector labels and generate a Service selector change. The selector must match that Pod.
+- **Matching Deployment scaled down:** explicitly choose the Deployment and desired replicas. Its template must match the Service selector.
+- **Incorrect targetPort:** choose a selected Pod and one of its declared container ports. Other Service ports are retained.
+- **No healthy matching workload:** inspect Pod startup, readiness, scheduling and events. Changing a selector or replica count is not presented as a cure for an unhealthy application.
+
+Parent-reference checks can open a route-parent wizard with the affected route already selected. The intended frontend Service and Service port remain explicit; other parents and route rules are retained.
+
+## Select, deploy or share a waypoint
+
+Use the waypoint remedy on an investigation, or **Select or deploy a waypoint** on a Service. Namespace, Gateway and ServiceEntry entry points also offer enrolment setup.
+
+![New shared waypoint with an explicit namespace enrolment list](/images/ambient-waypoint.png)
+
+Choose **existing** or **new**, then the binding scope:
+
+- **Only this object:** change the selected Service or ServiceEntry binding.
+- **Namespace default:** set the namespace waypoint labels. Existing object overrides remain effective unless the clear-override option is explicitly selected.
+- **Shared:** choose the namespaces to enrol. There is no automatic global default; only those namespaces are changed.
+
+A new waypoint uses a selected supported GatewayClass and an HBONE listener. Its access selector names the permitted namespaces. Testing verifies that the real GatewayClass exists and waits for the new Gateway to report Programmed before changing bindings.
+
+For an existing waypoint, the planner checks namespace access. An explicitly requested access change can extend a Same/explicit-name HBONE allowlist, preserving already allowed names. General namespace selectors are not silently broadened or replaced with All. Namespace ambient enrolment and clearing an object's override are separate explicit options.
+
 ## Collect enough evidence
 
 An objects-only capture supports configuration investigation. Include the application namespace and any other namespace containing its waypoint, policies, or cross-namespace backends. Nodes are needed to discover endpoint regions for locality failover.
@@ -83,7 +129,17 @@ Choose a deployed Service and open **Configuration wizard**. Capabilities depend
 
 ![Generated ambient configuration plan](/images/ambient-wizard.png)
 
-Choose the desired tasks, Service port and parameters, then **Generate YAML**. You can copy or download it without connecting to any cluster. Backend weights must total 100, refer to distinct Services in the same namespace and use their Service ports.
+Choose the desired tasks, Service port and supported parameters, then **Generate YAML**. You can copy or download it without connecting to any cluster. Backend references must name distinct Services in the same namespace and use their Service ports.
+
+Options are task-specific:
+
+- Service distribution can use **default/equal weights**, which omits explicit weights, or **explicit weights**. Percentages total 100; existing relative-weight rules can retain their original relative scale.
+- Endpoint load balancing can keep the **controller default** or select ROUND_ROBIN, LEAST_REQUEST or RANDOM. Choosing the default alone produces a no-change preview.
+- Method policies can ALLOW or DENY the selected methods.
+- Ambient mTLS supports STRICT or PERMISSIVE; DISABLE is rejected.
+- Timeouts expose request and optional backend timeouts, including supported zero-duration semantics.
+- Outlier detection exposes failure threshold, check interval, base ejection duration and maximum ejection percentage.
+- Local rate limiting exposes request count, time unit and independent burst capacity. Existing bucket keys and other fields are preserved when editing.
 
 These controls have different semantics:
 
@@ -102,11 +158,11 @@ Generation and investigation are offline. Test actions use a **separate real kub
 1. Review the exact generated YAML and its impact notes.
 2. Explicitly choose a local kubeconfig **context**, shown with its API server address. There is no automatic current-context selection.
 3. Choose **Validate with server dry-run**. Flightbay checks that the Service UID, selector, ports and waypoint configuration still match the runtime capture. It also checks the installed API schemas, admission and your create permissions using Kubernetes dry-run requests. A changed preview must be regenerated.
-4. Choose **Apply for testing**. Only that validated plan can be created, and validation expires after ten minutes. Existing objects are never overwritten.
+4. Choose **Apply for testing**. Only that validated plan can be applied, and validation expires after ten minutes. New resources are created without overwriting existing objects; existing edits update only their reviewed fields with UID/resourceVersion checks.
 5. Use **Refresh attachment status** and exercise traffic separately. A successful create does not mean a route was attached or the intended traffic behaviour occurred.
-6. Choose **Remove these test resources**. Cleanup reads back the objects and deletes only the recorded Flightbay-owned UIDs, then verifies that they are absent. A replacement object is not deleted.
+6. Choose **Undo changes and remove test resources** (or **Remove these test resources** for a create-only plan). Existing fields are restored only while they still equal this test's admitted values. Unrelated fields are preserved. Created objects are deleted only with matching recorded UIDs and ownership, and absence is verified. A replacement object is not deleted.
 
-Created resources have `flightbay-test-…` names and ownership labels. If applying a multi-resource plan fails, Flightbay attempts to remove the resources it created and reports any cleanup still needed.
+Generated traffic-policy resources have `flightbay-test-…` names; new waypoint names are explicitly chosen. Created resources carry ownership labels. If applying a multi-resource plan fails, Flightbay attempts to undo existing-field changes and remove created resources. Bindings are restored before a created waypoint is removed; an undo conflict retains the Gateway and reports the remaining work rather than disrupting a binding it cannot restore.
 
 Test records are stored with private file permissions under `~/.flightbay/ambient-tests` (or `$FLIGHTBAY_HOME/ambient-tests`). **Active test resources** can therefore be inspected and cleaned up after reopening a capture or restarting the desk. Applying a new plan still requires validation in the new session. Cluster credentials are not stored in the records.
 
@@ -122,4 +178,4 @@ In live mode the wizard uses the kubeconfig passed to `--kubeconfig`, but still 
 
 `python3 test/e2e/ambient.py --context kind-mesh1` creates a dedicated namespace on an existing local kind ambient cluster. It proves rejected-parent diagnosis, weighted routing, a real timeout response, L7 method enforcement, ztunnel access control, unhealthy endpoint ejection and, when an agentgateway waypoint class is installed, actual HTTP 429 responses. It applies the wizard's generated plans and uses the wizard's cleanup endpoint, then deletes its namespace and reads the state back. It does not change existing application namespaces.
 
-The live run on 16 October 2026 passed all 16 checks with Istio 1.30.4 and Enterprise agentgateway 2026.9.2. Browser testing also covered generation, server dry-run, apply, attachment status, recovery after reload and cleanup. Other installed versions must pass their own API server dry-run before a test plan can be applied.
+The expanded live run on 17 October 2026 passed all 29 checks with Istio 1.30.4 and Enterprise agentgateway 2026.9.2. It additionally proved existing-route edits/undo, equal/default weighting, selector remediation, scaling, existing waypoint enrolment and a new waypoint shared by two explicitly selected namespaces. Browser testing covered typeahead selection, map-to-editor navigation, actual editing and undo, endpoint recovery and namespace-level waypoint deployment. Other installed versions must pass their own API server dry-run before a test plan can be applied.

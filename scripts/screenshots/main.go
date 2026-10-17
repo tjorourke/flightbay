@@ -37,15 +37,20 @@ import (
 )
 
 type shot struct {
-	name  string // docs/images/<name>.png
-	desk  string // sample, mesh, reviewed
-	hash  string // #view
-	theme string // dark or light
-	setup string // JavaScript run after the page has loaded; may return a promise
-	wait  time.Duration
+	name     string // docs/images/<name>.png
+	desk     string // sample, mesh, reviewed
+	hash     string // #view
+	theme    string // dark or light
+	setup    string // JavaScript run after the page has loaded; may return a promise
+	wait     time.Duration
+	selector string // optional full element capture, including content below the viewport
 }
 
 var shots = []shot{
+	{name: "ambient-map", desk: "ambient", hash: "ambient", theme: "dark", selector: "#am-graph", setup: `(async()=>{const a=S.ambient.inventory.services.find(s=>s.namespace==='flightbay-ambient-e2e'&&s.name==='edit-front');S.ambient.key=amKey(a);S.ambient.tab='map';await render();})()`},
+	{name: "ambient-waypoint", desk: "ambient", hash: "ambient", theme: "dark", setup: `(async()=>{const a=S.ambient.inventory.objects.find(s=>s.kind==='Namespace'&&s.name==='flightbay-ambient-e2e-peer');S.ambient.key=amKey(a);S.ambient.tab='wizard';S.ambient.mode='waypoint';S.ambient.settings={wpMode:'new',wpScope:'shared',wpNamespace:'flightbay-ambient-e2e',wpName:'proposed-shared-waypoint',wpClass:'istio-waypoint',enrolNamespaces:['flightbay-ambient-e2e','flightbay-ambient-e2e-peer']};await render();document.querySelector('#am-setup-parameters').scrollIntoView({block:'start'});})()`},
+	{name: "ambient-recovery", desk: "ambient", hash: "ambient", theme: "dark", selector: "#am-repair-parameters", setup: `(async()=>{const a=S.ambient.inventory.services.find(s=>s.namespace==='flightbay-ambient-e2e'&&s.name==='broken-selector');S.ambient.key=amKey(a);S.ambient.tab='wizard';S.ambient.mode='endpoints';await render();const pod=S.ambient.result.recovery.pods.find(p=>p.labels.app==='stable');S.ambient.settings={repairOperation:'service-selector',selectedPod:pod.name,selector:{app:'stable'}};await render();})()`},
+	{name: "ambient-edit", desk: "ambient", hash: "ambient", theme: "dark", selector: "#am-parameters", setup: `(async()=>{const a=S.ambient.inventory.services.find(s=>s.namespace==='flightbay-ambient-e2e'&&s.name==='edit-front');S.ambient.key=amKey(a);await render();const e=S.ambient.result.editable.find(e=>e.ref.name==='existing-split');S.ambient.tab='wizard';S.ambient.edit=e.request.edit;S.ambient.tasks=Object.fromEntries(e.request.tasks.map(t=>[t,true]));S.ambient.settings={...e.request};await render();})()`},
 	{name: "ambient-investigation", desk: "ambient", hash: "ambient", theme: "dark", setup: `(async () => { const a = S.ambient.inventory.services.find(s => s.namespace === 'flightbay-ambient-e2e' && s.name === 'front'); if (!a) throw new Error('needs the ambient e2e capture'); S.ambient.key = amKey(a); S.ambient.route = 'wrong-parent'; await render(); })()`},
 	{name: "ambient-wizard", desk: "ambient", hash: "ambient", theme: "dark", setup: `(async () => { const a = S.ambient.inventory.services.find(s => s.namespace === 'flightbay-ambient-e2e' && s.name === 'front'); if (!a) throw new Error('needs the ambient e2e capture'); S.ambient.key = amKey(a); S.ambient.tab = 'wizard'; S.ambient.tasks = {'weighted-routing':true}; S.ambient.settings = {port:8080,backends:[{name:'stable',port:8080,weight:90},{name:'canary',port:8080,weight:10}]}; await render(); S.ambient.plan = await apiPost('api/ambient/plan',amRead()); await render(); document.querySelector('#am-plan').scrollIntoView({block:'start'}); })()`},
 	{name: "start", desk: "start", hash: "", theme: "dark", setup: `document.querySelector('[data-card=file]').click()`},
@@ -578,7 +583,24 @@ func (b *browser) capture(d *deskProc, s shot) ([]byte, error) {
 	var shotRes struct {
 		Data string `json:"data"`
 	}
-	if err := b.call(ss, "Page.captureScreenshot", map[string]any{"format": "png"}, &shotRes); err != nil {
+	params := map[string]any{"format": "png"}
+	if s.selector != "" {
+		if err := b.eval(ss, `document.querySelector('#terminal')?.style.setProperty('display','none'); true`); err != nil {
+			return nil, err
+		}
+		var rect struct {
+			Result struct {
+				Value map[string]any `json:"value"`
+			} `json:"result"`
+		}
+		js := fmt.Sprintf(`(()=>{const r=document.querySelector(%q).getBoundingClientRect();return {x:r.left+scrollX,y:r.top+scrollY,width:r.width,height:r.height,scale:1}})()`, s.selector)
+		if err := b.call(ss, "Runtime.evaluate", map[string]any{"expression": js, "returnByValue": true}, &rect); err != nil {
+			return nil, err
+		}
+		params["clip"] = rect.Result.Value
+		params["captureBeyondViewport"] = true
+	}
+	if err := b.call(ss, "Page.captureScreenshot", params, &shotRes); err != nil {
 		return nil, err
 	}
 	return base64.StdEncoding.DecodeString(shotRes.Data)

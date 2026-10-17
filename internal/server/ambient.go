@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,6 +28,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/tjorourke/flightbay/internal/ambient"
+	"github.com/tjorourke/flightbay/internal/store"
 )
 
 type ambientConnection struct {
@@ -42,6 +44,7 @@ type ambientCreated struct {
 	UID        types.UID `json:"uid"`
 }
 type ambientRecord struct {
+	Modified  []ambient.Change `json:"modified,omitempty"`
 	Owner     string           `json:"owner"`
 	Token     string           `json:"token"`
 	Context   string           `json:"context"`
@@ -76,7 +79,13 @@ func (s *Server) ambientInvestigation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	out, err := ambient.Investigate(s.WS, q.Get("cluster"), q.Get("namespace"), q.Get("service"), q.Get("route"))
+	kind := q.Get("kind")
+	name := q.Get("name")
+	if name == "" {
+		name = q.Get("service")
+		kind = "Service"
+	}
+	out, err := ambient.NewView(s.WS, q.Get("cluster"), kind, q.Get("namespace"), name, q.Get("route"))
 	if err != nil {
 		jerr(w, 400, err.Error())
 		return
@@ -202,7 +211,10 @@ func ambientServiceFingerprint(o map[string]any) string {
 }
 func (s *Server) ambientPreflight(ctx context.Context, c ambientConnection, p *ambient.Plan) error {
 	q := p.Request
-	names := map[string]bool{q.Service: true}
+	names := map[string]bool{}
+	if q.Service != "" {
+		names[q.Service] = true
+	}
 	for _, b := range q.Backends {
 		names[b.Name] = true
 	}
@@ -232,7 +244,11 @@ func (s *Server) ambientPreflight(ctx context.Context, c ambientConnection, p *a
 		}
 	}
 	svc := s.WS.Get(q.Cluster, "", "services", q.Namespace, q.Service)
-	wn, wp, gw := ambient.Waypoint(s.WS, svc)
+	var wn, wp string
+	var gw *store.Object
+	if svc != nil {
+		wn, wp, gw = ambient.Waypoint(s.WS, svc)
+	}
 	if gw != nil {
 		live, err := c.client.Resource(schema.GroupVersionResource{Group: ambient.GatewayGroup, Version: "v1", Resource: "gateways"}).Namespace(wn).Get(ctx, wp, metav1.GetOptions{})
 		if err != nil {
@@ -244,7 +260,17 @@ func (s *Server) ambientPreflight(ctx context.Context, c ambientConnection, p *a
 			return errors.New("waypoint configuration changed or belongs to a different cluster; refresh the workspace")
 		}
 	}
-	return nil
+	if q.Waypoint != nil && q.Waypoint.Mode == "new" {
+		cls, e := c.client.Resource(schema.GroupVersionResource{Group: ambient.GatewayGroup, Version: "v1", Resource: "gatewayclasses"}).Get(ctx, q.Waypoint.Class, metav1.GetOptions{})
+		if e != nil {
+			return fmt.Errorf("verify waypoint GatewayClass: %w", e)
+		}
+		controller := ambient.S(ambient.Path(cls.Object, "spec", "controllerName"))
+		if !strings.Contains(controller, "mesh-controller") && !strings.Contains(controller, "agentgateway") {
+			return fmt.Errorf("selected class is not served by a supported waypoint controller")
+		}
+	}
+	return ambientChangesPreflight(ctx, c, p)
 }
 
 func (s *Server) ambientRecords() error {
@@ -332,7 +358,7 @@ func (s *Server) ambientTests(w http.ResponseWriter, r *http.Request) {
 	}
 	out := []*ambientRecord{}
 	for _, rec := range s.ambientS.records {
-		if len(rec.Created) > 0 {
+		if len(rec.Created) > 0 || len(rec.Modified) > 0 {
 			out = append(out, rec)
 		}
 	}
@@ -366,6 +392,10 @@ func (s *Server) ambientTest(w http.ResponseWriter, r *http.Request) {
 			jerr(w, 409, "the configuration or choices changed since preview; regenerate the YAML before validating")
 			return
 		}
+		if len(p.Objects) == 0 && len(p.Changes) == 0 {
+			jerr(w, 400, "this preview contains no changes to apply")
+			return
+		}
 		c, err := s.ambientConnect(req.Context)
 		if err != nil {
 			jerr(w, 400, err.Error())
@@ -384,6 +414,12 @@ func (s *Server) ambientTest(w http.ResponseWriter, r *http.Request) {
 			}
 			if _, err = res.Create(ctx, u, metav1.CreateOptions{DryRun: []string{metav1.DryRunAll}, FieldManager: "flightbay-tests"}); err != nil {
 				jerr(w, 400, "server dry-run: "+err.Error())
+				return
+			}
+		}
+		for _, ch := range p.Changes {
+			if _, err := ambientPatch(ctx, c, ch, false, true); err != nil {
+				jerr(w, 400, "server dry-run of existing-field change: "+err.Error())
 				return
 			}
 		}
@@ -423,7 +459,7 @@ func (s *Server) ambientTest(w http.ResponseWriter, r *http.Request) {
 			jerr(w, 409, "validate again in this desk before applying; earlier test resources can still be cleaned up")
 			return
 		}
-		if time.Since(rec.Validated) > 10*time.Minute || len(rec.Created) > 0 {
+		if time.Since(rec.Validated) > 10*time.Minute || len(rec.Created) > 0 || len(rec.Modified) > 0 {
 			jerr(w, 409, "validation expired or test already applied; cleanup and validate again")
 			return
 		}
@@ -451,7 +487,38 @@ func (s *Server) ambientTest(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		writeJSON(w, 200, map[string]any{"test": rec, "message": "Test resources created. Check attachment status and exercise traffic; creation is not proof that the intended behaviour works."})
+		applyErr := waitAmbientWaypoint(ctx, c, rec.Plan)
+		if applyErr == nil {
+			for _, ch := range rec.Plan.Changes {
+				applied, e := ambientPatch(ctx, c, ch, false, false)
+				if e != nil {
+					applyErr = e
+					break
+				}
+				// Admission can materialise defaults, for example omitted route
+				// weights. Undo must compare with the actual admitted field values.
+				ch.Fields = append([]ambient.FieldChange{}, ch.Fields...)
+				for i := range ch.Fields {
+					v, present := ambient.Pointer(applied.Object, ch.Fields[i].Path)
+					ch.Fields[i].After = ambient.Copy(v)
+					ch.Fields[i].AfterPresent = present
+				}
+				rec.Modified = append(rec.Modified, ch)
+				if e := s.saveAmbientRecord(rec); e != nil {
+					applyErr = e
+					break
+				}
+			}
+		}
+		if applyErr != nil {
+			cleanupCtx, stop := context.WithTimeout(context.Background(), 30*time.Second)
+			rollback := cleanupAmbient(cleanupCtx, c, rec)
+			stop()
+			_ = s.saveAmbientRecord(rec)
+			writeJSON(w, 400, map[string]any{"error": fmt.Sprintf("test change failed: %v; undo: %v", applyErr, rollback), "test": rec})
+			return
+		}
+		writeJSON(w, 200, map[string]any{"test": rec, "message": "Test configuration applied. Check status and exercise traffic. An offline capture stays unchanged; refresh a live inventory or open a fresh capture to investigate the new state."})
 	case "cleanup":
 		if err := cleanupAmbient(ctx, c, rec); err != nil {
 			_ = s.saveAmbientRecord(rec)
@@ -462,9 +529,30 @@ func (s *Server) ambientTest(w http.ResponseWriter, r *http.Request) {
 			jerr(w, 500, err.Error())
 			return
 		}
-		writeJSON(w, 200, map[string]any{"test": rec, "message": "Test resources are absent. Existing configurations were not changed."})
+		writeJSON(w, 200, map[string]any{"test": rec, "message": "Test changes were undone and created resources are absent. Unrelated fields were preserved."})
 	case "status":
 		out := []map[string]any{}
+		for _, ch := range rec.Modified {
+			res, e := ambientChangeResource(c, ch)
+			if e != nil {
+				jerr(w, 400, e.Error())
+				return
+			}
+			o, e := res.Get(ctx, ch.Ref.Name, metav1.GetOptions{})
+			item := map[string]any{"changed": ch.Ref}
+			if e != nil {
+				item["error"] = e.Error()
+			} else {
+				item["status"] = o.Object["status"]
+				fields := map[string]any{}
+				for _, f := range ch.Fields {
+					v, _ := ambient.Pointer(o.Object, f.Path)
+					fields[f.Path] = v
+				}
+				item["currentFields"] = fields
+			}
+			out = append(out, item)
+		}
 		for _, o := range rec.Created {
 			res, err := ambientResource(c, o.APIVersion, o.Kind, o.Namespace)
 			if err != nil {
@@ -488,6 +576,9 @@ func (s *Server) ambientTest(w http.ResponseWriter, r *http.Request) {
 	}
 }
 func cleanupAmbient(ctx context.Context, c ambientConnection, rec *ambientRecord) error {
+	if err := undoAmbientChanges(ctx, c, rec); err != nil {
+		return err
+	}
 	left := []ambientCreated{}
 	var errs error
 	for i := len(rec.Created) - 1; i >= 0; i-- {

@@ -32,12 +32,19 @@ type Evidence struct {
 	Value string `json:"value"`
 }
 type Step struct {
-	ID       string     `json:"id"`
-	Title    string     `json:"title"`
-	State    string     `json:"state"` // pass, fail, warning, unknown, na
-	Detail   string     `json:"detail"`
-	Evidence []Evidence `json:"evidence,omitempty"`
-	FixYAML  string     `json:"fixYaml,omitempty"`
+	ID       string        `json:"id"`
+	Title    string        `json:"title"`
+	State    string        `json:"state"` // pass, fail, warning, unknown, na
+	Detail   string        `json:"detail"`
+	Evidence []Evidence    `json:"evidence,omitempty"`
+	FixYAML  string        `json:"fixYaml,omitempty"`
+	Actions  []Remediation `json:"actions,omitempty"`
+}
+type Remediation struct {
+	ID     string `json:"id"`
+	Label  string `json:"label"`
+	Detail string `json:"detail"`
+	Ref    *Ref   `json:"ref,omitempty"`
 }
 type Investigation struct {
 	Cluster       string         `json:"cluster"`
@@ -56,9 +63,17 @@ type Service struct {
 	Regions []string `json:"regions"`
 }
 type Inventory struct {
-	Services   []Service `json:"services"`
-	Routes     []Ref     `json:"routes"`
-	Namespaces []Ref     `json:"namespaces"`
+	Objects        []Ref            `json:"objects"`
+	Waypoints      []WaypointChoice `json:"waypoints"`
+	GatewayClasses []string         `json:"gatewayClasses"`
+	Services       []Service        `json:"services"`
+	Routes         []Ref            `json:"routes"`
+	Namespaces     []Ref            `json:"namespaces"`
+}
+type WaypointChoice struct {
+	Ref
+	Class   string `json:"class"`
+	Traffic string `json:"traffic"`
 }
 
 func M(x any) map[string]any { v, _ := x.(map[string]any); return v }
@@ -127,6 +142,7 @@ func List(ws *store.Workspace) Inventory {
 		a, b := r.Services[i], r.Services[j]
 		return a.Cluster+"/"+a.Namespace+"/"+a.Name < b.Cluster+"/"+b.Namespace+"/"+b.Name
 	})
+	expandInventory(ws, &r)
 	return r
 }
 
@@ -570,7 +586,7 @@ func inspectRoute(ws *store.Workspace, r *Investigation, svc, route *store.Objec
 			state = "warning"
 		}
 		if k == "Service" {
-			if ns != svc.Namespace || name != svc.Name {
+			if svc.Name != "" && (ns != svc.Namespace || name != svc.Name) {
 				state, detail = "warning", detail+" This parent is not the selected Service."
 			}
 			if port := N(p["port"]); port > 0 && !hasPort(o, port) {
@@ -578,7 +594,7 @@ func inspectRoute(ws *store.Workspace, r *Investigation, svc, route *store.Objec
 			}
 		}
 		add(r, id, "Route parent: "+route.Name, state, detail, evidence(route, field, p), evidence(o, "metadata.name", o.Name))
-		if k == "Gateway" && ns == wpNS && name == wpName && route.Namespace == svc.Namespace {
+		if svc.Name != "" && k == "Gateway" && ns == wpNS && name == wpName && route.Namespace == svc.Namespace {
 			parents := append([]any{}, L(Path(route.Obj, "spec", "parentRefs"))...)
 			entry := map[string]any{"group": "", "kind": "Service", "name": svc.Name}
 			if len(L(Path(svc.Obj, "spec", "ports"))) == 1 {

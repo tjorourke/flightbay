@@ -36,7 +36,7 @@ Browse captured resources with `kubectl` or a k9s-style navigator, search logs i
 - **Keeping the evidence.** Open a point-in-time capture after a pod has restarted or the cluster has changed, and compare it with another capture.
 - **Controlling what leaves the cluster.** Select namespaces and resource types, redact credentials during collection, and review or remove data before sending it. Signing and encryption are optional.
 - **Finding related problems.** Search objects and logs, inspect traffic and proxy state, and follow findings to their evidence and suggested fixes.
-- **Ambient attachment and configuration.** Follow Service-to-waypoint attachment, explain rejected route parents and controller status, then generate supported L4/L7 YAML. The Ambient wizard can separately dry-run, apply and clean up a test plan in an explicitly selected real cluster.
+- **Ambient attachment and configuration.** Search Namespace, Service, Pod, Gateway, HTTPRoute and ServiceEntry entry points. Inspect a visual attachment map, edit captured routing weights and policies, set up shared waypoints or follow failed checks into an evidence-aware recovery wizard. Preview YAML/field diffs, dry-run and apply to an explicitly selected real context, then undo scoped test changes.
 
 ![Overview of a snapshot](docs/images/overview.png)
 

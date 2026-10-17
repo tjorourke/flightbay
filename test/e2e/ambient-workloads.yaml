@@ -20,6 +20,75 @@ spec:
     port: 15008
     protocol: HBONE
 ---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: flightbay-ambient-e2e-peer
+  labels:
+    istio.io/dataplane-mode: ambient
+    app.kubernetes.io/managed-by: flightbay-e2e
+---
+apiVersion: v1
+kind: Service
+metadata: {name: broken-selector, namespace: flightbay-ambient-e2e}
+spec:
+  selector: {app: intentionally-missing}
+  ports: [{name: http, port: 8080, targetPort: 8080, appProtocol: http}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: scaled-zero, namespace: flightbay-ambient-e2e}
+spec:
+  replicas: 0
+  selector:
+    matchLabels: {app: scaled-zero}
+  template:
+    metadata:
+      labels: {app: scaled-zero}
+    spec:
+      containers:
+      - name: http
+        image: nginx:1.27-alpine
+        command: [/bin/sh, -c]
+        args:
+        - "printf 'server { listen 8080; location / { return 200 \"scaled\\n\"; } }' > /etc/nginx/conf.d/default.conf; exec nginx -g 'daemon off;'"
+        ports: [{containerPort: 8080}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: scaled, namespace: flightbay-ambient-e2e}
+spec:
+  selector: {app: scaled-zero}
+  ports: [{name: http, port: 8080, targetPort: 8080, appProtocol: http}]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: edit-front
+  namespace: flightbay-ambient-e2e
+  labels: {istio.io/use-waypoint: waypoint}
+spec:
+  selector: {app: stable}
+  ports: [{name: http, port: 8080, targetPort: 8080, appProtocol: http}]
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: existing-split
+  namespace: flightbay-ambient-e2e
+  annotations: {customer.example/keep: preserved}
+spec:
+  parentRefs: [{group: "", kind: Service, name: edit-front, port: 8080}]
+  rules:
+  - matches: [{path: {type: PathPrefix, value: /}}]
+    filters:
+    - type: RequestHeaderModifier
+      requestHeaderModifier:
+        add: [{name: x-flightbay-preserve, value: existing}]
+    backendRefs:
+    - {name: stable, port: 8080, weight: 90}
+    - {name: canary, port: 8080, weight: 10}
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:

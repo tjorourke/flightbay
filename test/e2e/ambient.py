@@ -18,6 +18,7 @@ from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[2]
 NS = "flightbay-ambient-e2e"
+PEER = NS + "-peer"
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--context", default="kind-mesh1")
 parser.add_argument("--keep", action="store_true")
@@ -71,8 +72,8 @@ def code(service, method="GET", count=1):
 
 
 try:
-    if k("get", "namespace", NS, check=False).returncode == 0:
-        raise RuntimeError(f"namespace {NS} already exists; refusing to overwrite it")
+    if any(k("get", "namespace", name, check=False).returncode == 0 for name in [NS, PEER]):
+        raise RuntimeError("a test namespace already exists; refusing to overwrite it")
     k("apply", "-f", str(ROOT / "test/e2e/ambient-workloads.yaml"))
     created_namespace = True
     k("-n", NS, "wait", "--for=condition=Available", "deployment", "--all", "--timeout=240s")
@@ -96,7 +97,7 @@ try:
     run("go", "build", "-o", str(collector), "./cmd/flightbay")
     run("go", "build", "-o", str(desk_bin), "./cmd/flightbay-desk")
     capture = work / "ambient.tar.zst"
-    run(str(collector), "collect", "--context", args.context, "--namespaces", NS, "--collect", "objects", "--no-logs", "--no-portforward", "--out", str(capture))
+    run(str(collector), "collect", "--context", args.context, "--namespaces", NS + "," + PEER, "--collect", "objects", "--no-logs", "--no-portforward", "--out", str(capture))
     log = (work / "desk.log").open("w")
     desk = subprocess.Popen([str(desk_bin), "open", str(capture), "--listen", "127.0.0.1:0", "--no-browser"], cwd=ROOT, env=env, stdout=log, stderr=log)
     match = until(lambda: re.search(r"UI:\s+(http://[^/]+/\?token=([a-f0-9]+))", (work / "desk.log").read_text()), timeout=120)
@@ -131,6 +132,55 @@ try:
     def cleanup(test):
         api("/api/ambient/test", dict(test, operation="cleanup"))
         ok("cleanup confirms test resources are absent without changing existing objects")
+
+    # The map and editor must use existing rule values, rather than create a competing route.
+    view = api(f"/api/ambient/investigate?cluster={args.context}&namespace={NS}&service=edit-front")
+    edit = next(e for e in view["editable"] if e["ref"]["name"] == "existing-split")
+    assert edit["supported"] and edit["request"]["backends"][0]["weight"] == 90
+    test = start_test("edit-front", ["weighted-routing"], backends=[dict(name="stable", port=8080, weight=25), dict(name="canary", port=8080, weight=75)], edit=edit["request"]["edit"])
+    changed = json.loads(k("-n", NS, "get", "httproute", "existing-split", "-o", "json").stdout)
+    assert changed["spec"]["rules"][0]["backendRefs"][1]["weight"] == 75
+    assert changed["metadata"]["annotations"]["customer.example/keep"] == "preserved"
+    assert changed["spec"]["rules"][0]["filters"][0]["requestHeaderModifier"]["add"][0]["value"] == "existing"
+    ok("attachment map loads actual weights and the editor updates the existing rule, preserving filters and annotations")
+    cleanup(test)
+    restored = json.loads(k("-n", NS, "get", "httproute", "existing-split", "-o", "json").stdout)
+    assert restored["spec"]["rules"][0]["backendRefs"][0]["weight"] == 90
+    ok("undo restores the existing routing weights")
+
+    test = start_test("edit-front", ["weighted-routing"], trafficMode="equal", backends=[dict(name="stable", port=8080, weight=0), dict(name="canary", port=8080, weight=0)], edit=edit["request"]["edit"])
+    changed = json.loads(k("-n", NS, "get", "httproute", "existing-split", "-o", "json").stdout)
+    assert all(b.get("weight", 1) == 1 for b in changed["spec"]["rules"][0]["backendRefs"])
+    ok("default/equal routing omits overrides and accepts API-server materialised weights")
+    cleanup(test)
+
+    recovery = api(f"/api/ambient/investigate?cluster={args.context}&namespace={NS}&service=broken-selector")
+    pod = next(p for p in recovery["recovery"]["pods"] if p["labels"].get("app") == "stable")
+    assert any(a["id"] == "endpoints" for step in recovery["steps"] for a in step.get("actions", []))
+    test = start_test("broken-selector", ["service-selector"], selectedPod=pod["name"], selector={"app": "stable"})
+    until(lambda: "stable" in http("broken-selector"))
+    ok("endpoint remediation generates and applies the selected workload's Service selector, restoring real traffic")
+    cleanup(test)
+
+    test = start_test("scaled", ["scale-workload"], workload="scaled-zero", replicas=1)
+    until(lambda: "200" in code("scaled"))
+    ok("endpoint recovery scales an explicitly selected matching zero-replica Deployment")
+    cleanup(test)
+
+    test = start_test("direct", ["waypoint"], waypoint=dict(mode="existing", scope="service", namespace=NS, name="waypoint", **{"class": "istio-waypoint"}))
+    assert json.loads(k("-n", NS, "get", "service", "direct", "-o", "json").stdout)["metadata"]["labels"]["istio.io/use-waypoint"] == "waypoint"
+    until(lambda: "200" in code("direct"))
+    ok("existing-waypoint Service enrolment changes only the reviewed binding")
+    cleanup(test)
+
+    test = start_test("front", ["waypoint"], waypoint=dict(mode="new", scope="shared", namespace=NS, name="shared-test-waypoint", namespaces=[NS, PEER], **{"class": "istio-waypoint"}))
+    for name in [NS, PEER]:
+        current = json.loads(k("get", "namespace", name, "-o", "json").stdout)
+        assert current["metadata"]["labels"]["istio.io/use-waypoint"] == "shared-test-waypoint"
+    override = json.loads(k("-n", NS, "get", "service", "front", "-o", "json").stdout)
+    assert override["metadata"]["labels"]["istio.io/use-waypoint"] == "waypoint"
+    ok("new shared waypoint reports Programmed before explicitly enrolling two namespaces and preserving Service overrides")
+    cleanup(test)
 
     test = start_test("front", ["weighted-routing"], backends=[dict(name="stable", port=8080, weight=50), dict(name="canary", port=8080, weight=50)])
     until(lambda: "canary" in http("front", count=20))
@@ -183,5 +233,5 @@ finally:
         except subprocess.TimeoutExpired:
             desk.kill()
     if created_namespace and not args.keep:
-        k("delete", "namespace", NS, "--wait=true", "--timeout=180s")
-        assert k("get", "namespace", NS, check=False).returncode != 0
+        k("delete", "namespace", NS, PEER, "--wait=true", "--timeout=180s")
+        assert all(k("get", "namespace", name, check=False).returncode != 0 for name in [NS, PEER])
