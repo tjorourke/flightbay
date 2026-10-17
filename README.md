@@ -42,6 +42,8 @@ Ambient's configuration flow is **Target → Task → Configure → Review**, wi
 
 The Attachment map groups Services inside draggable, expandable cluster-context boxes with Kubernetes icons and independent card/list views. Captured east-west peering and global-Service publications have evidence-backed connection lines. Zoom, pan, fit, reset or go full screen; the top search focuses resources on the map. View object and View YAML actions open the actual resources directly. Multicluster bundles show every captured context without assuming that the clusters are peered.
 
+Service cards expose cluster and published global DNS names. Configure can generate a reviewed global-publication label patch. **Test service** runs saved HTTP-header profiles from the desk host, directly or through a temporary port-forward to existing Pods, and links response results to the corresponding log time window. No test Pods are deployed. Investigation status badges filter the checks.
+
 ![Overview of a snapshot](docs/images/overview.png)
 
 It is two commands:

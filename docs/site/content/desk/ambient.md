@@ -41,6 +41,10 @@ The investigation checks:
 
 Every result is **Pass**, **Failed**, **Check**, **Unknown** or **Not applicable**. Click the evidence to inspect the original captured object. Missing, excluded, trimmed or reviewed-out data does not prove that a resource is absent.
 
+The status badges are filters. Choose **Failed**, **Check**, **Unknown**, **Pass** or **Not applicable** to show only those checks; **All** restores the full list. Clicking the active filter also resets it. Counts remain totals for the selected resource, and a zero-count filter shows an explicit empty state. Object/YAML access and related resources remain available while filtering checks.
+
+![Pass filter showing only passing checks while retaining resource access](/images/ambient-status-filter.png)
+
 Failures open first; other checks are compact, expandable rows. Raw fields used by a check are inside **Check details · captured fields**. Each step includes labelled **Official docs** links to the relevant upstream or Enterprise guide. A stale-status warning appears only when the observed generation is actually stale or missing.
 
 ## Detected implementation and official documentation
@@ -94,6 +98,40 @@ Click a connection chip to highlight its endpoints and frame the two cluster box
 The runnable fixture is `test/e2e/multicluster-demo.yaml`, with setup notes in `test/e2e/README-multicluster.md`. `bash test/e2e/multicluster-check.sh` temporarily stops only the fixture's local server, proves remote responses in both directions, and restores the exact initial replica counts. It passed on mesh1 and mesh2 with Solo Istio 1.30.4 on 17 October 2026. Bookinfo is outside that fixture namespace.
 
 Namespace setup in the Configure tab also retains the compact Service overview with endpoint counts.
+
+### Service DNS names
+
+Service cards show both **Cluster DNS** and **Global mesh DNS**. The target bar's **DNS names** menu exposes the full names with Copy actions. The cluster suffix comes from captured istiod `--domain` arguments or a captured CoreDNS Kubernetes zone. If neither is available, `cluster.local` is explicitly marked as an unconfirmed default; conflicting captured suffixes are not guessed. Trust domains are not used as DNS suffixes.
+
+Global names come from controller-generated ServiceEntries whose labels identify the selected Service. A global label alone does not invent a hostname. This demo publishes `global-echo.flightbay-global-demo.mesh.internal`; another installation might publish `mesh.local`, a Segment domain or custom aliases. Displaying a configured name does not prove it resolves from the workstation.
+
+### Publish an existing Service globally
+
+In **Configure**, choose **Publish a global Service**. The generator reviews the metadata label `solo.io/service-scope: global` on the existing Service. It preserves other labels, selectors, ports and service-takeover settings, and does not create an application or edit generated ServiceEntries. Legacy `global-only` publication is preserved.
+
+This template requires captured Solo Enterprise Istio evidence, the ServiceEntry API and an ambient-enrolled namespace with a selector-based application Service. An Enterprise-level Istio licence and working peering are runtime prerequisites. Review one context at a time; choose the corresponding Service in each other cluster that should contribute endpoints. API-server dry-run validates the patch, not end-to-end publication or connectivity.
+
+The downloaded YAML is a **scoped merge snippet for an existing resource**. Use Flightbay's reviewed dry-run/apply/undo flow, or `kubectl patch service NAME -n NAMESPACE --context CONTEXT --type merge --patch-file FILE.yaml`. Refresh afterwards to see the actual global DNS names.
+
+### Test a Service with HTTP header profiles
+
+Use **Test service** in the target bar or **Test** on a Service card. The modal supports saved, named profiles containing the HTTP method, path/query, headers, optional body and per-request timeout. Header values such as Authorization and cookies use masked inputs and are redacted from returned results. Profiles are stored locally in owner-only files beneath Flightbay's Ambient state directory, not in captured Kubernetes resources or exported bundles.
+
+Choose the connection explicitly:
+
+| Mode | Connection and meaning |
+|---|---|
+| Public / reachable address | Flightbay requests an HTTP(S) origin directly. Set path and query in the profile. Workstation DNS and connectivity must reach it. |
+| Service port-forward | Flightbay forwards to a Ready existing Pod selected by the Service. Selected local/global DNS names are HTTP authorities on the same backend connection, not DNS or mesh-routing tests. |
+| Gateway port-forward | Flightbay forwards to a captured HTTP ingress gateway's existing Pod. Its matching route must target the global Service to exercise east-west routing. Missing captured route references are reported in the result. |
+
+No test Pods, routes or Services are deployed. Port-forwarding needs the selected context's `pods/portforward` permission and a live Service UID matching the capture. The port-forward closes after the requests. Redirects are returned rather than followed; response bodies are capped at 32 KiB. Methods other than GET/HEAD have the application's normal HTTP semantics.
+
+A profile's explicit `Host` header overrides the selected HTTP authority; results show the authority actually sent. Each batch is limited to eight names and a two-minute overall timeout.
+
+Each result shows status, latency, connection address, HTTP authority, destination Pod where known, response headers/body and an `X-Flightbay-Test-ID`. **Logs around this request** opens the selected cluster, destination namespace/Pod and the test's time window. Exact ID correlation requires the application or gateway to log that header; a snapshot without those logs cannot show a new request. HTTP 200 through a backend port-forward is not proof of working global DNS or east-west routing.
+
+![HTTP results distinguish authorities from the actual port-forward connection and link to logs](/images/ambient-http-results.png)
 
 ![Service attachment map with routes, policies and backend weights](/images/ambient-map.png)
 

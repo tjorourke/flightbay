@@ -38,7 +38,7 @@ func TestAmbientBrowserPreview(t *testing.T) {
 	webRoot := filepath.Join("..", "..", "web")
 	static := http.StripPrefix("/static/", http.FileServer(http.Dir(webRoot)))
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/ambient/test" {
+		if r.URL.Path == "/api/ambient/test" || r.URL.Path == "/api/ambient/http-test" {
 			jerr(w, 403, "browser preview: real cluster actions are disabled")
 			return
 		}

@@ -51,6 +51,7 @@ type Recovery struct {
 	Command       string           `json:"command"`
 }
 type View struct {
+	DNS         *ServiceDNS      `json:"dns,omitempty"`
 	Environment Environment      `json:"environment"`
 	Services    []ServiceSummary `json:"services,omitempty"`
 	*Investigation
@@ -112,6 +113,8 @@ func NewView(ws *store.Workspace, c, kind, ns, name, route string) (*View, error
 	v.Environment = DetectEnvironment(ws, c, o)
 	if kind == "Service" {
 		v.Recovery = recovery(ws, o)
+		dns := serviceDNS(ws, o)
+		v.DNS = &dns
 		v.Graph = serviceGraph(ws, o, r)
 		v.Editable = editableConfigurations(ws, o)
 		for i := range r.Steps {

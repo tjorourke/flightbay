@@ -8,20 +8,22 @@ import (
 
 type ServiceSummary struct {
 	Ref
-	State          string `json:"state"`
-	Detail         string `json:"detail"`
-	Ready          int    `json:"ready"`
-	Total          int    `json:"total"`
-	Waypoint       string `json:"waypoint,omitempty"`
-	WaypointClass  string `json:"waypointClass,omitempty"`
-	Routes         int    `json:"routes"`
-	Infrastructure bool   `json:"infrastructure"`
-	Scope          string `json:"scope,omitempty"`
-	Takeover       bool   `json:"takeover"`
+	DNS            ServiceDNS `json:"dns"`
+	State          string     `json:"state"`
+	Detail         string     `json:"detail"`
+	Ready          int        `json:"ready"`
+	Total          int        `json:"total"`
+	Waypoint       string     `json:"waypoint,omitempty"`
+	WaypointClass  string     `json:"waypointClass,omitempty"`
+	Routes         int        `json:"routes"`
+	Infrastructure bool       `json:"infrastructure"`
+	Scope          string     `json:"scope,omitempty"`
+	Takeover       bool       `json:"takeover"`
 }
 
 func summariseService(ws *store.Workspace, svc *store.Object) ServiceSummary {
 	r := ServiceSummary{Ref: reference(svc), State: "unknown"}
+	r.DNS = serviceDNS(ws, svc)
 	r.Scope = svc.Labels()["solo.io/service-scope"]
 	r.Takeover = svc.Labels()["solo.io/service-takeover"] == "true"
 	r.Infrastructure = svc.Labels()["gateway.networking.k8s.io/gateway-name"] != ""

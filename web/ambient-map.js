@@ -22,8 +22,8 @@ function amClusterCanvas(target) {
     let height=250,listY=144;
     const cardWidth=list?width-32:(width-32-(columns-1)*16)/columns;
     const rendered=items.map((item,i)=>{
-      const nodeID=amMapKey(item.ref),positionID=view+(wide?'-wide':'')+'|'+nodeID,h=list?(item.gateway?192:146):252;
-      const pos=layout.positions[positionID]||{x:list?16:16+(i%columns)*(cardWidth+16),y:list?listY:144+Math.floor(i/columns)*280};listY+=h+24;
+      const nodeID=amMapKey(item.ref),positionID=view+(wide?'-wide':'')+'|'+nodeID,h=list?(item.gateway?192:240):(item.gateway?252:350);
+      const pos=layout.positions[positionID]||{x:list?16:16+(i%columns)*(cardWidth+16),y:list?listY:144+Math.floor(i/columns)*378};listY+=h+24;
       const x=Math.min(pos.x,width-cardWidth-16),y=pos.y;height=Math.max(height,y+h+24);
       return `<article class="am-canvas-card ${list?'am-canvas-list':''} ${item.gateway?'am-canvas-gateway':''} ${target&&amKey(item.ref)===amKey(target)?'am-canvas-selected':''}" style="left:${x}px;top:${y}px;width:${cardWidth}px;height:${h}px" data-map-object="${attr(item.ref)}" data-map-node="${esc(nodeID)}"><button class="am-drag-handle" data-map-drag="${esc(positionID)}" aria-label="Move ${esc(item.ref.name)}" title="Drag to move; arrow keys also move this card">⠿</button>${item.html}</article>`;
     }).join('');
@@ -36,6 +36,7 @@ function amClusterCanvas(target) {
 
 function amWireClusterCanvas(){
   const A=S.ambient,viewport=$('#am-map-viewport');if(!viewport)return;
+  document.querySelectorAll('.am-canvas-card[data-map-object]').forEach(card=>{const ref=JSON.parse(card.dataset.mapObject);if(ref.kind!=='Service')return;const svc=A.inventory.topology.clusters.find(c=>c.context===ref.cluster)?.services.find(s=>s.namespace===ref.namespace&&s.name===ref.name);if(!svc?.dns)return;card.querySelector('.am-global-label')?.remove();card.querySelector('.row.wrap')?.insertAdjacentHTML('beforebegin',`<div class="am-card-dns"><small title="${esc(svc.dns.domainSource)}">Cluster DNS${svc.dns.domainObserved?'':' · default suffix'}</small><code title="${esc(svc.dns.localName||svc.dns.domainSource)}">${esc(svc.dns.localName||'Not established')}</code><small>Global mesh DNS</small><code title="${esc((svc.dns.globalNames||[]).join(', '))}">${esc(svc.dns.globalNames?.join(', ')||'No published name captured')}</code></div>`);});
   const title=document.querySelector('.am-topology>.panel-head h2'),subtitle=document.querySelector('.am-topology>.panel-head p');
   if(title){title.textContent='Connections';if(subtitle)title.title=subtitle.textContent;}subtitle?.remove();
   A.mapObserver?.disconnect();

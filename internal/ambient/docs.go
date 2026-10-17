@@ -33,6 +33,8 @@ func agentGuide(e Environment, path, title string) []DocLink {
 }
 func TaskDocs(e Environment, id string) []DocLink {
 	switch id {
+	case "global-service":
+		return []DocLink{{"Publish services across clusters", enterpriseIstioDocs + "multicluster/multi-apps/multi-apps/", "Enterprise Istio"}, {"Service DNS", kubeDocs + "concepts/services-networking/dns-pod-service/", "Kubernetes"}}
 	case "l4-default-deny", "l4-allow-namespace":
 		return istioGuide(e, "ambient/usage/l4-policy/", "security/authorization/ztunnel-authz/", "L4 authorization")
 	case "strict-mtls":

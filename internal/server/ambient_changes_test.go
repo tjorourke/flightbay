@@ -124,6 +124,43 @@ func TestWaypointBindingDryRunApplyAndUndoPreservesOtherLabels(t *testing.T) {
 		t.Fatalf("undo lost unrelated labels: %+v", undone.GetLabels())
 	}
 }
+
+func TestGlobalServicePublicationDryRunApplyUndo(t *testing.T) {
+	s, dc, srv, _ := ambientFixture(t)
+	supportAmbientChanges(t, s, dc)
+	s.WS.AddObjects("captured", bundle.APIResource{Version: "v1", Resource: "pods", Kind: "Pod", Namespaced: true}, []map[string]any{{"metadata": map[string]any{"name": "istiod", "namespace": "istio-system"}, "spec": map[string]any{"containers": []any{map[string]any{"image": "istio/pilot:1.30.4-solo"}}}}}, "pilot")
+	s.WS.AddObjects("captured", bundle.APIResource{Group: "networking.istio.io", Version: "v1", Resource: "serviceentries", Kind: "ServiceEntry", Namespaced: true}, nil, "serviceentries")
+	req := ambient.Request{Cluster: "captured", Namespace: "app", Service: "web", Tasks: []string{"global-service"}}
+	token := validateAmbient(t, srv, req)
+	resource := dc.Resource(schema.GroupVersionResource{Version: "v1", Resource: "services"}).Namespace("app")
+	before, err := resource.Get(context.Background(), "web", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.GetLabels()["solo.io/service-scope"] != "" {
+		t.Fatal("dry-run changed the Service")
+	}
+	if code, out := ambientPost(t, srv, map[string]any{"operation": "apply", "context": "chosen", "validation": token}); code != 200 {
+		t.Fatalf("apply: %d %v", code, out)
+	}
+	current, _ := resource.Get(context.Background(), "web", metav1.GetOptions{})
+	if current.GetLabels()["solo.io/service-scope"] != "global" {
+		t.Fatal("global publication label missing")
+	}
+	labels := current.GetLabels()
+	labels["unrelated"] = "preserve"
+	current.SetLabels(labels)
+	if _, err = resource.Update(context.Background(), current, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if code, out := ambientPost(t, srv, map[string]any{"operation": "cleanup", "context": "chosen", "validation": token}); code != 200 {
+		t.Fatalf("cleanup: %d %v", code, out)
+	}
+	after, _ := resource.Get(context.Background(), "web", metav1.GetOptions{})
+	if after.GetLabels()["solo.io/service-scope"] != "" || after.GetLabels()["unrelated"] != "preserve" {
+		t.Fatalf("undo did not preserve other labels: %v", after.GetLabels())
+	}
+}
 func TestBindingConflictRetainsCreatedWaypoint(t *testing.T) {
 	s, dc, srv, _ := ambientFixture(t)
 	supportAmbientChanges(t, s, dc)

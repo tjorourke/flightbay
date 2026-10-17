@@ -92,7 +92,9 @@ func Capabilities(ws *store.Workspace, c, ns, service string) []Task {
 	security := hasResource(ws, c, "security.istio.io", "authorizationpolicies")
 	dr := hasResource(ws, c, "networking.istio.io", "destinationrules")
 	selector := len(M(Path(svc.Obj, "spec", "selector"))) > 0
+	globalSupported, globalReason := globalServiceSupport(ws, svc, env)
 	out := []Task{
+		{"global-service", "Publish as a global Service", "Multicluster", globalSupported, globalReason},
 		{"l4-default-deny", "Deny by default for the selected workload", "L4 ztunnel", security && selector, "Creates an empty ALLOW policy on the Service's workload selector. Other ALLOW policies are additive; this does not override them."},
 		{"l4-allow-namespace", "Allow calls from a namespace", "L4 ztunnel", security && selector && wpName == "", "For direct ambient traffic without a selected waypoint. Behind a waypoint, ztunnel sees the waypoint identity; use an L7 policy for original callers."},
 		{"strict-mtls", "Require mutual TLS", "L4 ztunnel", selector && hasResource(ws, c, "security.istio.io", "peerauthentications"), "STRICT PeerAuthentication for the selected workload. Ambient does not support DISABLE mode."},
@@ -112,6 +114,8 @@ func Capabilities(ws *store.Workspace, c, ns, service string) []Task {
 		}
 		why := ""
 		switch out[i].ID {
+		case "global-service":
+			continue // the support check already supplied the exact prerequisite
 		case "service-failover":
 			why = "Not implemented in Flightbay. Enabling this task requires a tested generator for the selected controller's priority-failover API; installing more CRDs or changing weights will not enable it."
 		case "global-rate-limit":
@@ -160,6 +164,9 @@ func Capabilities(ws *store.Workspace, c, ns, service string) []Task {
 }
 
 func Generate(ws *store.Workspace, req Request) (*Plan, error) {
+	if contains(req.Tasks, "global-service") {
+		return generateGlobalService(ws, req)
+	}
 	if contains(req.Tasks, "waypoint") || contains(req.Tasks, "enrol-namespace") {
 		return generateWaypoint(ws, req)
 	}
