@@ -71,6 +71,11 @@ func num(v any) int {
 func Run(ws *store.Workspace) []Finding {
 	st := ws.State()
 	provisional := st.Phase != store.PhaseComplete || !st.Verified
+	if ws.IsLive() {
+		// A live mirror has no bundle checksum to verify. PhaseLive means its
+		// initial lists have finished; individual coverage still gates absence rules.
+		provisional = st.Phase != store.PhaseLive
+	}
 	var out []Finding
 	for _, cluster := range ws.Clusters() {
 		out = append(out, workloads(ws, cluster)...)

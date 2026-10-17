@@ -2263,7 +2263,7 @@ async function findings() {
   const fs = all.filter(f => (!S.findingSev || f.severity === S.findingSev) && (!S.findingsRule || f.rule === S.findingsRule));
   const prov = all.some(f => f.provisional);
   return head('Findings', 'Things to look at, each linked to its evidence. None of them is a root cause on its own.', `<select id="sev"><option value="">All severities</option>${['critical', 'warning', 'info'].map(s => `<option ${S.findingSev === s ? 'selected' : ''}>${s}</option>`).join('')}</select>`) +
-    (prov ? '<div class="notice info" style="margin-bottom:14px">These findings are provisional: the bundle has not finished loading or failed verification. Rules that depend on something being absent wait for complete coverage.</div>' : '') +
+    (prov ? `<div class="notice info" style="margin-bottom:14px">These findings are provisional: ${isLive() ? 'the live workspace has not finished its initial sync' : 'the bundle has not finished loading or failed verification'}. Rules that depend on something being absent wait for complete coverage.</div>` : '') +
     `<section class="panel"><div class="panel-head"><h2>${fs.length} findings</h2>${S.findingsRule ? `<button class="chip" id="clear-rule" title="Show every rule">rule: ${esc(S.findingsRule)} ×</button>` : '<small>Deterministic rules</small>'}</div>${fs.map(findingRow).join('') || '<div class="empty"><strong>No findings in this selection</strong></div>'}</section>`;
 }
 after.findings = () => { $('#sev').onchange = e => { S.findingSev = e.target.value; render(); }; const cr = $('#clear-rule'); if (cr) cr.onclick = () => { S.findingsRule = ''; render(); }; wireFindings(); };

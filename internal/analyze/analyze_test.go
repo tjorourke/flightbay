@@ -137,6 +137,60 @@ func TestAbsenceRulesWaitForCoverage(t *testing.T) {
 	}
 }
 
+func TestFindingsReadinessForLiveAndBundleWorkspaces(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		liveSource  bool
+		manifest    bool
+		phase       string
+		verified    bool
+		provisional bool
+	}{
+		{"live initial list", true, false, store.PhaseLoading, false, true},
+		{"live initial list complete", true, false, store.PhaseLive, false, false},
+		{"live discovery failed", true, false, store.PhaseFailed, false, true},
+		{"verified bundle", false, true, store.PhaseComplete, true, false},
+		{"unverified bundle", false, true, store.PhaseComplete, false, true},
+		{"saved live bundle unverified", true, true, store.PhaseComplete, false, true},
+		{"saved live bundle verified", true, true, store.PhaseComplete, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ws := workspace(t, true)
+			defer ws.Close()
+			if tc.liveSource {
+				h := ws.Header()
+				h.Source = store.SourceLive
+				ws.SetHeader(h)
+			}
+			if tc.manifest {
+				ws.SetManifest(&bundle.Manifest{})
+			}
+			ws.SetState(func(s *store.ImportState) {
+				s.Phase, s.Verified = tc.phase, tc.verified
+			})
+			fs := Run(ws)
+			if len(fs) == 0 {
+				t.Fatal("expected findings from the unhealthy fixture workloads")
+			}
+			for _, f := range fs {
+				if f.Provisional != tc.provisional {
+					t.Fatalf("%s: provisional=%v, want %v", f.Rule, f.Provisional, tc.provisional)
+				}
+			}
+			if tc.phase == store.PhaseLive {
+				ws.SetCoverage(bundle.Coverage{ID: "mesh1.resource.core.v1.services", Cluster: "mesh1", Type: bundle.CoverageResource, Version: "v1", Resource: "services", State: bundle.StateFailed, Reason: "forbidden"})
+				fs = Run(ws)
+				if len(byRule(fs)["gateway.unresolved-backend"]) != 0 {
+					t.Fatal("live readiness bypassed missing Service coverage")
+				}
+				if len(byRule(fs)["collection.gap"]) == 0 {
+					t.Fatal("live collection failure was hidden")
+				}
+			}
+		})
+	}
+}
+
 func TestAmbientWithoutZtunnel(t *testing.T) {
 	ws := store.New()
 	p, _ := policy.Profile("standard")
