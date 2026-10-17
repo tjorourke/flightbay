@@ -12,11 +12,11 @@ Open a capture normally, then choose **Ambient** in the sidebar, or open a Servi
 flightbay ui ~/Downloads/flightbay-objects.tar.zst
 ```
 
-Use the searchable dropdown to choose a Namespace, Service, Pod, Gateway, HTTPRoute or ServiceEntry. Type a name, namespace, cluster or kind; arrow keys and Enter work, and the object-type filter narrows the suggestions. Ambient enrolment is not limited to Services: namespaces provide defaults, Pods can have dataplane/waypoint overrides, Gateways provide waypoint infrastructure, and ServiceEntries describe external destinations.
+Use **Select target** or **Change target** in the compact target bar to open the searchable picker for Namespace, Service, Pod, Gateway, HTTPRoute or ServiceEntry. Type a name, namespace, cluster or kind; arrow keys and Enter work, and the object-type filter narrows the suggestions. The picker closes after selection so the map or form gets the space. Ambient enrolment is not limited to Services: namespaces provide defaults, Pods can have dataplane/waypoint overrides, Gateways provide waypoint infrastructure, and ServiceEntries describe external destinations.
 
 **Clear selection** resets the object type, search value and draft. **New configuration** also switches to Configure and starts at the target step. Neither action applies or undoes cluster changes; any active tests remain available in **Active tests**. Selecting an incompatible object type clears the old target instead of leaving hidden selection state behind.
 
-The selected resource has prominent **View object** and **View YAML** actions. View object opens the resource details; View YAML opens its complete captured, redacted YAML, with Copy YAML available. **Related resources** lists each resource with separate Investigate, View object and YAML actions. Diagnostic fields are not a substitute for the resource itself.
+The target bar shows the resource and context once, with **View object** and **YAML** actions. View object opens the resource details; YAML opens its complete captured, redacted YAML, with Copy YAML available. **Related resources** lists each resource with separate Investigate, View object and YAML actions. Diagnostic fields are not a substitute for the resource itself.
 
 ![Open the selected Gateway's full YAML from its resource header](/images/ambient-resource-yaml.png)
 
@@ -45,7 +45,7 @@ Failures open first; other checks are compact, expandable rows. Raw fields used 
 
 ## Detected implementation and official documentation
 
-The implementation strip shows the selected waypoint/controller. In Configure, **Generated policy type** identifies the kind a policy template will produce, not the kind of the resource currently selected. **Detection details** explains the evidence: captured GatewayClasses, deployed Gateways, discovered policy APIs and recognised Istio control-plane/ztunnel images. Missing evidence stays unknown. A cluster can contain OSS and Enterprise components together; it is not assigned one blanket API shape.
+Open **Implementation details** in the target bar to see the selected waypoint/controller and detection evidence. In Configure, **Generated policy type** identifies the kind a policy template will produce, not the kind of the resource currently selected. The details include captured GatewayClasses, deployed Gateways, discovered policy APIs and recognised Istio control-plane/ztunnel images. Missing evidence stays unknown. A cluster can contain OSS and Enterprise components together; it is not assigned one blanket API shape.
 
 For agentgateway tasks, the selected controller determines `AgentgatewayPolicy` versus `EnterpriseAgentgatewayPolicy`, and the discovered API supplies the version. Installing both CRDs does not mean both controllers are active. A new waypoint can only use a supported class actually observed in the selected cluster. Refresh or collect the missing GatewayClasses/Gateways if no class is offered.
 
@@ -87,7 +87,7 @@ Captured `istio-eastwest` and `istio-remote` Gateways have distinct transport/pe
 
 Purple dashed lines connect global Services using captured publication evidence: reciprocal peer configuration, the same generated ServiceEntry hostname, explicit parent-Service labels, and remote workload identities matching the captured trust domains and namespaces. Export labels or identical Service names alone do not create a line. Include the generated ServiceEntries and the `istio-system/istio` mesh ConfigMap in the capture; missing identity evidence is not guessed from a context name.
 
-Click a connection chip to highlight its endpoints and frame the two cluster boxes. Lines reroute around resource cards when boxes or cards move; if an overlapping layout blocks a clear route, the map reports it instead of drawing through a resource. Connection colours identify configuration relationships, not measured request traffic.
+Click a connection chip to highlight its endpoints and frame the two cluster boxes. Lines use rounded bends and choose clear side, top or bottom ports rather than squeezing arrowheads into a narrow gap. Arrowheads have an explicit size independent of highlighted line thickness, and stop short of the destination border. Lines reroute around resource cards when boxes or cards move; if an overlapping layout blocks a clear route, the map reports it instead of drawing through a resource. Connection colours identify configuration relationships, not measured request traffic.
 
 ![East-west peer connections and a global Service published by mesh1 and mesh2](/images/ambient-cluster-connections.png)
 
@@ -157,6 +157,10 @@ Choose a deployed Service and open **Configure**. Capabilities depend on the sel
 Each unavailable task explains its actual blocker and the next step: a different waypoint implementation, a missing captured API, insufficient region evidence, a caller-identity limitation, or a generator not yet implemented in Flightbay. An unavailable template is not a claim that the product lacks the feature. Installing more CRDs alone does not make an Istio/Envoy template work with agentgateway, and installing a global rate-limit service alone does not add a Flightbay generator.
 
 The Configure tab follows **Target → Task → Configure → Review**. Supported tasks appear as short cards with official documentation links. Unavailable tasks are kept under **Other tasks · why unavailable?** rather than filling the main screen. Back preserves your choices. The review opens on a concise change summary; **Generated YAML** is a separate tab. Cluster testing is an optional expandable section after review.
+
+The selected task names the options panel, with a separate **This change** summary explaining its scope and next step. For mutual TLS, choose **Require mesh mTLS** or **Allow non-mesh callers too**; the generated values remain STRICT and PERMISSIVE. Workload-wide L4 tasks do not show a misleading Service-port selector. The compact target bar, stronger selected states and dark panel headings in light mode keep the active form distinct from surrounding context.
+
+![Compact mutual TLS configuration with explicit choices and change scope](/images/ambient-options-compact.png)
 
 ![Supported task cards with contextual official documentation](/images/ambient-tasks.png)
 

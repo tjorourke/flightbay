@@ -79,6 +79,7 @@ function openLogs(filters) {
 
 async function render() {
   const seq = ++S.renderSeq;
+  document.body.classList.toggle('ambient-view',S.view==='ambient');
   const navView = S.view === 'navigator' ? 'resources' : S.view;
   document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('active', a.dataset.view === navView));
   const views = {navigator, search, overview, scorecard: posture, reach, resources, logs, timeline, findings, compare, proxies, coverage, ...(typeof reviewPage === 'function' ? {review: reviewPage} : {}), ...(typeof trafficPage === 'function' ? {traffic: trafficPage} : {}), ...(typeof ambientPage === 'function' ? {ambient: ambientPage} : {})};
@@ -2738,7 +2739,7 @@ async function liveRefresh() {
   // only lose what you are in the middle of choosing.
   if (S.view === 'review') return;
   if(S.view==='ambient'){
-    if(S.ambient.tab==='map'&&!document.querySelector('.am-dragging,.am-panning')){S.ambient.inventory=null;await render();}
+    if(S.ambient.tab==='map'&&!document.querySelector('.am-dragging,.am-panning,.am-implementation[open]')&&!S.ambient.pickerOpen){S.ambient.inventory=null;await render();}
     return;
   }
   // Patch the page in place rather than rebuilding it, so scroll positions,

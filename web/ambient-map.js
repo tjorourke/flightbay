@@ -36,6 +36,8 @@ function amClusterCanvas(target) {
 
 function amWireClusterCanvas(){
   const A=S.ambient,viewport=$('#am-map-viewport');if(!viewport)return;
+  const title=document.querySelector('.am-topology>.panel-head h2'),subtitle=document.querySelector('.am-topology>.panel-head p');
+  if(title){title.textContent='Connections';if(subtitle)title.title=subtitle.textContent;}subtitle?.remove();
   A.mapObserver?.disconnect();
   const layout=A.mapLayouts[A.mapLayoutKey],world=$('#am-map-world'),space=$('#am-map-space');
   const resize=()=>{
@@ -66,5 +68,7 @@ function amWireClusterCanvas(){
   resize();if(!layout.initialized){layout.initialized=true;layout.zoom=Math.min(1,viewport.clientWidth/A.mapWorld.width);resize();}viewport.scrollLeft=layout.scrollLeft||0;viewport.scrollTop=layout.scrollTop||0;
   viewport.onscroll=()=>{layout.scrollLeft=viewport.scrollLeft;layout.scrollTop=viewport.scrollTop;};
   if(A.mapFocus){const focused=[...world.querySelectorAll('[data-map-object]')].find(e=>amKey(JSON.parse(e.dataset.mapObject))===A.mapFocus);if(focused){const box=focused.closest('.am-cluster-box');viewport.scrollLeft=(box.offsetLeft+focused.offsetLeft+focused.offsetWidth/2)*layout.zoom-viewport.clientWidth/2;viewport.scrollTop=(box.offsetTop+focused.offsetTop)*layout.zoom-80;}A.mapFocus=null;}
-  A.mapObserver=new ResizeObserver(resize);A.mapObserver.observe(viewport);
+  const sizeViewport=()=>{if(!viewport.isConnected)return;if(!A.mapFullscreen){const room=Math.max(360,Math.floor(innerHeight-viewport.getBoundingClientRect().top-scrollY-45));if(viewport.style.height!==room+'px')viewport.style.height=room+'px';viewport.style.maxHeight='none';}resize();};
+  A.mapObserver=new ResizeObserver(sizeViewport);A.mapObserver.observe(viewport);
+  if(A.mapResize)window.removeEventListener('resize',A.mapResize);A.mapResize=sizeViewport;window.addEventListener('resize',A.mapResize);requestAnimationFrame(sizeViewport);
 }
