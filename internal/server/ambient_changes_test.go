@@ -15,6 +15,7 @@ import (
 	ktesting "k8s.io/client-go/testing"
 
 	"github.com/tjorourke/flightbay/internal/ambient"
+	"github.com/tjorourke/flightbay/internal/bundle"
 )
 
 func supportAmbientChanges(t *testing.T, s *Server, dc *fake.FakeDynamicClient) {
@@ -51,6 +52,7 @@ func supportAmbientChanges(t *testing.T, s *Server, dc *fake.FakeDynamicClient) 
 		return c, nil
 	}
 	cls := &unstructured.Unstructured{Object: map[string]any{"apiVersion": ambient.GatewayGroup + "/v1", "kind": "GatewayClass", "metadata": map[string]any{"name": "istio-waypoint"}, "spec": map[string]any{"controllerName": "istio.io/mesh-controller"}}}
+	s.WS.AddObjects("captured", bundle.APIResource{Group: ambient.GatewayGroup, Version: "v1", Resource: "gatewayclasses", Kind: "GatewayClass"}, []map[string]any{cls.Object}, "classes")
 	if e := dc.Tracker().Add(cls); e != nil {
 		t.Fatal(e)
 	}

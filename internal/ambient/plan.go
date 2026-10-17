@@ -85,14 +85,11 @@ func Capabilities(ws *store.Workspace, c, ns, service string) []Task {
 	if svc == nil {
 		return []Task{}
 	}
-	_, wpName, wp := Waypoint(ws, svc)
-	cls := ""
-	if wp != nil {
-		cls = S(Path(wp.Obj, "spec", "gatewayClassName"))
-	}
-	istio := cls == "istio-waypoint"
-	agent := strings.Contains(cls, "agentgateway") && strings.Contains(cls, "waypoint")
-	agentPolicyAvailable := (!strings.HasPrefix(cls, "enterprise-") && hasResource(ws, c, "agentgateway.dev", "agentgatewaypolicies")) || (strings.HasPrefix(cls, "enterprise-") && hasResource(ws, c, "enterpriseagentgateway.solo.io", "enterpriseagentgatewaypolicies"))
+	_, wpName, _ := Waypoint(ws, svc)
+	env := DetectEnvironment(ws, c, svc)
+	istio := env.Selected != nil && env.Selected.Supported && env.Selected.Product == "istio"
+	agent := env.Selected != nil && env.Selected.Supported && env.Selected.Product == "agentgateway"
+	agentPolicyAvailable := env.PolicyAPI != ""
 	security := hasResource(ws, c, "security.istio.io", "authorizationpolicies")
 	dr := hasResource(ws, c, "networking.istio.io", "destinationrules")
 	selector := len(M(Path(svc.Obj, "spec", "selector"))) > 0
@@ -157,6 +154,9 @@ func Generate(ws *store.Workspace, req Request) (*Plan, error) {
 	}
 	// Stable IDs bind the preview, validated schema and test resources to the same choices.
 	inputs := map[string]any{"request": req, "serviceUid": Path(svc.Obj, "metadata", "uid"), "serviceSpec": svc.Obj["spec"], "serviceLabels": svc.Labels()}
+	detected := DetectEnvironment(ws, req.Cluster, svc)
+	inputs["implementation"] = detected.Selected
+	inputs["policyAPI"] = detected.PolicyAPI
 	if n := ws.Get(req.Cluster, "", "namespaces", "", req.Namespace); n != nil {
 		inputs["namespaceLabels"] = n.Labels()
 	}
@@ -337,11 +337,9 @@ func Generate(ws *store.Workspace, req Request) (*Plan, error) {
 		if req.Unit != "Seconds" && req.Unit != "Minutes" && req.Unit != "Hours" {
 			return nil, fmt.Errorf("choose Seconds, Minutes or Hours")
 		}
-		_, _, wp := Waypoint(ws, svc)
-		enterprise := strings.HasPrefix(S(Path(wp.Obj, "spec", "gatewayClassName")), "enterprise-")
-		api, kind := "agentgateway.dev/v1alpha1", "AgentgatewayPolicy"
-		if enterprise {
-			api, kind = "enterpriseagentgateway.solo.io/v1alpha1", "EnterpriseAgentgatewayPolicy"
+		api, kind, err := ratePolicy(ws, req.Cluster, req.Namespace, req.Service)
+		if err != nil {
+			return nil, err
 		}
 		burst := req.Requests
 		if req.Burst != nil {

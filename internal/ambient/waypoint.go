@@ -90,8 +90,14 @@ func generateWaypoint(ws *store.Workspace, req Request) (*Plan, error) {
 		if wp != nil {
 			return nil, fmt.Errorf("Gateway %s/%s already exists; choose it as an existing waypoint or choose another name", wpNS, w.Name)
 		}
-		if w.Class != "istio-waypoint" && w.Class != "agentgateway-waypoint" && w.Class != "enterprise-agentgateway-waypoint" {
-			return nil, fmt.Errorf("choose a supported waypoint class")
+		observed := false
+		for _, cl := range DetectEnvironment(ws, req.Cluster, nil).Classes {
+			if cl.Name == w.Class && cl.Supported {
+				observed = true
+			}
+		}
+		if !observed {
+			return nil, fmt.Errorf("waypoint class %q was not established in this cluster's captured GatewayClasses or deployed Gateways; refresh/capture those resources first", w.Class)
 		}
 		p.Objects = append(p.Objects, map[string]any{"apiVersion": GatewayGroup + "/v1", "kind": "Gateway", "metadata": map[string]any{"name": w.Name, "namespace": wpNS, "labels": map[string]any{"istio.io/waypoint-for": "service"}}, "spec": map[string]any{"gatewayClassName": w.Class, "listeners": []any{map[string]any{"name": "mesh", "port": 15008, "protocol": "HBONE", "allowedRoutes": permission(unique)}}}})
 	case "existing":

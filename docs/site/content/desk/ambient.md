@@ -14,7 +14,9 @@ flightbay ui ~/Downloads/flightbay-objects.tar.zst
 
 Use the searchable dropdown to choose a Namespace, Service, Pod, Gateway, HTTPRoute or ServiceEntry. Type a name, namespace, cluster or kind; arrow keys and Enter work, and the object-type filter narrows the suggestions. Ambient enrolment is not limited to Services: namespaces provide defaults, Pods can have dataplane/waypoint overrides, Gateways provide waypoint infrastructure, and ServiceEntries describe external destinations.
 
-The **Guided investigation** tab adapts to the object type. Service investigations trace Service-addressed traffic. Pod investigations distinguish workload/Pod-IP waypoint handling from Service traffic, and ServiceEntries are not diagnosed using Kubernetes EndpointSlice readiness. Related-object buttons let you move between these scopes. Choose a particular HTTPRoute if its intended Service is ambiguous, or leave **Related routes** selected.
+**Clear selection** resets the object type, search value and draft. **New configuration** also switches to Configure and starts at the target step. Neither action applies or undoes cluster changes; any active tests remain available in **Active tests**. Selecting an incompatible object type clears the old target instead of leaving hidden selection state behind.
+
+The **Investigate** tab adapts to the object type. Service investigations trace Service-addressed traffic. Pod investigations distinguish workload/Pod-IP waypoint handling from Service traffic, and ServiceEntries are not diagnosed using Kubernetes EndpointSlice readiness. Related-object buttons let you move between these scopes. Choose a particular HTTPRoute if its intended Service is ambiguous, or leave **Related routes** selected.
 
 ![Guided ambient attachment investigation](/images/ambient-investigation.png)
 
@@ -34,6 +36,16 @@ The investigation checks:
 - ready/eligible endpoints and availability of captured waypoint proxy diagnostics.
 
 Every result is **Pass**, **Failed**, **Check**, **Unknown** or **Not applicable**. Click the evidence to inspect the original captured object. Missing, excluded, trimmed or reviewed-out data does not prove that a resource is absent.
+
+Failures open first; other checks are compact, expandable rows. Raw fields are inside **View evidence**. Each step includes labelled **Official docs** links to the relevant upstream or Enterprise guide. Current conditions no longer carry a misleading stale-status warning; that warning appears only when the observed generation is actually stale or missing.
+
+## Detected implementation and official documentation
+
+The implementation strip shows the selected waypoint/controller and the policy YAML kind that matches it. **Detection details** explains the evidence: captured GatewayClasses, deployed Gateways, discovered policy APIs and recognised Istio control-plane/ztunnel images. Missing evidence stays unknown. A cluster can contain OSS and Enterprise components together; it is not assigned one blanket API shape.
+
+For agentgateway tasks, the selected controller determines `AgentgatewayPolicy` versus `EnterpriseAgentgatewayPolicy`, and the discovered API supplies the version. Installing both CRDs does not mean both controllers are active. A new waypoint can only use a supported class actually observed in the selected cluster. Refresh or collect the missing GatewayClasses/Gateways if no class is offered.
+
+Task cards, configuration options and debugging steps link to official documentation in context. Istio OSS, Enterprise Istio, agentgateway OSS and Enterprise agentgateway sources are labelled; shared APIs link to Kubernetes or Gateway API references. These guides describe their published versions, so compare their version selector with your installed build. Links are explanatory, not a declaration that every documented feature is supported by your cluster. Server dry-run is still required before applying a generated test.
 
 ### A waypoint Gateway is not always a wrong route parent
 
@@ -58,6 +70,10 @@ Agentgateway waypoint controllers can declare an HTTP mesh listener on port 1508
 ## Attachment map and existing configuration
 
 The **Attachment map** tab shows namespace defaults, selected waypoints, routes, backend Services, policies and selected workloads. Cards open the captured objects. Backend weights and calculated percentages are shown per route rule; a 90/10 split on one rule is not added to weights on another rule. This is a configuration relationship diagram, not observed traffic.
+
+For a **Namespace** or **Gateway**, the map opens a compact Service overview with the total captured count and a filter. All captured Services are included, including gateway infrastructure. Cards show ready/eligible endpoint counts, the selected waypoint and related-route count. **Explore connections** opens the individual Service map; **Configure** starts its wizard. A Service with missing endpoint evidence says so explicitly, rather than receiving a generic Unknown badge by default.
+
+![Namespace overview with all captured Services and real endpoint counts](/images/ambient-namespace.png)
 
 ![Service attachment map with routes, policies and backend weights](/images/ambient-map.png)
 
@@ -87,7 +103,7 @@ Parent-reference checks can open a route-parent wizard with the affected route a
 
 Use the waypoint remedy on an investigation, or **Select or deploy a waypoint** on a Service. Namespace, Gateway and ServiceEntry entry points also offer enrolment setup.
 
-![New shared waypoint with an explicit namespace enrolment list](/images/ambient-waypoint.png)
+![Existing waypoint selection with explicit binding scope and implementation-specific documentation](/images/ambient-waypoint.png)
 
 Choose **existing** or **new**, then the binding scope:
 
@@ -114,7 +130,11 @@ For logs and proxy configuration, use a normal capture with `--diagnostics` inst
 
 ## Configuration wizard
 
-Choose a deployed Service and open **Configuration wizard**. Capabilities depend on the selected waypoint class and the API types visible in the capture. Unavailable tasks stay visible with an explanation.
+Choose a deployed Service and open **Configure**. Capabilities depend on the selected waypoint class and the API types visible in the capture. Unavailable tasks are grouped under an expandable explanation.
+
+The Configure tab follows **Target → Task → Configure → Review**. Supported tasks appear as short cards with official documentation links. Unavailable tasks are kept under **Other tasks · why unavailable?** rather than filling the main screen. Back preserves your choices. The review opens on a concise change summary; **Generated YAML** is a separate tab. Cluster testing is an optional expandable section after review.
+
+![Supported task cards with contextual official documentation](/images/ambient-tasks.png)
 
 | Task | Enforcement/configuration |
 |---|---|
@@ -136,6 +156,7 @@ Choose the desired tasks, Service port and supported parameters, then **Generate
 Options are task-specific:
 
 - Service distribution can use **default/equal weights**, which omits explicit weights, or **explicit weights**. Percentages total 100; existing relative-weight rules can retain their original relative scale.
+- Changing a backend Service updates its port choices to that Service's captured ports; it does not retain a port from the previous backend.
 - Endpoint load balancing can keep the **controller default** or select ROUND_ROBIN, LEAST_REQUEST or RANDOM. Choosing the default alone produces a no-change preview.
 - Method policies can ALLOW or DENY the selected methods.
 - Ambient mTLS supports STRICT or PERMISSIVE; DISABLE is rejected.
@@ -181,3 +202,5 @@ In live mode the wizard uses the kubeconfig passed to `--kubeconfig`, but still 
 `python3 test/e2e/ambient.py --context kind-mesh1` creates a dedicated namespace on an existing local kind ambient cluster. It proves rejected-parent diagnosis, weighted routing, a real timeout response, L7 method enforcement, ztunnel access control, unhealthy endpoint ejection and, when an agentgateway waypoint class is installed, actual HTTP 429 responses. It applies the wizard's generated plans and uses the wizard's cleanup endpoint, then deletes its namespace and reads the state back. It does not change existing application namespaces.
 
 The expanded live run on 17 October 2026 passed all 29 checks with Istio 1.30.4 and Enterprise agentgateway 2026.9.2. It additionally proved existing-route edits/undo, equal/default weighting, selector remediation, scaling, existing waypoint enrolment and a new waypoint shared by two explicitly selected namespaces. Browser testing covered typeahead selection, map-to-editor navigation, actual editing and undo, endpoint recovery and namespace-level waypoint deployment. Other installed versions must pass their own API server dry-run before a test plan can be applied.
+
+The subsequent UI review checked reset/type-change flows, namespace filtering, back-navigation retaining weights, generated Enterprise YAML and responsive light/dark layouts against captured Bookinfo data. Unit tests cover OSS, Enterprise, mixed and unknown implementation evidence and missing APIs/classes. `FLIGHTBAY_CHECK_AMBIENT_DOCS=1 go test ./internal/ambient -run TestAmbientOfficialLinksLive` checks the official documentation URLs when network access is available.

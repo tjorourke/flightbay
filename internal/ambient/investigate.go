@@ -32,6 +32,7 @@ type Evidence struct {
 	Value string `json:"value"`
 }
 type Step struct {
+	Docs     []DocLink     `json:"docs"`
 	ID       string        `json:"id"`
 	Title    string        `json:"title"`
 	State    string        `json:"state"` // pass, fail, warning, unknown, na
@@ -63,6 +64,7 @@ type Service struct {
 	Regions []string `json:"regions"`
 }
 type Inventory struct {
+	Environments   []Environment    `json:"environments"`
 	Objects        []Ref            `json:"objects"`
 	Waypoints      []WaypointChoice `json:"waypoints"`
 	GatewayClasses []string         `json:"gatewayClasses"`
@@ -553,7 +555,14 @@ func conditions(r *Investigation, o *store.Object, field string, types []string,
 			if gen > 0 && N(c["observedGeneration"]) != gen {
 				state = "unknown"
 			}
-			add(r, prefix+"-"+typ, o.Kind+" "+o.Name+": "+typ, state, strings.TrimSpace(S(c["reason"])+" "+S(c["message"]))+" (stale or missing observedGeneration is unknown)", evidence(o, field+".conditions", c))
+			detail := strings.TrimSpace(S(c["reason"]) + " " + S(c["message"]))
+			if gen > 0 && N(c["observedGeneration"]) != gen {
+				detail += ". This status is stale or has no observed generation; it does not confirm the current configuration."
+			}
+			if detail == "" {
+				detail = typ + "=" + S(c["status"])
+			}
+			add(r, prefix+"-"+typ, o.Kind+" "+o.Name+": "+typ, state, detail, evidence(o, field+".conditions", c))
 		}
 		if !found {
 			add(r, prefix+"-"+typ, o.Kind+" "+o.Name+": "+typ, "unknown", "No current controller condition was captured.")

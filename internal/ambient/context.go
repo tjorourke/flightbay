@@ -51,6 +51,8 @@ type Recovery struct {
 	Command       string           `json:"command"`
 }
 type View struct {
+	Environment Environment      `json:"environment"`
+	Services    []ServiceSummary `json:"services,omitempty"`
 	*Investigation
 	Subject  Ref        `json:"subject"`
 	Related  []Ref      `json:"related"`
@@ -82,10 +84,8 @@ func expandInventory(ws *store.Workspace, r *Inventory) {
 			}
 		}
 	}
-	for _, cls := range []string{"istio-waypoint", "agentgateway-waypoint", "enterprise-agentgateway-waypoint"} {
-		if !contains(r.GatewayClasses, cls) {
-			r.GatewayClasses = append(r.GatewayClasses, cls)
-		}
+	for _, c := range ws.Clusters() {
+		r.Environments = append(r.Environments, DetectEnvironment(ws, c, nil))
 	}
 	sort.Slice(r.Objects, func(i, j int) bool {
 		a, b := r.Objects[i], r.Objects[j]
@@ -109,6 +109,7 @@ func NewView(ws *store.Workspace, c, kind, ns, name, route string) (*View, error
 		r = investigateObject(ws, o)
 	}
 	v := &View{Investigation: r, Subject: reference(o), Related: []Ref{}, Editable: []Editable{}, Graph: Graph{Root: reference(o), Groups: []GraphGroup{}}}
+	v.Environment = DetectEnvironment(ws, c, o)
 	if kind == "Service" {
 		v.Recovery = recovery(ws, o)
 		v.Graph = serviceGraph(ws, o, r)
@@ -164,10 +165,17 @@ func NewView(ws *store.Workspace, c, kind, ns, name, route string) (*View, error
 		}
 		nodes := []GraphNode{}
 		for _, ref := range v.Related {
-			nodes = append(nodes, GraphNode{Ref: ref, State: "unknown", Exists: true})
+			svc := Target(ws, ref.Cluster, "Service", ref.Namespace, ref.Name)
+			summary := summariseService(ws, svc)
+			v.Services = append(v.Services, summary)
+			nodes = append(nodes, GraphNode{Ref: ref, State: summary.State, Exists: true, Notes: []string{summary.Detail}})
 		}
 		v.Graph.Groups = append(v.Graph.Groups, GraphGroup{"Related Services", "Inspect this scope's Service-specific routing and policies", nodes})
 	}
+	if kind == "Namespace" || kind == "Gateway" {
+		sort.Slice(v.Services, func(i, j int) bool { return v.Services[i].Name < v.Services[j].Name })
+	}
+	addViewDocs(v)
 	return v, nil
 }
 func investigateObject(ws *store.Workspace, o *store.Object) *Investigation {
@@ -238,7 +246,7 @@ func investigateObject(ws *store.Workspace, o *store.Object) *Investigation {
 			}
 		}
 	case "Gateway":
-		add(r, "gateway-class", "Gateway class", "warning", S(Path(o.Obj, "spec", "gatewayClassName"))+"; a Gateway is infrastructure, while Services/namespaces choose which traffic uses it.", evidence(o, "spec", o.Obj["spec"]))
+		add(r, "gateway-class", "Gateway class", "na", S(Path(o.Obj, "spec", "gatewayClassName"))+"; select a connected Service to inspect its routing.", evidence(o, "spec.gatewayClassName", Path(o.Obj, "spec", "gatewayClassName")))
 		conditions(r, o, "status", []string{"Accepted", "Programmed"}, "gateway-status")
 		r.Steps[0].Actions = []Remediation{{"waypoint", "Enrol a namespace to this waypoint", "Choose the namespaces and review the binding scope.", nil}}
 	case "HTTPRoute":
@@ -339,7 +347,14 @@ func serviceGraph(ws *store.Workspace, svc *store.Object, r *Investigation) Grap
 		nodes := []GraphNode{}
 		for _, o := range objs {
 			if o != nil {
-				nodes = append(nodes, GraphNode{Ref: reference(o), State: stateFor(reference(o)), Exists: true})
+				state := stateFor(reference(o))
+				notes := []string{}
+				if o.Kind == "Service" {
+					sm := summariseService(ws, o)
+					state = sm.State
+					notes = append(notes, sm.Detail)
+				}
+				nodes = append(nodes, GraphNode{Ref: reference(o), State: state, Exists: true, Notes: notes})
 			}
 		}
 		g.Groups = append(g.Groups, GraphGroup{title, relation, nodes})
@@ -390,6 +405,10 @@ func serviceGraph(ws *store.Workspace, svc *store.Object, r *Investigation) Grap
 		state := stateFor(ref)
 		if o == nil {
 			state = missing(ws, ref.Cluster, "", "services", "Service", ref.Namespace)
+		} else {
+			sm := summariseService(ws, o)
+			state = sm.State
+			notes = append([]string{sm.Detail}, notes...)
 		}
 		nodes = append(nodes, GraphNode{ref, state, o != nil, notes})
 	}

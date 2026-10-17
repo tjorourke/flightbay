@@ -38,6 +38,8 @@ Browse captured resources with `kubectl` or a k9s-style navigator, search logs i
 - **Finding related problems.** Search objects and logs, inspect traffic and proxy state, and follow findings to their evidence and suggested fixes.
 - **Ambient attachment and configuration.** Search Namespace, Service, Pod, Gateway, HTTPRoute and ServiceEntry entry points. Inspect a visual attachment map, edit captured routing weights and policies, set up shared waypoints or follow failed checks into an evidence-aware recovery wizard. Preview YAML/field diffs, dry-run and apply to an explicitly selected real context, then undo scoped test changes.
 
+Ambient's configuration flow is **Target → Task → Configure → Review**, with **Clear selection** and **New configuration** controls. Namespace maps show all captured Services and their endpoint counts. Detected controller/API evidence selects the matching OSS or Enterprise policy shape; labelled **Official docs** links accompany tasks and debugging steps.
+
 ![Overview of a snapshot](docs/images/overview.png)
 
 It is two commands:
