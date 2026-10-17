@@ -243,13 +243,30 @@ func Investigate(ws *store.Workspace, c, ns, name, routeName string) (*Investiga
 		}
 		add(r, "waypoint", "Waypoint selection", classState, classDetail, evidence(wp, "spec.gatewayClassName", r.WaypointClass))
 		hbone := false
+		implicitHBONE := false
 		for _, v := range L(Path(wp.Obj, "spec", "listeners")) {
-			if S(M(v)["protocol"]) == "HBONE" {
+			if waypointMeshListener(wp, M(v)) {
 				hbone = true
+				if S(M(v)["protocol"]) != "HBONE" {
+					implicitHBONE = true
+				}
 			}
 		}
 		if !hbone {
 			add(r, "waypoint-listener", "Waypoint HBONE listener", "fail", "The selected Gateway has no HBONE listener for ambient traffic.", evidence(wp, "spec.listeners", Path(wp.Obj, "spec", "listeners")))
+		}
+		if implicitHBONE {
+			rendered := ws.Get(c, "", "services", wpNS, wpName)
+			state, detail := "unknown", "Agentgateway declares HTTP mesh port 15088 and supplies HBONE separately. The rendered Service was not captured."
+			es := []Evidence{evidence(wp, "spec.listeners", Path(wp.Obj, "spec", "listeners"))}
+			if rendered != nil {
+				state, detail = "pass", "Agentgateway's HTTP mesh listener on 15088 has a rendered HBONE Service port on 15008."
+				if !hasPort(rendered, 15008) {
+					state, detail = "fail", "The captured rendered waypoint Service does not expose its expected HBONE transport port 15008."
+				}
+				es = append(es, evidence(rendered, "spec.ports", Path(rendered.Obj, "spec", "ports")))
+			}
+			add(r, "waypoint-listener", "Waypoint transport", state, detail, es...)
 		}
 		traffic := defaultString(wp.Labels()["istio.io/waypoint-for"], "service")
 		if traffic != "service" && traffic != "all" {
@@ -262,7 +279,7 @@ func Investigate(ws *store.Workspace, c, ns, name, routeName string) (*Investiga
 			allowed := false
 			unknown := false
 			for _, v := range L(Path(wp.Obj, "spec", "listeners")) {
-				if S(M(v)["protocol"]) != "HBONE" {
+				if !waypointMeshListener(wp, M(v)) {
 					continue
 				}
 				ar := M(M(v)["allowedRoutes"])

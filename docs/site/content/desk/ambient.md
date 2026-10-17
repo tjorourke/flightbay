@@ -53,6 +53,8 @@ For a route pointing to the selected waypoint Gateway, Flightbay offers a downlo
 
 Resource acceptance is not proof of delivered proxy configuration or successful traffic. If diagnostics were collected, follow **Inspect delivered proxy config** to compare the waypoint's actual configuration and xDS state. Without them this part of the investigation is unknown. Root-namespace policies and configuration outside the capture can also affect traffic.
 
+Agentgateway waypoint controllers can declare an HTTP mesh listener on port 15088 and render a separate HBONE transport listener on 15008. Flightbay recognises this controller-specific form and checks the captured generated Service ports; it does not require the Gateway declaration itself to contain an HBONE listener in that case.
+
 ## Attachment map and existing configuration
 
 The **Attachment map** tab shows namespace defaults, selected waypoints, routes, backend Services, policies and selected workloads. Cards open the captured objects. Backend weights and calculated percentages are shown per route rule; a 90/10 split on one rule is not added to weights on another rule. This is a configuration relationship diagram, not observed traffic.

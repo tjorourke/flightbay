@@ -107,7 +107,7 @@ func generateWaypoint(ws *store.Workspace, req Request) (*Plan, error) {
 		hbone := false
 		for _, v := range listeners {
 			l := M(v)
-			if S(l["protocol"]) != "HBONE" {
+			if !waypointMeshListener(wp, l) {
 				continue
 			}
 			hbone = true
