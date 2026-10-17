@@ -36,13 +36,13 @@ Browse captured resources with `kubectl` or a k9s-style navigator, search logs i
 - **Keeping the evidence.** Open a point-in-time capture after a pod has restarted or the cluster has changed, and compare it with another capture.
 - **Controlling what leaves the cluster.** Select namespaces and resource types, redact credentials during collection, and review or remove data before sending it. Signing and encryption are optional.
 - **Finding related problems.** Search objects and logs, inspect traffic and proxy state, and follow findings to their evidence and suggested fixes.
-- **Ambient attachment and configuration.** Search Namespace, Service, Pod, Gateway, HTTPRoute and ServiceEntry entry points. Inspect a visual attachment map, edit captured routing weights and policies, set up shared waypoints or follow failed checks into an evidence-aware recovery wizard. Preview YAML/field diffs, dry-run and apply to an explicitly selected real context, then undo scoped test changes.
+- **Istio Ambient.** Search Namespace, Service, Pod, Gateway, HTTPRoute and ServiceEntry entry points. Inspect a visual attachment map, edit captured routing weights and policies, set up shared waypoints or follow failed checks into an evidence-aware recovery wizard. Preview YAML/field diffs, dry-run and confirm Apply to an explicitly selected real context, then undo scoped test changes. The entry requires captured Istio APIs and evidence of an ambient installation in the selected cluster scope.
 
 Ambient's configuration flow is **Target → Task → Configure → Review**, with **Clear selection** and **New configuration** controls. Namespace maps show all captured Services and their endpoint counts. Detected controller/API evidence selects the matching OSS or Enterprise policy shape; labelled **Official docs** links accompany tasks and debugging steps.
 
 The Attachment map groups Services inside draggable, expandable cluster-context boxes with Kubernetes icons and independent card/list views. Captured east-west peering and global-Service publications have evidence-backed connection lines. Zoom, pan, fit, reset or go full screen; the top search focuses resources on the map. View object and View YAML actions open the actual resources directly. Multicluster bundles show every captured context without assuming that the clusters are peered.
 
-Service cards expose cluster and published global DNS names. Configure can generate a reviewed global-publication label patch. **Test service** runs saved HTTP-header profiles from the desk host, directly or through a temporary port-forward to existing Pods, and links response results to the corresponding log time window. No test Pods are deployed. Investigation status badges filter the checks.
+Service cards expose cluster and published global DNS names. Configure generates independent global-publication label patches for selected clusters where the matching Service already exists, with separate contexts, dry-runs and status. Apply requires confirmation of the actual contexts, API servers and YAML; successful changes have undo available. **Test service** runs saved HTTP-header profiles from the desk host, directly or through a temporary port-forward to existing Pods, and links response results to the corresponding log time window. **Back to HTTP test** restores the originating map or wizard, profile and results without rerunning the request. No test Pods are deployed. Investigation status badges filter the checks.
 
 ![Overview of a snapshot](docs/images/overview.png)
 
@@ -114,7 +114,7 @@ Things to try:
 - **Findings.** The five planted faults, each with its evidence and a next step.
 - **Search.** `checkout`, `kind:pod CrashLoopBackOff`, `label:app=checkout`, `"registry.invalid"`.
 - **Log explorer.** Click the **Errors** example, drag across the chart to zoom into a spike, then click a line and follow its `trace_id` across pods.
-- **Proxy configs.** The waypoint's listeners, clusters, routes and certificates, istiod's view of which proxies are in sync, and ztunnel's workloads.
+- **Proxy diagnostics.** Read-only delivered configuration from Istio and agentgateway, including waypoint listeners, clusters, routes and certificates, istiod sync state and ztunnel workloads. Policy rows link to captured resource YAML when their identity resolves uniquely.
 - **k9s.** Press **Open in k9s** on Resources, or **k9s** in the terminal bar.
 - **Terminal.** Open it at the bottom (Ctrl+\`) and run `k get pods -n payments`, `k logs`, `k9s`, `fbsearch` or `fbq`.
 
@@ -194,7 +194,7 @@ level:error ns:payments "timed out"    pod:checkout*    trace_id:a4e98f02    sta
 
 ![Log explorer](docs/images/logs.png)
 
-**Proxy configs** shows what each Envoy, ztunnel and agentgateway had loaded when the snapshot was taken: listeners, routes, clusters, endpoints, workloads, policies and certificates. For istiod it shows which proxies are in sync.
+**Proxy diagnostics** shows what each Envoy, ztunnel and agentgateway had loaded when the snapshot was taken: listeners, routes, clusters, endpoints, workloads, policies and certificates. For istiod it shows which proxies are in sync. Filter by component family, then open captured policy resources or their YAML directly from the policy tables. Use Istio Ambient for setup and Traffic for observed mesh/gateway requests; Traffic's destination Service picker includes ordinary applications even when no matching connection was captured.
 
 ![Proxy configs](docs/images/proxies.png)
 

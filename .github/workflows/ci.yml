@@ -23,7 +23,7 @@ jobs:
       - run: go test -race ./...
       - name: map connector routing and JavaScript syntax
         run: |
-          node --test test/ambient-map-routing.test.cjs
+          node --test test/*.test.cjs
           for file in web/*.js; do node --check "$file"; done
       - name: collector builds static
         run: CGO_ENABLED=0 go build -o /tmp/flightbay ./cmd/flightbay

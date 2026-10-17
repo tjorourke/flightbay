@@ -28,6 +28,7 @@ import (
 	"filippo.io/age"
 	"sigs.k8s.io/yaml"
 
+	"github.com/tjorourke/flightbay/internal/ambient"
 	"github.com/tjorourke/flightbay/internal/analyze"
 	"github.com/tjorourke/flightbay/internal/apiserver"
 	"github.com/tjorourke/flightbay/internal/bundle"
@@ -368,6 +369,7 @@ func (s *Server) snapshot() time.Time { return apiserver.SnapshotTime(s.WS) }
 func (s *Server) workspace(w http.ResponseWriter, r *http.Request) {
 	h := s.WS.Header()
 	out := map[string]any{"state": s.WS.State(), "snapshot": s.snapshot(), "terminal": s.Terminal, "kubeconfig": s.KubeconfigPath(), "features": features.Map(), "agent": features.AgentMode()}
+	out["istioAmbient"] = ambient.AvailabilityByCluster(s.WS)
 	if h != nil {
 		out["case"], out["bundleId"], out["collector"], out["captureStart"] = h.Case, h.BundleID, h.Collector, h.CaptureStart
 		out["contexts"], out["planned"], out["unavailable"] = h.Contexts, h.Planned, h.Unavailable

@@ -8,10 +8,12 @@ description: Every connection ztunnel logged and every call through agentgateway
 
 The Traffic page shows what happened on the cluster, in two layers on one map:
 
+It includes ordinary applications as well as agents. This is a log-derived view, not a complete Service inventory. A captured Service without an observed connection does not imply that the Service is absent or agent-only.
+
 | Layer | From | Shows |
 |---|---|---|
 | **Network** | ztunnel access logs | Every connection between workloads and Services: mutual TLS or plaintext, the waypoint that carried it, refusals, and what the captured policy says about it |
-| **Gateway calls** | agentgateway request logs | Every call through an agentgateway gateway or waypoint: which MCP tool, model or agent was called, as whom, how often, what was refused and why, and the tokens used. See [Gateway calls](/desk/activity/) for how these are read. |
+| **Gateway calls** | agentgateway request logs | HTTP, MCP, model and agent calls through an agentgateway gateway or waypoint: what was called, as whom, how often, what was refused and why, and the tokens used. Ordinary HTTP calls are included by default. See [Gateway calls](/desk/activity/) for how these are read. |
 
 The **Why?** explainer takes one source and one destination and shows every check on the way, in order, with the policy each one read. The verdicts come from the same evaluator as the [Agents](/desk/agent-reach/) page, so the map, the explainer and each agent's reach always agree.
 
@@ -20,6 +22,14 @@ For one agent at a time (what it may reach, what it used, and the policy that wo
 Traffic is part of [Flightbay Enterprise](/enterprise/). It is on by default; `FLIGHTBAY_FEATURES=-traffic` turns it off (`activity`, the name of the gateway layer's old page, still works as a name). `AGENT=1` opens the desk on this page in [agent mode](/desk/agent-mode/).
 
 ![Traffic from the captured network connections and gateway calls](/images/traffic-map.png)
+
+## Select a destination Service
+
+**Destination Service · mesh traffic** lists every captured Service in the selected cluster scope, including those with no observed mesh traffic. Selecting one switches to the network layer and clears agent-only, namespace, text, flag and source-focus filters. The map then shows connections whose destination resolves to that Service in that cluster. **Service YAML** opens the captured resource directly.
+
+If no matching connections remain, the page explains the missing evidence rather than hiding the Service. Check the selected cluster, capture log scope and time window. A backend port-forward test bypasses the normal mesh path and does not establish observed ztunnel traffic. Use [Istio Ambient](/desk/ambient/) for Service setup and attachments, or [Proxy diagnostics](/desk/proxy-configs/) to inspect delivered configuration.
+
+![Ordinary petstore workload traffic filtered to its mesh2 destination Service](/images/traffic-service.png)
 
 ## Findings
 

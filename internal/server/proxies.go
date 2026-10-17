@@ -143,7 +143,14 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
 	}
 	k := d.Cluster + "/" + d.Kind + "/" + d.Namespace + "/" + d.Pod
 	row := s.diagRow(*d, s.diagCoverage()[k], false)
-	writeJSON(w, 200, map[string]any{"component": row, "summary": meshdiag.Summarise(d.Component, d.Files, s.snapshot())})
+	refs := []map[string]string{}
+	for _, object := range s.WS.AllObjects(d.Cluster) {
+		if !strings.HasSuffix(object.Kind, "Policy") && object.Kind != "PeerAuthentication" && object.Kind != "DestinationRule" {
+			continue
+		}
+		refs = append(refs, map[string]string{"cluster": object.Cluster, "kind": object.Kind, "group": object.Group, "resource": object.Resource, "namespace": object.Namespace, "name": object.Name})
+	}
+	writeJSON(w, 200, map[string]any{"component": row, "summary": meshdiag.Summarise(d.Component, d.Files, s.snapshot()), "policyObjects": refs})
 }
 
 // proxyFile returns one captured file as captured (already redacted).

@@ -125,8 +125,9 @@ The sidebar has every view:
 | [Findings](/desk/findings/) | Rules that point at likely problems |
 | [Scorecard](/desk/scorecard/) | Security and operational checks, scored |
 | [Traffic](/desk/traffic/) | Connections, agentgateway calls, and each agent's reach, use and lock-down (Enterprise) |
+| [Istio Ambient](/desk/ambient/) | Setup, attachments and reviewed changes when a running ambient installation is evidenced in the selected scope |
 | [Compare](/desk/compare/) | What changed between captures |
-| [Proxy configs](/desk/proxy-configs/) | Envoy, ztunnel, agentgateway and istiod as captured |
+| [Proxy diagnostics](/desk/proxy-configs/) | Read-only delivered configuration and debug output from Istio and agentgateway |
 | [Coverage](/desk/coverage/) | What was allowed, collected and verified |
 
 The terminal sits along the bottom of every page. See [Terminal](/desk/terminal/).

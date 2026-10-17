@@ -5,6 +5,7 @@ const httpSecretHeader=name=>/authorization|cookie|token|secret|key/i.test(name)
 
 async function amOpenHTTPTest(service){
   const T=HTTP_TEST;if(T.busy){toast('An HTTP test is already running');return;}if(!T.service||amKey(T.service)!==amKey(service))T.results=[];T.service=service;T.error='';T.names=[];
+  T.logReturn=null;
   try{
     [T.options,T.profiles,T.contexts]=await Promise.all([api('api/ambient/http-options',{cluster:service.cluster,namespace:service.namespace,name:service.name}),api('api/ambient/http-profiles'),api('api/ambient/contexts')]);
     const svc=S.ambient.inventory?.services.find(s=>amKey(s)===amKey(service));T.ports=svc?.ports||[];T.port=T.ports[0]||80;T.context=T.contexts.find(c=>c.cluster===service.cluster||c.name===service.cluster)?.name||'';
@@ -32,5 +33,37 @@ function drawHTTPTest(){
   document.querySelectorAll('[data-http-name]').forEach(e=>e.onchange=()=>e.closest('[data-http-header]').querySelector('[data-http-value]').type=httpSecretHeader(e.value)?'password':'text');
   $('#http-save-profile').onclick=async()=>{captureHTTPTest();try{T.profiles=await apiPost('api/ambient/http-profiles',T.profile);T.error='';toast('Profile saved locally');}catch(e){T.error=e.message;}drawHTTPTest();};
   $('#http-run').onclick=async()=>{captureHTTPTest();if(T.busy)return;T.busy=true;T.error='';T.results=[];drawHTTPTest();const g=T.gateway!==''?T.options.gateways[Number(T.gateway)]:null;try{const response=await apiPost('api/ambient/http-test',{service:T.service,context:T.context,mode:T.mode,url:T.url,names:T.names,port:T.port,gatewayService:g?.service,gatewayPort:g?.port,profile:T.profile});T.results=response.results;}catch(e){T.error=e.message;}finally{T.busy=false;if(document.querySelector('.http-test'))drawHTTPTest();else toast('HTTP test finished. Reopen Test service to see the result.');}};
-  document.querySelectorAll('[data-http-logs]').forEach(b=>b.onclick=()=>{const r=T.results[Number(b.dataset.httpLogs)],ref=r.pod||T.service;S.cluster=ref.cluster;$('#cluster').value=ref.cluster;openLogs({namespace:ref.namespace,pod:r.pod?.name||'',from:new Date(new Date(r.started).getTime()-2000).toISOString(),to:new Date(new Date(r.finished).getTime()+2000).toISOString()});});
+  document.querySelectorAll('[data-http-logs]').forEach(b=>b.onclick=()=>httpTestOpenLogs(Number(b.dataset.httpLogs)));
+}
+
+function httpTestOpenLogs(index){
+  captureHTTPTest();const T=HTTP_TEST,r=T.results[index];if(!r)return;
+  T.logReturn={hash:location.hash||'#ambient',cluster:S.cluster,x:scrollX,y:scrollY,mainScrollTop:$('#main')?.scrollTop||0,modalScrollTop:document.querySelector('.http-test-modal')?.scrollTop||0,openDetails:[...document.querySelectorAll('.http-test details')].map(e=>e.open),index,ambient:S.view==='ambient'?Object.fromEntries(['key','kind','tab','phase','clusterScope','pickerOpen'].map(k=>[k,S.ambient[k]])):null,awaitingReturn:true};
+  const ref=r.pod||T.service;S.cluster=ref.cluster;$('#cluster').value=ref.cluster;
+  openLogs({namespace:ref.namespace,pod:r.pod?.name||'',from:new Date(new Date(r.started).getTime()-2000).toISOString(),to:new Date(new Date(r.finished).getTime()+2000).toISOString()});
+}
+
+function httpTestReturnAction(){
+  const T=HTTP_TEST;if(!T.logReturn||!T.results.length)return '';
+  return `<button id="http-back-to-test" class="primary" title="Return to the Service test with the profile and results retained">← Back to HTTP test</button>`;
+}
+
+// Called after hash parsing, before rendering: URL parameters must not replace
+// the active map/wizard state that was present when the logs were opened.
+function httpTestNavigation(){
+  const T=HTTP_TEST,back=T.logReturn;if(!back)return;
+  if(S.view==='logs'){back.awaitingReturn=true;return;}
+  if(!back.awaitingReturn||location.hash!==back.hash)return;
+  S.cluster=back.cluster;$('#cluster').value=back.cluster;
+  if(back.ambient)Object.assign(S.ambient,back.ambient);
+  T.reopenAfterRender=true;back.awaitingReturn=false;
+}
+
+function httpTestNavigationRendered(){
+  const T=HTTP_TEST,back=T.logReturn;
+  const button=$('#http-back-to-test');if(button)button.onclick=()=>{location.hash=back.hash;};
+  if(!T.reopenAfterRender||!back||location.hash!==back.hash)return;
+  T.reopenAfterRender=false;drawHTTPTest();
+  document.querySelectorAll('.http-test details').forEach((e,i)=>e.open=!!back.openDetails[i]);
+  requestAnimationFrame(()=>{if(!document.querySelector('.http-test'))return;scrollTo(back.x,back.y);const main=$('#main');if(main)main.scrollTop=back.mainScrollTop;const modal=document.querySelector('.http-test-modal');if(modal)modal.scrollTop=back.modalScrollTop;document.querySelector(`[data-http-logs="${back.index}"]`)?.focus({preventScroll:true});});
 }

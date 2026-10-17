@@ -1,12 +1,16 @@
 ---
-title: Ambient investigation and configuration
+title: Istio Ambient
 weight: 17
 description: Trace Service-to-waypoint attachment, explain controller errors, generate L4/L7 configuration and explicitly apply a test plan to a selected real cluster.
 ---
 
 ## Open an investigation
 
-Open a capture normally, then choose **Ambient** in the sidebar, or open a Service in Resources and choose **Investigate ambient**.
+Open a capture normally, then choose **Istio Ambient** in the sidebar, or open a Service in Resources and choose **Investigate Istio Ambient**.
+
+The entry appears only when the selected scope contains served Istio APIs and ambient evidence: an ambient-labelled Namespace or a ztunnel Pod. Istio shares its CRDs between sidecar and ambient installations; Gateway API CRDs alone do not establish an ambient installation. Missing capture data stays unconfirmed. With **All clusters** selected, one confirmed cluster is sufficient; choosing an individual cluster checks that cluster's evidence. Repository-declared configuration does not establish a running installation.
+
+Use this page for setup, attachments and reviewed changes. [Traffic](/desk/traffic/) shows observed mesh and gateway requests; [Proxy diagnostics](/desk/proxy-configs/) shows delivered configuration and debug output.
 
 ```bash
 flightbay ui ~/Downloads/flightbay-objects.tar.zst
@@ -109,7 +113,13 @@ Global names come from controller-generated ServiceEntries whose labels identify
 
 In **Configure**, choose **Publish a global Service**. The generator reviews the metadata label `solo.io/service-scope: global` on the existing Service. It preserves other labels, selectors, ports and service-takeover settings, and does not create an application or edit generated ServiceEntries. Legacy `global-only` publication is preserved.
 
-This template requires captured Solo Enterprise Istio evidence, the ServiceEntry API and an ambient-enrolled namespace with a selector-based application Service. An Enterprise-level Istio licence and working peering are runtime prerequisites. Review one context at a time; choose the corresponding Service in each other cluster that should contribute endpoints. API-server dry-run validates the patch, not end-to-end publication or connectivity.
+This template requires captured Solo Enterprise Istio evidence, the ServiceEntry API and an ambient-enrolled namespace with a selector-based application Service. An Enterprise-level Istio licence and working peering are runtime prerequisites. API-server dry-run validates the patch, not end-to-end publication or connectivity.
+
+**Participating clusters** lists the captured contexts for the same namespace and Service name. Select the instances that should contribute endpoints. An already-global instance needs no label change. A missing Service is disabled with an explanation: deploy the application there first, or refresh a capture that includes it. This workflow does not copy Services or workloads between clusters.
+
+The review gives each cluster its own YAML, explicit real kubeconfig context, dry-run and apply result. **Dry-run selected clusters** validates the independent plans. **Apply validated cluster plans** opens a confirmation containing every selected context, API server and YAML; Cancel writes nothing. You can also validate and apply a single row. Each cluster is applied separately: a later failure stops the batch, leaves earlier successful changes in place and records them under **Active tests** for undo. There is no cross-cluster transaction.
+
+![Independent publication plans with explicit kubeconfig contexts and successful dry-runs](/images/ambient-global-review.png)
 
 The downloaded YAML is a **scoped merge snippet for an existing resource**. Use Flightbay's reviewed dry-run/apply/undo flow, or `kubectl patch service NAME -n NAMESPACE --context CONTEXT --type merge --patch-file FILE.yaml`. Refresh afterwards to see the actual global DNS names.
 
@@ -130,6 +140,8 @@ No test Pods, routes or Services are deployed. Port-forwarding needs the selecte
 A profile's explicit `Host` header overrides the selected HTTP authority; results show the authority actually sent. Each batch is limited to eight names and a two-minute overall timeout.
 
 Each result shows status, latency, connection address, HTTP authority, destination Pod where known, response headers/body and an `X-Flightbay-Test-ID`. **Logs around this request** opens the selected cluster, destination namespace/Pod and the test's time window. Exact ID correlation requires the application or gateway to log that header; a snapshot without those logs cannot show a new request. HTTP 200 through a backend port-forward is not proof of working global DNS or east-west routing.
+
+Use **Back to HTTP test** in Log explorer, or the browser's Back button, to return to the original map or wizard with its draft, unsaved header profile, results and position retained. Returning does not resend the requests. Closing the restored modal leaves it closed during normal live refreshes.
 
 ![HTTP results distinguish authorities from the actual port-forward connection and link to logs](/images/ambient-http-results.png)
 
@@ -240,18 +252,22 @@ These controls have different semantics:
 
 Primary/backup service failover and shared/global rate limiting are shown as unavailable until a supported integration and its required configuration are provided. No EnvoyFilter workaround is generated for waypoints.
 
-## Apply for testing
+## Apply
 
 Generation and investigation are offline. Test actions use a **separate real kubeconfig connection**, not the read-only snapshot API or live mirror transport.
 
 1. Review the exact generated YAML and its impact notes.
 2. Explicitly choose a local kubeconfig **context**, shown with its API server address. There is no automatic current-context selection.
 3. Choose **Validate with server dry-run**. Flightbay checks that the Service UID, selector, ports and waypoint configuration still match the runtime capture. It also checks the installed API schemas, admission and your create permissions using Kubernetes dry-run requests. A changed preview must be regenerated.
-4. Choose **Apply for testing**. Only that validated plan can be applied, and validation expires after ten minutes. New resources are created without overwriting existing objects; existing edits update only their reviewed fields with UID/resourceVersion checks.
+4. Choose **Apply**, inspect the confirmation's exact context, API server and complete YAML, then choose its red **Apply** button to write the change, or **Cancel** to leave the cluster unchanged. Only that validated plan can be applied, and validation expires after ten minutes. New resources are created without overwriting existing objects; existing edits update only their reviewed fields with UID/resourceVersion checks.
 5. Use **Refresh attachment status** and exercise traffic separately. A successful create does not mean a route was attached or the intended traffic behaviour occurred.
 6. Choose **Undo changes and remove test resources** (or **Remove these test resources** for a create-only plan). Existing fields are restored only while they still equal this test's admitted values. Unrelated fields are preserved. Created objects are deleted only with matching recorded UIDs and ownership, and absence is verified. A replacement object is not deleted.
 
 Generated traffic-policy resources have `flightbay-test-…` names; new waypoint names are explicitly chosen. Created resources carry ownership labels. If applying a multi-resource plan fails, Flightbay attempts to undo existing-field changes and remove created resources. Bindings are restored before a created waypoint is removed; an undo conflict retains the Gateway and reports the remaining work rather than disrupting a binding it cannot restore.
+
+Dry-run results have explicit **Dry-run passed** or **Dry-run failed** labels and success/failure icons as well as colour. A passing dry-run means the API server accepted the reviewed requests without saving them. It is not approval, evidence of working traffic or a replacement for your deployment/GitOps process.
+
+![Apply confirmation showing the real context, API server, reviewed YAML and Cancel action](/images/ambient-apply-confirmation.png)
 
 Test records are stored with private file permissions under `~/.flightbay/ambient-tests` (or `$FLIGHTBAY_HOME/ambient-tests`). **Active test resources** can therefore be inspected and cleaned up after reopening a capture or restarting the desk. Applying a new plan still requires validation in the new session. Cluster credentials are not stored in the records.
 

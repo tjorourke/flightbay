@@ -5,7 +5,7 @@
 // usage and lock-down tabs. Flightbay Enterprise (feature traffic). Loaded
 // after app.js, which routes #traffic here and #activity to it.
 
-S.act = {tab: 'map', kinds: {meta: true, tool: true, model: true, agent: true, mcp: true, http: false}, q: '', sel: '', data: null, key: '', gz: null, gfull: false, fopen: {}, showDeclared: false};
+S.act = {tab: 'map', kinds: {meta: true, tool: true, model: true, agent: true, mcp: true, http: true}, q: '', sel: '', data: null, key: '', gz: null, gfull: false, fopen: {}, showDeclared: false};
 S.tf = {tab: 'map', flag: '', ns: '', q: '', sel: '', data: null, key: '', gz: null, gfull: false, fopen: {}, ex: null, exFrom: '', exTo: '', agents: false, focus: '', focusName: '', freach: null, fkey: '', fexp: {}};
 
 const fbKey = () => `${S.state?.revision ?? ''}/${S.state?.logLines ?? ''}`;
@@ -365,7 +365,7 @@ function actChanges(d) {
 }
 
 // ---------- Traffic map ----------
-const tfIntro = 'Every connection ztunnel logged and every call through agentgateway: mutual TLS, waypoints, policy verdicts, tools, models, tokens and refusals.';
+const tfIntro = 'Observed traffic for ordinary mesh workloads and agents: ztunnel connections plus agentgateway calls. This is log-derived traffic, not the Service inventory.';
 const tfLayerName = {both: 'Both', network: 'Network', gateway: 'Gateway calls'};
 const tfNoAct = {edges: [], callers: [], targets: [], tools: [], denials: [], findings: [], notes: [], coverage: [], totals: {}};
 
@@ -488,7 +488,11 @@ async function trafficPage() {
   const nodes = new Map((d.nodes || []).map(n => [n.id, n]));
   const callers = new Map((a.callers || []).map(c => [c.id, c])), targets = new Map((a.targets || []).map(x => [x.id, x]));
   const hasNet = !!d.captured, hasGw = (a.edges || []).length > 0;
-  const layer = T.layer && (T.layer !== 'network' || hasNet) && (T.layer !== 'gateway' || hasGw) ? T.layer : hasNet && hasGw ? 'both' : hasGw ? 'gateway' : 'network';
+  const serviceKey=S.cluster+'|'+(S.state?.objects||0);
+  if(T.serviceKey!==serviceKey){T.serviceRows=(await api('api/objects',{cluster:S.cluster,group:'',resource:'services'}).catch(()=>({rows:[]}))).rows||[];T.serviceKey=serviceKey;}
+  const serviceID=r=>JSON.stringify([r.cluster,r.namespace,r.name]);
+  const selectedService=(T.serviceRows||[]).find(r=>serviceID(r)===T.service);
+  const layer = selectedService?'network':T.layer && (T.layer !== 'network' || hasNet) && (T.layer !== 'gateway' || hasGw) ? T.layer : hasNet && hasGw ? 'both' : hasGw ? 'gateway' : 'network';
   if (T.focusName) {
     const n = (d.nodes || []).find(x => (x.kind === 'workload' || x.kind === 'waypoint') && x.label === T.focusName) || (a.callers || []).find(c => c.label === T.focusName);
     if (n) T.focus = n.id; else toast(`${T.focusName} has no traffic in this capture`);
@@ -500,7 +504,7 @@ async function trafficPage() {
   const typedKind = terms.some(tm => tm.key === 'kind');
   const srcNS = id => nodes.get(id)?.namespace || callers.get(id)?.namespace;
   const isAgent = id => nodes.get(id)?.agentType || callers.get(id)?.agentType || callers.get(id)?.agentic;
-  const common = (from, to) => (!T.focus || from === T.focus) && (!T.agents || isAgent(from)) && (!T.ns || srcNS(from) === T.ns || nodes.get(to)?.namespace === T.ns);
+  const common = (from, to) => (!T.focus || from === T.focus) && (!T.agents || isAgent(from)) && (!T.ns || srcNS(from) === T.ns || nodes.get(to)?.namespace === T.ns)&&(!selectedService||(nodes.get(to)?.cluster===selectedService.cluster&&nodes.get(to)?.label===selectedService.namespace+'/'+selectedService.name));
   const netAll = (d.edges || []).filter(e => tfNetOk(e, terms, nodes));
   const gwAll = (a.edges || []).filter(e => tfGwOk(e, terms, callers, targets));
   const netE = layer === 'gateway' ? [] : netAll.filter(e => common(e.from, e.to) && (!T.flag || (e.flags || []).includes(T.flag)));
@@ -541,14 +545,15 @@ async function trafficPage() {
   const kchips = layer === 'network' || typedKind ? '' : Object.entries(actKinds).filter(([k]) => kindCount(k)).map(([k, l]) => `<button class="chip ${A.kinds[k] ? 'on' : ''}" data-actkind="${k}" title="Gateway calls to ${esc(l.toLowerCase())}">${esc(l)} <small>${kindCount(k)}</small></button>`).join('');
   const input = `<input id="tf-q" placeholder="Filter. Try from: to: tool: server: flag: state: layer: or text" value="${esc(T.q)}" style="min-width:340px" autocomplete="off" spellcheck="false">`;
   const gchip = T.goneN ? `<button class="chip ${T.showGone ? 'on' : ''}" id="tf-gone" title="Agents and workloads in the logs that no longer exist: deleted since they made these calls">${T.showGone ? 'Showing' : 'Show'} gone <small>${num(T.goneN)}</small></button>` : '';
-  const toolbar = `<div class="toolbar"><div class="row wrap">${tfFoundMenu(d, a, hasNet, hasGw)}${achip}${fchips}${kchips}${gchip}</div><div class="row">${nsOpts}${input}</div></div>`;
+  const servicePicker=`<label class="tf-service-picker">Destination Service · mesh traffic<select id="tf-service"><option value="">All observed destinations</option>${(T.serviceRows||[]).map(r=>{const seen=(d.nodes||[]).some(n=>n.kind==='service'&&n.cluster===r.cluster&&n.label===r.namespace+'/'+r.name);return `<option value="${esc(serviceID(r))}" ${selectedService===r?'selected':''}>${esc(r.namespace+'/'+r.name)} · ${esc(r.cluster)}${seen?'':' · no observed mesh traffic'}</option>`;}).join('')}</select></label>${selectedService?`<button id="tf-service-yaml">Service YAML</button>`:''}`;
+  const toolbar = `<div class="toolbar"><div class="row wrap">${tfFoundMenu(d, a, hasNet, hasGw)}${achip}${fchips}${kchips}${gchip}</div><div class="row wrap">${servicePicker}${nsOpts}${input}</div></div>`;
   void lchips;
   const toolbarPlain = `<div class="toolbar">${input}</div>`;
   const sel = tfSelPanel(d, a, nodes, callers, targets);
   let body;
   if (T.tab === 'agents') return head('Traffic', `${esc(tfIntro)} <span class="ent-pill">Enterprise</span>`, '<button id="tf-term">&gt;_ fbtraffic in terminal</button>') + notes + stats + cov + findings + tabs + await reachBody();
-  if (!hasNet && !hasGw && T.tab !== 'explain') body = '<section class="panel"><div class="empty"><strong>No traffic in this capture</strong>The page is read from ztunnel access logs (istio-system) and agentgateway request logs (gateways and waypoints). Collect those pods\' logs to fill it. You can still explain any pair on the Why? tab from the captured policy.</div></section>';
-  else if (T.tab === 'map') body = toolbar + tfFocusBar(fnode, netE, gwE) + tfMap(d, a, netE, gwE, nodes, callers, targets, layer, fresh) + sel;
+  if (!hasNet && !hasGw && T.tab !== 'explain') body = toolbar+'<section class="panel"><div class="empty"><strong>No observed traffic in this capture</strong>This includes ordinary mesh applications and agents, but requires ztunnel access logs (istio-system) or agentgateway request logs. Captured Services can still be selected above. Port-forward requests do not establish normal mesh traffic; policy analysis remains available on Why?.</div></section>';
+  else if (T.tab === 'map') body = toolbar + tfFocusBar(fnode, netE, gwE) + (selectedService&&!netE.length?`<section class="panel mt"><div class="empty"><strong>No observed mesh traffic for ${esc(selectedService.namespace+'/'+selectedService.name)}</strong>The Service is captured, but no matching ztunnel connections remain after these filters. Check the selected cluster, log scope/window and other filters. Backend port-forward tests bypass the normal mesh path. This does not mean the Service is agent-only or absent.</div></section>`:tfMap(d, a, netE, gwE, nodes, callers, targets, layer, fresh)) + sel;
   else if (T.tab === 'edges') body = toolbar + tfEdges(netE, id => nodes.get(id)?.label || id) + sel;
   else if (T.tab === 'calls') body = toolbar + actCalls(gwE, callers, targets) + sel;
   else if (T.tab === 'tools') body = toolbarPlain + actTools(a, callers, gwAll, terms) + '<div class="mt"></div>' + actModels(a, gwAll, terms);
@@ -967,6 +972,8 @@ async function tfRunExplain(key, from, to, cluster) {
 }
 
 after.traffic = () => {
+  if($('#tf-service'))$('#tf-service').onchange=e=>{S.tf.service=e.target.value;S.tf.layer=e.target.value?'network':'both';S.tf.found=e.target.value?'ztunnel':'any';S.tf.agents=false;S.tf.ns='';S.tf.q='';S.tf.flag='';S.tf.focus='';S.tf.gz=null;S.tf.tab='map';render();};
+  if($('#tf-service-yaml'))$('#tf-service-yaml').onclick=()=>{const [cluster,namespace,name]=JSON.parse(S.tf.service);openObject({cluster,namespace,name,resource:'services',group:'',kind:'Service'},'yaml');};
   const T = S.tf, d = T.data, A = S.act, a = A.data || tfNoAct;
   $('#tf-term')?.addEventListener('click', () => termRun('fbtraffic'));
   if ((!feature('traffic') && !feature('reach')) || !d) return;
@@ -1373,8 +1380,8 @@ function taPanel(act, who, servers, title) {
 // on an agent. It sets the layer and the tools view.
 const tfFoundKinds = [
   ['any', 'Any', 'everything: connections, gateway calls, and every tool'],
-  ['ztunnel', 'ztunnel connections', 'the network layer: every connection ztunnel logged'],
-  ['agentgateway', 'agentgateway calls', 'the gateway layer: a box per tool, model and agent called'],
+  ['ztunnel', 'Istio mesh · ztunnel connections', 'ordinary application and agent workload connections recorded by ztunnel'],
+  ['agentgateway', 'Agentgateway calls', 'HTTP, MCP, model and agent calls recorded by agentgateway'],
   ['called', 'Tools called', 'tools that were called, behind the Service they went through'],
   ['allowed', 'Tools allowed', 'tools an allowlist allows (every tool of a server without one), called or not'],
   ['configured', 'Tools configured', "tools named in an agent's toolNames or ALLOWED_TOOLS"],

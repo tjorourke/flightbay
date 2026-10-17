@@ -14,7 +14,7 @@ install:
 	@echo "Installed to $$(go env GOPATH)/bin. Try: flightbay ui"
 test:
 	go test ./...
-	node --test test/ambient-map-routing.test.cjs
+	node --test test/*.test.cjs
 e2e: build
 	test/e2e/e2e.sh
 e2e-reach: build

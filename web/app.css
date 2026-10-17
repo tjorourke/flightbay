@@ -521,6 +521,8 @@ a.btn:hover{background:#221f2d;border-color:#3f3950;text-decoration:none}
 .start-contexts{display:grid;gap:6px;max-height:320px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:8px}.start-contexts .start-context{display:flex;flex-direction:row;align-items:start;gap:12px;padding:10px;cursor:pointer;border:1px solid transparent;border-radius:6px}.start-contexts .start-context:has(input:checked){border-color:var(--teal);background:var(--raised)}.start-contexts input[type=checkbox]{width:16px;flex:none;margin-top:3px}.start-context>span{min-width:0;overflow-wrap:anywhere}.start-context small{display:block;color:var(--muted);margin-top:4px}.start-context[hidden]{display:none}#lv-kubeconfig{width:100%;min-width:0;font:13px var(--mono)}
 .start-context-picker{display:grid;gap:8px;min-width:0}#live-cluster-status{flex-basis:100%;font-size:12px;min-width:0}#live-cluster-status>summary{cursor:pointer;padding:8px 0}#live-cluster-status>div{padding:8px 0;border-top:1px solid var(--line)}#live-cluster-status small{display:block;color:var(--muted);margin-top:5px;overflow-wrap:anywhere}
 /* Workspace refinements: floating sidebar, pill navigation and roomy cards. */
+.tf-service-picker{display:grid;gap:5px;font-size:12px;max-width:100%;min-width:200px}.tf-service-picker select{max-width:440px}.nav a[data-view="proxies"] .nav-text{font-size:13px}
+body.agent-mode .nav a[data-view="proxies"]{display:flex}
 :root{--bg:#0d171e;--panel:#121f27;--raised:#1a2a34;--line:#293b46;--line-2:#344b57;--text:#e7f0f4;--muted:#91a4af;--teal:#28c6d6;--blue:#91bfff;--accent:#138b9d;--accent-bg:#12313a;--accent-line:#205767;--r:14px;--sans:Inter,-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif}
 :root[data-theme=light]{--bg:#f5fafb;--panel:#ffffff;--raised:#edf5f7;--line:#dce9ec;--line-2:#c8dce1;--text:#17272f;--muted:#647c86;--teal:#087e8b;--blue:#1769aa;--accent:#0a8795;--accent-bg:#e1f4f6;--accent-line:#9bd5dc}
 body{font-size:13.5px;-webkit-font-smoothing:antialiased}
@@ -744,7 +746,7 @@ tbody tr:hover{background:#192a33}
 .ts-list{max-height:48vh;overflow:auto}
 .ts-row{cursor:pointer}.ts-row input{margin:0 6px 0 0;vertical-align:-2px}
 /* Agent mode (AGENT=1): Traffic, the agentic Scorecard, Resources and the Log explorer, nothing else */
-body.agent-mode .nav a[data-view]:not([data-view="traffic"]):not([data-view="scorecard"]):not([data-view="resources"]):not([data-view="logs"]):not([data-view="ambient"]),
+body.agent-mode .nav a[data-view]:not([data-view="traffic"]):not([data-view="scorecard"]):not([data-view="resources"]):not([data-view="logs"]):not([data-view="ambient"]):not([data-view="proxies"]),
 body.agent-mode .nav .nav-label,body.agent-mode #live-save,body.agent-mode #live-review{display:none!important}
 body.agent-mode .nav a[data-view="traffic"]{display:flex!important;order:-3}
 body.agent-mode .nav a[data-view="scorecard"]{order:-2}
@@ -761,3 +763,4 @@ body.agent-mode .nav a[data-view="resources"]{order:-1}
 .am-fields input[type=checkbox]{width:auto;max-width:none!important;flex:none}
 .brand-agent{display:none;font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--teal)}
 body.agent-mode .brand-agent{display:block}
+.px-policy-actions{display:flex;align-items:center;flex-wrap:wrap;gap:6px;white-space:normal;min-width:180px}.px-policy-actions>.link{max-width:100%;overflow-wrap:anywhere;white-space:normal;text-align:left}

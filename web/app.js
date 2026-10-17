@@ -79,6 +79,7 @@ function openLogs(filters) {
 
 async function render() {
   const seq = ++S.renderSeq;
+  updateIstioAmbientNav();
   document.body.classList.toggle('ambient-view',S.view==='ambient');
   const navView = S.view === 'navigator' ? 'resources' : S.view;
   document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('active', a.dataset.view === navView));
@@ -92,6 +93,7 @@ async function render() {
     if (S.morph && S.lastView === S.view) morphHTML($('#main'), html); else $('#main').innerHTML = html;
     S.lastView = S.view;
     after[S.view]?.();
+    if(typeof httpTestNavigationRendered==='function')httpTestNavigationRendered();
   } catch (e) {
     if (seq === S.renderSeq) $('#main').innerHTML = `<div class="notice bad">${esc(e.message)}</div>`;
   }
@@ -378,6 +380,7 @@ const declaredText = w => w.source === 'repo' ? `Declared state from repo ${w.re
 async function loadWorkspace() {
   const w = await api('api/workspace');
   S.ws = w;
+  updateIstioAmbientNav();
   $('#bundle-case').textContent = w.case ? `Case ${w.case}` : 'Snapshot';
   $('#bundle-sub').textContent = `${(w.contexts || []).length} cluster(s) · ${fmtDateTime(w.snapshot)}`;
   $('#snapshot-time').textContent = declaredText(w) || `Captured ${fmtDateTime(w.snapshot)}`;
@@ -399,7 +402,9 @@ async function loadWorkspace() {
 
 // Agent mode (AGENT=1): only the views about agents. Links to any other
 // view land on Traffic.
-const AGENT_VIEWS = ['traffic', 'scorecard', 'resources', 'navigator', 'logs', 'search', 'review', 'ambient'];
+const AGENT_VIEWS = ['traffic', 'scorecard', 'resources', 'navigator', 'logs', 'search', 'review', 'ambient','proxies'];
+function istioAmbientAvailable(){return !!S.ws?.istioAmbient?.some(c=>c.available&&(!S.cluster||c.cluster===S.cluster));}
+function updateIstioAmbientNav(){document.querySelector('.nav [data-view="ambient"]')?.classList.toggle('hidden',!istioAmbientAvailable());}
 function agentMode() {
   document.body.classList.add('agent-mode');
   document.title = 'Flightbay agent';
@@ -2019,7 +2024,7 @@ async function logs() {
       <span class="muted">${fmtTime(r.ts)}</span><span class="${r.level === 'error' ? 'red' : r.level === 'warn' ? 'amber' : 'green'}">${esc(r.level.toUpperCase())}</span>
       <span class="pod" title="${esc(r.cluster)} ${esc(r.namespace)}/${esc(r.pod)}">${esc(r.pod)}<br><span class="muted">${esc(r.container)}${r.stream === 'previous' ? ' · previous' : ''}</span></span>
       <span class="msg">${esc(r.msg)}${Object.entries(r.fields || {}).filter(([k]) => /trace|request_id|connection/.test(k)).map(([k, v]) => ` <span class="blue">${esc(k)}=${esc(v)}</span>`).join('')}</span></div>${L.expanded === r.id ? '<div id="log-detail"></div>' : ''}`).join('');
-  return head('Log explorer', 'Search every captured log line. Drag across the chart to zoom into a time range; pinch or scroll over it to zoom around the cursor.', `<label class="row"><input type="checkbox" id="follow" ${L.follow ? 'checked' : ''}> Follow incoming data</label><button id="log-term">&gt;_ fbq in terminal</button>${typeof rvLogsAction === 'function' ? rvLogsAction() : ''}`) + `
+  return head('Log explorer', 'Search every captured log line. Drag across the chart to zoom into a time range; pinch or scroll over it to zoom around the cursor.', `${typeof httpTestReturnAction==='function'?httpTestReturnAction():''}<label class="row"><input type="checkbox" id="follow" ${L.follow ? 'checked' : ''}> Follow incoming data</label><button id="log-term">&gt;_ fbq in terminal</button>${typeof rvLogsAction === 'function' ? rvLogsAction() : ''}`) + `
   <div class="log-layout"><aside class="facets" aria-label="Filters">${facet('level', 'level', 'Level')}${facet('namespace', 'namespace', 'Namespace')}${workloadFacet}${facet('pod', 'pod', 'Pod', podPicker)}${facet('container', 'container', 'Container')}${facet('stream', 'stream', 'Stream')}${!S.cluster ? facet('cluster', 'cluster_', 'Cluster') : ''}
     ${fieldList}
     <h3>Syntax</h3><div class="muted mono" style="font-size:10px;line-height:1.8">level:error<br>ns:payments pod:checkout*<br>trace_id:a4e98f02<br>"connection reset"<br>-healthz · a OR b<br>status:5* · since:15m</div></aside>
@@ -2434,20 +2439,28 @@ function certCell(c) {
   return `<span class="${cls}">${esc(left)}</span>`;
 }
 
-function pxTable(t, q) {
+function pxTable(t, q, policyObjects=[]) {
   const rows = q ? t.rows.filter(r => r.join(' ').toLowerCase().includes(q)) : t.rows;
+  const kindColumn=t.columns.findIndex(c=>c.toLowerCase()==='kind'),namespaceColumn=t.columns.findIndex(c=>c.toLowerCase()==='namespace'),policyColumn=t.columns.findIndex(c=>['policy','name'].includes(c.toLowerCase()));
+  const cell=(value,index,row)=>{
+    if(!/polic/i.test(t.title)||index!==policyColumn)return /^STALE/.test(value)?`<span class="red">${esc(value)}</span>`:esc(value);
+    const kind=kindColumn>=0?row[kindColumn]:t.title==='Authorization policies'?'AuthorizationPolicy':'';
+    const matches=policyObjects.filter(ref=>(!kind||ref.kind===kind)&&(namespaceColumn<0||ref.namespace===row[namespaceColumn])&&[ref.namespace+'/'+ref.name,ref.name].includes(value));
+    if(matches.length!==1)return `${esc(value)} <small class="muted">dump only · captured resource not uniquely resolved</small>`;
+    const ref=matches[0];return `<div class="px-policy-actions"><button class="link" data-pxobject="${attr(ref)}">${esc(value)}</button><button class="ghost" data-pxyaml="${attr(ref)}">YAML</button></div>`;
+  };
   return `<section class="panel mt"><div class="panel-head"><h2>${esc(t.title)}</h2><span class="badge">${rows.length}${rows.length !== t.rows.length ? ' of ' + t.rows.length : ''}</span></div>
     <div class="table-scroll" style="max-height:48vh">${rows.length ? `<table><thead><tr>${t.columns.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>
-    ${rows.slice(0, 500).map(r => `<tr>${r.map((c, i) => `<td class="${i === 0 ? 'mono' : ''} ${String(c).length > 48 ? 'px-long' : 'px-short'}">${/^STALE/.test(c) ? `<span class="red">${esc(c)}</span>` : esc(c)}</td>`).join('')}</tr>`).join('')}</tbody></table>` : '<div class="empty">Nothing captured here' + (q ? ' matches the filter' : '') + '.</div>'}</div>
+    ${rows.slice(0, 500).map(r => `<tr>${r.map((c, i) => `<td class="${i === 0 ? 'mono' : ''} ${String(c).length > 48 ? 'px-long' : 'px-short'}">${cell(c,i,r)}</td>`).join('')}</tr>`).join('')}</tbody></table>` : '<div class="empty">Nothing captured here' + (q ? ' matches the filter' : '') + '.</div>'}</div>
     ${rows.length > 500 ? `<div class="table-foot"><span>Showing 500 of ${rows.length}; narrow with the filter</span></div>` : ''}</section>`;
 }
 
 async function proxies() {
   const d = await api('api/proxies', {cluster: S.cluster});
-  S.px = S.px || {sel: '', tab: 'summary', file: '', q: ''};
-  const comps = d.components;
+  S.px = S.px || {sel: '', tab: 'summary', file: '', q: '',family:'all'};
+  const comps = d.components.filter(c=>!S.px.family||S.px.family==='all'||(S.px.family==='istio'?['envoy','ztunnel','istiod'].includes(c.component):['agentgateway','controller'].includes(c.component)));
   if (!comps.length) {
-    return head('Proxy configs', 'Envoy, ztunnel and agentgateway config dumps, istiod debug output and metrics.') + `<div class="panel empty"><strong>${d.selected ? 'No matching components captured' : 'Proxy dumps, control-plane debug and metrics were not selected'}</strong>${
+    return head('Proxy diagnostics', 'Delivered configuration and debug output for Istio and agentgateway.') + `${S.px.family&&S.px.family!=='all'?'<button id="px-family-reset">Show all component families</button>':''}<div class="panel empty"><strong>${d.selected ? 'No matching components captured' : 'Proxy dumps, control-plane debug and metrics were not selected'}</strong>${
       S.ws?.live ? (S.ws.canRefreshDiagnostics ? 'Live mode reads diagnostics once when the mirror is ready; they may still be arriving. Component pods appear here as soon as they are read.' : 'Live mode reads proxy dumps only with flightbay-desk live --diagnostics.') : d.loading ? 'Diagnostics are written last in a bundle, so they may still be arriving.' : d.selected ? 'The selected namespaces held no ztunnel, Envoy, agentgateway, istiod or controller pods.' : 'Port-forward diagnostics were not allowed for this bundle (flightbay collect --diagnostics). Their absence says nothing about the proxies.'}</div>`;
   }
   if (!comps.find(c => pxKey(c) === S.px.sel)) { S.px.sel = pxKey(comps[0]); S.px.file = ''; }
@@ -2476,7 +2489,7 @@ async function proxies() {
         ${(sm.notes || []).map(n => `<div class="notice info mt">${esc(n)}</div>`).join('')}
         ${sm.certs?.length ? `<section class="panel mt"><div class="panel-head"><h2>Certificates</h2><small>At snapshot time. Workload certificates are short-lived.</small></div><div class="table-scroll" style="max-height:34vh"><table><thead><tr><th>Identity</th><th>Type</th><th>State</th><th>Expires</th><th>Left</th></tr></thead><tbody>
           ${sm.certs.map(c => `<tr><td class="mono">${esc(c.identity)}</td><td>${c.root ? 'root' : 'workload'}</td><td>${esc(c.state || '')}</td><td>${fmtDateTime(c.notAfter)}</td><td>${certCell(c)}</td></tr>`).join('')}</tbody></table></div></section>` : ''}
-        ${(sm.tables || []).map(t => pxTable(t, q)).join('')}`;
+        ${(sm.tables || []).map(t => pxTable(t, q,p.policyObjects||[])).join('')}`;
     }
   } else {
     const files = cur.files;
@@ -2498,7 +2511,7 @@ async function proxies() {
       </tbody></table></div></section>${viewer}`;
   }
   const meta = [['Node', cur.node], ['Pod', `${cur.namespace}/${cur.pod}`], ['Version', cur.version], ['Cluster', multi ? cur.cluster : ''], ['Image', cur.image]].filter(([, v]) => v);
-  return head('Proxy configs', 'Envoy, ztunnel and agentgateway config dumps, istiod debug output and metrics, as captured.', `${S.ws?.canRefreshDiagnostics ? '<button id="px-refresh" title="Read this pod\'s admin endpoints again now, over port-forward">Refresh diagnostics</button>' : ''}<button id="px-term">&gt;_ fbpc ${esc(cur.pod)}</button>`) + `
+  return head('Proxy diagnostics', 'Read-only delivered configuration: Istio (Envoy, ztunnel, istiod) and agentgateway. Use Istio Ambient for setup and reviewed changes.', `${S.ws?.canRefreshDiagnostics ? '<button id="px-refresh" title="Read this pod\'s admin endpoints again now, over port-forward">Refresh diagnostics</button>' : ''}<button id="px-term">&gt;_ fbpc ${esc(cur.pod)}</button>`) + `<div class="toolbar"><label>Component family <select id="px-family">${['all','istio','agentgateway'].map(value=>`<option value="${value}" ${(S.px.family||'all')===value?'selected':''}>${{all:'All components',istio:'Istio · mesh data/control plane',agentgateway:'Agentgateway · proxies and controller'}[value]}</option>`).join('')}</select></label><a class="btn" href="#traffic">Observed traffic ↗</a>${istioAmbientAvailable()?'<a class="btn" href="#ambient">Istio Ambient · setup and attachments ↗</a>':''}</div>` + `
   <div class="resource-layout px-layout"><nav class="types px-nav" aria-label="Components">${nav}</nav>
   <div><div class="px-head"><div class="row"><span class="badge">${esc(compLabel[cur.component] || cur.component)}</span><h2 class="mono">${esc(pxTitle(cur))}</h2></div>
     <dl class="px-meta">${meta.map(([k, v]) => `<div><dt>${k}</dt><dd class="mono">${esc(v)}</dd></div>`).join('')}</dl></div>
@@ -2507,6 +2520,10 @@ async function proxies() {
     ${body}</div></div>`;
 }
 after.proxies = () => {
+  document.querySelectorAll('[data-pxobject]').forEach(b=>b.onclick=()=>openObject(JSON.parse(b.dataset.pxobject)));
+  document.querySelectorAll('[data-pxyaml]').forEach(b=>b.onclick=()=>openObject(JSON.parse(b.dataset.pxyaml),'yaml'));
+  if($('#px-family'))$('#px-family').onchange=e=>{S.px.family=e.target.value;S.px.sel='';render();};
+  if($('#px-family-reset'))$('#px-family-reset').onclick=()=>{S.px.family='all';render();};
   document.querySelectorAll('[data-px]').forEach(b => b.onclick = () => { S.px.sel = JSON.parse(b.dataset.px); S.px.file = ''; render(); });
   document.querySelectorAll('[data-pxtab]').forEach(b => b.onclick = () => { S.px.tab = b.dataset.pxtab; render(); });
   document.querySelectorAll('[data-pxfile]').forEach(tr => tr.onclick = () => { S.px.file = tr.dataset.pxfile; render(); });
@@ -2551,18 +2568,20 @@ async function coverage() {
 
 // ---------- modal, search, cluster ----------
 function modal(title, body) {
+  if(S.applyConfirmCancel)S.applyConfirmCancel();
   $('#modal-root').innerHTML = `<div class="modal-backdrop"><section class="modal" role="dialog" aria-modal="true" aria-label="${esc(title)}"><div class="panel-head"><h2>${esc(title)}</h2><button class="ghost" id="m-close" aria-label="Close">✕</button></div><div class="panel-body">${body}</div></section></div>`;
   $('.modal-backdrop').onclick = e => { if (e.target.classList.contains('modal-backdrop')) closeModal(); };
   $('#m-close').onclick = closeModal;
 }
-function closeModal() { $('#modal-root').innerHTML = ''; }
+function closeModal() { if(S.applyConfirmCancel)S.applyConfirmCancel();$('#modal-root').innerHTML = ''; }
 
 function openSearch() {
   modal('Jump to an object or view', `<input id="gs" style="width:100%" placeholder="Any object: name, label, image, hostname. Try kind: ns: label:" autocomplete="off"><div id="gs-res" class="search-results"></div>`);
-  const views = ['navigator', 'search', 'overview', 'scorecard', 'ambient', ...(feature('traffic') || feature('reach') ? ['traffic'] : []), 'resources', 'logs', 'timeline', 'findings', 'compare', 'proxies', 'coverage'].filter(v => !S.ws?.agent || AGENT_VIEWS.includes(v));
+  const views = ['navigator', 'search', 'overview', 'scorecard', ...(istioAmbientAvailable()?['ambient']:[]), ...(feature('traffic') || feature('reach') ? ['traffic'] : []), 'resources', 'logs', 'timeline', 'findings', 'compare', 'proxies', 'coverage'].filter(v => !S.ws?.agent || AGENT_VIEWS.includes(v));
+  const viewLabel=v=>({ambient:'Istio Ambient',proxies:'Proxy diagnostics',traffic:'Traffic · mesh and gateway'}[v]||v);
   let hits = [], sel = 0;
   const draw = () => {
-    $('#gs-res').innerHTML = hits.map((h, i) => `<button class="${i === sel ? 'sel' : ''}" data-i="${i}">${h.all ? `<span class="green">⌕</span> Search everything for “${esc(h.all)}”<small>Search page</small>` : h.view ? `<span class="green">↗</span> ${esc(h.view)}<small>view</small>` : `<span class="badge">${esc(h.kind)}</span>${esc(h.namespace ? h.namespace + '/' : '')}${esc(h.name)}${h.snippet ? ` <span class="muted mono" style="font-size:10px">…${esc(h.snippet.slice(0, 70))}…</span>` : ''}<small>${esc(h.cluster)}</small>`}</button>`).join('');
+    $('#gs-res').innerHTML = hits.map((h, i) => `<button class="${i === sel ? 'sel' : ''}" data-i="${i}">${h.all ? `<span class="green">⌕</span> Search everything for “${esc(h.all)}”<small>Search page</small>` : h.view ? `<span class="green">↗</span> ${esc(viewLabel(h.view))}<small>view</small>` : `<span class="badge">${esc(h.kind)}</span>${esc(h.namespace ? h.namespace + '/' : '')}${esc(h.name)}${h.snippet ? ` <span class="muted mono" style="font-size:10px">…${esc(h.snippet.slice(0, 70))}…</span>` : ''}<small>${esc(h.cluster)}</small>`}</button>`).join('');
     document.querySelectorAll('#gs-res [data-i]').forEach(b => b.onclick = () => pick(hits[+b.dataset.i]));
   };
   const pick = h => { closeModal(); if (h.all) { S.search.q = h.all; nav('search'); } else if (h.view) nav(h.view); else if(S.view==='ambient'&&S.ambient.tab==='map'&&['Service','Namespace','Gateway','Pod','HTTPRoute','ServiceEntry'].includes(h.kind)){S.ambient.mapAllNamespaces=true;S.ambient.inventory=null;amChoose(h);}else openObject(h); };
@@ -2571,7 +2590,7 @@ function openSearch() {
   typeahead(input, {scope: 'objects', alias: objAlias});
   input.oninput = () => { clearTimeout(t); t = setTimeout(async () => {
     const q = input.value.toLowerCase();
-    hits = views.filter(v => q && v.includes(q)).map(v => ({view: v})).concat(q ? (await api('api/search', {q: input.value})).slice(0, 12) : []).concat(q ? [{all: input.value}] : []); sel = 0; draw();
+    hits = views.filter(v => q && viewLabel(v).toLowerCase().includes(q)).map(v => ({view: v})).concat(q ? (await api('api/search', {q: input.value})).slice(0, 12) : []).concat(q ? [{all: input.value}] : []); sel = 0; draw();
   }, 150); };
   input.onkeydown = e => {
     if (e.key === 'ArrowDown') { sel = Math.min(sel + 1, hits.length - 1); draw(); e.preventDefault(); }
@@ -2656,7 +2675,7 @@ function boot() {
     else if (e.key === 'Escape') { closeModal(); closeDrawer(); }
     else if (!typing && e.key === '/' && S.view !== 'navigator') { e.preventDefault(); ($('#log-q') || $('#res-q') || $('#obj-q') || $('#rc-q'))?.focus(); }
   });
-  addEventListener('hashchange', () => { parseHash(); closeDrawer(); render(); });
+  addEventListener('hashchange', () => { if(S.applyConfirmCancel)closeModal();parseHash();if(typeof httpTestNavigation==='function')httpTestNavigation(); closeDrawer(); render(); });
   parseHash();
   loadWorkspace().then(render).catch(e => { $('#main').innerHTML = `<div class="notice bad">${esc(e.message)}</div>`; });
   const es = new EventSource('api/state/stream');
@@ -2739,6 +2758,9 @@ async function liveRefresh() {
   // only lose what you are in the middle of choosing.
   if (S.view === 'review') return;
   if(S.view==='ambient'){
+    const wasAvailable=istioAmbientAvailable();
+    await loadWorkspace();
+    if(wasAvailable!==istioAmbientAvailable()){await render();return;}
     if(S.ambient.tab==='map'&&!document.querySelector('.am-dragging,.am-panning,.am-implementation[open]')&&!S.ambient.pickerOpen){S.ambient.inventory=null;await render();}
     return;
   }

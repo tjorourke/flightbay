@@ -9,11 +9,11 @@ const amState = s => `<span class="badge ${s === 'pass' ? 'green' : s === 'fail'
 const amLabel = o => `${o.kind || 'Service'} · ${o.cluster} · ${o.namespace ? o.namespace + '/' : ''}${o.name}`;
 const amOpts = (xs, value) => xs.map(x => { const v = typeof x === 'object' ? x.value : x, l = typeof x === 'object' ? x.label : x; return `<option value="${esc(v)}" ${String(value) === String(v) ? 'selected' : ''}>${esc(l)}</option>`; }).join('');
 const amInput = (id, label, value, type = 'text') => `<label>${label}<input id="am-${id}" type="${type}" value="${esc(value ?? '')}"></label>`;
-function amInvalidate() { S.ambient.plan = null; S.ambient.validation = null; $('#am-plan')?.replaceChildren(); }
-function amResetDraft() {const A=S.ambient;Object.assign(A,{route:'',tasks:{},settings:{},mode:'',edit:null,repairRef:null,error:'',message:'',context:'',phase:1,previewTab:'summary'});amInvalidate();}
+function amInvalidate() { S.ambient.plan = null; S.ambient.globalBatch = null; S.ambient.validation = null;S.ambient.testFeedback=null; $('#am-plan')?.replaceChildren(); }
+function amResetDraft() {const A=S.ambient;Object.assign(A,{route:'',tasks:{},settings:{},globalBatch:null,mode:'',edit:null,repairRef:null,error:'',message:'',context:'',phase:1,previewTab:'summary'});amInvalidate();}
 function amChoose(o) { const A = S.ambient; amResetDraft(); A.key = amKey(o); A.kind=o.kind; A.serviceFilter='';A.checkFilter='all';A.pickerOpen=false;if(A.tab==='map')A.mapFocus=amKey(o); history.replaceState(null,'','#ambient'); if(S.cluster&&S.cluster!==o.cluster){A.clusterScope=o.cluster;setCluster(o.cluster);}else render(); }
 function amClear(wizard=false){const A=S.ambient;amResetDraft();A.key='';A.kind='';A.result=null;A.serviceFilter='';if(wizard)A.tab='wizard';A.pickerOpen=A.tab!=='map';history.replaceState(null,'','#ambient');render().then(()=>{if(A.pickerOpen)$('#am-object-search')?.focus();});}
-function ambientObjectButton(o) { return ['Service', 'Namespace', 'Pod', 'Gateway', 'HTTPRoute', 'ServiceEntry'].includes(o.kind) ? '<button id="d-ambient">Investigate ambient →</button>' : ''; }
+function ambientObjectButton(o) { return S.ws?.istioAmbient?.some(c=>c.cluster===o.cluster&&c.available)&&['Service', 'Namespace', 'Pod', 'Gateway', 'HTTPRoute', 'ServiceEntry'].includes(o.kind) ? '<button id="d-ambient">Investigate Istio Ambient →</button>' : ''; }
 function ambientWireObject(o) { if (!$('#d-ambient')) $('#d-describe')?.insertAdjacentHTML('afterend', ambientObjectButton(o)); const b = $('#d-ambient'); if (b) b.onclick = () => { amResetDraft();S.ambient.key = amKey(o);S.ambient.kind=o.kind;S.ambient.tab='investigate';closeDrawer();nav('ambient'); }; }
 function amDownload(text, name) { const url = URL.createObjectURL(new Blob([text], {type: 'application/yaml'})); const a = document.createElement('a'); a.href = url; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
 
@@ -25,6 +25,7 @@ function amSteps(){const A=S.ambient,current=!amTarget()?0:A.phase;return `<nav 
 function amLanding(){return `<section class="panel am-landing"><div class="panel-body"><h2>${S.ambient.tab==='wizard'?'What would you like to configure?':'Explore your ambient mesh'}</h2><p>Choose a starting point. You can change it or clear the selection at any time.</p><div class="am-intents"><button data-amintent="Service"><strong>Service traffic</strong><span>Routing, rate limits, timeouts and access policies</span></button><button data-amintent="Namespace"><strong>Namespace setup</strong><span>See all Services and set up a shared waypoint</span></button><button data-amintent="Gateway"><strong>Waypoint connections</strong><span>Inspect readiness and connected Services</span></button></div></div></section>`;}
 async function ambientPage() {
   const A = S.ambient;
+  if(S.ws?.istioAmbient&&!istioAmbientAvailable())return head('Istio Ambient','No confirmed ambient installation in the selected capture scope.')+'<div class="notice info">Include Istio API discovery plus an ambient-enrolled Namespace or ztunnel Pods. Gateway API CRDs or a sidecar-only installation do not establish ambient support. Missing capture data does not prove the cluster lacks ambient.</div>';
   if(A.clusterScope!==S.cluster){if(A.clusterScope!==undefined) {amResetDraft();A.key='';A.kind='';A.result=null;}A.clusterScope=S.cluster;}
   if (!A.inventory) A.inventory = await api('api/ambient');
   A.objects = (A.inventory.objects || A.inventory.services).filter(o => !S.cluster || o.cluster === S.cluster);
@@ -38,6 +39,7 @@ async function ambientPage() {
     A.result = await api('api/ambient/investigate', amQuery());
     if (A.tab === 'investigate') body = amInvestigation(target);
     else if (A.tab === 'map') body = amClusterCanvas(target) + (target.kind==='Namespace'||target.kind==='Gateway'?'':`<details class="am-map-details"><summary>Routes, policies and workloads for ${esc(target.name)}</summary>${amGraph(target)}</details>`);
+    else if(A.phase===3&&A.globalBatch)body=amGlobalBatchPanel();
     else if(A.phase===3&&A.plan)body=amPlanPanel();
     else if (A.mode === 'waypoint' || A.mode === 'enrol-namespace') body = amWaypoint(target);
     else if (svc && ['endpoints', 'route-parent'].includes(A.mode)) body = amRecovery(svc);
@@ -46,7 +48,7 @@ async function ambientPage() {
   }
   if (A.tab === 'wizard'&&A.tests.length) body += `<details class="am-active-tests" ${A.status?'open':''}><summary>${A.tests.length} active test${A.tests.length===1?'':'s'} · status and undo</summary>${amTests()}</details>`;
   const targetBar=`<section class="am-targetbar"><div class="am-target-identity">${target?`<span class="badge">${esc(target.kind)}</span><strong title="${esc(amLabel(target))}">${esc(target.namespace?target.namespace+'/':'')}${esc(target.name)}</strong><span class="am-context-name">${esc(target.cluster)}</span>`:'<strong>All captured clusters</strong><span class="am-context-name">Select a resource to investigate or configure</span>'}</div><div class="am-target-actions"><button id="am-target-toggle" aria-expanded="${!!pickerOpen}" aria-controls="am-target-selector">${target?'Change target':'Select target'}</button>${target?`<button data-amevidence="${attr(target)}">View object</button><button data-amyaml="${attr(target)}">YAML</button>${amEnvironment()}`:''}</div></section>`;
-  const header=`<header class="am-header"><h1>Ambient</h1>${tabs}<div class="am-header-actions"><button id="am-start-new" class="primary">New configuration</button><button id="am-refresh" title="Refresh captured inventory">Refresh</button><a class="help-link" href="/docs/desk/ambient/" target="_blank" rel="noopener">Docs ↗</a></div></header>`;
+  const header=`<header class="am-header"><h1>Istio Ambient</h1>${tabs}<div class="am-header-actions"><button id="am-start-new" class="primary">New configuration</button><button id="am-refresh" title="Refresh captured inventory">Refresh</button><a class="help-link" href="/docs/desk/ambient/" target="_blank" rel="noopener">Docs ↗</a></div></header>`;
   return `<div class="am-shell am-mode-${A.tab}">${header}${targetBar}${picker}${A.tab==='wizard'?amSteps():''}${A.error?`<div class="notice bad mt" role="alert">${esc(A.error)}</div>`:''}<div class="am-workspace" id="am-workspace">${body}</div></div>`;
 }
 function amRelated() { const seen = new Set(); return `<section class="panel mt"><div class="panel-head"><h2>Related resources</h2><small>Open the resource or its full YAML</small></div><div class="table-scroll"><table><thead><tr><th>Object</th><th>Context</th><th>Actions</th></tr></thead><tbody>${(S.ambient.result.related || []).filter(r => { const k = amKey(r); if (seen.has(k)) return false; seen.add(k); return true; }).map(r => `<tr><td><span class="badge">${esc(r.kind)}</span> ${esc(r.namespace ? r.namespace + '/' : '')}${esc(r.name)}</td><td>${esc(r.cluster)}</td><td><div class="row wrap"><button data-amrelated="${attr(r)}">Investigate</button><button data-amevidence="${attr(r)}">View object</button><button data-amyaml="${attr(r)}">YAML</button></div></td></tr>`).join('') || '<tr><td colspan="3">No related resources captured. Missing collection data does not prove absence.</td></tr>'}</tbody></table></div></section>`; }
@@ -102,7 +104,8 @@ function amWizard(svc) {
   if(A.phase===1)return edit+amTaskCards();
   const tasks=Object.keys(A.tasks).filter(k=>A.tasks[k]),names=tasks.map(k=>amTaskText[k]?.[0]||k),hasPortOptions=tasks.some(k=>['methods','weighted-routing','timeouts','rate-limit'].includes(k));
   const fields = `<section class="panel am-options"><div class="panel-head"><div><h2>${esc(names.length===1?names[0]:'Configure selected tasks')}</h2><p class="muted">${esc(names.length===1?amTaskText[tasks[0]]?.[1]||'Choose the settings for this task.':'Set the options below, then review the generated changes.')}</p></div><button id="am-edit-tasks">Change tasks</button></div><div class="panel-body" id="am-parameters"><div class="am-fields">${hasPortOptions?`<label>Service port <select id="am-port">${amOpts(svc.ports, F.port || svc.ports[0])}</select></label>`:''}
-    ${selected('global-service')?`<div class="am-global-publication"><h3>Publish ${esc(svc.namespace+'/'+svc.name)} from ${esc(svc.cluster)}</h3><p>The reviewed change sets <code>solo.io/service-scope: global</code> on this existing Service. Other labels, selectors, ports and service-takeover settings are preserved.</p><p>This plan applies to <strong>one cluster</strong>. Select and publish the matching Service in each other cluster that should contribute endpoints. Peering and a supported Enterprise Istio licence must already be configured.</p>${amDNSMarkup(A.result.dns)}<p>The controller chooses the global hostname. Refresh after applying to see its published names.</p></div>`:''}
+    ${selected('global-service')?amGlobalClusterChoices(svc):''}
+    ${selected('global-service')?`<div class="am-global-publication"><h3>Publication change</h3><p>The reviewed change sets <code>solo.io/service-scope: global</code> on each selected existing Service. Other labels, selectors, ports and service-takeover settings are preserved.</p><p>Each cluster gets an independent plan and explicit kubeconfig context. Peering and a supported Enterprise Istio licence must already be configured.</p>${amDNSMarkup(A.result.dns)}<p>The controller chooses the global hostname. Refresh after applying to see its published names.</p></div>`:''}
     ${selected('l4-allow-namespace') ? `<label>Source namespace <select id="am-source">${amOpts(namespaces, F.sourceNamespace)}</select></label>` : ''}
     ${selected('strict-mtls') ? `<fieldset class="am-choice-group"><legend>Which connections should this workload accept?</legend>${[['STRICT','Require mesh mTLS','Only callers with a mesh-authenticated connection can reach these Pods.'],['PERMISSIVE','Allow non-mesh callers too','Accept plaintext connections as well as mesh mTLS.']].map(([value,label,detail])=>`<label class="am-choice"><input type="radio" name="am-mtls-mode" value="${value}" ${(F.mtlsMode||'STRICT')===value?'checked':''}><span><strong>${label}</strong><small>${detail}</small><code>${value}</code></span></label>`).join('')}</fieldset>` : ''}
     ${selected('methods') ? `<label>Method rule <select id="am-methodAction">${amOpts([{value:'ALLOW',label:'Allow only selected methods (additive ALLOW policy)'},{value:'DENY',label:'Deny selected methods'}], F.methodAction || 'ALLOW')}</select></label>` + amInput('methods', 'HTTP methods (comma separated)', F.methods ?? 'GET,HEAD') : ''}
@@ -158,6 +161,7 @@ function amTests() { const A = S.ambient; return `<section class="panel mt"><div
 
 function amCapture() {
   const F = S.ambient.settings, get = id => $('#am-'+id);
+  if(document.querySelector('[data-amglobalcluster]'))F.globalClusters=[...document.querySelectorAll('[data-amglobalcluster]:checked')].map(e=>e.dataset.amglobalcluster).filter(cluster=>S.ambient.inventory.services.some(s=>s.cluster===cluster&&s.namespace===amService()?.namespace&&s.name===amService()?.name));
   const mtls=document.querySelector('input[name="am-mtls-mode"]:checked');if(mtls)F.mtlsMode=mtls.value;
   const text = ['source','methods','timeout','backendTimeout','algorithm','unit','fromRegion','toRegion','trafficMode','mtlsMode','methodAction','wpMode','wpScope','wpExisting','wpNamespace','wpName','wpClass','targetNamespace','repairOperation','selectedPod','workload','repairRoute'];
   for (const k of text) if (get(k)) F[k === 'source' ? 'sourceNamespace' : k] = get(k).value;
@@ -182,7 +186,23 @@ function amRead() {
   return req;
 }
 async function amAction(fn) { const A = S.ambient; if (A.busy) return; A.busy = true; A.error = ''; document.querySelectorAll('#main button, #main input, #main select').forEach(e => e.disabled = true); try { await fn(); } catch (e) { A.error = e.message; if (e.body?.test) A.tests = await api('api/ambient/tests').catch(() => A.tests); } finally { A.busy = false; await render(); } }
-async function amTestOperation(operation, rec) { const A = S.ambient; const result = await apiPost('api/ambient/test',{operation,context:rec?.context || A.context,validation:rec?.token || A.validation?.token || '',...(operation === 'validate' ? {request:A.plan.request,planId:A.plan.id} : {})}); if (operation === 'validate') A.validation = result; else if (operation === 'status') A.status = result; else { A.message = result.message; A.validation = null; A.tests = await api('api/ambient/tests'); } }
+async function amTestOperation(operation, rec) {
+  const A = S.ambient;
+  const result = await apiPost('api/ambient/test',{operation,context:rec?.context || A.context,validation:rec?.token || A.validation?.token || '',...(operation === 'validate' ? {request:A.plan.request,planId:A.plan.id} : {})});
+  if (operation === 'validate') A.validation = result;
+  else if (operation === 'status') A.status = result;
+  else {
+    A.message = result.message;
+    A.validation = null;
+    A.tests = await api('api/ambient/tests');
+    if(operation==='cleanup'&&A.globalBatch){
+      // An applied row is no longer current after undo. Re-read publication
+      // evidence before offering another independent plan for these clusters.
+      A.globalBatch=null;A.inventory=null;A.status=null;A.phase=2;
+      toast(result.message);
+    }
+  }
+}
 function amWirePicker() {
   const A = S.ambient, input = $('#am-object-search'), list = $('#am-object-options'); let matches = [], active = 0;
   const close = () => { list.classList.add('hidden'); input.setAttribute('aria-expanded','false'); input.removeAttribute('aria-activedescendant'); };
@@ -191,9 +211,13 @@ function amWirePicker() {
   $('#am-kind').onchange = e => {const kind=e.target.value;if(amTarget()&&kind&&kind!==amTarget().kind){amResetDraft();A.key='';A.result=null;history.replaceState(null,'','#ambient');}A.kind=kind;render().then(()=>$('#am-object-search')?.focus());};
 }
 after.ambient = () => {
+  if(!$('#am-target-selector'))return;
   const A = S.ambient; amWirePicker();
   amWireClusterCanvas();
+  amWireGlobalPublication();
   const testPanel=document.querySelector('.am-test-panel');if(testPanel){if(A.testOpen)testPanel.open=true;testPanel.ontoggle=()=>A.testOpen=testPanel.open;}
+  if($('#am-apply'))$('#am-apply').textContent='Apply';
+  if(A.testFeedback&&testPanel)testPanel.querySelector('.panel-body')?.insertAdjacentHTML('afterbegin',`<div class="am-test-feedback ${A.testFeedback.ok?'green':'red'}" role="status"><strong>${A.testFeedback.ok?'✓':'✕'} ${esc(A.testFeedback.label)}</strong><p>${esc(A.testFeedback.message)}</p></div>`);
   amWireStatusFilters();
   if(A.result?.dns&&amTarget()?.kind==='Service')document.querySelector('.am-target-actions')?.insertAdjacentHTML('beforeend',`<details class="am-implementation"><summary>DNS names</summary><div class="am-implementation-body">${amDNSMarkup(A.result.dns)}</div></details>`);
   if(amTarget()?.kind==='Service')document.querySelector('.am-target-actions')?.insertAdjacentHTML('beforeend',`<button data-amhttp="${attr(amTarget())}">Test service</button>`);
@@ -244,13 +268,13 @@ after.ambient = () => {
   document.querySelectorAll('[data-amname]').forEach(el=>el.onchange=()=>{amCapture();const i=Number(el.closest('[data-ambackend]').dataset.ambackend),backend=A.settings.backends[i],svc=amService(),chosen=A.inventory.services.find(s=>s.cluster===svc.cluster&&s.namespace===svc.namespace&&s.name===backend.name);if(chosen&&!chosen.ports.includes(backend.port))backend.port=chosen.ports[0];amInvalidate();render();});
   if($('#am-add-backend')) $('#am-add-backend').onclick=()=>{amCapture();const s=amService();A.settings.backends.push({name:s.name,port:s.ports[0],weight:0});amInvalidate();render();};
   document.querySelectorAll('[data-amremove]').forEach(b=>b.onclick=()=>{amCapture();A.settings.backends.splice(Number(b.dataset.amremove),1);amInvalidate();render();});
-  for(const id of ['am-generate','am-generate-setup','am-generate-repair'])if($('#'+id))$('#'+id).onclick=()=>amAction(async()=>{A.plan=await apiPost('api/ambient/plan',amRead());A.validation=null;A.message='';A.phase=3;A.previewTab='summary';});
+  for(const id of ['am-generate','am-generate-setup','am-generate-repair'])if($('#'+id))$('#'+id).onclick=()=>amAction(async()=>{if(A.tasks['global-service']&&!A.mode){await amGenerateGlobalBatch();return;}A.plan=await apiPost('api/ambient/plan',amRead());A.validation=null;A.message='';A.phase=3;A.previewTab='summary';});
   if($('#am-copy-evidence'))$('#am-copy-evidence').onclick=()=>navigator.clipboard.writeText(A.result.recovery.command).then(()=>toast('Capture command copied'));
   if($('#am-copy'))$('#am-copy').onclick=()=>navigator.clipboard.writeText(A.plan.yaml).then(()=>toast('YAML copied'),()=>toast('Clipboard unavailable'));
   if($('#am-download'))$('#am-download').onclick=()=>amDownload(A.plan.yaml,'flightbay-ambient-'+A.plan.id+'.yaml');
   if($('#am-context'))$('#am-context').onchange=()=>{A.context=$('#am-context').value;A.validation=null;render();};
-  if($('#am-validate'))$('#am-validate').onclick=()=>amAction(()=>amTestOperation('validate'));
-  if($('#am-apply'))$('#am-apply').onclick=()=>amAction(()=>amTestOperation('apply'));
+  if($('#am-validate'))$('#am-validate').onclick=()=>amAction(async()=>{A.testFeedback=null;try{await amTestOperation('validate');A.testFeedback={ok:true,label:'Dry-run passed',message:'The API server accepted this plan without saving it. Review the YAML and confirm Apply to write the changes.'};}catch(e){A.testFeedback={ok:false,label:'Dry-run failed · nothing applied',message:e.message};throw e;}});
+  if($('#am-apply'))$('#am-apply').onclick=async()=>{const entry={plan:A.plan,context:A.context,validation:A.validation};if(!await amConfirmApply([entry]))return;return amAction(async()=>{try{await amTestOperation('apply',{context:entry.context,token:entry.validation.token});A.testFeedback={ok:true,label:'Applied',message:'Changes were sent to '+entry.context+'. Inspect their status or use Active tests to undo them.'};}catch(e){A.testFeedback={ok:false,label:'Apply failed · inspect Active tests',message:e.message};throw e;}});};
   document.querySelectorAll('[data-amstatus]').forEach(b=>b.onclick=()=>amAction(()=>amTestOperation('status',A.tests[Number(b.dataset.amstatus)])));
   document.querySelectorAll('[data-amcleanup]').forEach(b=>b.onclick=()=>amAction(()=>amTestOperation('cleanup',A.tests[Number(b.dataset.amcleanup)])));
 };
