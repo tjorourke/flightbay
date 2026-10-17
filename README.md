@@ -40,7 +40,7 @@ Browse captured resources with `kubectl` or a k9s-style navigator, search logs i
 
 Ambient's configuration flow is **Target → Task → Configure → Review**, with **Clear selection** and **New configuration** controls. Namespace maps show all captured Services and their endpoint counts. Detected controller/API evidence selects the matching OSS or Enterprise policy shape; labelled **Official docs** links accompany tasks and debugging steps.
 
-The Attachment map groups Services inside draggable cluster-context boxes, with captured east-west gateway and remote-peer cards. Zoom, pan, fit and reset the canvas, then open a Service's connections or configuration. Multicluster bundles show every captured context without assuming that the clusters are peered.
+The Attachment map groups Services inside draggable, expandable cluster-context boxes with Kubernetes icons and independent card/list views. Captured east-west peering and global-Service publications have evidence-backed connection lines. Zoom, pan, fit, reset or go full screen; the top search focuses resources on the map. View object and View YAML actions open the actual resources directly. Multicluster bundles show every captured context without assuming that the clusters are peered.
 
 ![Overview of a snapshot](docs/images/overview.png)
 

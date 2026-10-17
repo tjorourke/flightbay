@@ -1,0 +1,83 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: flightbay-global-demo
+  labels:
+    app.kubernetes.io/managed-by: flightbay
+    istio.io/dataplane-mode: ambient
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: global-echo
+  namespace: flightbay-global-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: global-echo
+  template:
+    metadata:
+      labels:
+        app: global-echo
+    spec:
+      containers:
+      - name: echo
+        image: hashicorp/http-echo:1.0.0
+        args: ["-listen=:8080", "-text=$(CLUSTER_NAME)/$(POD_NAME)"]
+        env:
+        - name: CLUSTER_NAME
+          value: configure-with-kubectl-set-env
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        ports:
+        - containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8080
+        resources:
+          requests:
+            cpu: 10m
+            memory: 16Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: global-echo
+  namespace: flightbay-global-demo
+  labels:
+    solo.io/service-scope: global
+spec:
+  selector:
+    app: global-echo
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: client
+  namespace: flightbay-global-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: global-client
+  template:
+    metadata:
+      labels:
+        app: global-client
+    spec:
+      containers:
+      - name: curl
+        image: curlimages/curl:8.12.1
+        command: ["sleep", "infinity"]
+        resources:
+          requests:
+            cpu: 5m
+            memory: 16Mi

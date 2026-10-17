@@ -59,6 +59,7 @@ function parseHash() {
   if ((view === 'scorecard' || view === 'posture') && p.has('tab')) S.pst.tab = p.get('tab');
   if (view === 'resources' && p.has('resource')) { S.res.resource = p.get('resource'); S.res.group = p.get('group') || ''; }
   if (view === 'ambient' && p.has('service') && S.ambient) { S.ambient.key = JSON.stringify([p.get('cluster') || S.cluster, p.get('namespace') || '', p.get('service')]); S.ambient.route = p.get('route') || ''; }
+  if(view==='ambient'&&S.ambient){if(['investigate','map','wizard'].includes(p.get('tab')))S.ambient.tab=p.get('tab');if(['Namespace','Service','Pod','Gateway','HTTPRoute','ServiceEntry'].includes(p.get('kind'))&&p.has('name')){const kind=p.get('kind'),cluster=p.get('cluster')||S.cluster,ns=p.get('namespace')||'',name=p.get('name');S.ambient.key=JSON.stringify(kind==='Service'?[cluster,ns,name]:[cluster,kind,ns,name]);S.ambient.kind=kind;}}
   if (view === 'reach') { location.replace('#traffic?tab=agents' + (p.get('agent') ? '&agent=' + encodeURIComponent(p.get('agent')).replace(/%2F/gi, '/') : '')); S.view = 'traffic'; return; }
   // Activity is now the gateway layer of Traffic; keep old links working.
   if (view === 'activity') { location.replace('#traffic?layer=gateway' + (p.get('caller') ? '&caller=' + encodeURIComponent(p.get('caller')) : '')); S.view = 'traffic'; return; }
@@ -2563,7 +2564,7 @@ function openSearch() {
     $('#gs-res').innerHTML = hits.map((h, i) => `<button class="${i === sel ? 'sel' : ''}" data-i="${i}">${h.all ? `<span class="green">⌕</span> Search everything for “${esc(h.all)}”<small>Search page</small>` : h.view ? `<span class="green">↗</span> ${esc(h.view)}<small>view</small>` : `<span class="badge">${esc(h.kind)}</span>${esc(h.namespace ? h.namespace + '/' : '')}${esc(h.name)}${h.snippet ? ` <span class="muted mono" style="font-size:10px">…${esc(h.snippet.slice(0, 70))}…</span>` : ''}<small>${esc(h.cluster)}</small>`}</button>`).join('');
     document.querySelectorAll('#gs-res [data-i]').forEach(b => b.onclick = () => pick(hits[+b.dataset.i]));
   };
-  const pick = h => { closeModal(); if (h.all) { S.search.q = h.all; nav('search'); } else if (h.view) nav(h.view); else openObject(h); };
+  const pick = h => { closeModal(); if (h.all) { S.search.q = h.all; nav('search'); } else if (h.view) nav(h.view); else if(S.view==='ambient'&&S.ambient.tab==='map'&&['Service','Namespace','Gateway','Pod','HTTPRoute','ServiceEntry'].includes(h.kind)){S.ambient.mapAllNamespaces=true;S.ambient.inventory=null;amChoose(h);}else openObject(h); };
   let t;
   const input = $('#gs');
   typeahead(input, {scope: 'objects', alias: objAlias});

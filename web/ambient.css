@@ -1,4 +1,13 @@
 /* Ambient workspace: progressive forms, compact evidence and scoped overview. */
+.am-object-header{display:flex;justify-content:space-between;gap:20px;align-items:center;flex-wrap:wrap;padding:18px 20px;margin-top:16px}.am-object-header>div:first-child{min-width:0}.am-object-header h2{display:inline;font-size:19px;margin-left:10px;overflow-wrap:anywhere}.am-object-header p{margin:8px 0 0;font-size:13px}
+.am-environment .badge[hidden]{display:none}
+.am-topology .am-canvas-card{min-height:0;z-index:3}.am-topology .am-canvas-card>small{font-size:11px}.am-canvas-list>strong{font-size:15px}.am-canvas-list .am-canvas-card-head{gap:12px}
+.am-cluster-box>header{position:relative;z-index:3}.am-kubernetes-icon{width:42px;height:42px;flex:none;object-fit:contain}.am-cluster-bar{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:0 16px 12px;flex-wrap:wrap}.am-cluster-bar>small{font-size:11px;color:var(--muted)}.am-cluster-bar .row{gap:4px}.am-cluster-bar button{font-size:11px;padding:6px 10px}.am-cluster-bar [aria-pressed=true]{border-color:var(--teal);color:var(--teal)}
+.am-map-connections{display:flex;gap:8px;flex-wrap:wrap;padding:10px 20px;border-bottom:1px solid var(--line)}.am-connection-chip{font-size:11px;white-space:normal;overflow-wrap:anywhere;text-align:left}.am-peer-chip{border-color:#138b9d;color:#138b9d}.am-global-chip{border-color:#9463db;color:#9463db}.am-connection-chip[aria-pressed=true]{background:var(--raised);box-shadow:0 0 0 1px currentColor}
+#am-map-lines{position:absolute;left:0;top:0;width:100%;height:100%;z-index:2;pointer-events:none;overflow:visible}.am-map-line{pointer-events:stroke}.am-link-endpoint{outline:3px solid #9463db;outline-offset:3px}
+.am-map-fullscreen{position:fixed;inset:12px;z-index:30;margin:0;display:flex;flex-direction:column;box-shadow:0 0 0 30px var(--bg)}.am-map-fullscreen .am-map-viewport{flex:1;max-height:none;height:auto;min-height:0}.am-map-fullscreen .panel-head{flex-shrink:0}.am-global-label{overflow-wrap:anywhere}
+.am-topology .am-canvas-empty{top:150px}
+.am-topology .am-canvas-list{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 12px;align-content:start}.am-canvas-list>.am-canvas-card-head{grid-column:1/-1}.am-canvas-list>strong,.am-canvas-list>small,.am-canvas-list>.link,.am-canvas-list>.am-peer-label{grid-column:1;min-width:0}.am-topology .am-canvas-list>.row{grid-column:2;grid-row:2/span 4;align-self:center;margin:0;max-width:225px}
 .am-topology{margin-bottom:24px}
 .am-topology .panel-head{flex-wrap:wrap;gap:12px}
 .am-topology .panel-head p{margin:6px 0 0;font-size:13px}

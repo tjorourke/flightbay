@@ -16,7 +16,11 @@ Use the searchable dropdown to choose a Namespace, Service, Pod, Gateway, HTTPRo
 
 **Clear selection** resets the object type, search value and draft. **New configuration** also switches to Configure and starts at the target step. Neither action applies or undoes cluster changes; any active tests remain available in **Active tests**. Selecting an incompatible object type clears the old target instead of leaving hidden selection state behind.
 
-The **Investigate** tab adapts to the object type. Service investigations trace Service-addressed traffic. Pod investigations distinguish workload/Pod-IP waypoint handling from Service traffic, and ServiceEntries are not diagnosed using Kubernetes EndpointSlice readiness. Related-object buttons let you move between these scopes. Choose a particular HTTPRoute if its intended Service is ambiguous, or leave **Related routes** selected.
+The selected resource has prominent **View object** and **View YAML** actions. View object opens the resource details; View YAML opens its complete captured, redacted YAML, with Copy YAML available. **Related resources** lists each resource with separate Investigate, View object and YAML actions. Diagnostic fields are not a substitute for the resource itself.
+
+![Open the selected Gateway's full YAML from its resource header](/images/ambient-resource-yaml.png)
+
+The **Investigate** tab adapts to the object type. Service investigations trace Service-addressed traffic. Pod investigations distinguish workload/Pod-IP waypoint handling from Service traffic, and ServiceEntries are not diagnosed using Kubernetes EndpointSlice readiness. Choose a particular HTTPRoute if its intended Service is ambiguous, or leave **Related routes** selected.
 
 ![Guided ambient attachment investigation](/images/ambient-investigation.png)
 
@@ -37,11 +41,11 @@ The investigation checks:
 
 Every result is **Pass**, **Failed**, **Check**, **Unknown** or **Not applicable**. Click the evidence to inspect the original captured object. Missing, excluded, trimmed or reviewed-out data does not prove that a resource is absent.
 
-Failures open first; other checks are compact, expandable rows. Raw fields are inside **View evidence**. Each step includes labelled **Official docs** links to the relevant upstream or Enterprise guide. Current conditions no longer carry a misleading stale-status warning; that warning appears only when the observed generation is actually stale or missing.
+Failures open first; other checks are compact, expandable rows. Raw fields used by a check are inside **Check details · captured fields**. Each step includes labelled **Official docs** links to the relevant upstream or Enterprise guide. A stale-status warning appears only when the observed generation is actually stale or missing.
 
 ## Detected implementation and official documentation
 
-The implementation strip shows the selected waypoint/controller and the policy YAML kind that matches it. **Detection details** explains the evidence: captured GatewayClasses, deployed Gateways, discovered policy APIs and recognised Istio control-plane/ztunnel images. Missing evidence stays unknown. A cluster can contain OSS and Enterprise components together; it is not assigned one blanket API shape.
+The implementation strip shows the selected waypoint/controller. In Configure, **Generated policy type** identifies the kind a policy template will produce, not the kind of the resource currently selected. **Detection details** explains the evidence: captured GatewayClasses, deployed Gateways, discovered policy APIs and recognised Istio control-plane/ztunnel images. Missing evidence stays unknown. A cluster can contain OSS and Enterprise components together; it is not assigned one blanket API shape.
 
 For agentgateway tasks, the selected controller determines `AgentgatewayPolicy` versus `EnterpriseAgentgatewayPolicy`, and the discovered API supplies the version. Installing both CRDs does not mean both controllers are active. A new waypoint can only use a supported class actually observed in the selected cluster. Refresh or collect the missing GatewayClasses/Gateways if no class is offered.
 
@@ -73,13 +77,21 @@ The **Attachment map** tab shows namespace defaults, selected waypoints, routes,
 
 The map opens a **cluster canvas** with a labelled box for every context in the capture, including contexts with no matching Services. The header distinguishes the kubeconfig context from the captured mesh cluster/network identity. A selected object's namespace limits the Service cards by default; **All namespaces** expands the scope. The map can also be opened without selecting an object to inspect the whole capture. The canvas includes all captured contexts even when the workspace filter selects one cluster.
 
-Drag a cluster header to move its whole box, or a card's handle to move that card inside its cluster. Focus a handle and use arrow keys for keyboard movement; Shift increases the step. Drag empty canvas space to pan, scroll to explore, or use **− / +**, Ctrl/Command plus mouse wheel, **Fit**, and **Reset layout**. Layout changes stay in the current browser session and do not modify Kubernetes resources. They survive navigation within the desk, but not a page reload.
+Every cluster header uses the Kubernetes icon and has **Expand / Compact** controls: Expand increases the box width and gives the card view another column. **Cards / List** switches that cluster independently between a card grid and compact resource rows. **Full screen** expands the canvas; Escape or Exit full screen returns to the page.
 
-All captured Services in the scope are included, including gateway infrastructure. Cards show endpoint counts, waypoint selection and related-route counts; a filter narrows by Service name or namespace. **Connections** opens the individual Service relationships below the canvas; **Configure** starts its wizard. Missing endpoint evidence is explained explicitly. Global-scope and local-name takeover labels are shown when captured; these labels alone do not prove remote membership or working cross-cluster traffic.
+Drag a cluster header to move its whole box, or a resource handle to move the resource inside its cluster. Focus a handle and use arrow keys for keyboard movement; Shift increases the step. Drag empty canvas space to pan, scroll to explore, or use **− / +**, Ctrl/Command plus mouse wheel, **Fit**, and **Reset layout**. Layout changes stay in the current browser session and do not modify Kubernetes resources. They survive navigation within the desk, but not a page reload.
 
-Captured `istio-eastwest` and `istio-remote` Gateways have distinct transport/peer cards with listener ports, addresses and current Programmed status. Remote mesh identities resolve to context names only when the captured identity uniquely matches. An unresolved peer stays labelled as such. The map does not invent gateway resources, merge same-named Services, or infer peering merely because two contexts are present. These cards describe configuration and controller status; active traffic verification remains separate.
+All captured Services in the scope are included, including gateway infrastructure. Cards show their context, namespace, endpoint counts and waypoint selection. Global Services appear first after the gateways. Use the normal **top search / ⌘K** to find a resource: selecting a supported Ambient resource while the map is open focuses it on the map instead of opening a separate drawer. There is no separate Service-name filter in the canvas. **Connections** opens individual Service relationships below the canvas; **Configure** starts its wizard, and **YAML** opens the resource directly.
 
-![Cluster canvas showing captured mesh1 and mesh2 contexts, filtered to reviews Services](/images/ambient-clusters.png)
+Captured `istio-eastwest` and `istio-remote` Gateways have distinct transport/peer cards with listener ports, addresses and current Programmed status. Remote mesh identities resolve to context names only when the captured identity uniquely matches. Teal directed lines connect a remote-peer Gateway to the destination east-west Gateway when the advertised addresses match. An unresolved peer stays labelled as such.
+
+Purple dashed lines connect global Services using captured publication evidence: reciprocal peer configuration, the same generated ServiceEntry hostname, explicit parent-Service labels, and remote workload identities matching the captured trust domains and namespaces. Export labels or identical Service names alone do not create a line. Include the generated ServiceEntries and the `istio-system/istio` mesh ConfigMap in the capture; missing identity evidence is not guessed from a context name.
+
+Click a connection chip to highlight its endpoints and frame the two cluster boxes. Lines reroute around resource cards when boxes or cards move; if an overlapping layout blocks a clear route, the map reports it instead of drawing through a resource. Connection colours identify configuration relationships, not measured request traffic.
+
+![East-west peer connections and a global Service published by mesh1 and mesh2](/images/ambient-cluster-connections.png)
+
+The runnable fixture is `test/e2e/multicluster-demo.yaml`, with setup notes in `test/e2e/README-multicluster.md`. `bash test/e2e/multicluster-check.sh` temporarily stops only the fixture's local server, proves remote responses in both directions, and restores the exact initial replica counts. It passed on mesh1 and mesh2 with Solo Istio 1.30.4 on 17 October 2026. Bookinfo is outside that fixture namespace.
 
 Namespace setup in the Configure tab also retains the compact Service overview with endpoint counts.
 

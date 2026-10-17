@@ -1,0 +1,68 @@
+'use strict';
+
+// Orthogonal routing around resource rectangles. No connector is drawn when
+// the current layout cannot provide a clear route.
+function amSegmentBlocked(a,b,rectangles){
+  return rectangles.some(r=>a.x===b.x?a.x>r.x&&a.x<r.x+r.w&&Math.max(a.y,b.y)>r.y&&Math.min(a.y,b.y)<r.y+r.h:a.y>r.y&&a.y<r.y+r.h&&Math.max(a.x,b.x)>r.x&&Math.min(a.x,b.x)<r.x+r.w);
+}
+
+function amRoute(a,b,obstacles){
+  if(a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y)return null;
+  const ac={x:a.x+a.w/2,y:a.y+a.h/2},bc={x:b.x+b.w/2,y:b.y+b.h/2};
+  let source,target,start,end;
+  if(Math.abs(ac.x-bc.x)>=Math.abs(ac.y-bc.y)){
+    const direction=bc.x>=ac.x?1:-1;
+    source={x:direction>0?a.x+a.w:a.x,y:ac.y};target={x:direction>0?b.x:b.x+b.w,y:bc.y};
+    start={x:source.x+direction*8,y:source.y};end={x:target.x-direction*8,y:target.y};
+  }else{
+    const direction=bc.y>=ac.y?1:-1;
+    source={x:ac.x,y:direction>0?a.y+a.h:a.y};target={x:bc.x,y:direction>0?b.y:b.y+b.h};
+    start={x:source.x,y:source.y+direction*8};end={x:target.x,y:target.y-direction*8};
+  }
+  const same=(r,s)=>Math.abs(r.x-s.x)<.02&&Math.abs(r.y-s.y)<.02&&Math.abs(r.w-s.w)<.02&&Math.abs(r.h-s.h)<.02;
+  if(amSegmentBlocked(source,start,obstacles.filter(r=>!same(r,a)))||amSegmentBlocked(end,target,obstacles.filter(r=>!same(r,b))))return null;
+  const padded=obstacles.map(r=>({x:r.x-3,y:r.y-3,w:r.w+6,h:r.h+6}));
+  const unique=values=>[...new Set(values.map(n=>Math.round(n*100)/100))].sort((x,y)=>x-y);
+  const xs=unique([start.x,end.x,0,...obstacles.flatMap(r=>[r.x-10,r.x+r.w+10])]);
+  const ys=unique([start.y,end.y,0,...obstacles.flatMap(r=>[r.y-10,r.y+r.h+10])]);
+  if(xs.length*ys.length>70000)return null;
+  const key=p=>ys.indexOf(Math.round(p.y*100)/100)*xs.length+xs.indexOf(Math.round(p.x*100)/100);
+  const point=i=>({x:xs[i%xs.length],y:ys[Math.floor(i/xs.length)]});
+  const first=key(start),last=key(end),distance=new Float64Array(xs.length*ys.length).fill(Infinity),parent=new Int32Array(distance.length).fill(-1);
+  distance[first]=0;
+  const heap=[];
+  const less=(a,b)=>a.f<b.f||(a.f===b.f&&a.g>b.g);
+  const push=value=>{heap.push(value);let i=heap.length-1;while(i){const p=(i-1)>>1;if(!less(heap[i],heap[p]))break;[heap[i],heap[p]]=[heap[p],heap[i]];i=p;}};
+  const pop=()=>{const value=heap[0],tail=heap.pop();if(heap.length){heap[0]=tail;let i=0;while(true){let next=i,l=i*2+1,r=l+1;if(l<heap.length&&less(heap[l],heap[next]))next=l;if(r<heap.length&&less(heap[r],heap[next]))next=r;if(next===i)break;[heap[i],heap[next]]=[heap[next],heap[i]];i=next;}}return value;};
+  push({i:first,g:0,f:0});
+  while(heap.length){
+    const current=pop();if(current.g!==distance[current.i])continue;
+    if(current.i===last){const points=[];for(let i=last;i!==-1;i=parent[i])points.push(point(i));points.reverse();const result=[source,...points,target];return result.filter((p,i)=>i===0||i===result.length-1||!((result[i-1].x===p.x&&p.x===result[i+1].x)||(result[i-1].y===p.y&&p.y===result[i+1].y)));}
+    const p=point(current.i),x=current.i%xs.length,y=Math.floor(current.i/xs.length),neighbors=[];
+    if(x>0)neighbors.push(current.i-1);if(x+1<xs.length)neighbors.push(current.i+1);if(y>0)neighbors.push(current.i-xs.length);if(y+1<ys.length)neighbors.push(current.i+xs.length);
+    for(const index of neighbors){const next=point(index);if(amSegmentBlocked(p,next,padded))continue;const cost=current.g+Math.abs(p.x-next.x)+Math.abs(p.y-next.y);if(cost>=distance[index])continue;distance[index]=cost;parent[index]=current.i;push({i:index,g:cost,f:cost+Math.abs(next.x-end.x)+Math.abs(next.y-end.y)});}
+  }
+  return null;
+}
+
+function amDrawMapLinks(world,zoom,links,selected){
+  const svg=world.querySelector('#am-map-lines');if(!svg)return;
+  const ns='http://www.w3.org/2000/svg',wr=world.getBoundingClientRect();
+  const rect=e=>{const r=e.getBoundingClientRect();return {x:(r.left-wr.left)/zoom,y:(r.top-wr.top)/zoom,w:r.width/zoom,h:r.height/zoom};};
+  const nodes=new Map([...world.querySelectorAll('[data-map-object]')].map(e=>[amMapKey(JSON.parse(e.dataset.mapObject)),e]));
+  const obstacles=[...nodes.values(),...world.querySelectorAll('.am-cluster-box>header')].map(rect);
+  svg.replaceChildren();svg.setAttribute('viewBox',`0 0 ${world.offsetWidth} ${world.offsetHeight}`);
+  const defs=document.createElementNS(ns,'defs'),marker=document.createElementNS(ns,'marker');marker.id='am-peer-arrow';marker.setAttribute('viewBox','0 0 8 8');marker.setAttribute('refX','8');marker.setAttribute('refY','4');marker.setAttribute('markerWidth','6');marker.setAttribute('markerHeight','6');marker.setAttribute('orient','auto');const triangle=document.createElementNS(ns,'path');triangle.setAttribute('d','M0 0L8 4L0 8Z');triangle.setAttribute('fill','#138b9d');marker.appendChild(triangle);defs.appendChild(marker);svg.appendChild(defs);
+  let drawn=0,hidden=0,blocked=0;
+  nodes.forEach(e=>e.classList.remove('am-link-endpoint'));
+  for(const link of links){
+    const source=nodes.get(amMapKey(link.source)),target=nodes.get(amMapKey(link.target));if(!source||!target){hidden++;continue;}
+    const route=amRoute(rect(source),rect(target),obstacles);if(!route){blocked++;continue;}
+    const path=document.createElementNS(ns,'path');path.setAttribute('d',route.map((p,i)=>`${i?'L':'M'}${p.x} ${p.y}`).join(' '));path.setAttribute('fill','none');path.setAttribute('stroke',link.kind==='peering'?'#138b9d':'#9463db');path.setAttribute('stroke-width',selected===link.id?'4':'2.5');path.setAttribute('class','am-map-line');path.dataset.linkId=link.id;
+    if(link.kind==='peering')path.setAttribute('marker-end','url(#am-peer-arrow)');else path.setAttribute('stroke-dasharray','7 5');
+    if(selected&&selected!==link.id)path.setAttribute('opacity','.2');
+    const title=document.createElementNS(ns,'title');title.textContent=link.label+' · captured configuration';path.appendChild(title);svg.appendChild(path);drawn++;
+    if(selected===link.id){source.classList.add('am-link-endpoint');target.classList.add('am-link-endpoint');}
+  }
+  const status=document.querySelector('#am-map-line-status');if(status)status.textContent=`${drawn} connections drawn.${hidden?' '+hidden+' outside this namespace scope.':''}${blocked?' '+blocked+' blocked by this layout; move boxes/cards apart.':''}`;
+}

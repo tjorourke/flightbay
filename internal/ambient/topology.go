@@ -2,20 +2,38 @@ package ambient
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/tjorourke/flightbay/internal/store"
+	"sigs.k8s.io/yaml"
 )
 
 // Topology is captured configuration, not an assertion of working connectivity.
 type Topology struct {
 	Clusters []TopologyCluster `json:"clusters"`
+	Links    []TopologyLink    `json:"links"`
+}
+type TopologyLink struct {
+	ID       string `json:"id"`
+	Kind     string `json:"kind"`
+	Source   Ref    `json:"source"`
+	Target   Ref    `json:"target"`
+	Label    string `json:"label"`
+	Evidence []Ref  `json:"evidence"`
+}
+type TopologyService struct {
+	ServiceSummary
+	GlobalHosts    []string `json:"globalHosts,omitempty"`
+	GlobalEvidence []Ref    `json:"globalEvidence,omitempty"`
+	identities     []string
 }
 type TopologyCluster struct {
-	Context  string            `json:"context"`
-	Identity string            `json:"identity,omitempty"`
-	Network  string            `json:"network,omitempty"`
-	Services []ServiceSummary  `json:"services"`
-	Gateways []TopologyGateway `json:"gateways"`
+	Context     string            `json:"context"`
+	Identity    string            `json:"identity,omitempty"`
+	Network     string            `json:"network,omitempty"`
+	TrustDomain string            `json:"trustDomain,omitempty"`
+	Services    []TopologyService `json:"services"`
+	Gateways    []TopologyGateway `json:"gateways"`
 }
 type TopologyGateway struct {
 	Ref
@@ -29,12 +47,22 @@ type TopologyGateway struct {
 }
 
 func capturedTopology(ws *store.Workspace) Topology {
-	t := Topology{Clusters: []TopologyCluster{}}
+	t := Topology{Clusters: []TopologyCluster{}, Links: []TopologyLink{}}
 	for _, c := range ws.Clusters() {
-		cl := TopologyCluster{Context: c, Services: []ServiceSummary{}, Gateways: []TopologyGateway{}}
+		cl := TopologyCluster{Context: c, Services: []TopologyService{}, Gateways: []TopologyGateway{}}
 		if ns := ws.Get(c, "", "namespaces", "", "istio-system"); ns != nil {
 			cl.Identity = ns.Labels()["topology.istio.io/cluster"]
 			cl.Network = ns.Labels()["topology.istio.io/network"]
+		}
+		if config := ws.Get(c, "", "configmaps", "istio-system", "istio"); config != nil {
+			if text := S(Path(config.Obj, "data", "mesh")); text != "" {
+				var mesh struct {
+					TrustDomain string `json:"trustDomain"`
+				}
+				if yaml.Unmarshal([]byte(text), &mesh) == nil {
+					cl.TrustDomain = defaultString(mesh.TrustDomain, "cluster.local")
+				}
+			}
 		}
 		// Read actual mesh identity, never derive it by trimming a context name.
 		for _, p := range ws.List(c, "", "pods", "istio-system", nil) {
@@ -51,7 +79,26 @@ func capturedTopology(ws *store.Workspace) Topology {
 			}
 		}
 		for _, svc := range ws.List(c, "", "services", "", nil) {
-			cl.Services = append(cl.Services, summariseService(ws, svc))
+			s := TopologyService{ServiceSummary: summariseService(ws, svc)}
+			if s.Scope == "global" || s.Scope == "global-only" {
+				for _, entry := range ws.List(c, "networking.istio.io", "serviceentries", "", nil) {
+					labels := entry.Labels()
+					if labels["solo.io/parent-service"] != svc.Name || labels["solo.io/parent-service-namespace"] != svc.Namespace || labels["solo.io/service-scope"] == "" {
+						continue
+					}
+					for _, host := range L(Path(entry.Obj, "spec", "hosts")) {
+						if name := S(host); name != "" && !contains(s.GlobalHosts, name) {
+							s.GlobalHosts = append(s.GlobalHosts, name)
+						}
+					}
+					for _, identity := range L(Path(entry.Obj, "spec", "subjectAltNames")) {
+						s.identities = append(s.identities, S(identity))
+					}
+					s.GlobalEvidence = append(s.GlobalEvidence, reference(entry))
+				}
+			}
+			sort.Strings(s.GlobalHosts)
+			cl.Services = append(cl.Services, s)
 		}
 		for _, gw := range ws.List(c, GatewayGroup, "gateways", "", nil) {
 			class := S(Path(gw.Obj, "spec", "gatewayClassName"))
@@ -108,8 +155,70 @@ func capturedTopology(ws *store.Workspace) Topology {
 			}
 			if len(matches) == 1 {
 				g.PeerContext = matches[0]
+				for _, remote := range t.Clusters {
+					if remote.Context != g.PeerContext {
+						continue
+					}
+					for _, gateway := range remote.Gateways {
+						if gateway.Role != "east-west" {
+							continue
+						}
+						matched := false
+						for _, address := range gateway.Addresses {
+							if contains(g.Addresses, address) {
+								matched = true
+							}
+						}
+						if matched {
+							t.Links = append(t.Links, TopologyLink{ID: "peer/" + g.Cluster + "/" + g.Namespace + "/" + g.Name + "/" + gateway.Cluster + "/" + gateway.Name, Kind: "peering", Source: g.Ref, Target: gateway.Ref, Label: "Configured peering: " + g.Cluster + " → " + gateway.Cluster, Evidence: []Ref{g.Ref, gateway.Ref}})
+						}
+					}
+				}
+			}
+		}
+	}
+	for i, source := range t.Clusters {
+		for _, target := range t.Clusters[i+1:] {
+			forward, reverse := false, false
+			for _, link := range t.Links {
+				if link.Kind != "peering" {
+					continue
+				}
+				forward = forward || (link.Source.Cluster == source.Context && link.Target.Cluster == target.Context)
+				reverse = reverse || (link.Source.Cluster == target.Context && link.Target.Cluster == source.Context)
+			}
+			if !forward || !reverse {
+				continue
+			}
+			for _, a := range source.Services {
+				for _, b := range target.Services {
+					if !hasRemoteIdentity(a.identities, target.TrustDomain, b.Namespace) || !hasRemoteIdentity(b.identities, source.TrustDomain, a.Namespace) {
+						continue
+					}
+					for _, host := range a.GlobalHosts {
+						if !contains(b.GlobalHosts, host) {
+							continue
+						}
+						evidence := append([]Ref{a.Ref, b.Ref}, a.GlobalEvidence...)
+						evidence = append(evidence, b.GlobalEvidence...)
+						t.Links = append(t.Links, TopologyLink{ID: "global/" + source.Context + "/" + target.Context + "/" + host, Kind: "global-service", Source: a.Ref, Target: b.Ref, Label: host, Evidence: evidence})
+					}
+				}
 			}
 		}
 	}
 	return t
+}
+
+func hasRemoteIdentity(identities []string, cluster, namespace string) bool {
+	if cluster == "" {
+		return false
+	}
+	prefix := "spiffe://" + cluster + "/ns/" + namespace + "/sa/"
+	for _, identity := range identities {
+		if strings.HasPrefix(identity, prefix) {
+			return true
+		}
+	}
+	return false
 }

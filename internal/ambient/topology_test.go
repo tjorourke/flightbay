@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/tjorourke/flightbay/internal/bundle"
+	"github.com/tjorourke/flightbay/internal/store"
 )
 
 func TestTopologyPreservesContextsAndOnlyResolvesObservedPeerIdentity(t *testing.T) {
@@ -54,5 +55,49 @@ func TestTopologyPreservesContextsAndOnlyResolvesObservedPeerIdentity(t *testing
 				t.Fatal("invented context for an uncaptured mesh identity")
 			}
 		}
+	}
+}
+
+func TestTopologyGlobalLinksRequirePublishedHostIdentityAndPeering(t *testing.T) {
+	ws := store.New()
+	defer ws.Close()
+	ws.SetHeader(&bundle.Header{Contexts: []string{"one", "two"}})
+	var remoteEntry map[string]any
+	for i, name := range []string{"one", "two"} {
+		other := "two"
+		address, remoteAddress := "192.0.2.1", "192.0.2.2"
+		if i == 1 {
+			other = "one"
+			address, remoteAddress = remoteAddress, address
+		}
+		ws.AddObjects(name, bundle.APIResource{Version: "v1", Resource: "namespaces", Kind: "Namespace"}, []map[string]any{{"metadata": map[string]any{"name": "istio-system", "labels": map[string]any{"topology.istio.io/cluster": name}}}}, "ns")
+		ws.AddObjects(name, bundle.APIResource{Version: "v1", Resource: "configmaps", Kind: "ConfigMap", Namespaced: true}, []map[string]any{{"metadata": map[string]any{"name": "istio", "namespace": "istio-system"}, "data": map[string]any{"mesh": "trustDomain: " + name + ".trust\n"}}}, "config")
+		gateway := func(gatewayName, class, peer, ip string) map[string]any {
+			return map[string]any{"metadata": map[string]any{"name": gatewayName, "namespace": "istio-eastwest", "labels": map[string]any{"topology.istio.io/cluster": peer}}, "spec": map[string]any{"gatewayClassName": class, "addresses": []any{map[string]any{"value": ip}}}, "status": map[string]any{"addresses": []any{map[string]any{"value": ip}}}}
+		}
+		ws.AddObjects(name, bundle.APIResource{Group: GatewayGroup, Version: "v1", Resource: "gateways", Kind: "Gateway", Namespaced: true}, []map[string]any{gateway("eastwest", "istio-eastwest", name, address), gateway("peer", "istio-remote", other, remoteAddress)}, "gateways")
+		ws.AddObjects(name, bundle.APIResource{Version: "v1", Resource: "services", Kind: "Service", Namespaced: true}, []map[string]any{{"metadata": map[string]any{"name": "echo", "namespace": "app", "labels": map[string]any{"solo.io/service-scope": "global"}}}}, "service")
+		entry := map[string]any{"metadata": map[string]any{"name": "published-echo", "namespace": "istio-system", "labels": map[string]any{"solo.io/service-scope": "global", "solo.io/parent-service": "echo", "solo.io/parent-service-namespace": "app"}}, "spec": map[string]any{"hosts": []any{"echo.app.mesh.internal"}, "subjectAltNames": []any{"spiffe://" + other + ".trust/ns/app/sa/default"}}}
+		ws.AddObjects(name, bundle.APIResource{Group: "networking.istio.io", Version: "v1", Resource: "serviceentries", Kind: "ServiceEntry", Namespaced: true}, []map[string]any{entry}, "entry")
+		remoteEntry = entry
+	}
+	top := capturedTopology(ws)
+	if len(top.Links) != 3 {
+		t.Fatalf("expected two peer links and a global-Service link, got %+v", top.Links)
+	}
+	for _, link := range top.Links {
+		if link.Kind == "global-service" && (link.Label != "echo.app.mesh.internal" || len(link.Evidence) != 4) {
+			t.Fatalf("global link lost its evidence: %+v", link)
+		}
+	}
+	M(remoteEntry["spec"])["subjectAltNames"] = []any{"spiffe://unrelated.trust/ns/app/sa/default"}
+	if len(capturedTopology(ws).Links) != 2 {
+		t.Fatal("same names and export labels invented global membership without matching identities")
+	}
+	M(remoteEntry["spec"])["subjectAltNames"] = []any{"spiffe://one.trust/ns/app/sa/default"}
+	peer := ws.Get("one", GatewayGroup, "gateways", "istio-eastwest", "peer")
+	M(peer.Obj["spec"])["addresses"] = []any{}
+	if len(capturedTopology(ws).Links) != 1 {
+		t.Fatal("global link invented without reciprocal captured peer addresses")
 	}
 }
