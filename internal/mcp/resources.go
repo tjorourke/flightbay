@@ -49,6 +49,7 @@ type resourceTemplate struct {
 }
 
 var fixedResources = []resource{
+	{URI: scheme + "ambient", Name: "ambient", Title: "Ambient failures and repair guides", MimeType: "application/json", Description: "Confirmed ambient failures with evidence, suggested repairs and verification steps, matching Needs attention."},
 	{URI: scheme + "workspace", Name: "workspace", Title: "Workspace summary", MimeType: "application/json",
 		Description: "Case, clusters, capture time, the collection policy (what the customer allowed), import and verification state, and finding counts."},
 	{URI: scheme + "findings", Name: "findings", Title: "Findings", MimeType: "application/json",
@@ -283,6 +284,8 @@ func (s *Server) readResource(u string) (content, error) {
 	}
 	jsonText := func(t string, err error) (content, error) { return text(t, "application/json", err) }
 	switch kind {
+	case "ambient":
+		return jsonText(s.ambientInventory(map[string]any{}, true))
 	case "workspace":
 		return jsonText(s.get("/api/workspace", nil))
 	case "coverage":

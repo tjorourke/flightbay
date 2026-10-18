@@ -67,7 +67,7 @@ func TestServe(t *testing.T) {
 	if v := rs[0]["result"].(map[string]any)["protocolVersion"]; v != "2025-03-26" {
 		t.Fatalf("should speak the client's older revision, got %v", v)
 	}
-	if n := len(rs[1]["result"].(map[string]any)["tools"].([]any)); n != 18 {
+	if n := len(rs[1]["result"].(map[string]any)["tools"].([]any)); n != 25 {
 		t.Fatalf("tools %d", n)
 	}
 	if s, _ := text(2); !strings.Contains(s, "crash loop") || strings.Contains(s, "api version") {

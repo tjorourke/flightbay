@@ -27,6 +27,16 @@ Cite every claim: a finding id, an object as kind namespace/name, a log line id 
 
 func prompts() []prompt {
 	return []prompt{
+		{Name: "ambient_triage", Title: "Investigate ambient failures", Description: "Find failures across clusters, trace attachments and propose an evidence-based repair preview.", Arguments: []promptArg{{Name: "symptom", Description: "optional symptom or resource"}, {Name: "cluster", Description: "optional captured cluster"}}, text: func(a map[string]string) string {
+			return fmt.Sprintf(`Investigate Istio ambient in this Flightbay workspace. Symptom: %s. Cluster: %s.
+1. Call workspace_summary to establish live mirror versus offline capture, clusters and coverage.
+2. Call ambient_issues, filtered by cluster if provided. Report confirmed failures before asking the user to choose a resource.
+3. Call ambient_investigate for each relevant subject using its exact cluster, kind, namespace and name. Distinguish missing evidence, stale status and optional configuration from proven failures.
+4. Use ambient_inventory for peering/global publication topology; investigation includes Service DNS and detected controller/edition. Use proxy_config and logs for delivered configuration and observed traffic.
+5. Use ambient_capabilities and ambient_plan_preview for supported fixes. For Scorecard entries use best_practices and scorecard_fix_preview. Do not infer frontend intent from a backend or invent caller principals.
+6. Present exact YAML, affected cluster and resources, field changes, verification steps and the UI review link. MCP does not apply, validate against Kubernetes, issue HTTP tests or undo changes. The user reviews and confirms in the UI.
+HTTP test results held only in the browser are not part of the MCP workspace; request logs or ask the user to share them.`+evidenceRules, a["symptom"], a["cluster"])
+		}},
 		{Name: "triage", Title: "Triage this snapshot",
 			Description: "Guided root-cause investigation that cites evidence from findings, objects, logs and proxy dumps.",
 			Arguments:   []promptArg{{Name: "symptom", Description: "what the customer reported, e.g. 503s from checkout since 14:00"}},

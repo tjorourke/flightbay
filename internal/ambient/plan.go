@@ -25,6 +25,9 @@ type Backend struct {
 	Weight int    `json:"weight"`
 }
 type Request struct {
+	Scorecard          *ScorecardRequest `json:"scorecard,omitempty"`
+	Parent             *Ref              `json:"parent,omitempty"`
+	ParentSection      string            `json:"parentSection,omitempty"`
 	TargetKind         string            `json:"targetKind,omitempty"`
 	TargetName         string            `json:"targetName,omitempty"`
 	TrafficMode        string            `json:"trafficMode,omitempty"`
@@ -60,6 +63,22 @@ type Request struct {
 	FromRegion         string            `json:"fromRegion,omitempty"`
 	ToRegion           string            `json:"toRegion,omitempty"`
 }
+
+type ScorecardRequest struct {
+	Check      string   `json:"check"`
+	Target     Ref      `json:"target"`
+	Principals []string `json:"principals,omitempty"`
+}
+
+// ReviewedPolicyPlan uses the same hashed preview and validation/apply records
+// as ambient plans. The server supplies the policy from a verified check recipe.
+func ReviewedPolicyPlan(req Request, target *store.Object, policy map[string]any, notes ...string) (*Plan, error) {
+	p := basePlan(req, target)
+	p.Objects = append(p.Objects, policy)
+	p.Notes = append(p.Notes, notes...)
+	return finishPlan(p)
+}
+
 type Plan struct {
 	Changes    []Change         `json:"changes,omitempty"`
 	ID         string           `json:"id"`

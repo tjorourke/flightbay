@@ -291,8 +291,15 @@ func generateRepair(ws *store.Workspace, req Request) (*Plan, error) {
 		}
 		change(p, svc, "Use the selected workload's declared container port", map[string]any{"/spec/ports": ports})
 	case "route-parent":
-		route := Target(ws, req.Cluster, "HTTPRoute", req.Namespace, req.Route)
-		if route == nil || !hasPort(svc, req.Port) {
+		routeNS := req.Namespace
+		if req.Edit != nil {
+			if req.Edit.Ref.Cluster != req.Cluster || req.Edit.Ref.Kind != "HTTPRoute" {
+				return nil, fmt.Errorf("choose an HTTPRoute in the selected cluster")
+			}
+			routeNS = req.Edit.Ref.Namespace
+		}
+		route := Target(ws, req.Cluster, "HTTPRoute", routeNS, req.Route)
+		if route == nil || (req.Parent == nil && !hasPort(svc, req.Port)) {
 			return nil, fmt.Errorf("choose the affected HTTPRoute and frontend Service port")
 		}
 		parents := L(Copy(Path(route.Obj, "spec", "parentRefs")))
@@ -307,9 +314,38 @@ func generateRepair(ws *store.Workspace, req Request) (*Plan, error) {
 		if index < 0 || index >= len(parents) {
 			return nil, fmt.Errorf("parent index is out of range")
 		}
-		parents[index] = map[string]any{"group": "", "kind": "Service", "name": req.Service, "port": req.Port}
-		change(p, route, "Attach this parent to the explicitly selected frontend Service", map[string]any{"/spec/parentRefs": parents})
-		p.Notes = append(p.Notes, "Other parent references, route rules and backend selections are preserved. A Gateway parent can be valid for other scopes; this change is specifically for the selected frontend Service.")
+		entry := map[string]any{"group": "", "kind": "Service", "name": req.Service, "port": req.Port}
+		if route.Namespace != svc.Namespace {
+			entry["namespace"] = svc.Namespace
+		}
+		reason := "Attach this parent to the explicitly selected frontend Service"
+		if req.Parent != nil {
+			ref := req.Parent
+			if ref.Cluster != req.Cluster || ref.Kind != "Gateway" || ref.Group != GatewayGroup || ref.Resource != "gateways" {
+				return nil, fmt.Errorf("choose a Gateway in the selected cluster")
+			}
+			gw := Target(ws, req.Cluster, "Gateway", ref.Namespace, ref.Name)
+			if gw == nil {
+				return nil, fmt.Errorf("chosen Gateway was not captured in this cluster")
+			}
+			entry = map[string]any{"group": GatewayGroup, "kind": "Gateway", "name": ref.Name, "namespace": ref.Namespace}
+			if req.ParentSection != "" {
+				found := false
+				for _, l := range L(Path(gw.Obj, "spec", "listeners")) {
+					if S(M(l)["name"]) == req.ParentSection {
+						found = true
+					}
+				}
+				if !found {
+					return nil, fmt.Errorf("chosen listener does not exist on this Gateway")
+				}
+				entry["sectionName"] = req.ParentSection
+			}
+			reason = "Attach this parent to the explicitly selected Gateway"
+		}
+		parents[index] = entry
+		change(p, route, reason, map[string]any{"/spec/parentRefs": parents})
+		p.Notes = append(p.Notes, "Other parent references, route rules and backend selections are preserved. Check listener eligibility and current per-parent Accepted/ResolvedRefs status after applying; selecting a Gateway does not prove it will accept the route.")
 	default:
 		return nil, fmt.Errorf("unknown remediation")
 	}

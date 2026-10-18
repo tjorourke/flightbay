@@ -188,6 +188,7 @@ func NewView(ws *store.Workspace, c, kind, ns, name, route string) (*View, error
 	if kind == "Namespace" || kind == "Gateway" {
 		sort.Slice(v.Services, func(i, j int) bool { return v.Services[i].Name < v.Services[j].Name })
 	}
+	addSuggestedFixes(v)
 	addViewDocs(v)
 	return v, nil
 }

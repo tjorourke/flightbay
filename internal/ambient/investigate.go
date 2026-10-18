@@ -32,15 +32,16 @@ type Evidence struct {
 	Value string `json:"value"`
 }
 type Step struct {
-	Docs     []DocLink     `json:"docs"`
-	ID       string        `json:"id"`
-	Title    string        `json:"title"`
-	State    string        `json:"state"` // pass, fail, warning, unknown, na
-	Detail   string        `json:"detail"`
-	NextStep string        `json:"nextStep,omitempty"`
-	Evidence []Evidence    `json:"evidence,omitempty"`
-	FixYAML  string        `json:"fixYaml,omitempty"`
-	Actions  []Remediation `json:"actions,omitempty"`
+	SuggestedFix *FixGuide     `json:"suggestedFix,omitempty"`
+	Docs         []DocLink     `json:"docs"`
+	ID           string        `json:"id"`
+	Title        string        `json:"title"`
+	State        string        `json:"state"` // pass, fail, warning, unknown, na
+	Detail       string        `json:"detail"`
+	NextStep     string        `json:"nextStep,omitempty"`
+	Evidence     []Evidence    `json:"evidence,omitempty"`
+	FixYAML      string        `json:"fixYaml,omitempty"`
+	Actions      []Remediation `json:"actions,omitempty"`
 }
 type Remediation struct {
 	ID     string `json:"id"`
@@ -65,6 +66,8 @@ type Service struct {
 	Regions []string `json:"regions"`
 }
 type Inventory struct {
+	Issues         []AmbientIssue   `json:"issues"`
+	FixGuides      []FixGuide       `json:"fixGuides"`
 	Topology       Topology         `json:"topology"`
 	Environments   []Environment    `json:"environments"`
 	Objects        []Ref            `json:"objects"`
@@ -126,7 +129,7 @@ func defaultString(s, d string) string {
 }
 
 func List(ws *store.Workspace) Inventory {
-	r := Inventory{Services: []Service{}, Routes: []Ref{}, Namespaces: []Ref{}}
+	r := Inventory{FixGuides: CommonFixes(), Services: []Service{}, Routes: []Ref{}, Namespaces: []Ref{}}
 	for _, c := range ws.Clusters() {
 		for _, n := range ws.List(c, "", "namespaces", "", nil) {
 			r.Namespaces = append(r.Namespaces, reference(n))
@@ -148,6 +151,7 @@ func List(ws *store.Workspace) Inventory {
 	})
 	expandInventory(ws, &r)
 	r.Topology = capturedTopology(ws)
+	r.Issues = Issues(ws)
 	return r
 }
 

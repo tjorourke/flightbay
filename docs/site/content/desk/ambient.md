@@ -12,6 +12,14 @@ The entry appears only when the selected scope contains served Istio APIs and am
 
 Use this page for setup, attachments and reviewed changes. [Traffic](/desk/traffic/) shows observed mesh and gateway requests; [Proxy diagnostics](/desk/proxy-configs/) shows delivered configuration and debug output.
 
+The landing page shows **Explore your ambient mesh**, followed by **Needs attention**. Confirmed failed checks are listed across the selected clusters without choosing a resource first. Each row names its cluster and resource, explains the failure and offers **Investigate and fix**. **Findings** includes the same ambient failures and links to their investigation. Missing capture data is not promoted to a confirmed failure.
+
+Failed checks include suggested repairs and verification steps, with a catalogue of 20 common problem types available on the landing page. A missing HTTPRoute parent can be repaired by explicitly choosing a captured Gateway or frontend Service, then reviewing the affected parent entry. Other parents and route rules are preserved.
+
+Live investigation updates and the **Refresh** button retain expanded checks, evidence sections and scroll position for the same target. **All issues** returns from a target to the landing page.
+
+**Inspect this resource** provides **Copy command** and **Run in Flightbay terminal**. Built-in commands use the read-only `cluster@live` or `cluster@snapshot` context. The separately labelled **Your own terminal** command uses the original cluster context and your own kubeconfig.
+
 ```bash
 flightbay ui ~/Downloads/flightbay-objects.tar.zst
 ```

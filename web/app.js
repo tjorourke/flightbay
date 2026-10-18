@@ -59,6 +59,7 @@ function parseHash() {
   if ((view === 'scorecard' || view === 'posture') && p.has('tab')) S.pst.tab = p.get('tab');
   if (view === 'resources' && p.has('resource')) { S.res.resource = p.get('resource'); S.res.group = p.get('group') || ''; }
   if (view === 'ambient' && p.has('service') && S.ambient) { S.ambient.key = JSON.stringify([p.get('cluster') || S.cluster, p.get('namespace') || '', p.get('service')]); S.ambient.route = p.get('route') || ''; }
+  if(view==='ambient'&&S.ambient&&p.has('step'))S.ambient.pendingStep=p.get('step');
   if(view==='ambient'&&S.ambient){if(['investigate','map','wizard'].includes(p.get('tab')))S.ambient.tab=p.get('tab');if(['Namespace','Service','Pod','Gateway','HTTPRoute','ServiceEntry'].includes(p.get('kind'))&&p.has('name')){const kind=p.get('kind'),cluster=p.get('cluster')||S.cluster,ns=p.get('namespace')||'',name=p.get('name');S.ambient.key=JSON.stringify(kind==='Service'?[cluster,ns,name]:[cluster,kind,ns,name]);S.ambient.kind=kind;}}
   if (view === 'reach') { location.replace('#traffic?tab=agents' + (p.get('agent') ? '&agent=' + encodeURIComponent(p.get('agent')).replace(/%2F/gi, '/') : '')); S.view = 'traffic'; return; }
   // Activity is now the gateway layer of Traffic; keep old links working.
@@ -79,11 +80,12 @@ function openLogs(filters) {
 
 async function render() {
   const seq = ++S.renderSeq;
+  const ambientView = typeof amCaptureView==='function' ? amCaptureView() : null;
   updateIstioAmbientNav();
   document.body.classList.toggle('ambient-view',S.view==='ambient');
   const navView = S.view === 'navigator' ? 'resources' : S.view;
   document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('active', a.dataset.view === navView));
-  const views = {navigator, search, overview, scorecard: posture, reach, resources, logs, timeline, findings, compare, proxies, coverage, ...(typeof reviewPage === 'function' ? {review: reviewPage} : {}), ...(typeof trafficPage === 'function' ? {traffic: trafficPage} : {}), ...(typeof ambientPage === 'function' ? {ambient: ambientPage} : {})};
+  const views = {navigator: resourceNavigator, search, overview, scorecard: posture, reach, resources, logs, timeline, findings, compare, proxies, coverage, ...(typeof reviewPage === 'function' ? {review: reviewPage} : {}), ...(typeof trafficPage === 'function' ? {traffic: trafficPage} : {}), ...(typeof ambientPage === 'function' ? {ambient: ambientPage} : {})};
   const fn = views[S.view] || overview;
   $('#crumb').textContent = S.ws ? `Workspace / ${S.ws.case ? 'Case ' + S.ws.case : 'Snapshot'} / ${S.view}` : 'Workspace';
   try {
@@ -93,12 +95,53 @@ async function render() {
     if (S.morph && S.lastView === S.view) morphHTML($('#main'), html); else $('#main').innerHTML = html;
     S.lastView = S.view;
     after[S.view]?.();
+    wireKubectlBlocks($('#main'));
+    if(typeof amRestoreView==='function')amRestoreView(ambientView);
     if(typeof httpTestNavigationRendered==='function')httpTestNavigationRendered();
   } catch (e) {
     if (seq === S.renderSeq) $('#main').innerHTML = `<div class="notice bad">${esc(e.message)}</div>`;
   }
 }
 const after = {};
+
+const shellArg = value => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
+function mirrorKubectl(args,cluster){return `kubectl --context ${shellArg(cluster+'@'+(S.ws?.live?'live':'snapshot'))} ${args}`;}
+async function copyTerminalCommand(command,button){
+  let copied=false;
+  try{await navigator.clipboard.writeText(command);copied=true;}catch{
+    // Older/insecure browser contexts may not expose the async clipboard API.
+    const focused=document.activeElement,input=document.createElement('textarea');input.value=command;input.style.cssText='position:fixed;left:-9999px;top:0';document.body.appendChild(input);input.select();
+    try{copied=document.execCommand('copy');}finally{input.remove();focused?.focus({preventScroll:true});}
+  }
+  if(!copied){toast('Clipboard unavailable; select the command to copy it');return;}
+  if(button){const title=button.title;button.textContent='✓';button.title='Copied';setTimeout(()=>{button.textContent='⧉';button.title=title;},1500);}toast('Command copied');
+}
+function commandControls(button,command){
+  button.title=command;
+  button.insertAdjacentHTML('afterend','<button class="terminal-copy" aria-label="Copy command" title="Copy command">⧉</button>');
+  const copy=button.nextElementSibling;copy.onclick=()=>copyTerminalCommand(command,copy);
+}
+// Source templates can contain shell commands as well as YAML. Only read
+// commands are runnable in the mirror; never imply a write recipe will work.
+function wireKubectlBlocks(root){
+  if(!root)return;
+  root.querySelectorAll('pre').forEach(pre=>{
+    if(pre.closest('.am-check,.terminal-command')||pre.dataset.commandCopy)return;
+    const lines=pre.textContent.split('\n').filter(line=>/^\s*kubectl\s/.test(line));
+    if(!lines.length)return;
+    pre.dataset.commandCopy='true';
+    const row=document.createElement('div');row.className='command-copy-tools';
+    lines.forEach((line,i)=>{
+      const command=line.trim(),button=document.createElement('button');button.textContent=lines.length>1?`Copy command ${i+1}`:'Copy command';
+      const unresolved=/<[^>]+>/.test(command),readOnly=/^kubectl\s+(?:(?:--context(?:=|\s+)(?:'[^']*'|"[^"]*"|\S+)|-n\s+\S+|--namespace(?:=|\s+)\S+)\s+)*(get|describe|logs|version|api-resources|api-versions)\b/.test(command);
+      if(!readOnly||unresolved){button.textContent=unresolved?'Copy template':'Copy command (real cluster only)';button.title=unresolved?'Fill in the placeholders using Review fix; this is not ready to run.':'Flightbay’s built-in terminal is read-only; this change needs your real cluster and review.';button.onclick=()=>navigator.clipboard.writeText(command).then(()=>toast(unresolved?'Template copied; fill placeholders before running':'Real-cluster command copied; not runnable in the read-only mirror'));}
+      else {const clusters=S.cluster?[S.cluster]:(S.ws?.clusters||[]).map(c=>c.name),match=command.match(/--context(?:=|\s+)(?:'([^']+)'|"([^"]+)"|(\S+))/),specified=match&&(match[1]||match[2]||match[3]).replace(/@(live|snapshot)$/,'');const args=command.replace(/^kubectl\s+/,'').replace(/--context(?:=|\s+)(?:'[^']*'|"[^"]*"|\S+)\s*/,'');const chosen=specified?[specified]:clusters;button.onclick=()=>copyTerminalCommand(chosen.map(c=>mirrorKubectl(args,c)).join('\n'));button.title='Copy for the read-only mirror'+(chosen.length>1?' (one command per cluster)':'');}
+      const label=button.title||button.textContent;button.setAttribute('aria-label',button.textContent);button.title=label;button.textContent='⧉';button.className='command-copy-icon';
+      row.appendChild(button);
+    });
+    const wrapper=document.createElement('div');wrapper.className='terminal-command';pre.replaceWith(wrapper);wrapper.appendChild(pre);wrapper.appendChild(row);
+  });
+}
 
 // morphHTML updates el to match html, touching only what differs: unchanged
 // nodes keep their scroll position, selection and state. Used for live
@@ -557,7 +600,7 @@ const nvKeys = [
   ['Filter', [['/checkout', 'name, status or content contains'], ['/!Running', 'does not contain'], ['/-l app=web', 'label selector (also label:app=web)'], ['Esc', 'clear the filter'], ['0-9', 'cluster (0 is all)'], ['?', 'help']]],
 ];
 
-async function navigator() {
+async function resourceNavigator() {
   const N = S.nv, w = S.ws || await api('api/workspace');
   const types = await api('api/resources', {cluster: S.cluster});
   S.nvTypes = types;
@@ -570,6 +613,7 @@ async function navigator() {
   const list = await api('api/objects', {cluster: S.cluster, group: N.group, resource: N.resource, namespace: N.ns, q: f.server});
   let rows = list.rows;
   if (f.not) rows = rows.filter(r => !(r.name + ' ' + r.cells.join(' ')).toLowerCase().includes(f.not));
+  const multi = (w.clusters || []).length > 1 && !S.cluster;
   N.rows = rows; N.sel = Math.min(N.sel, Math.max(0, rows.length - 1));
   const nss = [...new Set(list.rows.map(r => r.namespace).filter(Boolean))].sort();
   if (N.ns && !nss.includes(N.ns)) nss.unshift(N.ns);
@@ -608,8 +652,8 @@ async function navigator() {
       <div class="nv-bar">${quick.map(([r, g]) => `<button class="nv-type ${r === N.resource && g === N.group ? 'on' : ''}" data-nvtype="${attr({r, g})}">:${r}</button>`).join('')}
         <span style="flex:1"></span><select id="nv-ns"><option value="">All namespaces</option>${nss.map(n => `<option ${n === N.ns ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
         <input id="nv-q" placeholder="/ filter · !exclude · -l app=web" value="${esc(N.q)}" style="width:280px" autocomplete="off" spellcheck="false"></div>
-      <div class="table-scroll" style="max-height:58vh"><table class="nv-table"><thead><tr>${cur.namespaced ? '<th>Namespace</th>' : ''}${list.columns.map(c => `<th>${esc(c)}</th>`).join('')}<th></th></tr></thead><tbody>
-        ${rows.map((r, i) => `<tr class="${i === N.sel ? 'sel' : ''}" data-nvrow="${i}">${cur.namespaced ? `<td>${esc(r.namespace)}</td>` : ''}${r.cells.map((c, j) => `<td>${j === 0 ? `<button class="link nv-open" data-nvopen="${i}">${i === N.sel ? '› ' : ''}${esc(c)}</button>` : j === statusCol ? statusCell(c) : esc(c)}</td>`).join('')}
+      <div class="table-scroll" style="max-height:58vh"><table class="nv-table"><thead><tr>${multi ? '<th>Cluster</th>' : ''}${cur.namespaced ? '<th>Namespace</th>' : ''}${list.columns.map(c => `<th>${esc(c)}</th>`).join('')}<th></th></tr></thead><tbody>
+        ${rows.map((r, i) => `<tr class="${i === N.sel ? 'sel' : ''}" data-nvrow="${i}">${multi ? `<td><span class="tag">${esc(r.cluster)}</span></td>` : ''}${cur.namespaced ? `<td>${esc(r.namespace)}</td>` : ''}${r.cells.map((c, j) => `<td>${j === 0 ? `<button class="link nv-open" data-nvopen="${i}">${i === N.sel ? '› ' : ''}${esc(c)}</button>` : j === statusCol ? statusCell(c) : esc(c)}</td>`).join('')}
           <td class="nv-acts"><button class="ghost" data-nvgo="${attr({i, v: 'describe'})}" title="Describe (d)">d</button><button class="ghost" data-nvgo="${attr({i, v: 'yaml'})}" title="YAML (y)">y</button>${(N.resource === 'pods' && !N.group) || workloadKinds.includes(r.kind) ? `<button class="ghost" data-nvgo="${attr({i, v: 'logs'})}" title="Logs (l)">l</button>` : ''}</td></tr>`).join('') || `<tr><td colspan="9" class="muted">No ${esc(cur.kind || cur.resource)} objects${N.q ? ' match the filter' : ''}.</td></tr>`}
       </tbody></table></div>
       <div class="nv-status"><span>${sel ? `${esc(sel.name)}${sel.namespace ? ' · ' + esc(sel.namespace) : ''}${!S.cluster ? ' · ' + esc(sel.cluster) : ''}` : ''}</span><span><b>Enter</b> describe · <b>y</b> yaml · <b>e</b> events · <b>l</b> logs · <b>:</b> command · <b>/</b> filter · <b>?</b> help</span></div>`;
@@ -809,7 +853,7 @@ document.addEventListener('keydown', e => {
     else if (k === 'L' && canLogs) openLogs(o.resource === 'pods' ? {pod: o.name, namespace: o.namespace} : {workload: `${o.kind}/${o.name}`, namespace: o.namespace});
     return;
   }
-  const move = d => { N.sel = Math.max(0, Math.min(rows.length - 1, N.sel + d)); document.querySelectorAll('[data-nvrow]').forEach(tr => tr.classList.toggle('sel', +tr.dataset.nvrow === N.sel)); document.querySelectorAll('.nv-open').forEach((b, i) => { b.textContent = (i === N.sel ? '› ' : '') + b.textContent.replace(/^› /, ''); }); document.querySelector('tr.sel')?.scrollIntoView({block: 'nearest'}); const st = document.querySelector('.nv-status span'); if (st && rows[N.sel]) st.textContent = rows[N.sel].name + (rows[N.sel].namespace ? ' · ' + rows[N.sel].namespace : ''); };
+  const move = d => { N.sel = Math.max(0, Math.min(rows.length - 1, N.sel + d)); document.querySelectorAll('[data-nvrow]').forEach(tr => tr.classList.toggle('sel', +tr.dataset.nvrow === N.sel)); document.querySelectorAll('.nv-open').forEach((b, i) => { b.textContent = (i === N.sel ? '› ' : '') + b.textContent.replace(/^› /, ''); }); document.querySelector('tr.sel')?.scrollIntoView({block: 'nearest'}); const st = document.querySelector('.nv-status span'); if (st && rows[N.sel]) st.textContent = rows[N.sel].name + (rows[N.sel].namespace ? ' · ' + rows[N.sel].namespace : '') + (!S.cluster ? ' · ' + rows[N.sel].cluster : ''); };
   if (k === 'j' || k === 'ArrowDown') { move(1); e.preventDefault(); }
   else if (k === 'k' || k === 'ArrowUp') { move(-1); e.preventDefault(); }
   else if (k === 'PageDown') { move(15); e.preventDefault(); }
@@ -923,7 +967,7 @@ async function posture() {
     const items = c.items.filter(i => i.status !== 'na');
     return `<div class="pst-check ${open ? 'open' : ''}"><button class="pst-head" data-pstopen="${esc(c.id)}">${pstBadge(c.status)}${pstSev(c.severity)}<strong>${esc(c.title)}</strong><span class="muted" title="${esc(c.category)}: ${esc(pstCatTip(c.category))}">${esc(shortName[c.area] || c.area)} · ${esc(c.category)}</span><span style="flex:1"></span>${c.points ? `<span class="pst-pts" title="Area score points recovered if every object passed">${pstPts(c.points)} pts</span>` : ''}${c.status === 'na' ? `<small class="muted">${esc(c.reason)}</small>` : `<small>${c.passed}/${c.total} pass</small>`}<span class="muted">${open ? '▾' : '▸'}</span></button>
       ${open ? `<div class="pst-body"><p>${esc(c.why)}</p>
-        ${items.length ? `<div class="table-scroll mt" style="max-height:40vh"><table><thead><tr><th></th><th>Object</th><th>What we found</th></tr></thead><tbody>${items.map((i, n) => `<tr><td>${pstBadge(i.status)}</td><td class="mono">${i.name ? `<button class="link" data-pstobj="${attr({c: c.id, n})}">${esc(i.kind)} ${esc(i.namespace ? i.namespace + '/' : '')}${esc(i.name)}</button>` : '<span class="muted">cluster</span>'}</td><td style="white-space:normal">${esc(i.detail)}</td></tr>`).join('')}</tbody></table></div>` : ''}
+        ${items.length ? `<div class="table-scroll mt" style="max-height:40vh"><table><thead><tr><th></th><th>Cluster</th><th>Object</th><th>What we found</th><th></th></tr></thead><tbody>${items.map((i, n) => `<tr><td>${pstBadge(i.status)}</td><td class="mono">${esc(i.cluster)}</td><td class="mono">${i.name ? `<button class="link" data-pstobj="${attr({c: c.id, n})}">${esc(i.kind)} ${esc(i.namespace ? i.namespace + '/' : '')}${esc(i.name)}</button>` : '<span class="muted">cluster</span>'}</td><td style="white-space:normal">${esc(i.detail)}</td><td>${['fail','warn'].includes(i.status)?`<button data-pstfix="${attr({c:c.id,n})}">Review fix</button>`:''}</td></tr>`).join('')}</tbody></table></div>` : ''}
         ${c.status === 'fail' || c.status === 'warn' || c.status === 'na' ? `<div class="row between mt"><h3>How to fix</h3><div class="row"><button data-pstcopy="${esc(c.id)}">Copy YAML</button>${guideLinks(c.source, c.docs)}</div></div><pre class="code mt">${esc(c.fix)}</pre>` : `<p class="mt row">${guideLinks(c.source, c.docs)}</p>`}
       </div>` : ''}</div>`;
   };
@@ -977,6 +1021,7 @@ after.scorecard = () => {
   document.querySelectorAll('[data-pstopen]').forEach(b => b.onclick = () => { P.open = P.open === b.dataset.pstopen ? null : b.dataset.pstopen; render(); });
   document.querySelectorAll('[data-pstobj]').forEach(b => b.onclick = () => { const x = JSON.parse(b.dataset.pstobj); const it = S.pstData.checks.find(c => c.id === x.c).items.filter(i => i.status !== 'na')[x.n]; openObject({cluster: it.cluster, group: it.group, resource: it.resource, namespace: it.namespace, name: it.name}); });
   document.querySelectorAll('[data-pstcopy]').forEach(b => b.onclick = () => { const c = S.pstData.checks.find(x => x.id === b.dataset.pstcopy); navigator.clipboard.writeText(c.fix).then(() => toast('Fix copied'), () => toast('Clipboard unavailable')); });
+  document.querySelectorAll('[data-pstfix]').forEach(b=>b.onclick=()=>{const x=JSON.parse(b.dataset.pstfix),check=S.pstData.checks.find(c=>c.id===x.c);pstReviewFix(check,check.items.filter(i=>i.status!=='na')[x.n]);});
   const q = $('#pst-q');
   if (q) {
   let t; q.oninput = e => { clearTimeout(t); t = setTimeout(() => { const c = e.target.selectionStart, v = e.target.value; P.q = v; render().then(() => refocus('#pst-q', c, v)); }, 250); };
@@ -989,6 +1034,30 @@ after.scorecard = () => {
   }
   $('#pst-term').onclick = () => termRun('fbscore');
 };
+
+async function pstReviewFix(check,item){
+  const target={cluster:item.cluster,group:item.group,resource:item.resource,kind:item.kind,namespace:item.namespace,name:item.name};
+  const namespace=item.kind==='Namespace'?item.name:item.namespace;
+  const request={cluster:item.cluster,namespace,targetKind:item.kind,targetName:item.name,tasks:['scorecard'],scorecard:{check:check.id,target}};
+  const state={plan:null,context:'',contexts:[],validation:null,busy:false,error:'',message:'',principals:'',record:null};
+  const supported=['ambient.default-deny','ambient.mtls-strict','k8s.netpol-default-deny','mesh.global-service-authz'].includes(check.id);
+  const example=check.fix.replaceAll('<ns>',namespace||'<namespace>').replaceAll('<svc>',item.kind==='Service'?item.name:'<service>');
+  const draw=()=>{
+    modal('Review Scorecard fix',`<p><strong>${esc(check.title)}</strong></p><p class="mt"><span class="tag">${esc(item.cluster)}</span> ${esc(item.kind)} ${esc(item.namespace?item.namespace+'/':'')}${esc(item.name)}</p><p class="mt">${esc(item.detail)}</p>${check.id==='mesh.global-service-authz'?`<label class="mt">Intended caller principals (one per line)<textarea id="pst-fix-principals" rows="3" placeholder="cluster.local/ns/caller-namespace/sa/caller-account">${esc(state.principals)}</textarea></label><button id="pst-fix-generate" ${state.busy?'disabled':''}>Generate scoped YAML</button>`:''}${state.error?`<div class="notice info mt" role="status">${esc(state.error)}</div>`:''}${state.plan?state.plan.notes.map(n=>`<p class="mt">${esc(n)}</p>`).join(''):`<p class="mt">${supported?'Review the generated change before choosing a real context.':'This entry needs additional resource-specific choices. The example below is guidance only; it cannot be applied from this preview.'}</p>`}<h3 class="mt">${state.plan?'Exact YAML to apply':'YAML guidance · not ready to apply'}</h3><pre class="code mt">${esc(state.plan?.yaml||example)}</pre><div class="row wrap mt"><button id="pst-fix-copy">Copy YAML</button><button id="pst-fix-download">Download YAML</button><button id="pst-fix-object">Inspect affected object</button>${guideLinks(check.source,check.docs)}</div>${state.plan?`<label class="mt">Real kubeconfig context<select id="pst-fix-context"><option value="">Choose the context for ${esc(item.cluster)}…</option>${state.contexts.map(c=>`<option value="${esc(c.name)}" ${state.context===c.name?'selected':''}>${esc(c.name)} · ${esc(c.server)}</option>`).join('')}</select></label><div class="row wrap mt"><button id="pst-fix-validate" ${state.busy||!state.context?'disabled':''}>Validate (dry-run)</button><button id="pst-fix-apply" class="primary" ${state.busy||!state.validation?'disabled':''}>Apply…</button>${state.record?'<button id="pst-fix-undo">Undo this change</button>':''}</div>`:''}${state.message?`<p class="mt" role="status">${esc(state.message)}</p>`:''}`);
+    $('#pst-fix-copy').onclick=()=>navigator.clipboard.writeText(state.plan?.yaml||example).then(()=>toast('YAML copied'));
+    $('#pst-fix-download').onclick=()=>amDownload(state.plan?.yaml||example,'flightbay-scorecard-'+check.id+'.yaml');
+    $('#pst-fix-object').onclick=()=>{closeModal();openObject(target);};
+    const p=$('#pst-fix-principals');if(p)p.oninput=()=>{state.principals=p.value;state.plan=null;state.validation=null;$('#pst-fix-apply')?.setAttribute('disabled','');$('#pst-fix-validate')?.setAttribute('disabled','');};
+    if($('#pst-fix-generate'))$('#pst-fix-generate').onclick=()=>run(async()=>{request.scorecard.principals=state.principals.split(/[\n,]+/).map(x=>x.trim()).filter(Boolean);state.validation=null;state.plan=await apiPost('api/ambient/plan',request);state.error='';});
+    if($('#pst-fix-context'))$('#pst-fix-context').onchange=e=>{state.context=e.target.value;state.validation=null;draw();};
+    if($('#pst-fix-validate'))$('#pst-fix-validate').onclick=()=>run(async()=>{state.validation=null;state.validation=await apiPost('api/ambient/test',{operation:'validate',context:state.context,request:state.plan.request,planId:state.plan.id});state.message='Dry-run passed. Review the YAML, then Apply opens a separate confirmation.';});
+    if($('#pst-fix-apply'))$('#pst-fix-apply').onclick=async()=>{const entry={plan:state.plan,context:state.context,validation:state.validation};S.ambient.contexts=state.contexts;if(!await amConfirmApply([entry])){draw();return;}await run(async()=>{const result=await apiPost('api/ambient/test',{operation:'apply',context:entry.context,validation:entry.validation.token});state.record=result.test;state.validation=null;state.message=result.message;S.ambient.inventory=null;});};
+    if($('#pst-fix-undo'))$('#pst-fix-undo').onclick=()=>run(async()=>{const result=await apiPost('api/ambient/test',{operation:'cleanup',context:state.record.context,validation:state.record.token});state.record=null;state.validation=null;state.message=result.message;S.ambient.inventory=null;});
+  };
+  const run=async fn=>{if(state.busy)return;state.busy=true;state.error='';draw();try{await fn();}catch(e){state.error=e.message;if(e.body?.test)state.record=e.body.test;}finally{state.busy=false;draw();}};
+  draw();
+  await run(async()=>{state.contexts=await api('api/ambient/contexts');if(supported&&check.id!=='mesh.global-service-authz')state.plan=await apiPost('api/ambient/plan',request);});
+}
 
 // ---------- agent reach (Flightbay Enterprise) ----------
 // By agent: what each agent, MCP server and agent gateway can reach on the
@@ -1880,7 +1949,7 @@ async function resources() {
   const cur = types.find(t => t.resource === S.res.resource && t.group === S.res.group);
   const list = await api('api/objects', {cluster: S.cluster, group: S.res.group, resource: S.res.resource, namespace: S.res.ns, q: S.res.q});
   if (!S.res.ns && !S.res.q) S.res.nsOptions = [...new Set(list.rows.map(r => r.namespace).filter(Boolean))].sort();
-  const multi = !S.cluster;
+  const multi = (S.ws?.clusters || []).length > 1 && !S.cluster;
   const stateNote = cur.state === 'complete' ? '' : `<div class="notice ${cur.state === 'failed' ? 'bad' : 'info'}" style="margin-bottom:12px">${stateBadge(cur.state)} <span>${esc({
     loading: 'This collection is still loading. The rows below are what has arrived so far.',
     excluded: 'The customer excluded this resource type. Its absence here says nothing about the cluster.',
@@ -1909,7 +1978,9 @@ after.resources = () => {
   $('#res-reset').onclick = () => { S.res.ns = ''; S.res.q = ''; render(); };
   const rc = $('#res-cov'); if (rc) rc.onclick = () => nav('coverage');
   $('#res-k9s').onclick = () => openK9s(S.res.resource + (S.res.group ? '.' + S.res.group : ''), S.res.ns);
-  $('#res-term').onclick = () => termRun(`kubectl get ${S.res.resource}${S.res.group ? '.' + S.res.group : ''} ${S.res.ns ? '-n ' + S.res.ns : '-A'}`);
+  const commands=(S.cluster?[S.cluster]:(S.ws?.clusters||[]).map(c=>c.name)).map(c=>mirrorKubectl(`get ${shellArg(S.res.resource+(S.res.group?'.'+S.res.group:''))} ${S.res.ns?'-n '+shellArg(S.res.ns):'-A'}`,c)).join('\n');
+  $('#res-term').onclick = () => termRun(commands);
+  commandControls($('#res-term'),commands);
 };
 
 // ---------- object drawer ----------
@@ -1950,7 +2021,7 @@ async function openObject(ref, tab = 'summary') {
     document.querySelectorAll('[data-stream]').forEach(b => b.onclick = () => { const s = JSON.parse(b.dataset.stream); openLogs({pod: o.name, namespace: o.namespace, container: s.c, stream: s.st}); });
     const dw = $('#d-wlogs'); if (dw) dw.onclick = () => openLogs({workload: `${o.kind}/${o.name}`, namespace: o.namespace});
     const dl = $('#d-logs'); if (dl) dl.onclick = () => { const prev = (d.streams || []).find(s => s.endsWith('/previous')); openLogs({pod: o.name, namespace: o.namespace, stream: prev ? 'previous' : ''}); };
-    const dd = $('#d-describe'); if (dd) dd.onclick = () => { closeDrawer(); termRun(`kubectl --context ${o.cluster}@snapshot describe ${o.resource}${o.group ? '.' + o.group : ''} ${o.name}${o.namespace ? ' -n ' + o.namespace : ''}`); };
+    const dd = $('#d-describe'); if (dd) {const command=mirrorKubectl(`describe ${shellArg(o.resource+(o.group?'.'+o.group:''))} ${shellArg(o.name)}${o.namespace?' -n '+shellArg(o.namespace):''}`,o.cluster);dd.onclick=()=>{closeDrawer();termRun(command);};commandControls(dd,command);}
     const dc = $('#d-compare'); if (dc) dc.onclick = () => { S.compare = {group: o.group, resource: o.resource, namespace: o.namespace, name: o.name, kind: o.kind}; closeDrawer(); nav('compare'); };
     const cp = $('#d-copy'); if (cp) cp.onclick = () => navigator.clipboard.writeText(d.yaml).then(() => toast('YAML copied'), () => toast('Clipboard unavailable'));
     if (typeof rvWireObject === 'function') rvWireObject();
@@ -2282,6 +2353,10 @@ function openFinding(f) {
     ${f.source || f.docs ? `<p class="mt row">${guideLinks(f.source, f.docs)}</p>` : ''}
     <div class="row wrap mt">${f.object ? '<button class="primary" id="f-obj">Inspect object →</button>' : ''}${f.logQuery ? '<button id="f-logs">Open the logs →</button>' : ''}</div>`);
   const o = $('#f-obj'); if (o) o.onclick = () => { closeModal(); openObject(f.object); };
+  if(f.ambient){
+    document.querySelector('.modal .row.wrap.mt')?.insertAdjacentHTML('beforeend','<button id="f-ambient">Investigate and fix in Ambient →</button>');
+    const b=$('#f-ambient');if(b)b.onclick=()=>{closeModal();amResetDraft();S.ambient.clusterScope=S.cluster;if(S.cluster&&S.cluster!==f.ambient.subject.cluster){S.cluster=f.ambient.subject.cluster;$('#cluster').value=S.cluster;S.ambient.clusterScope=S.cluster;}nav('ambient?'+new URLSearchParams({...f.ambient.subject,tab:'investigate',step:f.ambient.step}));};
+  }
   const l = $('#f-logs'); if (l) l.onclick = () => openLogs({q: f.logQuery});
 }
 
@@ -2570,6 +2645,7 @@ async function coverage() {
 function modal(title, body) {
   if(S.applyConfirmCancel)S.applyConfirmCancel();
   $('#modal-root').innerHTML = `<div class="modal-backdrop"><section class="modal" role="dialog" aria-modal="true" aria-label="${esc(title)}"><div class="panel-head"><h2>${esc(title)}</h2><button class="ghost" id="m-close" aria-label="Close">✕</button></div><div class="panel-body">${body}</div></section></div>`;
+  wireKubectlBlocks($('#modal-root'));
   $('.modal-backdrop').onclick = e => { if (e.target.classList.contains('modal-backdrop')) closeModal(); };
   $('#m-close').onclick = closeModal;
 }
@@ -2762,6 +2838,7 @@ async function liveRefresh() {
     await loadWorkspace();
     if(wasAvailable!==istioAmbientAvailable()){await render();return;}
     if(S.ambient.tab==='map'&&!document.querySelector('.am-dragging,.am-panning,.am-implementation[open]')&&!S.ambient.pickerOpen){S.ambient.inventory=null;await render();}
+    else if(S.ambient.tab==='investigate'&&!S.ambient.pickerOpen){S.ambient.inventory=null;await render();}
     return;
   }
   // Patch the page in place rather than rebuilding it, so scroll positions,

@@ -127,7 +127,7 @@ func (s *Server) ambientPlan(w http.ResponseWriter, r *http.Request) {
 	if !ambientBody(w, r, &req) {
 		return
 	}
-	plan, err := ambient.Generate(s.WS, req)
+	plan, err := s.generateReviewedPlan(req)
 	if err != nil {
 		jerr(w, 400, err.Error())
 		return
@@ -212,6 +212,31 @@ func ambientServiceFingerprint(o map[string]any) string {
 }
 func (s *Server) ambientPreflight(ctx context.Context, c ambientConnection, p *ambient.Plan) error {
 	q := p.Request
+	if q.Scorecard != nil {
+		ref := q.Scorecard.Target
+		captured := ambient.Target(s.WS, ref.Cluster, ref.Kind, ref.Namespace, ref.Name)
+		if captured == nil || ambient.S(ambient.Path(captured.Obj, "metadata", "uid")) == "" {
+			return errors.New("refresh the runtime capture before testing this Scorecard fix")
+		}
+		gvr := schema.GroupVersionResource{Group: captured.Group, Version: captured.Version, Resource: captured.Resource}
+		res := c.client.Resource(gvr)
+		var live *unstructured.Unstructured
+		var err error
+		if captured.Namespace == "" {
+			live, err = res.Get(ctx, captured.Name, metav1.GetOptions{})
+		} else {
+			live, err = res.Namespace(captured.Namespace).Get(ctx, captured.Name, metav1.GetOptions{})
+		}
+		if err != nil {
+			return err
+		}
+		if string(live.GetUID()) != ambient.S(ambient.Path(captured.Obj, "metadata", "uid")) {
+			return errors.New("target belongs to another cluster or was recreated; refresh before applying")
+		}
+		if !ambient.Equal(captured.Obj["spec"], live.Object["spec"]) || !ambient.Equal(ambient.Path(captured.Obj, "metadata", "labels"), ambient.Path(live.Object, "metadata", "labels")) {
+			return errors.New("target configuration changed since capture; refresh before applying the Scorecard fix")
+		}
+	}
 	names := map[string]bool{}
 	if q.Service != "" {
 		names[q.Service] = true
@@ -384,7 +409,7 @@ func (s *Server) ambientTest(w http.ResponseWriter, r *http.Request) {
 			jerr(w, 400, "select a real kubeconfig context explicitly")
 			return
 		}
-		p, err := ambient.Generate(s.WS, req.Request)
+		p, err := s.generateReviewedPlan(req.Request)
 		if err != nil {
 			jerr(w, 400, err.Error())
 			return

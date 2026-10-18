@@ -8,6 +8,12 @@ description: Score a snapshot against security and operational checks for agenti
 
 The Scorecard checks the snapshot against security and operational guidance and says what to change. Findings tell you what is broken; the Scorecard tells you what is risky or fragile even when everything works: MCP endpoints anyone can call, namespaces without STRICT mTLS, privileged pods, a single istiod.
 
+Each failing or warning object row includes its **Cluster** and a **Review fix** button. Identical namespace/resource names in different clusters remain separate entries. Review fix opens the YAML, target and guidance for that entry.
+
+Scoped recipes currently cover ambient namespace default-deny, a new namespace STRICT mTLS policy, namespace ingress NetworkPolicy default-deny and explicit caller restrictions for global Services. Caller restrictions require you to enter the intended service-account principals. Existing namespace PeerAuthentication or unsupported waypoint implementations need inspection rather than a competing policy. Other checks show their YAML guidance with an explanation of the missing resource-specific choices; they do not offer Apply for an unresolved template.
+
+For a generated plan, choose a real kubeconfig context and **Validate (dry-run)**. **Apply…** then opens the same separate confirmation used by Istio Ambient, including the exact YAML, cluster and context. Cancelling sends no apply request. Applied changes have an undo action and are recorded with the ambient test plans. Default-deny and STRICT mTLS can reject traffic; the preview describes their scope before you confirm.
+
 ![Scorecard summary](/images/scorecard-summary.png)
 
 The checks draw on public field guides, agentgateway, kagent, Istio and kgateway source, and Kubernetes hardening guidance. There are 129 of them, plus five more built on [Agent reach](/desk/agent-reach/) when that Enterprise feature is on. Every check is listed in [Scorecard checks](/desk/scorecard-checks/).

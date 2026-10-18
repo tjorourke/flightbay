@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tjorourke/flightbay/internal/ambient"
 	"github.com/tjorourke/flightbay/internal/bundle"
 	"github.com/tjorourke/flightbay/internal/logs"
 	"github.com/tjorourke/flightbay/internal/store"
@@ -33,19 +34,25 @@ type Ref struct {
 
 // Finding is one analyzer result.
 type Finding struct {
-	ID          string   `json:"id"`
-	Rule        string   `json:"rule"`
-	Severity    string   `json:"severity"`
-	Title       string   `json:"title"`
-	Detail      string   `json:"detail"`
-	Cluster     string   `json:"cluster"`
-	Object      *Ref     `json:"object,omitempty"`
-	Evidence    []string `json:"evidence,omitempty"`
-	LogQuery    string   `json:"logQuery,omitempty"`
-	NextStep    string   `json:"nextStep,omitempty"`
-	Docs        string   `json:"docs,omitempty"` // product documentation for the next step
-	Count       int      `json:"count,omitempty"`
-	Provisional bool     `json:"provisional"`
+	Ambient     *AmbientFinding `json:"ambient,omitempty"`
+	ID          string          `json:"id"`
+	Rule        string          `json:"rule"`
+	Severity    string          `json:"severity"`
+	Title       string          `json:"title"`
+	Detail      string          `json:"detail"`
+	Cluster     string          `json:"cluster"`
+	Object      *Ref            `json:"object,omitempty"`
+	Evidence    []string        `json:"evidence,omitempty"`
+	LogQuery    string          `json:"logQuery,omitempty"`
+	NextStep    string          `json:"nextStep,omitempty"`
+	Docs        string          `json:"docs,omitempty"` // product documentation for the next step
+	Count       int             `json:"count,omitempty"`
+	Provisional bool            `json:"provisional"`
+}
+
+type AmbientFinding struct {
+	Subject ambient.Ref `json:"subject"`
+	Step    string      `json:"step"`
 }
 
 func ref(o *store.Object) *Ref {
@@ -91,6 +98,27 @@ func Run(ws *store.Workspace) []Finding {
 		out = append(out, gatewayAPI(ws, cluster)...)
 	}
 	out = append(out, signatures(ws)...)
+	for _, issue := range ambient.Issues(ws) {
+		subject, step := issue.Subject, issue.Step
+		object := subject
+		if len(step.Evidence) > 0 {
+			object = step.Evidence[0].Ref
+		}
+		next := step.NextStep
+		if step.SuggestedFix != nil {
+			next = step.SuggestedFix.Fix + " Verify: " + step.SuggestedFix.Verify
+		}
+		evidence := []string{}
+		for _, e := range step.Evidence {
+			evidence = append(evidence, e.Ref.Kind+" "+e.Ref.Namespace+"/"+e.Ref.Name+" · "+e.Field+": "+e.Value)
+		}
+		out = append(out, Finding{Rule: "ambient." + func() string {
+			if step.SuggestedFix != nil {
+				return step.SuggestedFix.ID
+			}
+			return step.ID
+		}(), Severity: Warning, Title: "Ambient: " + step.Title, Detail: step.Detail, Cluster: subject.Cluster, Object: &Ref{object.Cluster, object.Group, object.Resource, object.Kind, object.Namespace, object.Name}, Evidence: evidence, NextStep: next, Ambient: &AmbientFinding{subject, step.ID}})
+	}
 	if h := ws.Header(); h.Declared() {
 		repo := "the repository"
 		if h.Repo != nil && h.Repo.Name != "" {

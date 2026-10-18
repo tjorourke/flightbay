@@ -6,7 +6,7 @@ description: Give an AI agent read-only access to an open workspace over the Mod
 
 # MCP server
 
-`flightbay-desk mcp` makes the open workspace available to AI agents over the Model Context Protocol. The agent gets read-only tools for everything the desk can do: search objects and logs, read-only SQL, findings, best-practice scores, agent reach, objects, proxy configs, the timeline, coverage and comparisons. Every object, log stream, proxy dump, finding and Scorecard check is also a `flightbay://` resource that you can attach to a conversation, with completions for the names in each address. Seven prompts walk the agent through common investigations.
+`flightbay-desk mcp` makes the open workspace available to AI agents over the Model Context Protocol. Its 25 read-only tools cover objects, logs, SQL, findings, scores, reach, proxy configuration, ambient investigation and repair previews. The workspace can be an offline bundle or a live read-only mirror. Objects, log streams, proxy dumps, findings, Scorecard checks and ambient failures are also `flightbay://` resources. Eight prompts guide common investigations. Stdio additionally offers `workspaces` to select an open desk.
 
 Use it when you want an assistant to do the legwork on a case: gather the evidence behind the findings, follow a trace across pods, or check whether a problem started with a change.
 
@@ -33,13 +33,69 @@ opencode, in `opencode.json`:
 
 Any other MCP client works the same way: the command is `flightbay-desk mcp` with no arguments. The tools read the most recently opened desk that is still running. With more than one desk open, the `workspaces` tool lists them and switches between them.
 
-### The agent only reads the snapshot
+### The agent only reads captured evidence
 
 A bundle is usually captured in a customer's environment, and the clusters in it are not reachable from your machine. The server tells the agent so when it connects: answer from the tools and resources only, and never run `kubectl`, a cloud CLI or anything else against a cluster, or call the desk's HTTP API, in their place. When no desk is open, or the desk has closed, every tool returns an error that says the same thing and asks the agent to have you open the bundle, rather than looking for another way in. The desk token is handled by the server; you never sign in on the agent's behalf.
+
+For a live desk, tools read the current mirror rather than a fixed bundle. The MCP boundary is unchanged: diagnosis and YAML previews use captured data; cluster mutations and active HTTP tests stay in the UI.
 
 ### Over HTTP
 
 The desk also serves MCP at `/mcp` on its own address, for agents that connect over HTTP (for example a kagent `RemoteMCPServer`). It uses the streamable HTTP transport with plain JSON responses: POST one JSON-RPC message, get one back. It needs the desk token as `Authorization: Bearer`, like the rest of the API.
+
+For the desk at `http://127.0.0.1:50629/`, use **`http://127.0.0.1:50629/mcp`**, not the documentation URL. Use the port of the desk you actually opened; temporary ports change between sessions. The token is in the startup URL and that workspace's `desk.json`. Keep it out of shared configuration and source control.
+
+Example HTTP client configuration (replace the placeholder locally):
+
+```json
+{
+  "mcpServers": {
+    "flightbay": {
+      "type": "http",
+      "url": "http://127.0.0.1:50629/mcp",
+      "headers": {"Authorization": "Bearer YOUR_DESK_TOKEN"}
+    }
+  }
+}
+```
+
+`127.0.0.1` must be reachable from the MCP client process. A client in a container or on another machine has a different localhost; use the local stdio adapter or an explicitly configured reachable desk address. The normal local desk listens on loopback. HTTP clients use MCP `initialize`, `notifications/initialized`, then `tools/list` / `tools/call`. Restart or reconnect existing stdio clients after upgrading the desk binary to discover new tools.
+
+### Ambient investigation flow
+
+Ask: **“Find ambient failures across both clusters, investigate petstore, and show the smallest repair without applying it.”**
+
+1. `workspace_summary` establishes clusters, live/offline mode and capture freshness.
+2. `ambient_issues` returns the same confirmed failures as **Needs attention**; `list_findings` includes them too.
+3. `ambient_investigate` with `cluster`, `kind`, `namespace` and `name` returns checks, captured fields, suggested fixes, official docs, DNS names, controller/edition, related resources and recovery choices.
+4. `ambient_inventory` exposes configured peering, global Service publication and the attachment topology. `ambient_capabilities` identifies supported tasks for that Service's implementation.
+5. `ambient_plan_preview` produces exact YAML and before/after changes. `scorecard_fix_preview` generates supported per-entry Scorecard fixes. Both are in-memory previews only. Use the UI to select a real context, validate and confirm Apply.
+
+Example tool arguments for a missing parent repair after explicitly choosing `ar-ingress`:
+
+```json
+{
+  "request": {
+    "cluster": "kind-mesh1",
+    "namespace": "petstore-prod",
+    "service": "petstore",
+    "tasks": ["route-parent"],
+    "route": "petstore-prod",
+    "parent": {
+      "cluster": "kind-mesh1",
+      "group": "gateway.networking.k8s.io",
+      "resource": "gateways",
+      "kind": "Gateway",
+      "namespace": "agentgateway-system",
+      "name": "ar-ingress"
+    }
+  }
+}
+```
+
+For a specific parent in a multi-parent route, include `edit: {ref: <HTTPRoute reference>, rule: <zero-based parent index>}`. Optional `parentSection` selects a listener. Preview requests also accept the Configure task options: `waypoint`, `backends`, `port`, `timeout`, `methods` and related choices. Read capabilities and captured resources first; backend names do not establish frontend intent.
+
+There are no MCP apply, cleanup, live dry-run or HTTP-probe tools. This keeps the client's connection read-only. `ambient_change_history` returns recorded resource changes without validation tokens. HTTP test results retained in the browser are not server-side workspace data; use captured logs or share those results explicitly. The `ambient_triage` prompt follows this workflow.
 
 ## Tools
 
@@ -66,6 +122,13 @@ Every tool is read-only and marked as such.
 | `get_object` | `cluster`, `resource`, `name` (required), `group`, `namespace` | One object as captured (redacted YAML), its related objects, its events and, for pods, its log streams. Links the log streams and related objects as resources. |
 | `proxy_config` | `pod`, `namespace`, `cluster`, `file` | With no pod, what was captured. With a pod, its summary tables. With `file`, that raw file. |
 | `compare_baseline` | none | When the desk was opened with a baseline, what changed. See [Compare](/desk/compare/). |
+| `ambient_inventory` | `cluster`, `namespace` | Captured ambient resources, waypoint choices, detected implementation and topology. Resource lists are filtered; cross-cluster topology retains peer context. |
+| `ambient_issues` | `cluster`, `namespace` | Confirmed failed checks, evidence and repair/verification guidance; no target selection needed. |
+| `ambient_investigate` | `cluster`, `kind`, `name` (required), `namespace`, `route` | Full investigation, DNS, related objects, controller conditions, recovery and editing choices. |
+| `ambient_capabilities` | `cluster`, `namespace`, `service` (required) | Supported tasks and reasons for unavailable features. |
+| `ambient_plan_preview` | `request` (required) | Exact generated YAML, plan ID, affected fields and before/after values. Does not contact Kubernetes. |
+| `scorecard_fix_preview` | `check`, `target` (required), `principals` | Supported per-entry Scorecard YAML; caller restrictions need explicit principals. |
+| `ambient_change_history` | none | Recorded applied plans and changed resource identities; no credentials or validation tokens. |
 
 Responses longer than 60,000 characters are cut, with a note asking the agent to narrow the request.
 
@@ -86,6 +149,7 @@ Resources are the snapshot as documents. A client can list them, read them and a
 | `flightbay://scorecard/{check}` | One check in full: affected objects, why it matters and the fix YAML |
 | `flightbay://coverage` | Coverage, the collection log and the redaction report |
 | `flightbay://timeline` | The timeline |
+| `flightbay://ambient` | Confirmed ambient failures and the common-problem repair catalogue. |
 
 Three templates address anything else in the snapshot:
 
@@ -114,6 +178,7 @@ Each prompt gives the agent a plan that uses the tools above and asks for a repl
 | `agent_review` | `agent` (required) | One agent, MCP server or gateway: what it can reach, its credentials, what it actually called, and the paths to close | |
 | `what_changed` | none | Changes since the baseline bundle, lined up with the timeline and new findings, or the timeline alone when there is no baseline | |
 | `incident_timeline` | `since` | A table of what happened when, from the timeline, the logs in each spike and ids followed across pods, with the first failure marked | timeline |
+| `ambient_triage` | `symptom`, `cluster` | Discover failures, investigate exact resources, check topology/DNS and controller edition, then propose a scoped preview and verification steps | |
 
 In Claude Code, run them as `/mcp__flightbay__triage`, `/mcp__flightbay__pod_debug shop checkout-7d9f` and so on.
 

@@ -184,7 +184,7 @@ func TestCompletions(t *testing.T) {
 func TestPromptsAndLinks(t *testing.T) {
 	s := stubDesk(t)
 	ps := call(t, s, "prompts/list", nil)["prompts"].([]any)
-	if len(ps) != 7 {
+	if len(ps) != 8 {
 		t.Fatalf("prompts %d", len(ps))
 	}
 	get := func(name string, args map[string]string) []any {

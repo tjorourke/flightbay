@@ -764,3 +764,10 @@ body.agent-mode .nav a[data-view="resources"]{order:-1}
 .brand-agent{display:none;font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--teal)}
 body.agent-mode .brand-agent{display:block}
 .px-policy-actions{display:flex;align-items:center;flex-wrap:wrap;gap:6px;white-space:normal;min-width:180px}.px-policy-actions>.link{max-width:100%;overflow-wrap:anywhere;white-space:normal;text-align:left}
+/* Terminal snippets share a top-right, keyboard-accessible copy control. */
+.terminal-command{position:relative;min-width:0;max-width:100%}
+.terminal-command pre.code{padding-right:52px}
+.command-copy-tools{position:absolute;right:6px;top:6px;display:flex;gap:4px}
+.command-copy-icon{font-size:19px;line-height:1;width:32px;height:30px;padding:4px;border-radius:5px;background:var(--panel);color:var(--muted)}
+.terminal-command>.command-copy-icon{position:absolute;right:6px;top:6px}
+.command-copy-icon:hover,.command-copy-icon:focus-visible{color:var(--text);border-color:var(--teal)}

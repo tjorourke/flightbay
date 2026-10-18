@@ -352,7 +352,7 @@ func tools() []tool {
 // tools is the tool set this server offers: workspaces only makes sense
 // when there is more than one desk to choose from.
 func (s *Server) tools() []tool {
-	ts := tools()
+	ts := append(tools(), ambientTools()...)
 	if s.Desks != nil {
 		ts = append([]tool{{Name: "workspaces", Title: "Open desks",
 			Description: "The Flightbay desks open on this machine (each one a bundle or a live mirror) and which one every other tool reads, most recently opened first. Pass use (a number from the list, a bundle file name or a live context) to switch. Call this when the user names a bundle or when more than one desk may be open.",
@@ -362,12 +362,13 @@ func (s *Server) tools() []tool {
 	return ts
 }
 
-const instructions = "Read-only access to an offline Flightbay snapshot of Kubernetes clusters, usually captured in a customer's environment. The clusters themselves are not reachable from here: answer only from these tools and resources, and never run kubectl, cloud CLIs or other commands against a cluster, or call the desk's HTTP API, in their place. If a tool says no desk is open or cannot reach it, tell the user and ask them to open the bundle (`flightbay ui BUNDLE`). Start with workspace_summary, then list_findings. Use the triage prompt for a guided investigation. Objects, log streams, proxy dumps, findings and Scorecard checks are also flightbay:// resources you can read or attach."
+const instructions = "Read-only access to a Flightbay captured workspace: an offline bundle or a live read-only mirror. Check workspace_summary for the mode, clusters and freshness. Answer from these tools and resources only; never bypass them with kubectl, cloud CLIs or direct desk API calls. Start with workspace_summary, list_findings and ambient_issues. Investigate the exact cluster/kind/namespace/name using ambient_investigate; inspect DNS, topology, controller edition, parent/listener status, endpoints and policies. Missing evidence is not absence; Accepted configuration is not proof of successful traffic. ambient_plan_preview and scorecard_fix_preview generate YAML without changing clusters; human review, real-context validation and Apply confirmation belong in the UI. Do not treat a backend as proof of frontend intent. If no desk is open, ask the user to open Flightbay. Use ambient_triage or triage for guided investigations. Objects, logs, dumps, findings, Scorecard checks and ambient issues are flightbay:// resources."
 
-const triagePrompt = `You are investigating a Kubernetes support issue from a Flightbay snapshot: an offline, redacted capture of one or more clusters running Istio ambient, agentgateway, kgateway or kagent. You cannot change the clusters. Work only from the snapshot.
+const triagePrompt = `You are investigating a Kubernetes support issue from a Flightbay workspace: an offline redacted capture or a live read-only mirror of one or more clusters running Istio ambient, agentgateway, kgateway or kagent. You cannot change the clusters. Work only from captured evidence and note its freshness.
 
 1. Call workspace_summary. Note what the customer excluded, anything still loading, and whether the bundle verified. Never treat excluded or uncollected data as evidence of absence.
 2. Call list_findings and best_practices (open MCP endpoints, missing mTLS or default-deny are often the story). Start from critical, then warning findings. Findings are signals, not conclusions.
+For ambient failures, call ambient_issues, then ambient_investigate using the exact cluster and resource. Use ambient_plan_preview or scorecard_fix_preview for proposed YAML, leaving validation and Apply confirmation to the UI.
 3. For each promising finding, gather evidence (search_objects finds any object by name, label or content; run_sql answers counting and grouping questions): search_logs with its logQuery, then log_context around the key lines; get_object for the objects involved and their related objects and events; proxy_config for the proxies, ztunnel or istiod involved (listeners, routes, certificates, xDS sync).
 4. Follow identifiers across pods (trace_id, request id, connection id) with search_logs.
 5. If compare_baseline has data, check whether the problem started with a change.
