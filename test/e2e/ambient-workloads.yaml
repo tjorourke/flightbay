@@ -212,6 +212,25 @@ spec:
 ---
 apiVersion: v1
 kind: Service
+metadata:
+  name: explain-front
+  namespace: flightbay-ambient-e2e
+  labels: {istio.io/use-waypoint: waypoint}
+spec:
+  selector: {app: stable}
+  ports: [{name: http, port: 8080, targetPort: 8080, appProtocol: http}]
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: explain-default-deny
+  namespace: flightbay-ambient-e2e
+spec:
+  targetRefs: [{group: "", kind: Service, name: explain-front}]
+  action: ALLOW
+---
+apiVersion: v1
+kind: Service
 metadata: {name: stable, namespace: flightbay-ambient-e2e}
 spec:
   selector: {app: stable}

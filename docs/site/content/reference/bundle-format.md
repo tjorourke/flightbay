@@ -43,7 +43,7 @@ clusters/<context>/
   discovery/
     version.json                                  API server version
     apiresources.json                             discovered resource types
-    crds/<resource>.<group>.json                  CRD names, scope and printer columns (schema dropped)
+    crds/<resource>.<group>.json                  CRD names, scope and printer columns (HTTPRoute schema retained)
   resources/<group or core>/<version>/<resource>/part-000001.json
   events/part-000001.json
   logs/<namespace>/<pod>/<container>/<current|previous>/part-000001.log

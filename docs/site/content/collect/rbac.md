@@ -42,7 +42,7 @@ flightbay rbac --discover --context mesh1 --exclude-resources secrets,configmaps
 | Option | Permissions |
 |---|---|
 | Objects (every profile) | `get, list` on the selected resource types in the selected namespaces; `get` on the Namespace objects in scope |
-| Custom resources | `get` on their `customresourcedefinitions` (names and printer columns are kept; the schema is dropped), by name when `--discover` or `--resources` is used |
+| Custom resources | `get` on their `customresourcedefinitions` (names and printer columns are kept; only HTTPRoute retains its schema for routing capability checks), by name when `--discover` or `--resources` is used |
 | `--namespaces a,b` | A Role and RoleBinding per namespace instead of a ClusterRole, plus a ClusterRole to `get` those Namespace objects by name. Globs fall back to a ClusterRole. |
 | `--cluster-scoped` | `get, list` on cluster-scoped types (a ClusterRole) |
 | Events | `get, list` on `events` in core and `events.k8s.io` |

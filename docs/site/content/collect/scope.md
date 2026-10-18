@@ -31,7 +31,7 @@ flightbay collect --profile custom --collect objects,events --namespaces payment
 
 | Category | What is read |
 |---|---|
-| `objects` | A `list` of each selected resource type, in bounded chunks. For custom resources, the CRD definition too (names and printer columns; the schema is dropped). |
+| `objects` | A `list` of each selected resource type, in bounded chunks. For custom resources, the CRD definition too (names and printer columns; only HTTPRoute retains its schema for routing capability checks). |
 | `events` | Core and `events.k8s.io/v1` events. |
 | `logs` | `pods/log` for the selected containers. See [Logs](/collect/logs/). |
 | `nodes` | Node objects: conditions, capacity, versions, taints. Needs `--cluster-scoped`. |

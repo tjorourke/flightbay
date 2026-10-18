@@ -131,6 +131,7 @@ Sources are resolved to workloads by pod name, then SPIFFE identity. Destination
 | Policy | The evaluator's verdict for the source and the Service: allowed, denied or unknown, and at L4 or L7 |
 | Policed | Some NetworkPolicy or AuthorizationPolicy looks at this traffic |
 | Via | The waypoint that carried it |
+| Expected waypoint | The waypoint selected by captured configuration, kept separate from observed traversal |
 
 Edges are flagged:
 
@@ -141,6 +142,9 @@ Edges are flagged:
 | No policy | No NetworkPolicy or AuthorizationPolicy applies. |
 | Refused | Some connections were refused. |
 | Logs and policy disagree | Every connection was refused although policy allows it at L4, or some got through although policy denies it. The policy may be newer than the traffic, or apply differently from how it reads. |
+| Bypasses selected waypoint | Logs resolve directly to a captured application workload although configuration selects a waypoint. The edge offers **Require waypoint in wizard** for review. A binding alone does not prove traversal. |
+
+Open an edge for **Official troubleshooting commands** using its real cluster and captured resource names. Commands map to the resources, ztunnel configuration, waypoint proxy dump, istiod sync state and logs Flightbay collects. Missing proxy identities do not produce guessed names. Envoy debug logging is separately labelled as a live logging-level change and is copy-only. See [Ambient troubleshooting commands](/desk/ambient/) for the evidence mapping and restoring the previous level.
 
 ![The totals: each one is a filter](/images/traffic-stats.png)
 
@@ -154,7 +158,8 @@ Pick an edge on the map or the Edges tab, or use the **Why? Explain a connection
 2. **NetworkPolicy ingress** to the destination. With a waypoint, the path is source to waypoint to destination, and each leg is checked.
 3. **mTLS**: whether both ends are in the mesh, and whether a STRICT PeerAuthentication refuses a caller outside it.
 4. **ztunnel authorization (L4)**: AuthorizationPolicies selecting the destination, DENY before ALLOW. An ALLOW rule with HTTP attributes matches nothing at ztunnel.
-5. **Waypoint authorization (L7)**: AuthorizationPolicies attached to the Service or its waypoint with `targetRefs`, where methods and paths apply.
+5. **Waypoint JWT authentication**, when a captured RequestAuthentication targets the Service or its waypoint. It validates presented tokens but does not itself require a token.
+6. **Waypoint authorization (L7)**: AuthorizationPolicies attached to the Service or its waypoint with `targetRefs`, where methods and paths apply.
 
 Each step shows **allowed**, **denied**, **unknown** (the data was not captured), or **nothing applies**, with links to the policies. A Service with several pods is checked pod by pod until one admits the caller.
 
@@ -162,9 +167,11 @@ Each step shows **allowed**, **denied**, **unknown** (the data was not captured)
 
 Under the checks:
 
-- **Not evaluated from a snapshot**: conditions the evaluator cannot judge, such as JWT claims, `when:` clauses, `ipBlocks`, external authorisation (CUSTOM), and agentgateway policies on a waypoint.
+- **Not evaluated from a snapshot**: conditions the evaluator cannot judge, such as token signatures and claims, `when:` clauses, `ipBlocks`, external authorisation (CUSTOM), and agentgateway policies on a waypoint. A workload's mesh identity does not establish its JWT request principal. A verdict depending on `requestPrincipals` stays unknown rather than treating that rule as an unconditional allow or deny.
 - **In the access logs**: connections, refusals, HBONE and plaintext seen for the pair, and whether that agrees with the verdict.
-- **To allow it**: when the call is refused only because no ALLOW rule admits it, the smallest AuthorizationPolicy that would (by selector at ztunnel, or `targetRefs` at a waypoint), with the trust domain read from the access logs. A NetworkPolicy refusal gets an egress rule. A DENY rule, or STRICT mTLS for a caller outside the mesh, gets advice instead of YAML: those need a decision.
+- **To allow it**: when the call is refused only because no ALLOW rule admits it, the smallest AuthorizationPolicy that would (by selector at ztunnel, or `targetRefs` at a waypoint), with numeric workload ports for ztunnel and Service ports plus paths for a waypoint. The trust domain comes from captured mesh configuration or access logs; a default is labelled for review. A NetworkPolicy refusal gets an egress rule. A DENY rule, or STRICT mTLS for a caller outside the mesh, gets advice instead of YAML: those need a decision.
+
+**Review in Ambient wizard** regenerates that repair on the server and opens **Review**. **Edit options** can narrow destination ports and waypoint paths. Explicitly select the real kubeconfig context, validate with server dry-run, review Apply confirmation and then apply. Undo uses the same ownership and UID checks as other Ambient plans. Opening the wizard does not change the cluster. See [Apply](/desk/ambient/#apply).
 
 A Service with no pods whose waypoint answers for it (an agentgateway waypoint in front of a backend outside the cluster, for example) is evaluated to the waypoint.
 
@@ -196,7 +203,7 @@ The filter box takes free text or `key:value` terms, with suggestions from the c
 | `layer:` | `network` or `gateway` | `layer:gateway` |
 | `tool:`, `server:`, `model:`, `gateway:`, `route:`, `user:`, `state:` | Gateway calls; see [Gateway calls](/desk/activity/#filtering) | `server:github state:refused` |
 | `ns:` | Namespace at either end | `ns:kagent` |
-| `flag:` | `plaintext`, `plaintext-in`, `unpoliced`, `denied`, `mismatch` | `flag:unpoliced` |
+| `flag:` | `plaintext`, `plaintext-in`, `unpoliced`, `denied`, `mismatch`, `waypoint-bypass` | `flag:waypoint-bypass` |
 | `tls:` | `mtls`, `plaintext`, `mixed` | `tls:plaintext` |
 | `verdict:` | `allowed`, `denied`, `unknown` | `verdict:denied` |
 | `via:` | The waypoint that carried it | `via:github-mcp-waypoint` |

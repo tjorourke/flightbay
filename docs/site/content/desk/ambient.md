@@ -14,7 +14,7 @@ Use this page for setup, attachments and reviewed changes. [Traffic](/desk/traff
 
 The landing page shows **Explore your ambient mesh**, followed by **Needs attention**. Confirmed failed checks are listed across the selected clusters without choosing a resource first. Each row names its cluster and resource, explains the failure and offers **Investigate and fix**. **Findings** includes the same ambient failures and links to their investigation. Missing capture data is not promoted to a confirmed failure.
 
-Failed checks include suggested repairs and verification steps, with a catalogue of 20 common problem types available on the landing page. A missing HTTPRoute parent can be repaired by explicitly choosing a captured Gateway or frontend Service, then reviewing the affected parent entry. Other parents and route rules are preserved.
+Failed checks include suggested repairs and verification steps, with a catalogue of 22 common problem types available on the landing page. A missing HTTPRoute parent can be repaired by explicitly choosing a captured Gateway or frontend Service, then reviewing the affected parent entry. Other parents and route rules are preserved.
 
 Live investigation updates and the **Refresh** button retain expanded checks, evidence sections and scroll position for the same target. **All issues** returns from a target to the landing page.
 
@@ -39,7 +39,7 @@ The **Investigate** tab adapts to the object type. Service investigations trace 
 The investigation checks:
 
 - ambient namespace enrolment, pod opt-outs and sidecars;
-- Service waypoint overrides and namespace inheritance;
+- Service waypoint overrides, namespace inheritance and the Service's `istio.io/WaypointBound` condition;
 - missing waypoints, waypoint traffic types and cross-namespace enrolment;
 - Gateway `Accepted` and `Programmed` status;
 - route parent kind, API group, namespace and Service port;
@@ -48,6 +48,7 @@ The investigation checks:
 - Gateway listener names, ports, protocols, allowed route kinds, namespace restrictions and hostname intersection;
 - backend Service existence, Service ports versus container targetPorts, and cross-namespace ReferenceGrants;
 - L7 fields on workload-selector AuthorizationPolicies that ztunnel cannot enforce;
+- JWT `requestPrincipals` rules and their captured Service or Gateway RequestAuthentication attachment;
 - unsupported ambient `PeerAuthentication` DISABLE settings;
 - ready/eligible endpoints and availability of captured waypoint proxy diagnostics.
 
@@ -59,11 +60,17 @@ The status badges are filters. Choose **Failed**, **Check**, **Unknown**, **Pass
 
 Failures open first; other checks are compact, expandable rows. Raw fields used by a check are inside **Check details · captured fields**. Each step includes labelled **Official docs** links to the relevant upstream or Enterprise guide. A stale-status warning appears only when the observed generation is actually stale or missing.
 
+**Official troubleshooting commands** beside a failed check provides copyable commands using the original cluster context and captured resource names. It maps `istioctl analyze` to resource/controller conditions, `ztunnel-config service` and `workload` to ztunnel configuration, `proxy-status` to istiod sync state, `proxy-config all` to the waypoint dump, and `kubectl logs deploy/<waypoint>` to Log explorer. Commands requiring a Pod or Deployment are omitted when that identity was not captured. They run in your own terminal, not against the snapshot API.
+
+The separately labelled `istioctl pc log --level debug` command changes live Envoy logging. Flightbay provides it for copying and does not execute it. Record and restore the previous level after investigating. Agentgateway waypoints do not receive Envoy-specific commands.
+
 ## Detected implementation and official documentation
 
 Open **Implementation details** in the target bar to see the selected waypoint/controller and detection evidence. In Configure, **Generated policy type** identifies the kind a policy template will produce, not the kind of the resource currently selected. The details include captured GatewayClasses, deployed Gateways, discovered policy APIs and recognised Istio control-plane/ztunnel images. Missing evidence stays unknown. A cluster can contain OSS and Enterprise components together; it is not assigned one blanket API shape.
 
 For agentgateway tasks, the selected controller determines `AgentgatewayPolicy` versus `EnterpriseAgentgatewayPolicy`, and the discovered API supplies the version. Installing both CRDs does not mean both controllers are active. A new waypoint can only use a supported class actually observed in the selected cluster. Refresh or collect the missing GatewayClasses/Gateways if no class is offered.
+
+Enterprise agentgateway classes require the corresponding Enterprise policy API. Enterprise Istio templates also require its detected CRD evidence, including the Segment API, alongside the captured Istio installation. Images or class names alone do not enable Enterprise YAML.
 
 Task cards, configuration options and debugging steps link to official documentation in context. Istio OSS, Enterprise Istio, agentgateway OSS and Enterprise agentgateway sources are labelled; shared APIs link to Kubernetes or Gateway API references. These guides describe their published versions, so compare their version selector with your installed build. Links are explanatory, not a declaration that every documented feature is supported by your cluster. Server dry-run is still required before applying a generated test.
 
@@ -226,10 +233,15 @@ The selected task names the options panel, with a separate **This change** summa
 |---|---|
 | Deny by default | ztunnel workload-selector AuthorizationPolicy |
 | Allow a source namespace | ztunnel AuthorizationPolicy for a direct ambient path without a selected waypoint |
+| Require the selected waypoint | ztunnel workload-selector ALLOW permitting only the captured waypoint service account principal |
 | Require mutual TLS | Workload-selector STRICT PeerAuthentication |
 | Allow HTTP methods | Service-targeted AuthorizationPolicy on an Istio waypoint |
+| Require a JWT | Service-targeted RequestAuthentication plus AuthorizationPolicy on an Istio waypoint |
 | Balance between Services | Service-parent HTTPRoute with explicit backend weights |
 | Request timeout | HTTPRoute request timeout |
+| Retry failed requests | HTTPRoute `retry.attempts`, only with an Istio waypoint and the field present in the captured installed CRD schema |
+| Mirror requests | HTTPRoute RequestMirror to another captured Service, on an Istio waypoint |
+| Route by HTTP header | Exact HTTPRoute header matches, on an Istio or agentgateway waypoint with captured schema evidence |
 | Endpoint load balancing | Istio-waypoint DestinationRule: ROUND_ROBIN, LEAST_REQUEST or RANDOM |
 | Eject unhealthy endpoints | Istio-waypoint DestinationRule outlier detection |
 | Region failover | DestinationRule locality failover with outlier detection; requires captured endpoint regions |
@@ -249,6 +261,13 @@ Options are task-specific:
 - Timeouts expose request and optional backend timeouts, including supported zero-duration semantics.
 - Outlier detection exposes failure threshold, check interval, base ejection duration and maximum ejection percentage.
 - Local rate limiting exposes request count, time unit and independent burst capacity. Existing bucket keys and other fields are preserved when editing.
+- Require waypoint reads the waypoint's actual Pod service account and the mesh trust domain from captured mesh configuration or identities. Missing or conflicting identity evidence keeps the task unavailable. The policy is workload-wide and other ALLOW policies remain additive.
+- JWT configuration takes an issuer, either an HTTPS JWKS URI or inline public JWKS, and explicit `issuer/subject` or `issuer/*` request principals. Optional paths, methods and exact header values narrow the ALLOW rule. RequestAuthentication validates presented tokens; the accompanying authorization requires a matching principal. A snapshot cannot verify a request's signature, claims or JWKS retrieval.
+- Header routing takes an exact header name/value JSON object and a captured backend Service port. All supplied headers must match. A catch-all rule retains the selected Service's original backend for non-matching requests. Mirroring copies requests to another captured Service and ignores its response.
+
+New captures retain the HTTPRoute CRD schema so these tasks can distinguish installed fields from API discovery alone. Older captures without that schema leave schema-dependent tasks unavailable. Retries remain unavailable on the tested kind clusters because their installed HTTPRoute schemas omit `retry`. Agentgateway JWT, mirroring and retry mappings are marked **UNVERIFIED** and unavailable until the generator and waypoint behaviour are verified; installing an Enterprise CRD does not enable an unverified mapping.
+
+Traffic's **To allow it → Review in Ambient wizard** opens the same Review step with a server-regenerated repair, not arbitrary pasted YAML. Generated ztunnel repairs include numeric destination workload ports; waypoint repairs include Service ports and paths. **Edit options** can narrow the repair to captured ports and selected waypoint paths. ztunnel path restrictions are rejected. The normal explicit-context dry-run, Apply confirmation and undo controls follow.
 
 These controls have different semantics:
 
@@ -290,6 +309,8 @@ In live mode the wizard uses the kubeconfig passed to `--kubeconfig`, but still 
 ## Validation
 
 `python3 test/e2e/ambient.py --context kind-mesh1` creates a dedicated namespace on an existing local kind ambient cluster. It proves rejected-parent diagnosis, weighted routing, a real timeout response, L7 method enforcement, ztunnel access control, unhealthy endpoint ejection and, when an agentgateway waypoint class is installed, actual HTTP 429 responses. It applies the wizard's generated plans and uses the wizard's cleanup endpoint, then deletes its namespace and reads the state back. It does not change existing application namespaces.
+
+The P1 run on 18 October 2026 passed 45 checks on `kind-mesh1`. It additionally proved waypoint-only access with a blocked direct path, explainer repair apply/undo with restricted paths, exact header routing with a default backend on Istio and Enterprise agentgateway waypoints, request mirroring observed in backend logs, and JWT enforcement for valid, missing and invalid tokens plus path, method and header restrictions. It checked copyable runbook commands and refusal of retries absent from the installed schema. Experimental retries and agentgateway JWT/mirroring/retry behaviour were not exercised and remain unverified on these clusters.
 
 The expanded live run on 17 October 2026 passed all 29 checks with Istio 1.30.4 and Enterprise agentgateway 2026.9.2. It additionally proved existing-route edits/undo, equal/default weighting, selector remediation, scaling, existing waypoint enrolment and a new waypoint shared by two explicitly selected namespaces. Browser testing covered typeahead selection, map-to-editor navigation, actual editing and undo, endpoint recovery and namespace-level waypoint deployment. Other installed versions must pass their own API server dry-run before a test plan can be applied.
 
