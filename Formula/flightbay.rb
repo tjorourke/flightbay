@@ -2,28 +2,28 @@
 class Flightbay < Formula
   desc "Capture and investigate redacted Kubernetes snapshots"
   homepage "https://github.com/tjorourke/flightbay"
-  version "0.4.0"
+  version "0.4.1"
   license "Apache-2.0"
 
   depends_on :macos
 
   on_arm do
-    url "https://github.com/tjorourke/flightbay/releases/download/v0.4.0/flightbay_0.4.0_darwin_arm64.tar.gz"
-    sha256 "bda6a901739af245828f55595a4caa0d28e029da99110a0c36c8f33cad62515d"
+    url "https://github.com/tjorourke/flightbay/releases/download/v0.4.1/flightbay_0.4.1_darwin_arm64.tar.gz"
+    sha256 "b05da608cac2938270e5288342e1e866b2384bd5245f5e17e0d2b1e6279016aa"
 
     resource "flightbay-desk" do
-      url "https://github.com/tjorourke/flightbay/releases/download/v0.4.0/flightbay-desk_0.4.0_darwin_arm64.tar.gz"
-      sha256 "533306798b346ce237602f8d08c3ffce394d8b353f3c0f87630b3026e9ae2edc"
+      url "https://github.com/tjorourke/flightbay/releases/download/v0.4.1/flightbay-desk_0.4.1_darwin_arm64.tar.gz"
+      sha256 "4883b1e1f01e437885fe18ee7e02079012ce4feb8fa00a7ddccedfae45a009bf"
     end
   end
 
   on_intel do
-    url "https://github.com/tjorourke/flightbay/releases/download/v0.4.0/flightbay_0.4.0_darwin_amd64.tar.gz"
-    sha256 "287c2089539165f7143ff4a0643caf6d77d4b2e696c23983cb95f36ccac0ca86"
+    url "https://github.com/tjorourke/flightbay/releases/download/v0.4.1/flightbay_0.4.1_darwin_amd64.tar.gz"
+    sha256 "acf818363d8eb43b8c532415324cf48c3d822529a6983e3d389b47b39182b54e"
 
     resource "flightbay-desk" do
-      url "https://github.com/tjorourke/flightbay/releases/download/v0.4.0/flightbay-desk_0.4.0_darwin_amd64.tar.gz"
-      sha256 "e77578e14e14538d3fef1a8444cbddd89d6eb5fdef42df37d1c6d01a0cee71a8"
+      url "https://github.com/tjorourke/flightbay/releases/download/v0.4.1/flightbay-desk_0.4.1_darwin_amd64.tar.gz"
+      sha256 "bb38480043b25cafbeb953dca4bc3a9e7e203e2b39077f926a9f628238194d26"
     end
   end
 
