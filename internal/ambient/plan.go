@@ -25,6 +25,15 @@ type Backend struct {
 	Weight int    `json:"weight"`
 }
 type Request struct {
+	Explain            *ExplainRequest   `json:"explain,omitempty"`
+	Paths              []string          `json:"paths,omitempty"`
+	Headers            map[string]string `json:"headers,omitempty"`
+	Issuer             string            `json:"issuer,omitempty"`
+	JWKSURI            string            `json:"jwksUri,omitempty"`
+	JWKS               string            `json:"jwks,omitempty"`
+	RequestPrincipals  []string          `json:"requestPrincipals,omitempty"`
+	Mirror             *Backend          `json:"mirror,omitempty"`
+	RetryAttempts      int               `json:"retryAttempts,omitempty"`
 	Scorecard          *ScorecardRequest `json:"scorecard,omitempty"`
 	Parent             *Ref              `json:"parent,omitempty"`
 	ParentSection      string            `json:"parentSection,omitempty"`
@@ -64,6 +73,13 @@ type Request struct {
 	ToRegion           string            `json:"toRegion,omitempty"`
 }
 
+type ExplainRequest struct {
+	From  string   `json:"from"`
+	To    string   `json:"to"`
+	Ports []string `json:"ports,omitempty"`
+	Paths []string `json:"paths,omitempty"`
+}
+
 type ScorecardRequest struct {
 	Check      string   `json:"check"`
 	Target     Ref      `json:"target"`
@@ -74,6 +90,9 @@ type ScorecardRequest struct {
 // as ambient plans. The server supplies the policy from a verified check recipe.
 func ReviewedPolicyPlan(req Request, target *store.Object, policy map[string]any, notes ...string) (*Plan, error) {
 	p := basePlan(req, target)
+	if target.Kind == "Service" {
+		p.ServiceUID = S(Path(target.Obj, "metadata", "uid"))
+	}
 	p.Objects = append(p.Objects, policy)
 	p.Notes = append(p.Notes, notes...)
 	return finishPlan(p)
@@ -113,6 +132,11 @@ func Capabilities(ws *store.Workspace, c, ns, service string) []Task {
 	selector := len(M(Path(svc.Obj, "spec", "selector"))) > 0
 	globalSupported, globalReason := globalServiceSupport(ws, svc, env)
 	out := []Task{
+		{"require-waypoint", "Require the selected waypoint", "L4 ztunnel", security && selector && waypointPrincipal(ws, svc) != "", "Allows only the captured waypoint service account. Requires an unambiguous captured identity and trust domain. Existing ALLOW policies remain additive."},
+		{"jwt", "Require a JWT", "L7 Istio waypoint", istio && security && hasResource(ws, c, "security.istio.io", "requestauthentications"), "RequestAuthentication and requestPrincipals authorization on the Service. Agentgateway JWT generation is UNVERIFIED and unavailable: no tested installed-schema policy mapping is established."},
+		{"retries", "Retry failed requests", "L7 Istio waypoint", istio && routeField(ws, c, "retry", "attempts"), "Requires the experimental HTTPRoute retry.attempts field in the captured installed CRD schema and an Istio waypoint. Otherwise unavailable; agentgateway support is UNVERIFIED."},
+		{"mirroring", "Mirror requests", "L7 Istio waypoint", istio && routeField(ws, c, "filters", "requestMirror", "backendRef", "name"), "HTTPRoute RequestMirror to a captured Service. Agentgateway waypoint support is UNVERIFIED and unavailable."},
+		{"header-routing", "Route by HTTP header", "L7 waypoint", (istio || agent) && routeField(ws, c, "matches", "headers", "value"), "Exact HTTPRoute header matches. Requires the captured installed HTTPRoute schema."},
 		{"global-service", "Publish as a global Service", "Multicluster", globalSupported, globalReason},
 		{"l4-default-deny", "Deny by default for the selected workload", "L4 ztunnel", security && selector, "Creates an empty ALLOW policy on the Service's workload selector. Other ALLOW policies are additive; this does not override them."},
 		{"l4-allow-namespace", "Allow calls from a namespace", "L4 ztunnel", security && selector && wpName == "", "For direct ambient traffic without a selected waypoint. Behind a waypoint, ztunnel sees the waypoint identity; use an L7 policy for original callers."},
@@ -133,6 +157,8 @@ func Capabilities(ws *store.Workspace, c, ns, service string) []Task {
 		}
 		why := ""
 		switch out[i].ID {
+		case "require-waypoint", "jwt", "retries", "mirroring", "header-routing":
+			continue // these tasks describe their evidence and implementation prerequisites
 		case "global-service":
 			continue // the support check already supplied the exact prerequisite
 		case "service-failover":
@@ -222,6 +248,9 @@ func Generate(ws *store.Workspace, req Request) (*Plan, error) {
 	detected := DetectEnvironment(ws, req.Cluster, svc)
 	inputs["implementation"] = detected.Selected
 	inputs["policyAPI"] = detected.PolicyAPI
+	if selected["require-waypoint"] {
+		inputs["waypointPrincipal"] = waypointPrincipal(ws, svc)
+	}
 	if n := ws.Get(req.Cluster, "", "namespaces", "", req.Namespace); n != nil {
 		inputs["namespaceLabels"] = n.Labels()
 	}
@@ -253,6 +282,11 @@ func Generate(ws *store.Workspace, req Request) (*Plan, error) {
 	if selected["l4-default-deny"] {
 		obj("security.istio.io/v1", "AuthorizationPolicy", "-deny", map[string]any{"selector": sel, "action": "ALLOW"})
 	}
+	if selected["require-waypoint"] {
+		p.Evidence = append(p.Evidence, waypointIdentityEvidence(ws, svc)...)
+		obj("security.istio.io/v1", "AuthorizationPolicy", "-waypoint", map[string]any{"selector": sel, "action": "ALLOW", "rules": []any{map[string]any{"from": []any{map[string]any{"source": map[string]any{"principals": []string{waypointPrincipal(ws, svc)}}}}}}})
+		p.Notes = append(p.Notes, "This workload-wide ALLOW admits only the waypoint identity unless another ALLOW policy admits other callers. Review all additive policies. Direct Pod-IP callers will be refused.")
+	}
 	if selected["l4-allow-namespace"] {
 		if req.SourceNamespace == "" || ws.Get(req.Cluster, "", "namespaces", "", req.SourceNamespace) == nil {
 			return nil, fmt.Errorf("choose a captured source namespace")
@@ -267,6 +301,11 @@ func Generate(ws *store.Workspace, req Request) (*Plan, error) {
 		obj("security.istio.io/v1", "PeerAuthentication", "-mtls", map[string]any{"selector": sel, "mtls": map[string]any{"mode": mode}})
 	}
 	target := []any{map[string]any{"group": "", "kind": "Service", "name": req.Service}}
+	if selected["jwt"] {
+		if err := generateJWT(req, target, obj); err != nil {
+			return nil, err
+		}
+	}
 	if selected["methods"] {
 		valid := map[string]bool{}
 		for _, m := range []string{"GET", "HEAD", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "CONNECT", "TRACE"} {
@@ -286,7 +325,7 @@ func Generate(ws *store.Workspace, req Request) (*Plan, error) {
 		}
 		obj("security.istio.io/v1", "AuthorizationPolicy", "-methods", map[string]any{"targetRefs": target, "action": action, "rules": []any{map[string]any{"to": []any{map[string]any{"operation": map[string]any{"methods": req.Methods}}}}}})
 	}
-	if selected["weighted-routing"] || selected["timeouts"] {
+	if selected["weighted-routing"] || selected["timeouts"] || selected["retries"] || selected["mirroring"] || selected["header-routing"] {
 		backends := []any{map[string]any{"name": req.Service, "port": req.Port, "weight": 100}}
 		if selected["weighted-routing"] {
 			mode := defaultString(req.TrafficMode, "weighted")
@@ -321,6 +360,9 @@ func Generate(ws *store.Workspace, req Request) (*Plan, error) {
 			}
 		}
 		rule := map[string]any{"backendRefs": backends}
+		if err := routeOptions(ws, req, selected, rule); err != nil {
+			return nil, err
+		}
 		if selected["timeouts"] {
 			d, e := time.ParseDuration(req.Timeout)
 			if e != nil || d < 0 || d > 5*time.Minute {
@@ -335,7 +377,12 @@ func Generate(ws *store.Workspace, req Request) (*Plan, error) {
 				M(rule["timeouts"])["backendRequest"] = req.BackendTimeout
 			}
 		}
-		obj("gateway.networking.k8s.io/v1", "HTTPRoute", "-route", map[string]any{"parentRefs": []any{map[string]any{"group": "", "kind": "Service", "name": req.Service, "port": req.Port}}, "rules": []any{rule}})
+		rules := []any{rule}
+		if selected["header-routing"] {
+			rules = append(rules, map[string]any{"backendRefs": []any{map[string]any{"name": req.Service, "port": req.Port}}})
+			p.Notes = append(p.Notes, "Header matches use the chosen backend. A separate catch-all rule sends non-matching requests to the selected Service's original endpoints. Review existing route precedence before applying.")
+		}
+		obj("gateway.networking.k8s.io/v1", "HTTPRoute", "-route", map[string]any{"parentRefs": []any{map[string]any{"group": "", "kind": "Service", "name": req.Service, "port": req.Port}}, "rules": rules})
 		for _, r := range ws.List(req.Cluster, GatewayGroup, "httproutes", req.Namespace, nil) {
 			if related(r, svc, "", "") {
 				p.Notes = append(p.Notes, "Existing route "+r.Namespace+"/"+r.Name+" may overlap this test route. Acceptance does not prove this route wins route precedence.")

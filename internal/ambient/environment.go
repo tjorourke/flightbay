@@ -75,7 +75,7 @@ func DetectEnvironment(ws *store.Workspace, c string, target *store.Object) Envi
 			low := strings.ToLower(image)
 			if strings.Contains(low, "/pilot:") || strings.Contains(low, "/ztunnel:") {
 				if strings.Contains(low, "soloio") || strings.Contains(low, "-solo") {
-					istioEnt = true
+					istioEnt = hasResource(ws, c, "admin.solo.io", "segments")
 					e.Evidence = append(e.Evidence, "Istio image: "+image)
 				} else if strings.HasPrefix(low, "istio/") || strings.HasPrefix(low, "docker.io/istio/") {
 					istioOSS = true
@@ -98,6 +98,9 @@ func DetectEnvironment(ws *store.Workspace, c string, target *store.Object) Envi
 			return
 		}
 		product, edition := classFamily(name, controller)
+		if product == "agentgateway" && edition == "enterprise" && !hasResource(ws, c, "enterpriseagentgateway.solo.io", "enterpriseagentgatewaypolicies") {
+			return
+		}
 		if product == "istio" {
 			edition = istioEdition
 		}
@@ -205,7 +208,7 @@ func DetectEnvironment(ws *store.Workspace, c string, target *store.Object) Envi
 	e.Evidence = append(e.Evidence, "CRDs can coexist without active controllers. The selected waypoint/controller determines policy YAML; API-server dry-run still validates the installed schema.")
 	e.TaskDocs = map[string][]DocLink{}
 	e.TaskDocs["global-service"] = TaskDocs(e, "global-service")
-	for _, id := range []string{"l4-default-deny", "l4-allow-namespace", "strict-mtls", "methods", "weighted-routing", "timeouts", "load-balancing", "endpoint-failover", "locality-failover", "rate-limit", "service-failover", "global-rate-limit", "waypoint", "enrol-namespace", "endpoints", "route-parent", "service-selector", "service-port", "scale-workload"} {
+	for _, id := range []string{"require-waypoint", "jwt", "retries", "mirroring", "header-routing", "l4-default-deny", "l4-allow-namespace", "strict-mtls", "methods", "weighted-routing", "timeouts", "load-balancing", "endpoint-failover", "locality-failover", "rate-limit", "service-failover", "global-rate-limit", "waypoint", "enrol-namespace", "endpoints", "route-parent", "service-selector", "service-port", "scale-workload"} {
 		e.TaskDocs[id] = TaskDocs(e, id)
 	}
 	e.ClassDocs = map[string][]DocLink{}

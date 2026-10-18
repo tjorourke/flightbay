@@ -28,7 +28,7 @@ Cluster-scoped objects (nodes, CRDs, ClusterRoles) need `--cluster-scoped`. Prox
 
 | Category | What is read |
 |---|---|
-| objects | `list` of each selected resource type in the selected namespaces, in bounded chunks. CRD definitions of selected custom resources (names and printer columns; the schema is dropped). |
+| objects | `list` of each selected resource type in the selected namespaces, in bounded chunks. CRD definitions of selected custom resources (names and printer columns; only HTTPRoute retains its schema for routing capability checks). |
 | events | `events.k8s.io/v1` and core events in the selected namespaces. |
 | logs | `pods/log` for selected containers with `timestamps=true`, within the time window and per-stream byte limit. |
 | nodes | Node objects: conditions, capacity, versions, taints (needs `--cluster-scoped`). |

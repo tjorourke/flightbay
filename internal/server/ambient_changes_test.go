@@ -130,6 +130,7 @@ func TestGlobalServicePublicationDryRunApplyUndo(t *testing.T) {
 	supportAmbientChanges(t, s, dc)
 	s.WS.AddObjects("captured", bundle.APIResource{Version: "v1", Resource: "pods", Kind: "Pod", Namespaced: true}, []map[string]any{{"metadata": map[string]any{"name": "istiod", "namespace": "istio-system"}, "spec": map[string]any{"containers": []any{map[string]any{"image": "istio/pilot:1.30.4-solo"}}}}}, "pilot")
 	s.WS.AddObjects("captured", bundle.APIResource{Group: "networking.istio.io", Version: "v1", Resource: "serviceentries", Kind: "ServiceEntry", Namespaced: true}, nil, "serviceentries")
+	s.WS.AddObjects("captured", bundle.APIResource{Group: "admin.solo.io", Version: "v1", Resource: "segments", Kind: "Segment"}, nil, "segments")
 	req := ambient.Request{Cluster: "captured", Namespace: "app", Service: "web", Tasks: []string{"global-service"}}
 	token := validateAmbient(t, srv, req)
 	resource := dc.Resource(schema.GroupVersionResource{Version: "v1", Resource: "services"}).Namespace("app")

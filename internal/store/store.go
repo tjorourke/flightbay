@@ -353,7 +353,8 @@ func (w *Workspace) DiagnosticSummary(cluster string) json.RawMessage {
 	return w.diagnosticSummary[cluster]
 }
 
-// AddCRD records a collected CustomResourceDefinition (schema stripped).
+// AddCRD records a collected CustomResourceDefinition. Most schemas are stripped;
+// HTTPRoute retains its schema for installed routing capability checks.
 func (w *Workspace) AddCRD(cluster string, crd map[string]any) {
 	md, _ := crd["metadata"].(map[string]any)
 	name, _ := md["name"].(string)

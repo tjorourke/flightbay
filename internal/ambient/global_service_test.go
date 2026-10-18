@@ -16,6 +16,7 @@ func TestGlobalPublicationIsScopedAndIdempotent(t *testing.T) {
 	M(pilot["metadata"])["labels"] = map[string]any{"app": "istiod"}
 	put(ws, "", "pods", "Pod", pilot)
 	put(ws, "networking.istio.io", "serviceentries", "ServiceEntry")
+	put(ws, "admin.solo.io", "segments", "Segment")
 	svc := Target(ws, "c", "Service", "app", "front")
 	M(svc.Obj["metadata"])["labels"] = map[string]any{"app": "front", "team": "keep", "solo.io/service-takeover": "true"}
 	before := Copy(svc.Obj)

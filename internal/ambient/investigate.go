@@ -32,16 +32,17 @@ type Evidence struct {
 	Value string `json:"value"`
 }
 type Step struct {
-	SuggestedFix *FixGuide     `json:"suggestedFix,omitempty"`
-	Docs         []DocLink     `json:"docs"`
-	ID           string        `json:"id"`
-	Title        string        `json:"title"`
-	State        string        `json:"state"` // pass, fail, warning, unknown, na
-	Detail       string        `json:"detail"`
-	NextStep     string        `json:"nextStep,omitempty"`
-	Evidence     []Evidence    `json:"evidence,omitempty"`
-	FixYAML      string        `json:"fixYaml,omitempty"`
-	Actions      []Remediation `json:"actions,omitempty"`
+	Runbook      []RunbookCommand `json:"runbook,omitempty"`
+	SuggestedFix *FixGuide        `json:"suggestedFix,omitempty"`
+	Docs         []DocLink        `json:"docs"`
+	ID           string           `json:"id"`
+	Title        string           `json:"title"`
+	State        string           `json:"state"` // pass, fail, warning, unknown, na
+	Detail       string           `json:"detail"`
+	NextStep     string           `json:"nextStep,omitempty"`
+	Evidence     []Evidence       `json:"evidence,omitempty"`
+	FixYAML      string           `json:"fixYaml,omitempty"`
+	Actions      []Remediation    `json:"actions,omitempty"`
 }
 type Remediation struct {
 	ID     string `json:"id"`
@@ -234,6 +235,13 @@ func Investigate(ws *store.Workspace, c, ns, name, routeName string) (*Investiga
 		add(r, "pod-"+p.Name, "Workload "+p.Name, state, detail, evidence(p, "metadata.labels", p.Labels()), evidence(p, "status.conditions", Path(p.Obj, "status", "conditions")))
 	}
 	wpNS, wpName, wp := Waypoint(ws, svc)
+	if wpName != "" {
+		conditions(r, svc, "status", []string{"istio.io/WaypointBound"}, "waypoint-bound")
+		add(r, "require-waypoint", "Waypoint bypass protection", "warning", "A waypoint binding selects a path, but does not prevent direct workload traffic. Review an L4 ALLOW restricted to the waypoint service account alongside all existing additive ALLOW policies.", evidence(svc, "spec.selector", sel))
+		if waypointPrincipal(ws, svc) != "" && len(sel) > 0 && hasResource(ws, c, "security.istio.io", "authorizationpolicies") {
+			r.Steps[len(r.Steps)-1].Actions = []Remediation{{ID: "require-waypoint", Label: "Require waypoint in wizard", Detail: "Review a workload-selector ALLOW for the captured waypoint identity."}}
+		}
+	}
 	r.Waypoint = wpName
 	if wpName == "" {
 		add(r, "waypoint", "Waypoint selection", "warning", "No waypoint is selected for this Service. L4 traffic can still work, but Service-scoped L7 controls need a waypoint.", evidence(svc, "metadata.labels", svc.Labels()))
@@ -393,6 +401,7 @@ func Investigate(ws *store.Workspace, c, ns, name, routeName string) (*Investiga
 			}
 		}
 	}
+	inspectJWT(ws, r, svc, wpNS, wpName)
 	for _, p := range ws.List(c, "security.istio.io", "peerauthentications", ns, nil) {
 		selector := M(Path(p.Obj, "spec", "selector", "matchLabels"))
 		if len(selector) > 0 && !matches(selector, stringMap(sel)) {
@@ -449,6 +458,11 @@ func Investigate(ws *store.Workspace, c, ns, name, routeName string) (*Investiga
 			state, detail = "warning", "Waypoint diagnostics are available in Proxy configs. Compare delivered routes and xDS sync with this configuration; resource acceptance alone is not proof of dataplane delivery."
 		}
 		add(r, "dataplane", "Delivered proxy configuration", state, detail)
+	}
+	for i := range r.Steps {
+		if r.Steps[i].State != "pass" && r.Steps[i].State != "na" {
+			r.Steps[i].Runbook = Runbook(ws, svc)
+		}
 	}
 	return r, nil
 }

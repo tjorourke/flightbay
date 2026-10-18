@@ -35,12 +35,16 @@ func TaskDocs(e Environment, id string) []DocLink {
 	switch id {
 	case "global-service":
 		return []DocLink{{"Publish services across clusters", enterpriseIstioDocs + "multicluster/multi-apps/multi-apps/", "Enterprise Istio"}, {"Service DNS", kubeDocs + "concepts/services-networking/dns-pod-service/", "Kubernetes"}}
-	case "l4-default-deny", "l4-allow-namespace":
+	case "l4-default-deny", "l4-allow-namespace", "require-waypoint":
 		return istioGuide(e, "ambient/usage/l4-policy/", "security/authorization/ztunnel-authz/", "L4 authorization")
 	case "strict-mtls":
 		return istioGuide(e, "ambient/usage/verify-mtls-enabled/", "security/verify-mtls/", "Ambient mutual TLS")
 	case "methods":
 		return istioGuide(e, "ambient/usage/l7-features/", "security/authorization/waypoint-authz/", "L7 waypoint authorization")
+	case "jwt":
+		return []DocLink{{"JWT validation", istioDocs + "reference/config/security/request_authentication/", "Istio shared API"}, {"JWT authorization", istioDocs + "tasks/security/authorization/authz-jwt/", "Istio OSS"}}
+	case "retries", "mirroring", "header-routing":
+		return []DocLink{{"HTTPRoute API", gatewayDocs + "reference/api-spec/1.4/spec/#httprouterule", "Gateway API"}, {"Waypoint L7 support", istioDocs + "ambient/usage/l7-features/", "Istio OSS"}}
 	case "weighted-routing":
 		return []DocLink{{"Weighted backend routing", gatewayDocs + "guides/user-guides/traffic-splitting/", "Gateway API"}}
 	case "timeouts":

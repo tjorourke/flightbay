@@ -17,13 +17,14 @@ const (
 
 // hop is the result of evaluating source -> destination.
 type hop struct {
-	verdict string
-	methods []string // nil: every method; non-nil: only these (L7 rule at a waypoint)
-	paths   []string
-	layer   string   // "L4" or "L7"
-	reasons []string // why, one line each, naming the policies
-	conds   []string // conditions we could not evaluate (JWT claims, when: clauses)
-	steps   []Step   // the same decision as a trace, one step per enforcement point
+	requestDependent bool
+	verdict          string
+	methods          []string // nil: every method; non-nil: only these (L7 rule at a waypoint)
+	paths            []string
+	layer            string   // "L4" or "L7"
+	reasons          []string // why, one line each, naming the policies
+	conds            []string // conditions we could not evaluate (JWT claims, when: clauses)
+	steps            []Step   // the same decision as a trace, one step per enforcement point
 }
 
 func (h *hop) add(r string) { h.reasons = append(h.reasons, r) }
@@ -272,7 +273,9 @@ func sourceMatches(from []any, src *workload) (match, unknown bool, cond string)
 	if len(from) == 0 {
 		return true, false, ""
 	}
+	conditional, condition := false, ""
 	for _, f := range from {
+		unknown, cond = false, ""
 		so := m(m(f)["source"])
 		ok := true
 		p := src.principal()
@@ -288,17 +291,21 @@ func sourceMatches(from []any, src *workload) (match, unknown bool, cond string)
 		if v := l(so["notNamespaces"]); len(v) > 0 {
 			ok = ok && !(src.inMesh && anyMatch(v, func(x string) bool { return globMatch(x, src.ns) }))
 		}
-		if len(l(so["requestPrincipals"])) > 0 {
-			cond = "needs a JWT (requestPrincipals)"
+		if len(l(so["requestPrincipals"])) > 0 || len(l(so["notRequestPrincipals"])) > 0 {
+			unknown = true
+			cond = "JWT requestPrincipal is request-dependent (requestPrincipals/notRequestPrincipals); a workload identity is not a validated JWT"
 		}
 		if len(l(so["ipBlocks"])) > 0 || len(l(so["remoteIpBlocks"])) > 0 {
 			unknown = true
 		}
 		if ok {
-			return true, unknown, cond
+			if !unknown {
+				return true, false, ""
+			}
+			conditional, condition = true, cond
 		}
 	}
-	return false, unknown, cond
+	return conditional, conditional, condition
 }
 
 type opMatch struct {
@@ -422,8 +429,16 @@ func evalAuthz(pols []*store.Object, src *workload, ports []string, atZtunnel bo
 		case "DENY":
 			for _, r := range l(sp["rules"]) {
 				rm := m(r)
-				sm, _, _ := sourceMatches(l(rm["from"]), src)
+				sm, unk, cond := sourceMatches(l(rm["from"]), src)
 				om := operationMatches(l(rm["to"]), ports)
+				if !sm || !om.match {
+					continue
+				}
+				if !atZtunnel && (unk || len(l(rm["when"])) > 0) {
+					h.requestDependent = true
+					h.conds = append(h.conds, "request-dependent DENY at "+where+": "+cond)
+					continue
+				}
 				if sm && om.match && (atZtunnel || !om.l7 || len(om.methods) == 0) {
 					h.add("denied by DENY policy " + ap.Namespace + "/" + ap.Name + " at the " + where)
 					return false
@@ -439,6 +454,7 @@ func evalAuthz(pols []*store.Object, src *workload, ports []string, atZtunnel bo
 		return true
 	}
 	matched := false
+	unconditional := false
 	var methods []string
 	anyMethod := false
 	for _, ap := range allows {
@@ -456,14 +472,22 @@ func evalAuthz(pols []*store.Object, src *workload, ports []string, atZtunnel bo
 			if !om.match {
 				continue
 			}
-			if atZtunnel && om.l7 {
+			if atZtunnel && (om.l7 || cond != "") {
 				h.conds = append(h.conds, "ALLOW policy "+ap.Namespace+"/"+ap.Name+" has HTTP rules but is enforced by ztunnel, where they match nothing")
 				continue
 			}
 			if cond != "" {
 				h.conds = append(h.conds, cond+" ("+ap.Namespace+"/"+ap.Name+")")
 			}
+			if unk || cond != "" {
+				h.conds = append(h.conds, "request-dependent ALLOW at "+where)
+			} else if len(l(rm["when"])) == 0 {
+				unconditional = true
+			} else {
+				h.conds = append(h.conds, "request-dependent when conditions at "+where)
+			}
 			matched = true
+			h.paths = union(h.paths, om.paths)
 			if om.methods == nil {
 				anyMethod = true
 			} else {
@@ -477,6 +501,9 @@ func evalAuthz(pols []*store.Object, src *workload, ports []string, atZtunnel bo
 		h.add("no ALLOW rule at the " + where + " admits " + src.principal() + " (" + names(allows) + ")")
 		return false
 	}
+	if matched && !unconditional {
+		h.requestDependent = true
+	}
 	if !atZtunnel && !anyMethod {
 		h.methods, h.layer = methods, "L7"
 	}
@@ -489,7 +516,9 @@ func (c *cluster) evalHop(src *workload, sv *service) hop {
 	h := hop{layer: "L4"}
 	if len(sv.backends) == 0 {
 		if wp := c.waypointFor(sv); wp != nil && sv.waypoint != "" {
-			return c.evalWaypointOnly(src, sv, wp)
+			h = c.evalWaypointOnly(src, sv, wp)
+			c.jwtStep(sv, &h)
+			return h
 		}
 		h.verdict = Unknown
 		h.add("no captured pods behind the Service")
@@ -575,12 +604,20 @@ func (c *cluster) evalHop(src *workload, sv *service) hop {
 		// the reasons evalAuthz added as the detail.
 		authzStep := func(point string, pols []*store.Object, atZtunnel bool, where string) bool {
 			n := len(bh.reasons)
-			res := evalAuthz(pols, src, ports, atZtunnel, &bh, where)
+			caller := src
+			if atZtunnel && wp != nil {
+				caller = wp
+			}
+			res := evalAuthz(pols, caller, ports, atZtunnel, &bh, where)
 			v := Allowed
 			if !res {
 				v = Denied
 			} else if len(pols) == 0 {
 				v = "none"
+			}
+			if res && bh.requestDependent {
+				v = Unknown
+				unknown = true
 			}
 			detail := strings.Join(bh.reasons[n:], "; ")
 			if len(pols) == 0 {
@@ -628,6 +665,7 @@ func (c *cluster) evalHop(src *workload, sv *service) hop {
 		}
 		if ok {
 			verdict = Allowed
+			h.requestDependent = bh.requestDependent
 			h.reasons, h.methods, h.paths, h.layer, h.conds, h.steps = bh.reasons, bh.methods, bh.paths, bh.layer, bh.conds, bh.steps
 			break
 		}
@@ -639,8 +677,12 @@ func (c *cluster) evalHop(src *workload, sv *service) hop {
 	}
 	if verdict == Allowed && unknown {
 		h.conds = append(h.conds, "some policy types were not captured")
+		if h.requestDependent {
+			verdict = Unknown
+		}
 	}
 	h.verdict = verdict
+	c.jwtStep(sv, &h)
 	return h
 }
 

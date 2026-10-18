@@ -494,8 +494,8 @@ var crdGVR = schema.GroupVersionResource{Group: "apiextensions.k8s.io", Version:
 
 // collectCRDs fetches the definition of each selected custom resource type, so
 // the desk can serve it and print the same columns kubectl would. Only the
-// selected types are read, one GET each; the schema is dropped because it is
-// large and adds nothing for an investigation.
+// selected types are read, one GET each. Most schemas are dropped; HTTPRoute's
+// schema is retained to establish installed Ambient routing capabilities.
 func (c *Collector) collectCRDs(ctx context.Context, cluster string, cl Clients, selected []bundle.APIResource) error {
 	if cl.Dynamic == nil {
 		return nil
@@ -528,15 +528,20 @@ func (c *Collector) collectCRDs(ctx context.Context, cluster string, cl Clients,
 }
 
 // SlimCRD keeps the parts of a CRD the desk uses: names, scope and the
-// per-version printer columns.
+// per-version printer columns, plus HTTPRoute's capability schema.
 func SlimCRD(obj map[string]any) map[string]any {
 	md, _ := obj["metadata"].(map[string]any)
 	spec, _ := obj["spec"].(map[string]any)
 	var versions []any
 	vs, _ := spec["versions"].([]any)
+	// HTTPRoute capabilities depend on the installed channel, not discovery alone.
+	keepSchema := md["name"] == "httproutes.gateway.networking.k8s.io"
 	for _, v := range vs {
 		vm, _ := v.(map[string]any)
 		keep := map[string]any{}
+		if keepSchema {
+			keep["schema"] = vm["schema"]
+		}
 		for _, k := range []string{"name", "served", "storage", "deprecated", "deprecationWarning", "additionalPrinterColumns"} {
 			if x, ok := vm[k]; ok {
 				keep[k] = x
@@ -556,7 +561,7 @@ func SlimCRD(obj map[string]any) map[string]any {
 		"apiVersion": "apiextensions.k8s.io/v1", "kind": "CustomResourceDefinition",
 		"metadata":    map[string]any{"name": md["name"], "creationTimestamp": md["creationTimestamp"], "uid": md["uid"], "labels": md["labels"], "annotations": ann},
 		"spec":        map[string]any{"group": spec["group"], "names": spec["names"], "scope": spec["scope"], "versions": versions},
-		"x-flightbay": map[string]any{"schemaCollected": false},
+		"x-flightbay": map[string]any{"schemaCollected": keepSchema},
 	}
 }
 

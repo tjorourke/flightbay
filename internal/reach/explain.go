@@ -1,11 +1,14 @@
 package reach
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/tjorourke/flightbay/internal/store"
+	"sigs.k8s.io/yaml"
 )
 
 // Explanation answers "why was this allowed or denied?" for one source and
@@ -14,6 +17,7 @@ import (
 // logs saw. It runs the Agent reach evaluator, so the answer matches the
 // reach report and the traffic map.
 type Explanation struct {
+	FixScope   *RepairScope `json:"fixScope,omitempty"`
 	Cluster    string       `json:"cluster"`
 	From       ExplainEnd   `json:"from"`
 	To         ExplainEnd   `json:"to"`
@@ -28,6 +32,50 @@ type Explanation struct {
 	Fix        string       `json:"fix,omitempty"`
 	FixNote    string       `json:"fixNote,omitempty"`
 	Advice     []string     `json:"advice,omitempty"`
+}
+
+type RepairScope struct {
+	Ports []string `json:"ports,omitempty"`
+	Paths []string `json:"paths,omitempty"`
+}
+
+// ExplainScoped narrows generated authorization to explicit ports and paths.
+// It regenerates the repair from evidence rather than accepting client YAML.
+func ExplainScoped(ws *store.Workspace, cluster, from, to string, scope RepairScope) (Explanation, error) {
+	x, err := Explain(ws, cluster, from, to)
+	if err != nil || x.FixScope == nil {
+		return x, err
+	}
+	var policy map[string]any
+	if err := yaml.Unmarshal([]byte(x.Fix), &policy); err != nil {
+		return x, err
+	}
+	rule := m(l(path(policy, "spec", "rules"))[0])
+	op := m(m(l(rule["to"])[0])["operation"])
+	if len(scope.Ports) > 0 {
+		for _, port := range scope.Ports {
+			if !has(x.FixScope.Ports, port) {
+				return Explanation{}, fmt.Errorf("repair port %q is not a captured destination port", port)
+			}
+		}
+		x.FixScope.Ports = scope.Ports
+		op["ports"] = scope.Ports
+	}
+	if len(scope.Paths) > 0 {
+		if len(l(path(policy, "spec", "targetRefs"))) == 0 {
+			return Explanation{}, fmt.Errorf("ztunnel repairs cannot enforce HTTP paths")
+		}
+		for _, p := range scope.Paths {
+			if p != "*" && !strings.HasPrefix(p, "/") {
+				return Explanation{}, fmt.Errorf("repair paths must start with / or be *")
+			}
+		}
+		x.FixScope.Paths = scope.Paths
+		op["paths"] = scope.Paths
+	}
+	b, err := yaml.Marshal(policy)
+	x.Fix = string(b)
+	return x, err
 }
 
 // ExplainEnd is one end of the explanation.
@@ -104,7 +152,81 @@ func Explain(ws *store.Workspace, cluster, from, to string) (Explanation, error)
 	x.Summary = explainSummary(x, h)
 	x.Observed = c.observedPair(ws, src, sv, h.verdict)
 	x.Fix, x.FixNote, x.Advice = explainFix(c, src, sv, h, trustDomain(ws, c.name))
+	if x.Fix != "" {
+		var policy map[string]any
+		if yaml.Unmarshal([]byte(x.Fix), &policy) == nil && s(policy["kind"]) == "AuthorizationPolicy" {
+			ports := []string{}
+			l7 := len(l(path(policy, "spec", "targetRefs"))) > 0
+			for _, p := range sv.ports {
+				v := strconv.Itoa(p.port)
+				if !l7 {
+					v = p.target
+					if _, err := strconv.Atoi(v); err != nil {
+						continue
+					}
+				}
+				ports = union(ports, []string{v})
+			}
+			if len(ports) == 0 {
+				x.Fix = ""
+				x.Advice = append(x.Advice, "Capture numeric workload ports before generating a scoped L4 repair.")
+			} else {
+				op := map[string]any{"ports": ports}
+				x.FixScope = &RepairScope{Ports: ports}
+				if l7 {
+					op["paths"] = []string{"*"}
+					x.FixScope.Paths = []string{"*"}
+					if len(x.Paths) > 0 {
+						op["paths"] = x.Paths
+						x.FixScope.Paths = x.Paths
+					}
+				}
+				if l7 && len(x.Methods) > 0 {
+					op["methods"] = x.Methods
+				}
+				rule := m(l(path(policy, "spec", "rules"))[0])
+				rule["to"] = []any{map[string]any{"operation": op}}
+				b, _ := yaml.Marshal(policy)
+				x.Fix = string(b)
+			}
+		}
+	}
 	return x, nil
+}
+
+func (c *cluster) jwtStep(sv *service, h *hop) {
+	for _, ra := range c.ws.List(c.name, "security.istio.io", "requestauthentications", "", nil) {
+		relevant := false
+		refs := append([]any{}, l(path(ra.Obj, "spec", "targetRefs"))...)
+		if ref := m(path(ra.Obj, "spec", "targetRef")); ref != nil {
+			refs = append(refs, ref)
+		}
+		for _, v := range refs {
+			t := m(v)
+			if (s(t["kind"]) == "Service" && s(t["group"]) == "" && ra.Namespace == sv.ns && s(t["name"]) == sv.name) || (s(t["kind"]) == "Gateway" && s(t["group"]) == "gateway.networking.k8s.io" && ra.Namespace == first(sv.waypointNS, sv.ns) && s(t["name"]) == sv.waypoint) {
+				relevant = true
+			}
+		}
+		if !relevant || sv.waypoint == "" {
+			continue
+		}
+		b, _ := json.Marshal(path(ra.Obj, "spec", "jwtRules"))
+		step := Step{Point: "waypoint JWT authentication", Verdict: Unknown, Detail: "RequestAuthentication " + ra.Namespace + "/" + ra.Name + " validates presented tokens: " + string(b) + ". Token signature and claims are request-dependent; an absent token is permitted unless authorization requires requestPrincipals.", Policies: []Ref{*refOf(ra)}}
+		index := len(h.steps)
+		for i, st := range h.steps {
+			if strings.HasPrefix(st.Point, "waypoint ") && strings.Contains(st.Point, "authorization") {
+				index = i
+				break
+			}
+		}
+		h.steps = append(h.steps, Step{})
+		copy(h.steps[index+1:], h.steps[index:])
+		h.steps[index] = step
+		h.conds = append(h.conds, "JWT signature, issuer/audience and JWKS retrieval cannot be verified from captured configuration")
+		if h.verdict == Allowed {
+			h.verdict = Unknown
+		}
+	}
 }
 
 func explainSummary(x Explanation, h hop) string {
@@ -207,10 +329,13 @@ func explainFix(c *cluster, src *workload, sv *service, h hop, td string) (fix, 
 			if strings.HasPrefix(st.Point, "waypoint") {
 				fmt.Fprintf(&b, "apiVersion: security.istio.io/v1\nkind: AuthorizationPolicy\nmetadata:\n  name: allow-%s\n  namespace: %s\nspec:\n  targetRefs:\n  - kind: Service\n    group: \"\"\n    name: %s\n  action: ALLOW\n  rules:\n  - from:\n    - source:\n        principals: [\"%s\"]\n", src.name, sv.ns, sv.name, principal)
 			} else {
+				if len(sv.backends) == 0 {
+					return "", "", []string{"Capture the destination workloads before generating a selector-based repair."}
+				}
 				dst := sv.backends[0]
 				fmt.Fprintf(&b, "apiVersion: security.istio.io/v1\nkind: AuthorizationPolicy\nmetadata:\n  name: allow-%s\n  namespace: %s\nspec:\n  selector:\n    matchLabels:\n%s  action: ALLOW\n  rules:\n  - from:\n    - source:\n        principals: [\"%s\"]\n", src.name, dst.ns, yamlLabels(sv.selector, 6), principal)
 			}
-			note := "Admits " + src.name + " by its service account, in trust domain " + td + " (read from the access logs)."
+			note := "Admits " + src.name + " by its service account, in trust domain " + td + " (captured mesh configuration or access logs)."
 			if td == "cluster.local" {
 				note = "Admits " + src.name + " by its service account. The trust domain is written as cluster.local; use the mesh's own if it differs."
 			}
@@ -240,6 +365,21 @@ func npAllowYAML(src *workload, sv *service) string {
 // trustDomain reads the mesh trust domain from the SPIFFE IDs in the access
 // logs, and falls back to cluster.local.
 func trustDomain(ws *store.Workspace, cluster string) string {
+	for _, cm := range ws.List(cluster, "", "configmaps", "", nil) {
+		if cm.Name != "istio" && !strings.HasPrefix(cm.Name, "istio-") {
+			continue
+		}
+		raw := s(path(cm.Obj, "data", "mesh"))
+		if raw == "" {
+			continue
+		}
+		var mesh struct {
+			TrustDomain string `json:"trustDomain"`
+		}
+		if yaml.Unmarshal([]byte(raw), &mesh) == nil {
+			return first(mesh.TrustDomain, "cluster.local")
+		}
+	}
 	for _, ae := range ws.AccessEdges(cluster) {
 		for _, id := range []string{ae.SrcIdentity, ae.DstIdentity} {
 			if strings.HasPrefix(id, "spiffe://") {

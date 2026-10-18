@@ -96,7 +96,7 @@ func TestExplainDenied(t *testing.T) {
 	if x.Steps[0].Point != "NetworkPolicy egress from eval-agent" || x.Steps[0].Verdict != "none" {
 		t.Fatalf("steps run in the order traffic meets them: %+v", x.Steps[0])
 	}
-	if !strings.Contains(x.Fix, "principals: [\"cluster.local/ns/agents/sa/eval-agent\"]") || !strings.Contains(x.Fix, "app: \"postgres\"") {
+	if !strings.Contains(x.Fix, "cluster.local/ns/agents/sa/eval-agent") || !strings.Contains(x.Fix, "app: postgres") || !strings.Contains(x.Fix, `"5432"`) {
 		t.Fatalf("fix:\n%s", x.Fix)
 	}
 	if x.Observed == nil || x.Observed.Denied != 1 || !x.Observed.Agrees {

@@ -111,6 +111,11 @@ func NewView(ws *store.Workspace, c, kind, ns, name, route string) (*View, error
 	}
 	v := &View{Investigation: r, Subject: reference(o), Related: []Ref{}, Editable: []Editable{}, Graph: Graph{Root: reference(o), Groups: []GraphGroup{}}}
 	v.Environment = DetectEnvironment(ws, c, o)
+	for i := range v.Steps {
+		if v.Steps[i].State != "pass" && v.Steps[i].State != "na" {
+			v.Steps[i].Runbook = Runbook(ws, o)
+		}
+	}
 	if kind == "Service" {
 		v.Recovery = recovery(ws, o)
 		dns := serviceDNS(ws, o)
@@ -120,6 +125,8 @@ func NewView(ws *store.Workspace, c, kind, ns, name, route string) (*View, error
 		for i := range r.Steps {
 			s := &r.Steps[i]
 			switch {
+			case strings.HasPrefix(s.ID, "waypoint-bound-") && s.State == "fail":
+				s.Actions = append(s.Actions, Remediation{"waypoint", "Review waypoint binding", "Review the rejected binding and captured Gateway before changing it.", nil})
 			case s.ID == "waypoint" && (s.State == "fail" || s.State == "warning" || s.State == "unknown"):
 				s.Actions = append(s.Actions, Remediation{"waypoint", "Set up or select a waypoint", "Bind this Service, its namespace, or selected shared namespaces.", nil})
 			case s.ID == "waypoint-listener" && s.State == "fail":
@@ -282,6 +289,9 @@ func investigateObject(ws *store.Workspace, o *store.Object) *Investigation {
 		add(r, "external-hosts", "External service configuration", "warning", "ServiceEntry represents external destinations, so Kubernetes EndpointSlice readiness is not applicable. Inspect hosts, addresses, resolution, ports and export scope.", evidence(o, "spec", o.Obj["spec"]))
 		wn, wp, gw := Waypoint(ws, o)
 		state := "warning"
+		if wp != "" {
+			conditions(r, o, "status", []string{"istio.io/WaypointBound"}, "waypoint-bound")
+		}
 		if gw != nil {
 			state = "pass"
 		}

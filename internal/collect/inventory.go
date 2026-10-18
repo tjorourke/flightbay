@@ -58,7 +58,7 @@ func InventoryMarkdown() string {
 	w("\nCluster-scoped objects (nodes, CRDs, ClusterRoles) need `--cluster-scoped`. Proxy dumps, control-plane debug output and metrics need `--diagnostics` (or the categories plus `--portforward`).\n\n")
 
 	w("## Categories\n\n| Category | What is read |\n|---|---|\n")
-	w("| objects | `list` of each selected resource type in the selected namespaces, in bounded chunks. CRD definitions of selected custom resources (names and printer columns; the schema is dropped). |\n")
+	w("| objects | `list` of each selected resource type in the selected namespaces, in bounded chunks. CRD definitions of selected custom resources (names and printer columns; only HTTPRoute retains its schema for routing capability checks). |\n")
 	w("| events | `events.k8s.io/v1` and core events in the selected namespaces. |\n")
 	w("| logs | `pods/log` for selected containers with `timestamps=true`, within the time window and per-stream byte limit. |\n")
 	w("| nodes | Node objects: conditions, capacity, versions, taints (needs `--cluster-scoped`). |\n")

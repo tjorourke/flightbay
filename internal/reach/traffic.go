@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tjorourke/flightbay/internal/ambient"
 	"github.com/tjorourke/flightbay/internal/store"
 )
 
@@ -56,33 +57,36 @@ type TNode struct {
 // TEdge is traffic from one workload to one Service (or workload, when it
 // was addressed directly).
 type TEdge struct {
-	ID          string    `json:"id"`
-	Cluster     string    `json:"cluster"`
-	From        string    `json:"from"`
-	To          string    `json:"to"`
-	SrcIdentity string    `json:"srcIdentity,omitempty"`
-	DstIdentity string    `json:"dstIdentity,omitempty"`
-	Connections int       `json:"connections"` // connections, or log lines when ztunnel logs no connection lines for it
-	Requests    int       `json:"requests"`    // HTTP requests (some ztunnel builds log one line each)
-	Denied      int       `json:"denied"`
-	HBONE       int       `json:"hbone"`
-	Plaintext   int       `json:"plaintext"`
-	BytesSent   int64     `json:"bytesSent,omitempty"`
-	BytesRecv   int64     `json:"bytesRecv,omitempty"`
-	Methods     []string  `json:"methods,omitempty"`
-	Paths       []string  `json:"paths,omitempty"`
-	Via         string    `json:"via,omitempty"` // waypoint
-	Verdict     string    `json:"verdict"`       // what policy says: allowed, denied, unknown
-	Layer       string    `json:"layer,omitempty"`
-	Reasons     []string  `json:"reasons,omitempty"`
-	Conditions  []string  `json:"conditions,omitempty"`
-	Policed     bool      `json:"policed"` // some NetworkPolicy or AuthorizationPolicy looks at it
-	TLS         string    `json:"tls"`     // mtls, plaintext, mixed
-	Flags       []string  `json:"flags"`   // plaintext, plaintext-in, unpoliced, denied, mismatch
-	Risk        string    `json:"risk"`    // red, amber, green, grey
-	Why         string    `json:"why"`
-	First       time.Time `json:"first"`
-	Last        time.Time `json:"last"`
+	Runbook          []ambient.RunbookCommand `json:"runbook,omitempty"`
+	ExpectedWaypoint string                   `json:"expectedWaypoint,omitempty"`
+	Bypass           int                      `json:"bypass,omitempty"`
+	ID               string                   `json:"id"`
+	Cluster          string                   `json:"cluster"`
+	From             string                   `json:"from"`
+	To               string                   `json:"to"`
+	SrcIdentity      string                   `json:"srcIdentity,omitempty"`
+	DstIdentity      string                   `json:"dstIdentity,omitempty"`
+	Connections      int                      `json:"connections"` // connections, or log lines when ztunnel logs no connection lines for it
+	Requests         int                      `json:"requests"`    // HTTP requests (some ztunnel builds log one line each)
+	Denied           int                      `json:"denied"`
+	HBONE            int                      `json:"hbone"`
+	Plaintext        int                      `json:"plaintext"`
+	BytesSent        int64                    `json:"bytesSent,omitempty"`
+	BytesRecv        int64                    `json:"bytesRecv,omitempty"`
+	Methods          []string                 `json:"methods,omitempty"`
+	Paths            []string                 `json:"paths,omitempty"`
+	Via              string                   `json:"via,omitempty"` // waypoint
+	Verdict          string                   `json:"verdict"`       // what policy says: allowed, denied, unknown
+	Layer            string                   `json:"layer,omitempty"`
+	Reasons          []string                 `json:"reasons,omitempty"`
+	Conditions       []string                 `json:"conditions,omitempty"`
+	Policed          bool                     `json:"policed"` // some NetworkPolicy or AuthorizationPolicy looks at it
+	TLS              string                   `json:"tls"`     // mtls, plaintext, mixed
+	Flags            []string                 `json:"flags"`   // plaintext, plaintext-in, unpoliced, denied, mismatch
+	Risk             string                   `json:"risk"`    // red, amber, green, grey
+	Why              string                   `json:"why"`
+	First            time.Time                `json:"first"`
+	Last             time.Time                `json:"last"`
 }
 
 const trafficGuide = "https://masterthemesh.com/solo/istio-ambient-authz-kind/"
@@ -119,13 +123,8 @@ func EvaluateTraffic(ws *store.Workspace) Traffic {
 			switch {
 			case sv != nil:
 				dstID = t.serviceNode(nodes, c, sv)
-				if dstW != nil && isWaypoint(dstW) && !has(sv.classes, "waypoint") {
+				if dstW != nil && (isWaypoint(dstW) || (dstW.ns == first(sv.waypointNS, sv.ns) && dstW.labels["gateway.networking.k8s.io/gateway-name"] == sv.waypoint && sv.waypoint != "")) && !has(sv.classes, "waypoint") {
 					via = dstW.ns + "/" + dstW.name
-				} else if sv.waypoint != "" {
-					via = sv.waypointNS + "/" + sv.waypoint
-					if sv.waypointNS == "" {
-						via = sv.ns + "/" + sv.waypoint
-					}
 				}
 			case dstW != nil:
 				dstID = t.workloadNode(nodes, c, dstW, agents)
@@ -138,8 +137,29 @@ func EvaluateTraffic(ws *store.Workspace) Traffic {
 				ed = &TEdge{ID: k, Cluster: cl, From: srcID, To: dstID, Flags: []string{}}
 				edges[k] = ed
 				ed.evaluate(c, e, src, sv, dstW)
+				if sv != nil {
+					ed.Runbook = ambient.Runbook(ws, sv.obj)
+					if sv.waypoint != "" {
+						ed.ExpectedWaypoint = first(sv.waypointNS, sv.ns) + "/" + sv.waypoint
+					}
+				} else if dstW != nil {
+					ed.Runbook = ambient.Runbook(ws, dstW.obj)
+				} else if src != nil {
+					ed.Runbook = ambient.Runbook(ws, src.obj)
+				} else {
+					ed.Runbook = ambient.Runbook(ws, &store.Object{Cluster: cl, Namespace: ae.DstNamespace})
+				}
 			}
 			ed.Via = first(ed.Via, via)
+			// A configured binding is not evidence of traversal. A captured
+			// application destination, rather than the waypoint, proves a direct leg.
+			if ed.ExpectedWaypoint != "" && via == "" && dstW != nil && !isWaypoint(dstW) {
+				count := ae.Connections
+				if count == 0 {
+					count = ae.Requests
+				}
+				ed.Bypass += count
+			}
 			ed.SrcIdentity = first(ed.SrcIdentity, ae.SrcIdentity)
 			ed.DstIdentity = first(ed.DstIdentity, ae.DstIdentity)
 			if ae.Connections > 0 {
@@ -339,6 +359,10 @@ func (ed *TEdge) classify(nodes map[string]*TNode) {
 	src, dst := nodes[ed.From], nodes[ed.To]
 	srcMesh, dstMesh := src != nil && src.InMesh, dst != nil && dst.InMesh
 	var why []string
+	if ed.Bypass > 0 {
+		ed.Flags = append(ed.Flags, "waypoint-bypass")
+		why = append(why, "logged direct workload traffic bypasses configured waypoint "+ed.ExpectedWaypoint)
+	}
 	if ed.Plaintext > 0 && srcMesh && dstMesh {
 		ed.Flags = append(ed.Flags, "plaintext")
 		why = append(why, fmt.Sprintf("%d connections in plaintext between two mesh workloads", ed.Plaintext))
@@ -365,7 +389,7 @@ func (ed *TEdge) classify(nodes map[string]*TNode) {
 	switch {
 	case has(ed.Flags, "plaintext"):
 		ed.Risk = "red"
-	case has(ed.Flags, "plaintext-in") || has(ed.Flags, "unpoliced") || has(ed.Flags, "mismatch"):
+	case has(ed.Flags, "plaintext-in") || has(ed.Flags, "unpoliced") || has(ed.Flags, "mismatch") || has(ed.Flags, "waypoint-bypass"):
 		ed.Risk = "amber"
 	case ed.Verdict == Unknown:
 		ed.Risk = "grey"

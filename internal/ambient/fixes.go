@@ -49,6 +49,13 @@ func knownIssues(ws *store.Workspace, services []Service, objects []Ref) []Ambie
 	issues := []AmbientIssue{}
 	seen := map[string]bool{}
 	collect := func(subject Ref, r *Investigation) {
+		if o := Target(ws, subject.Cluster, subject.Kind, subject.Namespace, subject.Name); o != nil {
+			for i := range r.Steps {
+				if r.Steps[i].State == "fail" {
+					r.Steps[i].Runbook = Runbook(ws, o)
+				}
+			}
+		}
 		v := &View{Investigation: r, Subject: subject}
 		addSuggestedFixes(v)
 		for _, s := range r.Steps {
@@ -86,6 +93,8 @@ func knownIssues(ws *store.Workspace, services []Service, objects []Ref) []Ambie
 
 func CommonFixes() []FixGuide {
 	return []FixGuide{
+		{"waypoint-bound", "Service waypoint binding rejected", "Read the Service's istio.io/WaypointBound reason and message. Check the selected Gateway, namespace access and service traffic type before reviewing a binding repair.", "The Service reports istio.io/WaypointBound=True for its current configuration; repeat the original request.", ""},
+		{"jwt", "JWT authentication or attachment needs attention", "Attach RequestAuthentication and requestPrincipals authorization to the same Service or waypoint. RequestAuthentication alone permits requests without a token. Verify issuer, JWKS and the intended subject restrictions.", "Test a valid token, an invalid token and a request without a token. Captured policy does not verify token signatures.", ""},
 		{"enrolment", "Namespace not enrolled in ambient", "If ambient is intended, label the namespace istio.io/dataplane-mode=ambient. Check Pod overrides and sidecar injection before changing the namespace.", "Confirm the namespace label, then inspect Pod redirection and ztunnel workload registration.", ""},
 		{"pod-dataplane", "Pod opted out or still has a sidecar", "Remove an unintended Pod-template opt-out or sidecar injection setting on its owning workload. For migration, roll out that workload after reviewing its traffic policies; do not delete a sidecar from a running Pod.", "New Pods have the intended dataplane and appear in ztunnel workload configuration.", ""},
 		{"readiness", "Workload not Ready", "Inspect Pod events and container status. Correct the reported probe, image, scheduling or application-startup problem on the owning workload.", "Pods report Ready and the Service has ready EndpointSlice addresses.", ""},
@@ -121,6 +130,10 @@ func addSuggestedFixes(v *View) {
 		}
 		id := s.ID
 		switch {
+		case strings.HasPrefix(id, "waypoint-bound"):
+			id = "waypoint-bound"
+		case strings.HasPrefix(id, "jwt-"):
+			id = "jwt"
 		case strings.HasPrefix(id, "pod-"):
 			id = "readiness"
 			if strings.Contains(s.Detail, "sidecar") || strings.Contains(s.Detail, "opts out") {

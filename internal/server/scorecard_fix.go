@@ -6,9 +6,31 @@ import (
 
 	"github.com/tjorourke/flightbay/internal/ambient"
 	"github.com/tjorourke/flightbay/internal/posture"
+	"github.com/tjorourke/flightbay/internal/reach"
+	"sigs.k8s.io/yaml"
 )
 
 func (s *Server) generateReviewedPlan(req ambient.Request) (*ambient.Plan, error) {
+	if req.Explain != nil {
+		if len(req.Tasks) != 1 || req.Tasks[0] != "explain" || req.Scorecard != nil {
+			return nil, fmt.Errorf("review one explainer repair at a time")
+		}
+		x, err := reach.ExplainScoped(s.WS, req.Cluster, req.Explain.From, req.Explain.To, reach.RepairScope{Ports: req.Explain.Ports, Paths: req.Explain.Paths})
+		if err != nil {
+			return nil, err
+		}
+		if x.Fix == "" || x.To.Ref == nil || x.To.Ref.Namespace != req.Namespace || x.To.Ref.Name != req.Service {
+			return nil, fmt.Errorf("the connection no longer has a generated repair for this Service")
+		}
+		var policy map[string]any
+		if err := yaml.Unmarshal([]byte(x.Fix), &policy); err != nil {
+			return nil, err
+		}
+		target := ambient.Target(s.WS, req.Cluster, "Service", req.Namespace, req.Service)
+		ambient.M(policy["metadata"])["name"] = "flightbay-test-explain-" + target.Name
+		p, err := ambient.ReviewedPolicyPlan(req, target, policy, x.FixNote)
+		return p, err
+	}
 	if req.Scorecard == nil {
 		return ambient.Generate(s.WS, req)
 	}

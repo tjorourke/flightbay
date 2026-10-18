@@ -29,6 +29,7 @@ import (
 
 	"github.com/tjorourke/flightbay/internal/ambient"
 	"github.com/tjorourke/flightbay/internal/collect"
+	"github.com/tjorourke/flightbay/internal/reach"
 	"github.com/tjorourke/flightbay/internal/store"
 )
 
@@ -212,6 +213,44 @@ func ambientServiceFingerprint(o map[string]any) string {
 }
 func (s *Server) ambientPreflight(ctx context.Context, c ambientConnection, p *ambient.Plan) error {
 	q := p.Request
+	for _, e := range p.Evidence {
+		if e.Field != "spec.serviceAccountName" && e.Field != "data.mesh" {
+			continue
+		}
+		captured := s.WS.Get(e.Ref.Cluster, e.Ref.Group, e.Ref.Resource, e.Ref.Namespace, e.Ref.Name)
+		if captured == nil {
+			return errors.New("waypoint identity evidence is no longer captured")
+		}
+		live, err := c.client.Resource(schema.GroupVersionResource{Group: captured.Group, Version: captured.Version, Resource: captured.Resource}).Namespace(captured.Namespace).Get(ctx, captured.Name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		keys := strings.Split(e.Field, ".")
+		if ambient.S(ambient.Path(captured.Obj, "metadata", "uid")) != string(live.GetUID()) || !ambient.Equal(ambient.Path(captured.Obj, keys...), ambient.Path(live.Object, keys...)) {
+			return errors.New("waypoint identity or trust domain changed; refresh before testing")
+		}
+	}
+	if q.Explain != nil {
+		x, err := reach.Explain(s.WS, q.Cluster, q.Explain.From, q.Explain.To)
+		if err != nil {
+			return err
+		}
+		if x.From.Ref == nil {
+			return errors.New("capture the source workload before testing")
+		}
+		ref := x.From.Ref
+		captured := s.WS.Get(q.Cluster, ref.Group, ref.Resource, ref.Namespace, ref.Name)
+		if captured == nil || ambient.S(ambient.Path(captured.Obj, "metadata", "uid")) == "" {
+			return errors.New("testing an explainer repair requires a runtime source UID")
+		}
+		live, err := c.client.Resource(schema.GroupVersionResource{Group: captured.Group, Version: captured.Version, Resource: captured.Resource}).Namespace(captured.Namespace).Get(ctx, captured.Name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		if ambient.S(ambient.Path(captured.Obj, "metadata", "uid")) != string(live.GetUID()) || !ambient.Equal(captured.Obj["spec"], live.Object["spec"]) || !ambient.Equal(ambient.Path(captured.Obj, "metadata", "labels"), ambient.Path(live.Object, "metadata", "labels")) {
+			return errors.New("source identity or workload configuration changed; refresh before testing the repair")
+		}
+	}
 	if q.Scorecard != nil {
 		ref := q.Scorecard.Target
 		captured := ambient.Target(s.WS, ref.Cluster, ref.Kind, ref.Namespace, ref.Name)
@@ -243,6 +282,9 @@ func (s *Server) ambientPreflight(ctx context.Context, c ambientConnection, p *a
 	}
 	for _, b := range q.Backends {
 		names[b.Name] = true
+	}
+	if q.Mirror != nil {
+		names[q.Mirror.Name] = true
 	}
 	for name := range names {
 		captured := s.WS.Get(q.Cluster, "", "services", q.Namespace, name)

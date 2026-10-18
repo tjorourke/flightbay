@@ -90,8 +90,8 @@ func TestSuggestedFixClassification(t *testing.T) {
 			}
 		})
 	}
-	if len(CommonFixes()) != 20 {
-		t.Fatal("expected 20 distinct problem guides")
+	if len(CommonFixes()) != 22 {
+		t.Fatal("expected 22 distinct problem guides")
 	}
 }
 
