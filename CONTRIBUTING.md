@@ -7,20 +7,29 @@ Thanks for helping improve Flightbay. For larger changes, open an issue first so
 Flightbay requires Go 1.27. Building `flightbay-desk` also requires a C compiler because it links DuckDB through cgo.
 
 ```bash
-make build
-make test
+git clone https://github.com/tjorourke/flightbay
+cd flightbay
+make install                                  # both binaries into $(go env GOPATH)/bin; make sure it is on your PATH
+make build                                    # ./bin/flightbay and ./bin/flightbay-desk
+make test                                     # unit tests
 go vet ./...
 ```
+
+Run `make install` again to install changes from your local checkout. Publishing a new `vX.Y.Z` tag builds release archives and updates the Homebrew formula; pushing to `main` alone does not publish a new binary.
 
 For changes to the live collector or desk, run the relevant kind end-to-end test as well:
 
 ```bash
-test/e2e/e2e.sh
-MESH_CONTEXT=kind-mesh1 test/e2e/mesh.sh
-test/e2e/reach.sh
+test/e2e/e2e.sh                               # kind cluster with planted faults: collector, UI, kubectl, k9s, search, SQL
+MESH_CONTEXT=kind-mesh1 test/e2e/mesh.sh      # proxy diagnostics against an existing ambient cluster (read-only)
+test/e2e/reach.sh                             # agent reach on kind + Istio ambient: applies the generated fixes, proves traffic blocked (make e2e-reach)
+python3 test/e2e/ambient.py --context kind-mesh1   # ambient investigation, generated policies/routing/rate limits, live traffic and cleanup in a dedicated namespace
+FLIGHTBAY_SCALE=10000000 go test ./internal/store -run TestScale -v -timeout 60m
+docker build -t flightbay-desk .              # UI image with kubectl, k9s, istioctl, stern, jq and yq
+go run ./scripts/screenshots -mesh BUNDLE     # retake docs/images from the sample bundle and a capture with agents (own headless Chrome)
 ```
 
-Build the documentation site with `hugo --source docs/site`. The command references are generated from the CLI and checked by tests; update them with `UPDATE_DOCS=1 go test ./cmd/...`. Regenerate the Scorecard checks page with `go run ./scripts/scorecard-checks` after changing a check.
+Build the documentation site with `hugo --source docs/site`. The command references are generated from the CLI and checked by tests; update them with `UPDATE_DOCS=1 go test ./cmd/...`. Regenerate the Scorecard checks page with `go run ./scripts/scorecard-checks` after changing a check. The guides in `docs/*.md` are the GitHub entry points to the same material; keep them in step when behaviour changes.
 
 ## Keep customer data out of the repository
 
