@@ -64,7 +64,7 @@ Run it with the same environment as the desk.
 - The Scorecard shows plain severity tags and "Most serious problems" instead of "Fix these first", with no points. `fbscore --top` is refused.
 - **Agents** is not in the sidebar or in ⌘K. Going to `#reach` directly shows a page saying it is an Enterprise feature and how to turn it on. `fbreach` and the MCP `agent_reach` tool return an error saying the same.
 - **Traffic** is hidden the same way; `fbtraffic`, `fbactivity`, `fbexplain` and their MCP tools say they need Enterprise.
-- The Scorecard runs its 130 standard checks, without the five reach checks.
+- The Scorecard runs its 129 standard checks, without the five reach checks.
 
 Pages, tools and helpers that show Enterprise features carry an **Enterprise** label.
 
