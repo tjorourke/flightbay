@@ -27,8 +27,10 @@ type Change struct {
 	Reason     string        `json:"reason"`
 }
 type EditTarget struct {
-	Ref  Ref `json:"ref"`
-	Rule int `json:"rule"`
+	Ref         Ref    `json:"ref"`
+	Rule        int    `json:"rule"`
+	UID         string `json:"uid,omitempty"`
+	Fingerprint string `json:"fingerprint,omitempty"`
 }
 type WaypointRequest struct {
 	Mode          string   `json:"mode"`

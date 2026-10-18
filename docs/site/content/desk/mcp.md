@@ -6,7 +6,7 @@ description: Give an AI agent read-only access to an open workspace over the Mod
 
 # MCP server
 
-`flightbay-desk mcp` makes the open workspace available to AI agents over the Model Context Protocol. Its 25 read-only tools cover objects, logs, SQL, findings, scores, reach, proxy configuration, ambient investigation and repair previews. The workspace can be an offline bundle or a live read-only mirror. Objects, log streams, proxy dumps, findings, Scorecard checks and ambient failures are also `flightbay://` resources. Eight prompts guide common investigations. Stdio additionally offers `workspaces` to select an open desk.
+`flightbay-desk mcp` makes the open workspace available to AI agents over the Model Context Protocol. Its 27 read-only tools cover objects, logs, SQL, findings, scores, reach, proxy configuration, ambient investigation, request paths and repair/demo previews. The workspace can be an offline bundle or a live read-only mirror. Objects, log streams, proxy dumps, findings, Scorecard checks and ambient failures are also `flightbay://` resources. Eight prompts guide common investigations. Stdio additionally offers `workspaces` to select an open desk.
 
 Use it when you want an assistant to do the legwork on a case: gather the evidence behind the findings, follow a trace across pods, or check whether a problem started with a change.
 
@@ -123,6 +123,8 @@ Every tool is read-only and marked as such.
 | `proxy_config` | `pod`, `namespace`, `cluster`, `file` | With no pod, what was captured. With a pod, its summary tables. With `file`, that raw file. |
 | `compare_baseline` | none | When the desk was opened with a baseline, what changed. See [Compare](/desk/compare/). |
 | `ambient_inventory` | `cluster`, `namespace` | Captured ambient resources, waypoint choices, detected implementation and topology. Resource lists are filtered; cross-cluster topology retains peer context. |
+| `bookinfo_demo` | `namespace` (optional), `request` (optional) | Bundled YAML/images, namespace occupancy, waypoint choices and global-service prerequisites. With a `bookinfo-demo` request, generates namespace or workload preview only. Both installation stages require UI validation and confirmation. |
+| `ambient_request_path` | `request` (optional), choice filters `cluster`, `namespace`, `query`, `limit` | With no request, captured caller and Service/DNS choices (20 per list by default). With `source` and `destination` references in request, plus optional `host`, `port`, `method` and `path`, returns configured hops, matching traffic, related checks and per-caller same-cluster policy evidence. Sends no request to the application or cluster. |
 | `ambient_issues` | `cluster`, `namespace` | Confirmed failed checks, evidence and repair/verification guidance; no target selection needed. |
 | `ambient_investigate` | `cluster`, `kind`, `name` (required), `namespace`, `route` | Full investigation, DNS, related objects, controller conditions, recovery and editing choices. |
 | `ambient_capabilities` | `cluster`, `namespace`, `service` (required) | Supported tasks and reasons for unavailable features. |

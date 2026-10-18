@@ -180,8 +180,13 @@ try:
 
     test = start_test("front", ["mirroring"], mirror=dict(name="canary", port=8080))
     mirror_path = "/flightbay-mirror-" + str(time.time_ns())
-    until(lambda: "stable" in request("front", path=mirror_path))
-    until(lambda: mirror_path in k("-n", NS, "logs", "deploy/canary", "--since=2m").stdout)
+    def mirrored():
+        # The primary response also succeeds before the new route reaches the
+        # waypoint. Keep sending traffic while waiting for mirrored evidence.
+        if "stable" not in request("front", path=mirror_path):
+            return False
+        return mirror_path in k("-n", NS, "logs", "deploy/canary", "--since=2m").stdout
+    until(mirrored)
     ok("RequestMirror sends a copy to the selected backend while retaining the primary response")
     cleanup(test)
 

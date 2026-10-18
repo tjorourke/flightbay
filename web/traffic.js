@@ -1089,6 +1089,8 @@ after.traffic = () => {
   $('#tf-focus')?.addEventListener('click', () => { T.focus = T.sel; T.sel = ''; T.fexp = {}; T.gz = null; render(); });
   $('#tf-focusc')?.addEventListener('click', ev => { T.focus = ev.currentTarget.dataset.id; T.sel = ''; T.fexp = {}; T.gz = null; render(); });
   const sn = nodes.get(T.sel), se = (d.edges || []).find(x => x.id === T.sel);
+  const pathDestination=se?nodes.get(se.to)?.ref:sn?.ref,pathSource=se?nodes.get(se.from)?.ref:null;
+  if(pathDestination?.kind==='Service'&&typeof rpOpen==='function'&&$('#tf-detail .panel-head .row')){const b=document.createElement('button');b.textContent='Trace request path →';b.id='tf-request-path';b.onclick=()=>rpOpen({destination:pathDestination,...(pathSource&&['Pod','Deployment','StatefulSet','DaemonSet','ServiceAccount'].includes(pathSource.kind)?{source:pathSource}:{})});$('#tf-detail .panel-head .row').appendChild(b);}
   $('#tf-obj')?.addEventListener('click', () => { const r = sn?.ref || nodes.get(se?.to)?.ref; if (r) fbOpenRef(r); });
   // An edge selected before this render (a live refresh, a tab switch) gets its explanation back.
   if (se && T.ex?.key !== se.id && $('#tf-why')) { const f = nodes.get(se.from), to = nodes.get(se.to); tfRunExplain(se.id, f.label, to.label, se.cluster).then(() => { const w = $('#tf-why'); if (w) { w.innerHTML = tfExplainBody(T.ex); tfWireExplain(); } }); }

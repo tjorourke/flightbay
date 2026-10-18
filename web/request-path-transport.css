@@ -1,0 +1,17 @@
+.am-shell{--rp-ew:#efbc58;--rp-ew-bg:#302715;--rp-ew-text:#f7d78c}
+[data-theme=light] .am-shell{--rp-ew:#a76a00;--rp-ew-bg:#fff5dd;--rp-ew-text:#734a00}
+.am-shell .rp-inspector-tabs{grid-template-columns:repeat(4,minmax(0,1fr))}
+.am-shell .rp-inspector-tabs button{white-space:normal;font-size:11px;padding:11px 8px;line-height:1.4}
+.rp-configuration-evidence{border-top:1px solid var(--line);padding:12px 0;line-height:1.6}
+.rp-configuration-evidence>summary{cursor:pointer;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.rp-hop.rp-hop-eastwest{border-left:4px solid var(--rp-ew)}
+.rp-hop-eastwest .rp-hop-number{border-color:var(--rp-ew);color:var(--rp-ew-text);background:var(--rp-ew-bg)}
+.rp-map-node.rp-map-role-eastwest:not(.rp-map-fail):not(.rp-map-unknown)>rect{fill:var(--rp-ew-bg);stroke:var(--rp-ew)}
+.rp-map-node.rp-map-role-eastwest>circle{fill:var(--rp-ew-bg);stroke:var(--rp-ew)}
+.rp-map-node.rp-map-role-eastwest .rp-map-title{fill:var(--rp-ew-text)}
+.rp-map-edge.rp-map-edge-eastwest:not(.rp-map-edge-fail)>path{stroke:var(--rp-ew)}
+.rp-map-arrow.rp-map-arrow-eastwest{fill:var(--rp-ew)}
+.rp-transport-label{fill:var(--muted);font:9px var(--mono);pointer-events:none}
+.rp-ew-legend-mark{display:inline-block;width:20px;height:10px;border:2px solid var(--rp-ew);background:var(--rp-ew-bg);border-radius:3px;flex:none;margin-left:12px}
+.am-canvas-card.am-canvas-eastwest{background:var(--rp-ew-bg);border-color:var(--rp-ew);border-left-width:4px}
+.am-canvas-eastwest .am-gateway-symbol,.am-canvas-eastwest .am-canvas-card-head>strong{color:var(--rp-ew-text)}

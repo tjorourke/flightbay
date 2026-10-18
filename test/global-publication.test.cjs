@@ -40,3 +40,11 @@ test('changing tasks invalidates the global batch so it cannot hide a new single
   context.amInvalidate();
   assert.equal(A.globalBatch,null);assert.equal(A.plan,null);assert.equal(A.validation,null);
 });
+
+test('global validation immediately reports working and rejects Apply without dry-run',async()=>{
+  const {context,A}=setup();let finish;const waiting=new Promise(resolve=>finish=resolve),badge={};context.esc=String;context.document.querySelectorAll=selector=>selector==='.am-global-plan'?[{querySelector:()=>badge}]:[];
+  A.globalBatch=[{cluster:'mesh1',context:'mesh1',plan:{id:'plan',request:{}},validation:null}];let calls=0;context.apiPost=async()=>{calls++;return waiting;};context.api=async()=>[];
+  await context.amGlobalOperation(0,'apply');assert.equal(calls,0);assert.match(A.globalBatch[0].error,/Dry-run/);
+  const pending=context.amGlobalOperation(0,'validate');assert.match(A.globalBatch[0].state,/Validating/);assert.match(badge.innerHTML,/bd-spinner/);
+  finish({token:'validated'});await pending;assert.equal(A.globalBatch[0].state,'Dry-run passed');assert.equal(badge.textContent,'Dry-run passed');assert.equal(A.globalBatch[0].validation.token,'validated');
+});

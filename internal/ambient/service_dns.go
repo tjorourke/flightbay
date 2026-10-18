@@ -9,12 +9,20 @@ import (
 )
 
 type ServiceDNS struct {
-	LocalName      string   `json:"localName,omitempty"`
-	DomainSource   string   `json:"domainSource"`
-	DomainObserved bool     `json:"domainObserved"`
-	GlobalNames    []string `json:"globalNames"`
-	GlobalEvidence []Ref    `json:"globalEvidence,omitempty"`
-	ExternalName   string   `json:"externalName,omitempty"`
+	LocalName      string                `json:"localName,omitempty"`
+	DomainSource   string                `json:"domainSource"`
+	DomainObserved bool                  `json:"domainObserved"`
+	GlobalNames    []string              `json:"globalNames"`
+	GlobalEvidence []Ref                 `json:"globalEvidence,omitempty"`
+	ExternalName   string                `json:"externalName,omitempty"`
+	GlobalAliases  []GlobalAliasEvidence `json:"globalAliases,omitempty"`
+}
+
+// API allocation evidence is distinct from proxy delivery and successful traffic.
+type GlobalAliasEvidence struct {
+	Ref       Ref      `json:"ref"`
+	Hosts     []string `json:"hosts"`
+	Addresses []string `json:"addresses"`
 }
 
 func clusterDNSDomain(ws *store.Workspace, c string) (string, string, bool) {
@@ -95,6 +103,23 @@ func serviceDNS(ws *store.Workspace, svc *store.Object) ServiceDNS {
 				d.GlobalNames = append(d.GlobalNames, name)
 			}
 		}
+		alias := GlobalAliasEvidence{Ref: reference(entry), Hosts: []string{}, Addresses: []string{}}
+		for _, host := range L(Path(entry.Obj, "spec", "hosts")) {
+			if name := S(host); name != "" {
+				alias.Hosts = append(alias.Hosts, name)
+			}
+		}
+		for _, address := range L(Path(entry.Obj, "spec", "addresses")) {
+			if value := S(address); value != "" && !contains(alias.Addresses, value) {
+				alias.Addresses = append(alias.Addresses, value)
+			}
+		}
+		for _, address := range L(Path(entry.Obj, "status", "addresses")) {
+			if value := S(M(address)["value"]); value != "" && !contains(alias.Addresses, value) {
+				alias.Addresses = append(alias.Addresses, value)
+			}
+		}
+		d.GlobalAliases = append(d.GlobalAliases, alias)
 		d.GlobalEvidence = append(d.GlobalEvidence, reference(entry))
 	}
 	sort.Strings(d.GlobalNames)

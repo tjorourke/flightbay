@@ -58,9 +58,19 @@ function parseHash() {
   if (view === 'posture' || view === 'bestpractices') { location.replace('#scorecard' + (query ? '?' + query : '')); }
   if ((view === 'scorecard' || view === 'posture') && p.has('tab')) S.pst.tab = p.get('tab');
   if (view === 'resources' && p.has('resource')) { S.res.resource = p.get('resource'); S.res.group = p.get('group') || ''; }
-  if (view === 'ambient' && p.has('service') && S.ambient) { S.ambient.key = JSON.stringify([p.get('cluster') || S.cluster, p.get('namespace') || '', p.get('service')]); S.ambient.route = p.get('route') || ''; }
-  if(view==='ambient'&&S.ambient&&p.has('step'))S.ambient.pendingStep=p.get('step');
-  if(view==='ambient'&&S.ambient){if(['investigate','map','wizard'].includes(p.get('tab')))S.ambient.tab=p.get('tab');if(['Namespace','Service','Pod','Gateway','HTTPRoute','ServiceEntry'].includes(p.get('kind'))&&p.has('name')){const kind=p.get('kind'),cluster=p.get('cluster')||S.cluster,ns=p.get('namespace')||'',name=p.get('name');S.ambient.key=JSON.stringify(kind==='Service'?[cluster,ns,name]:[cluster,kind,ns,name]);S.ambient.kind=kind;}}
+  if(view==='ambient'&&S.ambient){
+    const kind=p.get('kind'),named=['Namespace','Service','Pod','Gateway','HTTPRoute','ServiceEntry'].includes(kind)&&p.has('name');
+    if(named||p.has('service')){
+      const cluster=p.get('cluster')||S.cluster,ns=p.get('namespace')||'',name=p.get(named?'name':'service'),targetKind=named?kind:'Service';
+      const key=JSON.stringify(targetKind==='Service'?[cluster,ns,name]:[cluster,targetKind,ns,name]);
+      if(key!==S.ambient.key)amResetDraft();
+      S.ambient.key=key;S.ambient.kind=targetKind;
+      if(p.has('service')||p.has('route'))S.ambient.route=p.get('route')||'';
+    }
+    if(['investigate','map','path','demo','wizard'].includes(p.get('tab')))S.ambient.tab=p.get('tab');
+    if(p.get('tab')==='path'&&typeof RP!=='undefined'){for(const [query,key]of [['caller','source'],['destination','destination'],['host','host'],['port','port'],['method','method'],['path','path']])if(p.has(query))RP[key]=p.get(query);}
+    if(p.has('step'))S.ambient.pendingStep=p.get('step');
+  }
   if (view === 'reach') { location.replace('#traffic?tab=agents' + (p.get('agent') ? '&agent=' + encodeURIComponent(p.get('agent')).replace(/%2F/gi, '/') : '')); S.view = 'traffic'; return; }
   // Activity is now the gateway layer of Traffic; keep old links working.
   if (view === 'activity') { location.replace('#traffic?layer=gateway' + (p.get('caller') ? '&caller=' + encodeURIComponent(p.get('caller')) : '')); S.view = 'traffic'; return; }
@@ -1043,7 +1053,14 @@ async function pstReviewFix(check,item){
   const supported=['ambient.default-deny','ambient.mtls-strict','k8s.netpol-default-deny','mesh.global-service-authz'].includes(check.id);
   const example=check.fix.replaceAll('<ns>',namespace||'<namespace>').replaceAll('<svc>',item.kind==='Service'?item.name:'<service>');
   const draw=()=>{
-    modal('Review Scorecard fix',`<p><strong>${esc(check.title)}</strong></p><p class="mt"><span class="tag">${esc(item.cluster)}</span> ${esc(item.kind)} ${esc(item.namespace?item.namespace+'/':'')}${esc(item.name)}</p><p class="mt">${esc(item.detail)}</p>${check.id==='mesh.global-service-authz'?`<label class="mt">Intended caller principals (one per line)<textarea id="pst-fix-principals" rows="3" placeholder="cluster.local/ns/caller-namespace/sa/caller-account">${esc(state.principals)}</textarea></label><button id="pst-fix-generate" ${state.busy?'disabled':''}>Generate scoped YAML</button>`:''}${state.error?`<div class="notice info mt" role="status">${esc(state.error)}</div>`:''}${state.plan?state.plan.notes.map(n=>`<p class="mt">${esc(n)}</p>`).join(''):`<p class="mt">${supported?'Review the generated change before choosing a real context.':'This entry needs additional resource-specific choices. The example below is guidance only; it cannot be applied from this preview.'}</p>`}<h3 class="mt">${state.plan?'Exact YAML to apply':'YAML guidance · not ready to apply'}</h3><pre class="code mt">${esc(state.plan?.yaml||example)}</pre><div class="row wrap mt"><button id="pst-fix-copy">Copy YAML</button><button id="pst-fix-download">Download YAML</button><button id="pst-fix-object">Inspect affected object</button>${guideLinks(check.source,check.docs)}</div>${state.plan?`<label class="mt">Real kubeconfig context<select id="pst-fix-context"><option value="">Choose the context for ${esc(item.cluster)}…</option>${state.contexts.map(c=>`<option value="${esc(c.name)}" ${state.context===c.name?'selected':''}>${esc(c.name)} · ${esc(c.server)}</option>`).join('')}</select></label><div class="row wrap mt"><button id="pst-fix-validate" ${state.busy||!state.context?'disabled':''}>Validate (dry-run)</button><button id="pst-fix-apply" class="primary" ${state.busy||!state.validation?'disabled':''}>Apply…</button>${state.record?'<button id="pst-fix-undo">Undo this change</button>':''}</div>`:''}${state.message?`<p class="mt" role="status">${esc(state.message)}</p>`:''}`);
+    modal('Review Scorecard fix',`<p><strong>${esc(check.title)}</strong></p><p class="mt"><span class="tag">${esc(item.cluster)}</span> ${esc(item.kind)} ${esc(item.namespace?item.namespace+'/':'')}${esc(item.name)}</p><p class="mt">${esc(item.detail)}</p>
+      ${check.id==='mesh.global-service-authz'?`<label class="mt">Intended caller principals (one per line)<textarea id="pst-fix-principals" rows="3" placeholder="cluster.local/ns/caller-namespace/sa/caller-account">${esc(state.principals)}</textarea></label><button id="pst-fix-generate" ${state.busy?'disabled':''}>Generate scoped YAML</button>`:''}
+      ${state.error?`<div class="notice info mt" role="status">${esc(state.error)}</div>`:''}
+      ${state.plan?state.plan.notes.map(n=>`<p class="mt">${esc(n)}</p>`).join(''):`<p class="mt">${supported?'Review the generated change before validating it.':'This entry needs additional resource-specific choices. The example below is guidance only; it cannot be applied from this preview.'}</p>`}
+      <h3 class="mt">${state.plan?'Exact YAML to apply':'YAML guidance · not ready to apply'}</h3><pre class="code mt">${esc(state.plan?.yaml||example)}</pre>
+      <div class="row wrap mt"><button id="pst-fix-copy">Copy YAML</button><button id="pst-fix-download">Download YAML</button><button id="pst-fix-object">Inspect affected object</button>${guideLinks(check.source,check.docs)}</div>
+      ${state.plan?`${amContextControl(item.cluster,state.contexts,state.context,'id="pst-fix-context"')}<p class="mt">Review and apply runs any required server dry-run before the final confirmation.</p><div class="row wrap mt"><button id="pst-fix-validate" ${state.busy||!state.context?'disabled':''}>Dry-run only</button><button id="pst-fix-apply" class="primary" ${state.busy||!state.context?'disabled':''}>Review and apply…</button>${state.record?'<button id="pst-fix-undo">Undo this change</button>':''}</div>`:''}
+      ${state.message?`<p class="mt" role="status">${esc(state.message)}</p>`:''}`);
     $('#pst-fix-copy').onclick=()=>navigator.clipboard.writeText(state.plan?.yaml||example).then(()=>toast('YAML copied'));
     $('#pst-fix-download').onclick=()=>amDownload(state.plan?.yaml||example,'flightbay-scorecard-'+check.id+'.yaml');
     $('#pst-fix-object').onclick=()=>{closeModal();openObject(target);};
@@ -1051,12 +1068,12 @@ async function pstReviewFix(check,item){
     if($('#pst-fix-generate'))$('#pst-fix-generate').onclick=()=>run(async()=>{request.scorecard.principals=state.principals.split(/[\n,]+/).map(x=>x.trim()).filter(Boolean);state.validation=null;state.plan=await apiPost('api/ambient/plan',request);state.error='';});
     if($('#pst-fix-context'))$('#pst-fix-context').onchange=e=>{state.context=e.target.value;state.validation=null;draw();};
     if($('#pst-fix-validate'))$('#pst-fix-validate').onclick=()=>run(async()=>{state.validation=null;state.validation=await apiPost('api/ambient/test',{operation:'validate',context:state.context,request:state.plan.request,planId:state.plan.id});state.message='Dry-run passed. Review the YAML, then Apply opens a separate confirmation.';});
-    if($('#pst-fix-apply'))$('#pst-fix-apply').onclick=async()=>{const entry={plan:state.plan,context:state.context,validation:state.validation};S.ambient.contexts=state.contexts;if(!await amConfirmApply([entry])){draw();return;}await run(async()=>{const result=await apiPost('api/ambient/test',{operation:'apply',context:entry.context,validation:entry.validation.token});state.record=result.test;state.validation=null;state.message=result.message;S.ambient.inventory=null;});};
+    if($('#pst-fix-apply'))$('#pst-fix-apply').onclick=async()=>{if(state.busy)return;const entry={plan:state.plan,context:state.context,validation:state.validation};S.ambient.contexts=state.contexts;await run(async()=>{state.validation=null;await amValidatePlans([entry]);state.validation=entry.validation;});if(state.error||!amValidated(entry)||state.plan!==entry.plan||state.context!==entry.context)return;if(!await amConfirmApply([entry])){draw();return;}await run(async()=>{const result=await apiPost('api/ambient/test',{operation:'apply',context:entry.context,validation:entry.validation.token});state.record=result.test;state.validation=null;state.message=result.message;S.ambient.inventory=null;});};
     if($('#pst-fix-undo'))$('#pst-fix-undo').onclick=()=>run(async()=>{const result=await apiPost('api/ambient/test',{operation:'cleanup',context:state.record.context,validation:state.record.token});state.record=null;state.validation=null;state.message=result.message;S.ambient.inventory=null;});
   };
   const run=async fn=>{if(state.busy)return;state.busy=true;state.error='';draw();try{await fn();}catch(e){state.error=e.message;if(e.body?.test)state.record=e.body.test;}finally{state.busy=false;draw();}};
   draw();
-  await run(async()=>{state.contexts=await api('api/ambient/contexts');if(supported&&check.id!=='mesh.global-service-authz')state.plan=await apiPost('api/ambient/plan',request);});
+  await run(async()=>{state.contexts=await api('api/ambient/contexts');state.context=amLiveContext(item.cluster,state.contexts)?.name||'';if(supported&&check.id!=='mesh.global-service-authz')state.plan=await apiPost('api/ambient/plan',request);});
 }
 
 // ---------- agent reach (Flightbay Enterprise) ----------
@@ -2353,6 +2370,8 @@ function openFinding(f) {
     ${f.source || f.docs ? `<p class="mt row">${guideLinks(f.source, f.docs)}</p>` : ''}
     <div class="row wrap mt">${f.object ? '<button class="primary" id="f-obj">Inspect object →</button>' : ''}${f.logQuery ? '<button id="f-logs">Open the logs →</button>' : ''}</div>`);
   const o = $('#f-obj'); if (o) o.onclick = () => { closeModal(); openObject(f.object); };
+  const pathTarget=f.ambient?.subject?.kind==='Service'?f.ambient.subject:f.object?.kind==='Service'?f.object:null;
+  if(pathTarget){document.querySelector('.modal .row.wrap.mt')?.insertAdjacentHTML('beforeend','<button id="f-request-path">Trace request path →</button>');if($('#f-request-path'))$('#f-request-path').onclick=()=>rpOpen({destination:pathTarget});}
   if(f.ambient){
     document.querySelector('.modal .row.wrap.mt')?.insertAdjacentHTML('beforeend','<button id="f-ambient">Investigate and fix in Ambient →</button>');
     const b=$('#f-ambient');if(b)b.onclick=()=>{closeModal();amResetDraft();S.ambient.clusterScope=S.cluster;if(S.cluster&&S.cluster!==f.ambient.subject.cluster){S.cluster=f.ambient.subject.cluster;$('#cluster').value=S.cluster;S.ambient.clusterScope=S.cluster;}nav('ambient?'+new URLSearchParams({...f.ambient.subject,tab:'investigate',step:f.ambient.step}));};

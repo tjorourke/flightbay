@@ -1,0 +1,6 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata: {name: bookinfo-waypoint, labels: {istio.io/waypoint-for: service}}
+spec:
+  gatewayClassName: agentgateway-waypoint
+  listeners: [{name: mesh, protocol: HTTP, port: 15088}]

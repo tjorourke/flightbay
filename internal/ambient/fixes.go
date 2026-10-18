@@ -128,6 +128,9 @@ func addSuggestedFixes(v *View) {
 		if s.State == "pass" || s.State == "na" {
 			continue
 		}
+		if s.ID == "dataplane" && s.State == "warning" {
+			continue
+		} // Availability is not a reported delivery error.
 		id := s.ID
 		switch {
 		case strings.HasPrefix(id, "waypoint-bound"):

@@ -1,10 +1,20 @@
 package ambient
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/tjorourke/flightbay/internal/store"
 )
+
+func configurationFingerprint(o *store.Object) string {
+	b, _ := json.Marshal(o.Obj["spec"])
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
 
 func editableConfigurations(ws *store.Workspace, svc *store.Object) []Editable {
 	out := []Editable{}
@@ -13,7 +23,7 @@ func editableConfigurations(ws *store.Workspace, svc *store.Object) []Editable {
 		port = N(M(ps[0])["port"])
 	}
 	base := func(o *store.Object, rule int) Request {
-		return Request{Cluster: svc.Cluster, Namespace: svc.Namespace, Service: svc.Name, Port: port, Edit: &EditTarget{Ref: reference(o), Rule: rule}}
+		return Request{Cluster: svc.Cluster, Namespace: svc.Namespace, Service: svc.Name, Port: port, Edit: &EditTarget{Ref: reference(o), Rule: rule, UID: S(Path(o.Obj, "metadata", "uid")), Fingerprint: configurationFingerprint(o)}}
 	}
 	wn, wp, _ := Waypoint(ws, svc)
 	for _, o := range ws.List(svc.Cluster, GatewayGroup, "httproutes", svc.Namespace, nil) {
@@ -113,7 +123,9 @@ func editableConfigurations(ws *store.Workspace, svc *store.Object) []Editable {
 	}
 	for _, kind := range []struct{ g, res string }{{"security.istio.io", "authorizationpolicies"}, {"agentgateway.dev", "agentgatewaypolicies"}, {"enterpriseagentgateway.solo.io", "enterpriseagentgatewaypolicies"}} {
 		for _, o := range ws.List(svc.Cluster, kind.g, kind.res, svc.Namespace, nil) {
-			relevant := false
+			targets := L(Path(o.Obj, "spec", "targetRefs"))
+			selector := M(Path(o.Obj, "spec", "selector", "matchLabels"))
+			relevant := o.Kind == "AuthorizationPolicy" && len(targets) == 0 && (len(selector) == 0 || matches(selector, stringMap(M(Path(svc.Obj, "spec", "selector")))))
 			for _, v := range L(Path(o.Obj, "spec", "targetRefs")) {
 				t := M(v)
 				if (S(t["kind"]) == "Service" && S(t["name"]) == svc.Name) || (S(t["kind"]) == "Gateway" && S(t["name"]) == wp && wn == svc.Namespace) {
@@ -127,7 +139,7 @@ func editableConfigurations(ws *store.Workspace, svc *store.Object) []Editable {
 			req := base(o, 0)
 			if o.Kind == "AuthorizationPolicy" {
 				rules := L(Path(o.Obj, "spec", "rules"))
-				if len(rules) == 1 && len(L(M(rules[0])["to"])) == 1 {
+				if len(targets) > 0 && len(rules) == 1 && len(L(M(rules[0])["to"])) == 1 {
 					methods := L(Path(M(L(M(rules[0])["to"])[0]), "operation", "methods"))
 					for _, v := range methods {
 						req.Methods = append(req.Methods, S(v))
@@ -139,6 +151,22 @@ func editableConfigurations(ws *store.Workspace, svc *store.Object) []Editable {
 					}
 				}
 				entry.Reason = "Only a single-rule, single-operation HTTP-method policy is edited; other policy shapes remain evidence-only."
+				if len(targets) == 0 && defaultString(S(Path(o.Obj, "spec", "action")), "ALLOW") == "ALLOW" {
+					if len(rules) == 0 {
+						entry.Tasks = []string{"l4-default-deny"}
+						entry.Reason = "Default-deny policy is already configured. Inspect its workload scope and additive allow policies; it has no request parameters to edit."
+					}
+					if len(rules) == 1 && len(L(M(rules[0])["from"])) == 1 {
+						from := M(L(M(rules[0])["from"])[0])
+						namespaces := L(Path(from, "source", "namespaces"))
+						if len(namespaces) == 1 {
+							req.Tasks = []string{"l4-allow-namespace"}
+							req.SourceNamespace = S(namespaces[0])
+							entry.Supported = true
+							entry.Reason = "Changes only the source namespace constraint. Selectors, other source constraints, operations and conditions are preserved."
+						}
+					}
+				}
 			} else {
 				local := L(Path(o.Obj, "spec", "traffic", "rateLimit", "local"))
 				if len(local) == 1 && N(M(local[0])["requests"]) > 0 {
@@ -159,6 +187,91 @@ func editableConfigurations(ws *store.Workspace, svc *store.Object) []Editable {
 			out = append(out, entry)
 		}
 	}
+	for _, o := range ws.List(svc.Cluster, "security.istio.io", "peerauthentications", svc.Namespace, nil) {
+		selector := M(Path(o.Obj, "spec", "selector", "matchLabels"))
+		if len(selector) > 0 && !matches(selector, stringMap(M(Path(svc.Obj, "spec", "selector")))) {
+			continue
+		}
+		e := Editable{Ref: reference(o), Tasks: []string{"strict-mtls"}, Reason: "Changes only the existing mTLS mode; workload selector and port-level settings are preserved."}
+		req := base(o, 0)
+		req.Tasks = []string{"strict-mtls"}
+		req.MTLSMode = S(Path(o.Obj, "spec", "mtls", "mode"))
+		if req.MTLSMode == "STRICT" || req.MTLSMode == "PERMISSIVE" {
+			e.Supported = true
+			e.Request = &req
+		} else {
+			e.Reason = "This policy inherits its mode or uses a mode unsupported by the simple editor. Inspect the original policy and port-level settings."
+		}
+		out = append(out, e)
+	}
+	for i := range out {
+		e := &out[i]
+		o := ws.Get(e.Ref.Cluster, e.Ref.Group, e.Ref.Resource, e.Ref.Namespace, e.Ref.Name)
+		if o == nil {
+			continue
+		}
+		e.Fingerprint = configurationFingerprint(o)
+		e.Status = "Captured"
+		if e.Request != nil {
+			e.Tasks = append([]string{}, e.Request.Tasks...)
+		}
+		e.Scope = "Preserves existing attachment scope"
+		if o.Kind == "HTTPRoute" {
+			rules := L(Path(o.Obj, "spec", "rules"))
+			if e.Rule < len(rules) {
+				e.Matches = M(rules[e.Rule])["matches"]
+			}
+			e.Scope = "Related route; inspect its parent references"
+			for _, v := range L(Path(o.Obj, "spec", "parentRefs")) {
+				p := M(v)
+				g, k, ns, n := parent(p, o.Namespace)
+				if g != "" || k != "Service" || ns != svc.Namespace || n != svc.Name {
+					continue
+				}
+				e.Scope = "Service " + ns + "/" + n
+				if N(p["port"]) > 0 {
+					e.Scope += fmt.Sprintf(" · port %d", N(p["port"]))
+				}
+				for _, s := range L(Path(o.Obj, "status", "parents")) {
+					status := M(s)
+					sg, sk, sns, sn := parent(M(status["parentRef"]), o.Namespace)
+					if sg != g || sk != k || sns != ns || sn != n || N(M(status["parentRef"])["port"]) != N(p["port"]) {
+						continue
+					}
+					accepted, resolved := false, false
+					for _, c := range L(status["conditions"]) {
+						cond := M(c)
+						if N(cond["observedGeneration"]) != N(Path(o.Obj, "metadata", "generation")) {
+							continue
+						}
+						if S(cond["type"]) == "Accepted" {
+							accepted = S(cond["status"]) == "True"
+						}
+						if S(cond["type"]) == "ResolvedRefs" {
+							resolved = S(cond["status"]) == "True"
+						}
+					}
+					if accepted && resolved {
+						e.Status = "Accepted"
+					}
+				}
+			}
+		} else if o.Kind == "PeerAuthentication" || o.Kind == "AuthorizationPolicy" {
+			targets := L(Path(o.Obj, "spec", "targetRefs"))
+			if len(targets) > 0 {
+				names := []string{}
+				for _, t := range targets {
+					ref := M(t)
+					names = append(names, S(ref["kind"])+" "+S(ref["name"]))
+				}
+				e.Scope = strings.Join(names, ", ")
+			} else if len(M(Path(o.Obj, "spec", "selector", "matchLabels"))) > 0 {
+				e.Scope = "Workload selector · can affect other Services using these Pods"
+			} else {
+				e.Scope = "Namespace-wide · affects other workloads in " + svc.Namespace
+			}
+		}
+	}
 	return out
 }
 func editGenerated(ws *store.Workspace, p *Plan) error {
@@ -174,11 +287,29 @@ func editGenerated(ws *store.Workspace, p *Plan) error {
 	if o == nil || o.Group != edit.Ref.Group {
 		return fmt.Errorf("selected existing configuration was not captured")
 	}
+	if edit.UID != "" && edit.UID != S(Path(o.Obj, "metadata", "uid")) {
+		return fmt.Errorf("the configuration was replaced after loading; reopen its current settings")
+	}
+	if edit.Fingerprint != "" && edit.Fingerprint != configurationFingerprint(o) {
+		return fmt.Errorf("the configuration changed after loading; reopen its current settings before reviewing an update")
+	}
 	allowed := false
 	svc := Target(ws, req.Cluster, "Service", req.Namespace, req.Service)
 	for _, e := range editableConfigurations(ws, svc) {
 		if e.Ref == edit.Ref && e.Rule == edit.Rule && e.Supported {
 			allowed = true
+			tasks := e.Request.Tasks
+			if o.Kind == "HTTPRoute" {
+				tasks = []string{"weighted-routing", "timeouts"}
+			}
+			if o.Kind == "DestinationRule" {
+				tasks = []string{"load-balancing", "endpoint-failover"}
+			}
+			for _, task := range req.Tasks {
+				if !contains(tasks, task) {
+					return fmt.Errorf("task %s does not edit this existing configuration shape", task)
+				}
+			}
 		}
 	}
 	if !allowed {
@@ -270,6 +401,12 @@ func editGenerated(ws *store.Workspace, p *Plan) error {
 		change(p, o, "Edit selected traffic-policy fields while preserving TLS and other settings", map[string]any{"/spec/trafficPolicy": tp})
 	case "AuthorizationPolicy":
 		rules := L(Copy(Path(o.Obj, "spec", "rules")))
+		if contains(req.Tasks, "l4-allow-namespace") {
+			from := M(L(M(rules[0])["from"])[0])
+			M(from["source"])["namespaces"] = []string{req.SourceNamespace}
+			change(p, o, "Edit the allowed source namespace while preserving all other policy constraints", map[string]any{"/spec/rules": rules})
+			break
+		}
 		to := L(M(rules[0])["to"])
 		op := M(M(to[0])["operation"])
 		if op == nil {
@@ -278,6 +415,8 @@ func editGenerated(ws *store.Workspace, p *Plan) error {
 		}
 		op["methods"] = req.Methods
 		change(p, o, "Edit method constraints while preserving source, path and other rules", map[string]any{"/spec/rules": rules, "/spec/action": defaultString(req.MethodAction, "ALLOW")})
+	case "PeerAuthentication":
+		change(p, o, "Edit the existing mTLS mode while preserving selector and port-level overrides", map[string]any{"/spec/mtls/mode": req.MTLSMode})
 	case "AgentgatewayPolicy", "EnterpriseAgentgatewayPolicy":
 		old := L(Copy(Path(o.Obj, "spec", "traffic", "rateLimit", "local")))
 		fresh := M(L(Path(generated, "spec", "traffic", "rateLimit", "local"))[0])
