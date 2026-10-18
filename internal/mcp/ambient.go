@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -19,6 +20,18 @@ func ambientTools() []tool {
 		return map[string]any{"cluster": str("exact captured cluster"), "namespace": str("namespace, empty for a Namespace object"), "kind": str("Service, Namespace, Pod, Gateway, HTTPRoute or ServiceEntry"), "name": str("resource name"), "route": str("optional HTTPRoute name for a Service investigation")}
 	}
 	return []tool{
+		{Name: "bookinfo_demo", Title: "Packaged Bookinfo demo and installation preview", Description: "With no request, show bundled demo YAML, images, implementation choices and namespace occupancy. With request, preview a bookinfo-demo plan with demo stage, waypointClass, waypointScope (namespace or service), waypointName (shared name or dedicated prefix), global and traffic options. Creates new waypoint plans, not selection of existing instances. Read-only preview only; installation and removal require the UI confirmations. Existing resources are never overwritten.", InputSchema: obj(map[string]any{"namespace": str("catalogue namespace; default bookinfo"), "request": obj(map[string]any{"cluster": str("captured cluster"), "namespace": str("a new application namespace, e.g. bookinfo-demo"), "tasks": map[string]any{"type": "array", "items": str("bookinfo-demo")}, "demo": obj(map[string]any{"stage": str("namespace or workloads"), "waypointClass": str("captured waypoint implementation"), "waypointScope": str("namespace: one shared new waypoint; service: four dedicated new waypoints"), "waypointName": str("new shared waypoint name or per-Service prefix; default bookinfo-waypoint"), "global": map[string]any{"type": "boolean"}, "traffic": map[string]any{"type": "boolean"}}, "stage", "waypointClass")}, "cluster", "namespace", "tasks", "demo")}), call: func(s *Server, a map[string]any) (string, error) {
+			if a["request"] != nil {
+				return s.previewPlan(a["request"])
+			}
+			return s.get("/api/ambient/bookinfo", url.Values{"namespace": {arg(a, "namespace")}})
+		}},
+		{Name: "ambient_request_path", Title: "Trace an ambient request path", Description: "With no request, discover captured caller and destination choices; narrow with cluster, namespace and query (names or DNS), limit defaults to 20 per list. With request, reconstruct configured hops and compare matching flow records and per-caller policy analysis. Use exact source/destination references and optional host, Service port, method and path. No network probe or cluster mutation.", InputSchema: pathToolSchema(), call: func(s *Server, a map[string]any) (string, error) {
+			if a["request"] == nil {
+				return s.pathChoices(a)
+			}
+			return s.postCaptured("/api/ambient/request-path", a["request"])
+		}},
 		{Name: "ambient_inventory", Title: "Ambient inventory and attachment map", Description: "Captured ambient objects, Services, waypoint choices, detected OSS/Enterprise implementations, cluster peering and global Service publication topology. Configuration relationships, not observed traffic. Filter by cluster and namespace to keep responses small.", InputSchema: obj(scope()), call: func(s *Server, a map[string]any) (string, error) { return s.ambientInventory(a, false) }},
 		{Name: "ambient_issues", Title: "Known ambient failures", Description: "The same confirmed failures shown in Ambient Needs attention and Findings, with cluster, affected resource, check ID, evidence, suggested repair and verification. Missing collection data is not a confirmed failure. Use ambient_investigate on the returned subject.", InputSchema: obj(scope()), call: func(s *Server, a map[string]any) (string, error) { return s.ambientInventory(a, true) }},
 		{Name: "ambient_investigate", Title: "Investigate an ambient resource", Description: "Full resource investigation: enrolment, waypoint binding and traffic type, listener and ParentRef errors, Accepted/ResolvedRefs status and generation, backend permissions, endpoints, policies, detected implementation, Service DNS, related objects, editable configuration and recovery choices. Includes suggested fixes and official documentation. Always specify the cluster.", InputSchema: obj(target(), "cluster", "kind", "name"), call: func(s *Server, a map[string]any) (string, error) {
@@ -60,6 +73,55 @@ func ambientTools() []tool {
 			return prettyJSON(out)
 		}},
 	}
+}
+
+func pathToolSchema() map[string]any {
+	ref := func() map[string]any {
+		return obj(map[string]any{"cluster": str("captured cluster"), "group": str("API group, empty for core"), "resource": str("plural resource"), "kind": str("resource kind"), "namespace": str("namespace"), "name": str("name")}, "cluster", "kind", "resource", "namespace", "name")
+	}
+	return obj(map[string]any{"cluster": str("filter choices by cluster"), "namespace": str("filter choices by namespace"), "query": str("filter choices by name, kind or hostname"), "limit": integer("choices per list, default 20; maximum 50"), "request": obj(map[string]any{"source": ref(), "destination": ref(), "host": str("destination hostname"), "port": integer("Service port"), "method": str("optional HTTP method"), "path": str("optional HTTP path")}, "source", "destination")})
+}
+func (s *Server) pathChoices(a map[string]any) (string, error) {
+	b, err := s.getRaw("/api/ambient/request-path/options", nil)
+	if err != nil {
+		return "", err
+	}
+	var data map[string][]map[string]any
+	if err = json.Unmarshal(b, &data); err != nil {
+		return "", err
+	}
+	limit := 20
+	if n, e := strconv.Atoi(arg(a, "limit")); e == nil && n > 0 {
+		limit = n
+	}
+	if limit > 50 {
+		limit = 50
+	}
+	out := map[string]any{}
+	for _, key := range []string{"callers", "destinations"} {
+		rows := []map[string]any{}
+		matched := 0
+		for _, row := range data[key] {
+			if arg(a, "cluster") != "" && row["cluster"] != arg(a, "cluster") {
+				continue
+			}
+			if arg(a, "namespace") != "" && row["namespace"] != arg(a, "namespace") {
+				continue
+			}
+			text, _ := json.Marshal(row)
+			if query := strings.ToLower(arg(a, "query")); query != "" && !strings.Contains(strings.ToLower(string(text)), query) {
+				continue
+			}
+			matched++
+			if len(rows) < limit {
+				rows = append(rows, row)
+			}
+		}
+		out[key] = rows
+		out[key+"Total"] = matched
+	}
+	out["note"] = "Use cluster, namespace or query to narrow choices. Pass exact references in request to analyse a path."
+	return prettyJSON(out)
 }
 
 func prettyJSON(v any) (string, error) { b, e := json.MarshalIndent(v, "", " "); return string(b), e }
@@ -108,9 +170,13 @@ func (s *Server) ambientInventory(a map[string]any, issuesOnly bool) (string, er
 	return prettyJSON(data)
 }
 
-// The sole POST allowed by the MCP adapter generates a preview in memory.
+// POSTs from MCP are limited to captured path analysis and in-memory previews.
 // There is deliberately no arbitrary endpoint, apply, validate or probe tool.
-func (s *Server) previewPlan(v any) (string, error) {
+func (s *Server) previewPlan(v any) (string, error) { return s.postCaptured("/api/ambient/plan", v) }
+func (s *Server) postCaptured(path string, v any) (string, error) {
+	if path != "/api/ambient/plan" && path != "/api/ambient/request-path" {
+		return "", fmt.Errorf("only captured analysis and preview endpoints are allowed")
+	}
 	if _, ok := v.(map[string]any); !ok {
 		return "", fmt.Errorf("request must be an object")
 	}
@@ -122,7 +188,7 @@ func (s *Server) previewPlan(v any) (string, error) {
 	if e != nil {
 		return "", e
 	}
-	req, e := http.NewRequest(http.MethodPost, strings.TrimRight(base, "/")+"/api/ambient/plan", bytes.NewReader(b))
+	req, e := http.NewRequest(http.MethodPost, strings.TrimRight(base, "/")+path, bytes.NewReader(b))
 	if e != nil {
 		return "", e
 	}

@@ -11,6 +11,12 @@ import (
 )
 
 func (s *Server) generateReviewedPlan(req ambient.Request) (*ambient.Plan, error) {
+	if req.Demo != nil {
+		if req.Explain != nil || req.Scorecard != nil {
+			return nil, fmt.Errorf("review Bookinfo separately from other repairs")
+		}
+		return ambient.GenerateBookinfo(s.WS, req)
+	}
 	if req.Explain != nil {
 		if len(req.Tasks) != 1 || req.Tasks[0] != "explain" || req.Scorecard != nil {
 			return nil, fmt.Errorf("review one explainer repair at a time")

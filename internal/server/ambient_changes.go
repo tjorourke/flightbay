@@ -106,6 +106,17 @@ func ambientChangesPreflight(ctx context.Context, c ambientConnection, p *ambien
 	return nil
 }
 func waitAmbientWaypoint(ctx context.Context, c ambientConnection, p *ambient.Plan) error {
+	if p.Request.Demo != nil && p.Request.Demo.Stage == "workloads" {
+		for _, o := range p.Objects {
+			if ambient.S(o["kind"]) == "Gateway" {
+				sub := &ambient.Plan{Request: ambient.Request{Namespace: p.Request.Namespace, Waypoint: &ambient.WaypointRequest{Name: ambient.S(ambient.Path(o, "metadata", "name")), Namespace: p.Request.Namespace}}}
+				if err := waitAmbientWaypoint(ctx, c, sub); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
 	w := p.Request.Waypoint
 	if w == nil {
 		return nil

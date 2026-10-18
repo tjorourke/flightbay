@@ -25,11 +25,16 @@ type Graph struct {
 	Groups []GraphGroup `json:"groups"`
 }
 type Editable struct {
-	Ref       Ref      `json:"ref"`
-	Rule      int      `json:"rule"`
-	Supported bool     `json:"supported"`
-	Reason    string   `json:"reason"`
-	Request   *Request `json:"request,omitempty"`
+	Ref         Ref      `json:"ref"`
+	Rule        int      `json:"rule"`
+	Supported   bool     `json:"supported"`
+	Reason      string   `json:"reason"`
+	Request     *Request `json:"request,omitempty"`
+	Tasks       []string `json:"tasks,omitempty"`
+	Status      string   `json:"status"`
+	Scope       string   `json:"scope"`
+	Matches     any      `json:"matches,omitempty"`
+	Fingerprint string   `json:"fingerprint"`
 }
 type PodChoice struct {
 	Ref

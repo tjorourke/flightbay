@@ -16,6 +16,14 @@ func TestAmbientToolsProtocolAndReadOnlyBoundary(t *testing.T) {
 			return
 		}
 		switch r.URL.Path {
+		case "/api/ambient/request-path/options":
+			_, _ = w.Write([]byte(`{"callers":[{"cluster":"mesh1","namespace":"app","name":"client"},{"cluster":"mesh2","namespace":"app","name":"client"}],"destinations":[{"cluster":"mesh1","namespace":"app","name":"petstore"}]}`))
+		case "/api/ambient/request-path":
+			posts++
+			if r.Method != "POST" {
+				t.Error("path analysis must be POST")
+			}
+			_, _ = w.Write([]byte(`{"path":{"hops":[],"observed":{"records":0}},"policies":[]}`))
 		case "/api/ambient":
 			_, _ = w.Write([]byte(`{"objects":[{"cluster":"mesh1","namespace":"app","name":"petstore"},{"cluster":"mesh2","namespace":"app","name":"petstore"}],"services":[],"routes":[],"namespaces":[],"waypoints":[],"issues":[{"subject":{"cluster":"mesh1","namespace":"app","name":"petstore"},"step":{"state":"fail","id":"missing-parent"}},{"subject":{"cluster":"mesh2","namespace":"app","name":"other"},"step":{"state":"fail","id":"other"}}],"fixGuides":[{"id":"route-parent"}]}`))
 		case "/api/ambient/investigate":
@@ -60,14 +68,19 @@ func TestAmbientToolsProtocolAndReadOnlyBoundary(t *testing.T) {
 	}
 	invoke("ambient_investigate", map[string]any{"cluster": "mesh1", "namespace": "app", "kind": "Service", "name": "petstore"})
 	invoke("ambient_capabilities", map[string]any{"cluster": "mesh1", "namespace": "app", "service": "petstore"})
+	text = invoke("ambient_request_path", map[string]any{"cluster": "mesh1"})
+	if strings.Contains(text, "mesh2") {
+		t.Fatal("request path choices ignored cluster")
+	}
+	invoke("ambient_request_path", map[string]any{"request": map[string]any{"source": map[string]any{"cluster": "mesh1"}, "destination": map[string]any{"cluster": "mesh1"}}})
 	invoke("ambient_plan_preview", map[string]any{"request": map[string]any{"cluster": "mesh1", "namespace": "app", "service": "petstore", "tasks": []string{"route-parent"}}})
 	invoke("scorecard_fix_preview", map[string]any{"check": "ambient.default-deny", "target": map[string]any{"cluster": "mesh1", "kind": "Namespace", "name": "app", "resource": "namespaces", "group": "", "namespace": ""}})
 	text = invoke("ambient_change_history", nil)
 	if strings.Contains(text, "SECRET") || strings.Contains(text, "PRIVATE") {
 		t.Fatal("validation credential leaked")
 	}
-	if posts != 2 {
-		t.Fatalf("expected only two preview POSTs, got %d", posts)
+	if posts != 3 {
+		t.Fatalf("expected two preview POSTs and one captured path analysis, got %d", posts)
 	}
 	for _, tool := range call(t, s, "tools/list", nil)["tools"].([]any) {
 		m := tool.(map[string]any)

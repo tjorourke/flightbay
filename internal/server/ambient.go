@@ -28,6 +28,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/tjorourke/flightbay/internal/ambient"
+	"github.com/tjorourke/flightbay/internal/bundle"
 	"github.com/tjorourke/flightbay/internal/collect"
 	"github.com/tjorourke/flightbay/internal/reach"
 	"github.com/tjorourke/flightbay/internal/store"
@@ -46,14 +47,18 @@ type ambientCreated struct {
 	UID        types.UID `json:"uid"`
 }
 type ambientRecord struct {
-	Modified  []ambient.Change `json:"modified,omitempty"`
-	Owner     string           `json:"owner"`
-	Token     string           `json:"token"`
-	Context   string           `json:"context"`
-	Server    string           `json:"server"`
-	Plan      *ambient.Plan    `json:"plan"`
-	Validated time.Time        `json:"validated"`
-	Created   []ambientCreated `json:"created"`
+	ApplyState    string           `json:"applyState,omitempty"`
+	ApplyError    string           `json:"applyError,omitempty"`
+	ApplyStarted  time.Time        `json:"applyStarted,omitempty"`
+	ApplyFinished time.Time        `json:"applyFinished,omitempty"`
+	Modified      []ambient.Change `json:"modified,omitempty"`
+	Owner         string           `json:"owner"`
+	Token         string           `json:"token"`
+	Context       string           `json:"context"`
+	Server        string           `json:"server"`
+	Plan          *ambient.Plan    `json:"plan"`
+	Validated     time.Time        `json:"validated"`
+	Created       []ambientCreated `json:"created"`
 }
 type ambientState struct {
 	mu      sync.Mutex
@@ -147,9 +152,33 @@ func (s *Server) ambientContexts(w http.ResponseWriter, r *http.Request) {
 	}
 	out := []map[string]string{}
 	for _, c := range cs {
-		out = append(out, map[string]string{"name": c.Name, "server": c.Server})
+		row := map[string]string{"name": c.Name, "server": c.Server}
+		if cluster := s.ambientLiveCluster(c.Name, c.Server); cluster != "" {
+			row["liveCluster"] = cluster
+		}
+		out = append(out, row)
 	}
 	writeJSON(w, 200, out)
+}
+
+// A matching display name alone is not authority to query another cluster.
+func (s *Server) ambientLiveCluster(name, server string) string {
+	if s.WS == nil || !s.WS.IsLive() || server == "" {
+		return ""
+	}
+	live := s.WS.State().Live
+	if live == nil {
+		return ""
+	}
+	if len(live.Clusters) == 0 && live.Context == name && live.Server == server {
+		return bundle.SafeID(name)
+	}
+	for _, cluster := range live.Clusters {
+		if cluster.Context == name && cluster.Server == server {
+			return bundle.SafeID(name)
+		}
+	}
+	return ""
 }
 
 func (s *Server) ambientConnect(name string) (ambientConnection, error) {
@@ -199,6 +228,9 @@ func ambientResource(c ambientConnection, api, kind, ns string) (dynamic.Resourc
 		return nil, err
 	}
 	if mapping.Scope.Name() != meta.RESTScopeNameNamespace {
+		if kind == "Namespace" && gv.Group == "" && mapping.Resource.Resource == "namespaces" && ns == "" {
+			return c.client.Resource(mapping.Resource), nil
+		}
 		return nil, errors.New("test plans may only create namespaced configuration")
 	}
 	return c.client.Resource(mapping.Resource).Namespace(ns), nil
@@ -213,6 +245,9 @@ func ambientServiceFingerprint(o map[string]any) string {
 }
 func (s *Server) ambientPreflight(ctx context.Context, c ambientConnection, p *ambient.Plan) error {
 	q := p.Request
+	if q.Demo != nil {
+		return s.bookinfoPreflight(ctx, c, p)
+	}
 	for _, e := range p.Evidence {
 		if e.Field != "spec.serviceAccountName" && e.Field != "data.mesh" {
 			continue
@@ -531,7 +566,19 @@ func (s *Server) ambientTest(w http.ResponseWriter, r *http.Request) {
 			jerr(w, 409, "validation expired or test already applied; cleanup and validate again")
 			return
 		}
+		rec.ApplyState = "applying"
+		rec.ApplyError = ""
+		rec.ApplyStarted = time.Now().UTC()
+		rec.ApplyFinished = time.Time{}
+		if err := s.saveAmbientRecord(rec); err != nil {
+			jerr(w, 500, "cannot record installation start: "+err.Error())
+			return
+		}
 		if err := s.ambientPreflight(ctx, c, rec.Plan); err != nil {
+			rec.ApplyState = "failed"
+			rec.ApplyError = err.Error()
+			rec.ApplyFinished = time.Now().UTC()
+			_ = s.saveAmbientRecord(rec)
 			jerr(w, 409, err.Error())
 			return
 		}
@@ -550,6 +597,9 @@ func (s *Server) ambientTest(w http.ResponseWriter, r *http.Request) {
 				cleanupCtx, stop := context.WithTimeout(context.Background(), 30*time.Second)
 				rollback := cleanupAmbient(cleanupCtx, c, rec)
 				stop()
+				rec.ApplyState = "failed"
+				rec.ApplyError = fmt.Sprintf("apply failed: %v; rollback: %v", err, rollback)
+				rec.ApplyFinished = time.Now().UTC()
 				_ = s.saveAmbientRecord(rec)
 				writeJSON(w, 400, map[string]any{"error": fmt.Sprintf("apply failed: %v; rollback: %v", err, rollback), "test": rec})
 				return
@@ -582,17 +632,27 @@ func (s *Server) ambientTest(w http.ResponseWriter, r *http.Request) {
 			cleanupCtx, stop := context.WithTimeout(context.Background(), 30*time.Second)
 			rollback := cleanupAmbient(cleanupCtx, c, rec)
 			stop()
+			rec.ApplyState = "failed"
+			rec.ApplyError = fmt.Sprintf("test change failed: %v; undo: %v", applyErr, rollback)
+			rec.ApplyFinished = time.Now().UTC()
 			_ = s.saveAmbientRecord(rec)
 			writeJSON(w, 400, map[string]any{"error": fmt.Sprintf("test change failed: %v; undo: %v", applyErr, rollback), "test": rec})
 			return
 		}
-		writeJSON(w, 200, map[string]any{"test": rec, "message": "Test configuration applied. Check status and exercise traffic. An offline capture stays unchanged; refresh a live inventory or open a fresh capture to investigate the new state."})
+		rec.ApplyState = "applied"
+		rec.ApplyFinished = time.Now().UTC()
+		if err := s.saveAmbientRecord(rec); err != nil {
+			writeJSON(w, 500, map[string]any{"test": rec, "error": "Configuration was applied, but its final status could not be saved: " + err.Error()})
+			return
+		}
+		writeJSON(w, 200, map[string]any{"test": rec, "message": "Configuration applied. Workload readiness and request connectivity have not yet been verified."})
 	case "cleanup":
 		if err := cleanupAmbient(ctx, c, rec); err != nil {
 			_ = s.saveAmbientRecord(rec)
 			writeJSON(w, 409, map[string]any{"error": err.Error(), "test": rec})
 			return
 		}
+		rec.ApplyState = "removed"
 		if err := s.saveAmbientRecord(rec); err != nil {
 			jerr(w, 500, err.Error())
 			return
@@ -636,7 +696,7 @@ func (s *Server) ambientTest(w http.ResponseWriter, r *http.Request) {
 				out = append(out, map[string]any{"object": o, "error": "object UID changed; this is not the created test resource"})
 				continue
 			}
-			out = append(out, map[string]any{"object": o, "status": u.Object["status"]})
+			out = append(out, map[string]any{"object": o, "status": u.Object["status"], "generation": u.GetGeneration()})
 		}
 		writeJSON(w, 200, out)
 	default:
@@ -644,8 +704,19 @@ func (s *Server) ambientTest(w http.ResponseWriter, r *http.Request) {
 	}
 }
 func cleanupAmbient(ctx context.Context, c ambientConnection, rec *ambientRecord) error {
+	demo := rec.Plan.Request.Demo != nil && rec.Plan.Request.Demo.Stage == "workloads"
+	if demo {
+		if err := bookinfoDeletePreflight(ctx, c, rec); err != nil {
+			return err
+		}
+	}
 	if err := undoAmbientChanges(ctx, c, rec); err != nil {
 		return err
+	}
+	if demo {
+		if err := bookinfoClearLegacyBinding(ctx, c, rec); err != nil {
+			return err
+		}
 	}
 	left := []ambientCreated{}
 	var errs error
@@ -659,7 +730,9 @@ func cleanupAmbient(ctx context.Context, c ambientConnection, rec *ambientRecord
 				continue
 			}
 			if err == nil {
-				if o.UID == "" || u.GetUID() != o.UID || u.GetLabels()["app.kubernetes.io/managed-by"] != "flightbay" || u.GetLabels()["flightbay.dev/test-id"] != rec.Plan.ID {
+				if o.Kind == "Namespace" {
+					err = fmt.Errorf("namespace %s is retained; namespace deletion is not performed automatically", o.Name)
+				} else if o.UID == "" || u.GetUID() != o.UID || u.GetLabels()["app.kubernetes.io/managed-by"] != "flightbay" || u.GetLabels()["flightbay.dev/test-id"] != rec.Plan.ID {
 					err = fmt.Errorf("refusing to delete %s: UID or ownership differs", o.Name)
 				} else {
 					err = res.Delete(ctx, o.Name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &o.UID}})

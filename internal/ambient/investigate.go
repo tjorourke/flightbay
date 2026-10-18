@@ -62,9 +62,10 @@ type Investigation struct {
 }
 type Service struct {
 	Ref
-	UID     string   `json:"uid"`
-	Ports   []int    `json:"ports"`
-	Regions []string `json:"regions"`
+	UID         string      `json:"uid"`
+	Ports       []int       `json:"ports"`
+	Regions     []string    `json:"regions"`
+	Publication *ServiceDNS `json:"publication,omitempty"`
 }
 type Inventory struct {
 	Issues         []AmbientIssue   `json:"issues"`
@@ -137,6 +138,10 @@ func List(ws *store.Workspace) Inventory {
 		}
 		for _, o := range ws.List(c, "", "services", "", nil) {
 			v := Service{Ref: reference(o), UID: S(Path(o.Obj, "metadata", "uid")), Ports: []int{}, Regions: regions(ws, o)}
+			if scope := o.Labels()["solo.io/service-scope"]; scope == "global" || scope == "global-only" {
+				dns := serviceDNS(ws, o)
+				v.Publication = &dns
+			}
 			for _, p := range L(Path(o.Obj, "spec", "ports")) {
 				v.Ports = append(v.Ports, N(M(p)["port"]))
 			}
@@ -342,7 +347,13 @@ func Investigate(ws *store.Workspace, c, ns, name, routeName string) (*Investiga
 		inspectRoute(ws, r, svc, route, wpNS, wpName)
 	}
 	if found == 0 {
-		add(r, "routes", "HTTPRoute selection", "unknown", "No related HTTPRoute was found. An HTTPRoute is optional for ordinary ambient traffic; select a route explicitly if its intended Service is ambiguous.")
+		if routeName != "" {
+			add(r, "routes", "Requested HTTPRoute", missing(ws, c, GatewayGroup, "httproutes", "HTTPRoute", ns), "Requested HTTPRoute "+ns+"/"+routeName+" was not captured. Check its name and collection scope.")
+		} else if missing(ws, c, GatewayGroup, "httproutes", "HTTPRoute", ns) == "fail" {
+			add(r, "routes", "Optional HTTPRoute", "na", "No related HTTPRoute is configured. Ordinary ambient Service traffic does not require one.")
+		} else {
+			add(r, "routes", "HTTPRoute coverage", "unknown", "HTTPRoute collection is incomplete. A route is optional for ordinary ambient Service traffic; refresh or collect this API to inspect any custom routing.")
+		}
 	}
 	sidecars := 0
 	for _, p := range pods {
@@ -455,9 +466,9 @@ func Investigate(ws *store.Workspace, c, ns, name, routeName string) (*Investiga
 		}
 		state, detail := "unknown", "No matching waypoint proxy diagnostics were captured. Use a capture with --diagnostics to inspect delivered config and xDS sync in Proxy configs."
 		if available {
-			state, detail = "warning", "Waypoint diagnostics are available in Proxy configs. Compare delivered routes and xDS sync with this configuration; resource acceptance alone is not proof of dataplane delivery."
+			state, detail = "pass", "Waypoint proxy diagnostics were captured and are available in Proxy diagnostics. Availability is confirmed; delivered routes, xDS sync and successful traffic require separate evidence."
 		}
-		add(r, "dataplane", "Delivered proxy configuration", state, detail)
+		add(r, "dataplane", "Proxy diagnostic coverage", state, detail)
 	}
 	for i := range r.Steps {
 		if r.Steps[i].State != "pass" && r.Steps[i].State != "na" {

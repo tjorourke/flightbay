@@ -25,6 +25,7 @@ type Backend struct {
 	Weight int    `json:"weight"`
 }
 type Request struct {
+	Demo               *BookinfoRequest  `json:"demo,omitempty"`
 	Explain            *ExplainRequest   `json:"explain,omitempty"`
 	Paths              []string          `json:"paths,omitempty"`
 	Headers            map[string]string `json:"headers,omitempty"`

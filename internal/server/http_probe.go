@@ -36,15 +36,17 @@ type httpProfile struct {
 	Timeout int               `json:"timeout"`
 }
 type httpProbeRequest struct {
-	Service        ambient.Ref  `json:"service"`
-	Context        string       `json:"context"`
-	Mode           string       `json:"mode"`
-	URL            string       `json:"url"`
-	Names          []string     `json:"names"`
-	Port           int          `json:"port"`
-	GatewayService *ambient.Ref `json:"gatewayService,omitempty"`
-	GatewayPort    int          `json:"gatewayPort,omitempty"`
-	Profile        httpProfile  `json:"profile"`
+	Service         ambient.Ref  `json:"service"`
+	Context         string       `json:"context"`
+	Mode            string       `json:"mode"`
+	URL             string       `json:"url"`
+	Names           []string     `json:"names"`
+	Port            int          `json:"port"`
+	GatewayService  *ambient.Ref `json:"gatewayService,omitempty"`
+	GatewayPort     int          `json:"gatewayPort,omitempty"`
+	Profile         httpProfile  `json:"profile"`
+	Count           int          `json:"count,omitempty"`
+	SkipAttribution bool         `json:"skipAttribution,omitempty"`
 }
 type httpProbeResult struct {
 	ID              string            `json:"id"`
@@ -376,7 +378,22 @@ func (s *Server) httpProbeOptions(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	writeJSON(w, 200, map[string]any{"dns": v.DNS, "gateways": gateways})
+	defaultPath := "/"
+	if ns := s.WS.Get(q.Get("cluster"), "", "namespaces", "", q.Get("namespace")); ns != nil && ns.Labels()["flightbay.dev/demo"] == "bookinfo" {
+		if q.Get("name") == "reviews" {
+			defaultPath = "/reviews/0"
+		}
+		if q.Get("name") == "productpage" {
+			defaultPath = "/productpage"
+		}
+	}
+	ports := []int{}
+	if svc := s.WS.Get(q.Get("cluster"), "", "services", q.Get("namespace"), q.Get("name")); svc != nil {
+		for _, p := range ambient.L(ambient.Path(svc.Obj, "spec", "ports")) {
+			ports = append(ports, ambient.N(ambient.M(p)["port"]))
+		}
+	}
+	writeJSON(w, 200, map[string]any{"dns": v.DNS, "gateways": gateways, "clients": s.meshClientOptions(q.Get("cluster")), "defaultPath": defaultPath, "ports": ports})
 }
 
 func (s *Server) httpProbe(w http.ResponseWriter, r *http.Request) {
@@ -390,6 +407,13 @@ func (s *Server) httpProbe(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := validateHTTPProfile(&req.Profile); err != nil {
 		jerr(w, 400, err.Error())
+		return
+	}
+	if req.Count == 0 {
+		req.Count = 1
+	}
+	if req.Count < 1 || req.Count > maxMeshRequests {
+		jerr(w, 400, "choose 1–1000 requests total")
 		return
 	}
 	v, err := ambient.NewView(s.WS, req.Service.Cluster, "Service", req.Service.Namespace, req.Service.Name, "")
@@ -426,6 +450,10 @@ func (s *Server) httpProbe(w http.ResponseWriter, r *http.Request) {
 				jerr(w, 400, "a selected DNS name is not in this capture")
 				return
 			}
+		}
+		if req.Count*len(req.Names) > maxMeshRequests {
+			jerr(w, 400, "choose at most 1000 requests total across selected names")
+			return
 		}
 		ref, port := req.Service, req.Port
 		if req.Mode == "gateway" {
@@ -465,27 +493,90 @@ func (s *Server) httpProbe(w http.ResponseWriter, r *http.Request) {
 		jerr(w, 400, "choose public, service or gateway connection mode")
 		return
 	}
+	stream := strings.Contains(r.Header.Get("Accept"), "application/x-ndjson")
 	results := []httpProbeResult{}
+	rows := []meshProbeResult{}
+	inventories, routes, warnings := []meshResponderInventory{}, []meshRouteRule{}, []string{}
+	if stream && !req.SkipAttribution {
+		metadataCtx, metadataCancel := context.WithTimeout(ctx, 15*time.Second)
+		inventories, routes, warnings = s.nativeResponderInventories(metadataCtx, req)
+		metadataCancel()
+	}
+	if stream && req.SkipAttribution {
+		warnings = append(warnings, "Cluster metadata lookup is disabled. Native HTTP runs without it; responder clusters remain unverified.")
+	}
+	connectionNote := "Requests originate from Flightbay's native HTTP client. No test workloads are deployed."
+	if req.Mode == "service" {
+		connectionNote = "Backend Pod only: the mesh, waypoint and east-west path are not taken. DNS names are HTTP authorities on the same backend connection."
+	}
+	if req.Mode == "gateway" {
+		connectionNote = "Flightbay forwards to an existing ingress gateway. Its routes determine the backend; only an appropriate global-Service route can exercise east-west routing."
+	}
+	encode := json.NewEncoder(w)
+	emit := func(event any) bool {
+		if encode.Encode(event) != nil {
+			return false
+		}
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		return true
+	}
+	if stream {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Accel-Buffering", "no")
+		clusters := []string{}
+		for _, inventory := range inventories {
+			clusters = append(clusters, inventory.Cluster)
+		}
+		if !emit(map[string]any{"type": "start", "requested": req.Count * len(req.Names), "names": req.Names, "count": req.Count, "origin": "flightbay", "connectionMode": req.Mode, "connection": base, "connectionPod": pod, "connectionNote": connectionNote, "routes": routes, "warnings": warnings, "attributionClusters": clusters}) {
+			return
+		}
+	}
 	for _, name := range req.Names {
-		authority := name
-		if req.Mode == "service" {
-			authority = net.JoinHostPort(name, strconv.Itoa(req.Port))
-		}
-		result := runHTTPProbe(ctx, req.Profile, base+req.Profile.Path, authority, req.Mode)
-		result.Name = name
-		result.Connection = base
-		result.Pod = pod
-		result.Note = "Direct request from the Flightbay host; no in-cluster caller identity is assumed."
-		if req.Mode == "service" {
-			result.Note = "Direct backend via port-forward to an existing Pod. DNS resolution and the normal Service/waypoint/east-west path are bypassed; DNS names are HTTP authorities only."
-		}
-		if req.Mode == "gateway" {
-			result.Note = "Gateway route test via port-forward. DNS resolution is bypassed. Only an existing matching gateway route to the selected global Service can exercise east-west routing; an HTTP success alone does not prove that path."
-			if !s.probeRouteCaptured(*req.GatewayService, req.Service, name) {
-				result.Note += " No captured HTTPRoute on this gateway references the selected Service or this hostname; the response may be from another backend."
+		for attempt := 0; attempt < req.Count; attempt++ {
+			if ctx.Err() != nil {
+				break
+			}
+			authority := name
+			if req.Mode == "service" {
+				authority = net.JoinHostPort(name, strconv.Itoa(req.Port))
+			}
+			result := runHTTPProbe(ctx, req.Profile, base+req.Profile.Path, authority, req.Mode)
+			result.Name = name
+			result.Connection = base
+			result.Pod = pod
+			result.Note = "Direct request from the Flightbay host; no in-cluster caller identity is assumed."
+			if req.Mode == "service" {
+				result.Note = "Direct backend via port-forward to an existing Pod. DNS resolution and the normal Service/waypoint/east-west path are bypassed; DNS names are HTTP authorities only."
+			}
+			if req.Mode == "gateway" {
+				result.Note = "Gateway route test via port-forward. DNS resolution is bypassed. Only an existing matching gateway route to the selected global Service can exercise east-west routing; an HTTP success alone does not prove that path."
+				if !s.probeRouteCaptured(*req.GatewayService, req.Service, name) {
+					result.Note += " No captured HTTPRoute on this gateway references the selected Service or this hostname; the response may be from another backend."
+				}
+			}
+			results = append(results, result)
+			if stream {
+				row := meshProbeResult{httpProbeResult: result, Index: len(rows) + 1}
+				row.Responder, row.Attribution = meshResponseAcrossClusters(result, inventories)
+				if len(inventories) != len(s.WS.Clusters()) {
+					row.Responder = nil
+					row.Attribution = "Responder cluster is unverified: not all captured cluster inventories could be read."
+				}
+				rows = append(rows, row)
+				if !emit(map[string]any{"type": "result", "result": row, "completed": len(rows), "requested": req.Count * len(req.Names)}) {
+					return
+				}
 			}
 		}
-		results = append(results, result)
+	}
+	if stream {
+		summary := summarizeMeshProbe(rows, req.Count*len(req.Names))
+		summary.Stopped = ctx.Err() != nil
+		emit(map[string]any{"type": "complete", "summary": summary})
+		return
 	}
 	writeJSON(w, 200, map[string]any{"results": results})
 }

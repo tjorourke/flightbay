@@ -12,6 +12,8 @@
 
 Istio ambient has its own guide, [Istio ambient](ambient.md), and the Agents and Traffic pages are covered in [Flightbay Enterprise](enterprise.md).
 
+The Ambient workbench includes captured configuration editing with per-rule drafts, request-path Steps and Map, reviewed Bookinfo installation/removal, and native or existing-Pod HTTP batches with cluster-aware responder results. Its live dry-run/apply actions use separately verified kubeconfig connections and explicit confirmation; the mirror and snapshot terminal remain read-only.
+
 ## Open a bundle
 
 ```bash

@@ -8,9 +8,11 @@ The **Ambient** page investigates and configures Istio ambient from a capture or
 
 - **Investigate.** Search Namespace, Service, Pod, Gateway, HTTPRoute and ServiceEntry entry points, and follow failed checks into an evidence-aware recovery wizard.
 - **Change.** Edit captured routing weights and policies, or set up shared waypoints.
+- **Trace a request path.** Choose a caller and destination Service across captured clusters. Steps and Map show reconstructed dataplane hops, with amber east-west gateways; address/routing configuration, traffic and policy evidence remain inspectable separately.
+- **Deploy the Bookinfo demo.** Review namespace preparation and workloads separately, follow readiness, recover recorded installations and remove only installer-owned resources after confirmation.
 - **Apply safely.** Preview the YAML and field diffs, dry-run, then confirm Apply to an explicitly selected real context. Scoped test changes can be undone.
 
-Configuration runs **Target → Task → Configure → Review**, with **Clear selection** and **New configuration** controls. Detected controller and API evidence selects the matching OSS or Enterprise policy shape, and labelled **Official docs** links accompany tasks and debugging steps.
+Configuration runs **Target → Configurations → Configure → Review**. Current configuration cards load actual resource/rule values. Shared breadcrumbs and a rule switcher retain separate drafts within the selected target; switching configuration requires a fresh review and validation. Detected controller and API evidence selects the matching OSS or Enterprise policy shape, and labelled **Official docs** links accompany tasks and debugging steps.
 
 ![The configuration wizard](images/ambient-wizard.png)
 
@@ -22,9 +24,13 @@ Namespace maps show every captured Service and its endpoint counts. The map grou
 
 Service cards show cluster and published global DNS names. Configure generates independent global-publication label patches for selected clusters where the matching Service already exists, with separate contexts, dry-runs and status. Apply requires confirmation of the actual contexts, API servers and YAML, and successful changes can be undone.
 
+Publication distinguishes the export label from generated alias/address evidence and successful traffic. A remote cluster can consume a global Service without deploying its own application; contributing endpoints requires the application and Service there. Version weights and cross-cluster locality are separate settings.
+
 ## Testing a service
 
-**Test service** runs saved HTTP-header profiles from the desk host, directly or through a temporary port-forward to existing Pods, and links response results to the matching log time window. **Back to HTTP test** restores the originating map or wizard, profile and results without rerunning the request. No test Pods are deployed. Investigation status badges filter the checks.
+**Test service** runs saved HTTP-header profiles from Flightbay's native client, directly or through a temporary port-forward to existing Pods, or uses curl in an explicitly selected existing client Pod. Native reachable-endpoint requests need no Kubernetes connection; optional read-only metadata lookup identifies existing application responders. No helper workloads are deployed.
+
+Both clients support up to 1,000 sequential requests with streaming Results, Stop and Run again. Results distinguish the request origin, destination and actual authority, and group identified responders by cluster and version. Ambiguous or missing identities stay unverified. Backend-only port-forward bypasses mesh routing; existing-Pod mode uses cluster DNS and the mesh path. **Back to HTTP test** restores the originating map or wizard, profile and results without rerunning the request. Investigation status badges filter the checks.
 
 ![HTTP test results](images/ambient-http-results.png)
 
