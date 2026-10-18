@@ -416,7 +416,7 @@ const tfNetText = (e, nodes) => [nodes.get(e.from)?.label, nodes.get(e.to)?.labe
 const tfGwText = (e, callers, targets) => { const c = callers.get(e.from), t = targets.get(e.to); return [c?.label, c?.identity, t && actTargetLabel(t), t?.server, t?.kind, t?.description, ...(e.gateways || []), ...(e.routes || []), ...(e.users || [])].join(' '); };
 const tfNetOk = (e, terms, nodes) => tfTermsOk(tfNetFields(e, nodes), tfNetText(e, nodes), 'network', terms);
 const tfGwOk = (e, terms, callers, targets) => tfTermsOk(tfGwFields(e, callers, targets), tfGwText(e, callers, targets), 'gateway', terms);
-const tfFlags = {plaintext: ['Plaintext in the mesh', 'red'], 'plaintext-in': ['Plaintext from outside the mesh', 'amber'], unpoliced: ['No policy', 'amber'], denied: ['Refused', 'amber'], mismatch: ['Logs and policy disagree', 'amber']};
+const tfFlags = {'waypoint-bypass':['Bypasses selected waypoint','amber'],plaintext: ['Plaintext in the mesh', 'red'], 'plaintext-in': ['Plaintext from outside the mesh', 'amber'], unpoliced: ['No policy', 'amber'], denied: ['Refused', 'amber'], mismatch: ['Logs and policy disagree', 'amber']};
 const tfVerdictCls = {allowed: '', denied: 'green', unknown: 'amber'};
 
 const tfFields = {
@@ -925,7 +925,7 @@ function tfEdgePanel(d, nodes) {
       ${e.via ? `<dt>Waypoint</dt><dd class="mono">${esc(e.via)}</dd>` : ''}${(e.methods || []).length ? `<dt>Methods</dt><dd class="mono">${esc(e.methods.join(', '))}${(e.paths || []).length ? ` <span class="muted">${esc(e.paths.join(', '))}</span>` : ''}</dd>` : ''}
       ${e.bytesSent || e.bytesRecv ? `<dt>Bytes</dt><dd class="mono">${num(e.bytesSent)} sent, ${num(e.bytesRecv)} received</dd>` : ''}
       <dt>Policy</dt><dd class="${tfVerdictCls[e.verdict] || ''}">${esc(e.verdict)}${e.layer ? ` (${esc(e.layer)})` : ''}</dd><dt>Flags</dt><dd>${(e.flags || []).map(f => `<span class="rc-badge ${(tfFlags[f] || [])[1] || ''}">${esc((tfFlags[f] || [f])[0])}</span>`).join(' ') || '<span class="muted">none</span>'}</dd></dl>
-    ${canExplain && to?.kind !== 'external' ? `<div id="tf-why" class="mt">${tfExplainBody(T.ex && T.ex.key === e.id ? T.ex : null)}</div>` : `<p class="muted mt">${to?.kind === 'external' ? 'The destination is outside the capture, so only NetworkPolicy egress could stop it.' : 'The source is not a workload in the capture, so there is nothing to explain from.'}</p>`}</div></section>`;
+    ${e.bypass&&to?.ref?`<p class="amber">Direct workload traffic bypasses configured waypoint ${esc(e.expectedWaypoint)}.</p><button data-tfrequire="${attr(to.ref)}">Require waypoint in wizard →</button>`:''}${amRunbook(e.runbook)}${canExplain && to?.kind !== 'external' ? `<div id="tf-why" class="mt">${tfExplainBody(T.ex && T.ex.key === e.id ? T.ex : null)}</div>` : `<p class="muted mt">${to?.kind === 'external' ? 'The destination is outside the capture, so only NetworkPolicy egress could stop it.' : 'The source is not a workload in the capture, so there is nothing to explain from.'}</p>`}</div></section>`;
 }
 
 function tfExplainBody(ex) {
@@ -944,7 +944,7 @@ function tfExplainBody(ex) {
     ${(x.conditions || []).length ? `<h3 class="mt">Not evaluated from a snapshot</h3><ul class="rc-advice">${x.conditions.map(c => `<li>${esc(c)}</li>`).join('')}</ul>` : ''}
     ${o ? `<h3 class="mt">In the access logs</h3><p>${num(o.connections)} connections, ${num(o.denied)} refused, ${num(o.hbone)} over HBONE, ${num(o.plaintext)} plaintext.${o.note ? ` <span class="${o.agrees ? 'muted' : 'amber'}">${esc(rcCap(o.note))}.</span>` : ''}</p>` : ''}
     ${(x.advice || []).map(a => `<div class="notice info mt"><div>${esc(a)}</div></div>`).join('')}
-    ${x.fix ? `<div class="row between mt"><h3>To allow it</h3><button id="tf-fixcopy">Copy YAML</button></div><p class="muted rc-small">${esc(x.fixNote || '')}</p><pre class="code">${esc(x.fix)}</pre>` : ''}
+    ${x.fix ? `<div class="row between mt"><h3>To allow it</h3><div class="row"><button id="tf-fixcopy">Copy YAML</button><button id="tf-fixreview">Review in Ambient wizard →</button></div></div><p class="muted rc-small">${esc(x.fixNote || '')}</p><pre class="code">${esc(x.fix)}</pre>` : ''}
     <p class="mt row"><button class="ghost" id="tf-exterm">&gt;_ fbexplain in terminal</button></p>`;
 }
 
@@ -975,6 +975,8 @@ after.traffic = () => {
   if($('#tf-service'))$('#tf-service').onchange=e=>{S.tf.service=e.target.value;S.tf.layer=e.target.value?'network':'both';S.tf.found=e.target.value?'ztunnel':'any';S.tf.agents=false;S.tf.ns='';S.tf.q='';S.tf.flag='';S.tf.focus='';S.tf.gz=null;S.tf.tab='map';render();};
   if($('#tf-service-yaml'))$('#tf-service-yaml').onclick=()=>{const [cluster,namespace,name]=JSON.parse(S.tf.service);openObject({cluster,namespace,name,resource:'services',group:'',kind:'Service'},'yaml');};
   const T = S.tf, d = T.data, A = S.act, a = A.data || tfNoAct;
+  document.querySelectorAll('[data-amcopycommand]').forEach(b=>b.onclick=()=>copyTerminalCommand(b.dataset.amcopycommand,b));
+  document.querySelectorAll('[data-tfrequire]').forEach(b=>b.onclick=()=>{const ref=JSON.parse(b.dataset.tfrequire);amResetDraft();S.ambient.key=amKey(ref);S.ambient.kind='Service';S.ambient.tab='wizard';S.ambient.phase=2;S.ambient.tasks={'require-waypoint':true};nav('ambient');});
   $('#tf-term')?.addEventListener('click', () => termRun('fbtraffic'));
   if ((!feature('traffic') && !feature('reach')) || !d) return;
   const keepY = fn => { const y = scrollY; fn(); render().then(() => scrollTo(0, y)); };
@@ -1106,6 +1108,7 @@ after.traffic = () => {
 
 function tfWireExplain() {
   const T = S.tf, x = T.ex?.res;
+  if($('#tf-fixreview'))$('#tf-fixreview').onclick=()=>amReviewExplanation(x).catch(e=>toast(e.message));
   document.querySelectorAll('[data-tfpol]').forEach(b => b.onclick = () => { const [i, j] = b.dataset.tfpol.split(':').map(Number); const p = x.steps[i].policies[j]; fbOpenRef(p); });
   $('#tf-fixcopy')?.addEventListener('click', () => navigator.clipboard.writeText(x.fix).then(() => toast('YAML copied'), () => toast('Clipboard unavailable')));
   $('#tf-exterm')?.addEventListener('click', () => termRun(`fbexplain ${T.ex.from} ${T.ex.to}`));

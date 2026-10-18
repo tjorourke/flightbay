@@ -92,6 +92,11 @@ function amGraph(target) {
   return `<section class="panel" id="am-graph"><div class="panel-head"><h2>Connections for ${esc(target.name)}</h2></div><div class="panel-body"><p class="muted">Captured relationships. Weights apply per route rule; they are not measured traffic.</p><div class="am-map-root">${node({ref: target, state: 'na', exists: true})}</div><div class="am-map-branches">${graph.groups.map(g => `<section class="am-map-branch"><h3>${esc(g.title)}</h3><p class="muted">${esc(g.relation)}</p>${g.nodes.map(node).join('') || '<p class="muted">None captured.</p>'}</section>`).join('')}</div></div></section>` + amEditors();
 }
 const amTaskText={
+  'require-waypoint':['Require waypoint','Only admit the captured waypoint service account at ztunnel.','Access'],
+  jwt:['Require a JWT','Validate tokens and restrict request principals at the Istio waypoint.','Access'],
+  retries:['Retry failed requests','Set retry attempts when the installed experimental schema permits it.','Resilience'],
+  mirroring:['Mirror requests','Copy requests to a captured Service; ignore its responses.','Routing'],
+  'header-routing':['Route by header','Send requests matching exact HTTP headers to a selected backend.','Routing'],
   'global-service':['Publish a global Service','Review the export label for this Service in the selected cluster.','Multicluster'],
   'l4-default-deny':['Deny by default','Require an explicit allow policy for this workload.','Access'],
   'l4-allow-namespace':['Allow a namespace','Permit callers from a selected namespace.','Access'],
@@ -113,7 +118,7 @@ function amWizard(svc) {
   const backends = F.backends || [svc, others.find(s => s.name !== svc.name) || svc].map((s, i) => ({name: s.name, port: s.ports[0], weight: i ? 10 : 90}));
   const edit = A.edit ? `<div class="notice info"><div><strong>Editing ${esc(A.edit.ref.kind)} ${esc(A.edit.ref.namespace)}/${esc(A.edit.ref.name)}${A.edit.ref.kind === 'HTTPRoute' ? ' · rule ' + (A.edit.rule + 1) : ''}</strong><p>Existing attachments and unedited fields are retained. The preview shows the exact existing-field changes.</p><button id="am-new-plan">Start a separate new plan</button></div></div>` : '';
   if(A.phase===1)return edit+amTaskCards();
-  const tasks=Object.keys(A.tasks).filter(k=>A.tasks[k]),names=tasks.map(k=>amTaskText[k]?.[0]||k),hasPortOptions=tasks.some(k=>['methods','weighted-routing','timeouts','rate-limit'].includes(k));
+  const tasks=Object.keys(A.tasks).filter(k=>A.tasks[k]),names=tasks.map(k=>amTaskText[k]?.[0]||k),hasPortOptions=tasks.some(k=>['methods','weighted-routing','timeouts','rate-limit','jwt','retries','mirroring','header-routing'].includes(k));
   const fields = `<section class="panel am-options"><div class="panel-head"><div><h2>${esc(names.length===1?names[0]:'Configure selected tasks')}</h2><p class="muted">${esc(names.length===1?amTaskText[tasks[0]]?.[1]||'Choose the settings for this task.':'Set the options below, then review the generated changes.')}</p></div><button id="am-edit-tasks">Change tasks</button></div><div class="panel-body" id="am-parameters"><div class="am-fields">${hasPortOptions?`<label>Service port <select id="am-port">${amOpts(svc.ports, F.port || svc.ports[0])}</select></label>`:''}
     ${selected('global-service')?amGlobalClusterChoices(svc):''}
     ${selected('global-service')?`<div class="am-global-publication"><h3>Publication change</h3><p>The reviewed change sets <code>solo.io/service-scope: global</code> on each selected existing Service. Other labels, selectors, ports and service-takeover settings are preserved.</p><p>Each cluster gets an independent plan and explicit kubeconfig context. Peering and a supported Enterprise Istio licence must already be configured.</p>${amDNSMarkup(A.result.dns)}<p>The controller chooses the global hostname. Refresh after applying to see its published names.</p></div>`:''}
@@ -177,8 +182,10 @@ function amCapture() {
   const mtls=document.querySelector('input[name="am-mtls-mode"]:checked');if(mtls)F.mtlsMode=mtls.value;
   const text = ['source','methods','timeout','backendTimeout','algorithm','unit','fromRegion','toRegion','trafficMode','mtlsMode','methodAction','wpMode','wpScope','wpExisting','wpNamespace','wpName','wpClass','targetNamespace','repairOperation','selectedPod','workload','repairRoute'];
   text.push('parentKind','parentGateway','parentSection');
+  text.push('issuer','jwksUri','jwks','requestPrincipals','paths','jwtMethods','p1Headers','mirrorService','headerService','explainPorts','explainPaths');
   for (const k of text) if (get(k)) F[k === 'source' ? 'sourceNamespace' : k] = get(k).value;
   for (const k of ['port','requests','burst','failureThreshold','maxEjectionPercent','targetPort','replicas','parentIndex']) if (get(k)) F[k] = Number(get(k).value);
+  for(const k of ['retryAttempts','mirrorPort','headerPort'])if(get(k))F[k]=Number(get(k).value);
   for (const k of ['relativeWeights','wpGrant','wpClear','wpEnrol']) if (get(k)) F[k] = get(k).checked;
   for (const k of ['ejectionInterval','ejectionDuration']) if (get(k)) F[k] = get(k).value;
   if ($('#am-selector')) F.selector = JSON.parse($('#am-selector').value);
@@ -187,6 +194,7 @@ function amCapture() {
 }
 function amRead() {
   amCapture(); const A = S.ambient, F = A.settings, o = amTarget(), s = amService();
+  if(F.explain)return {cluster:s.cluster,namespace:s.namespace,service:s.name,tasks:['explain'],explain:{...F.explain,ports:(F.explainPorts??F.explain.ports?.join(',')??'').split(',').map(x=>x.trim()).filter(Boolean),paths:(F.explainPaths??F.explain.paths?.join(',')??'').split(',').map(x=>x.trim()).filter(Boolean)}};
   if(A.mode==='route-parent'&&(F.parentKind||'Gateway')==='Gateway'){
     const parent=A.inventory.objects.find(o=>o.cluster===s.cluster&&o.kind==='Gateway'&&o.namespace+'/'+o.name===F.parentGateway);
     if(!parent)throw new Error('Choose the intended existing Gateway in this cluster.');
@@ -201,6 +209,11 @@ function amRead() {
   if (A.tasks.methods) req.methods = (F.methods || '').split(',').map(x => x.trim()).filter(Boolean);
   if (A.tasks['weighted-routing']) req.backends = F.backends;
   if (A.edit) req.edit = A.edit;
+  if(A.tasks.jwt){req.issuer=F.issuer;req.jwksUri=F.jwksUri;req.jwks=F.jwks;req.requestPrincipals=(F.requestPrincipals||'').split(',').map(x=>x.trim()).filter(Boolean);req.paths=(F.paths||'').split(',').map(x=>x.trim()).filter(Boolean);req.methods=(F.jwtMethods||'').split(',').map(x=>x.trim()).filter(Boolean);}
+  if(A.tasks.jwt||A.tasks['header-routing'])req.headers=JSON.parse(F.p1Headers||'{}');
+  if(A.tasks.retries)req.retryAttempts=F.retryAttempts;
+  if(A.tasks.mirroring)req.mirror={name:F.mirrorService,port:F.mirrorPort};
+  if(A.tasks['header-routing']&&!A.tasks['weighted-routing'])req.backends=[{name:F.headerService,port:F.headerPort}];
   return req;
 }
 async function amAction(fn) { const A = S.ambient; if (A.busy) return; A.busy = true; A.error = ''; document.querySelectorAll('#main button, #main input, #main select').forEach(e => e.disabled = true); try { await fn(); } catch (e) { A.error = e.message; if (e.body?.test) A.tests = await api('api/ambient/tests').catch(() => A.tests); } finally { A.busy = false; await render(); } }
@@ -231,6 +244,7 @@ function amWirePicker() {
 after.ambient = () => {
   if(!$('#am-target-selector'))return;
   const A = S.ambient; amWirePicker();
+  amP1Fields();
   if($('#am-workspace'))$('#am-workspace').dataset.amScope=amViewScope();
   document.querySelectorAll('.am-check').forEach((el,i)=>el.dataset.amStep=A.result.steps[i].id);
   if(A.pendingStep)A.checkFilter='all';
@@ -253,7 +267,7 @@ after.ambient = () => {
   document.querySelectorAll('input[name="am-mtls-mode"]').forEach(e=>e.addEventListener('change',()=>{amCapture();amInvalidate();}));
   const policyBadge=document.querySelector('.am-environment .badge');if(policyBadge){policyBadge.textContent=policyBadge.textContent.replace(/^YAML:/,'Generated policy type:');policyBadge.hidden=A.tab!=='wizard';}
   document.querySelectorAll('.am-evidence>summary').forEach(e=>e.textContent='Check details · captured fields');
-  document.querySelectorAll('.am-check').forEach((el,i)=>{const step=A.result.steps[i];el.querySelector('.panel-body>p')?.insertAdjacentHTML('afterend',amFixGuide(step.suggestedFix));el.querySelector('.panel-body')?.insertAdjacentHTML('beforeend',amOfficial(step.docs));});
+  document.querySelectorAll('.am-check').forEach((el,i)=>{const step=A.result.steps[i];el.querySelector('.panel-body>p')?.insertAdjacentHTML('afterend',amFixGuide(step.suggestedFix));el.querySelector('.panel-body')?.insertAdjacentHTML('beforeend',amRunbook(step.runbook)+amOfficial(step.docs));});
   document.querySelectorAll('[data-amcopycommand]').forEach(b=>b.onclick=()=>copyTerminalCommand(b.dataset.amcopycommand,b));
   document.querySelectorAll('[data-amruncommand]').forEach(b=>b.onclick=()=>termRun(b.dataset.amruncommand));
   document.querySelectorAll('[data-amissue]').forEach(b=>b.onclick=()=>{const issues=(A.inventory.issues||[]).filter(x=>!S.cluster||x.subject.cluster===S.cluster),issue=issues[Number(b.dataset.amissue)];A.tab='investigate';A.pendingStep=issue.step.id;amChoose(issue.subject);});
@@ -266,8 +280,8 @@ after.ambient = () => {
   $('#am-clear').onclick=()=>amClear();$('#am-start-new').onclick=()=>amClear(true);
   $('#am-refresh').onclick = () => {A.inventory=null;A.contexts=null;amInvalidate();if(A.phase===3)A.phase=2;render();};
    document.querySelectorAll('[data-amintent]').forEach(b=>b.onclick=()=>{A.kind=b.dataset.amintent;A.pickerOpen=true;render().then(()=>$('#am-object-search')?.focus());});
-  document.querySelectorAll('[data-amphase]').forEach(b=>b.onclick=()=>{const phase=Number(b.dataset.amphase);if(phase===0){amClear(true);return;}try{amCapture();}catch(e){toast(e.message);return;}A.phase=phase;if(phase===1&&A.mode){A.mode='';amInvalidate();}render();});
-  for(const id of ['am-edit-tasks','am-options-back'])if($('#'+id))$('#'+id).onclick=()=>{amCapture();A.phase=1;render();};
+  document.querySelectorAll('[data-amphase]').forEach(b=>b.onclick=()=>{const phase=Number(b.dataset.amphase);if(phase===0){amClear(true);return;}try{amCapture();}catch(e){toast(e.message);return;}A.phase=phase;if(phase===1&&A.settings.explain)amResetDraft();if(phase===1&&A.mode){A.mode='';amInvalidate();}render();});
+  for(const id of ['am-edit-tasks','am-options-back'])if($('#'+id))$('#'+id).onclick=()=>{amCapture();if(A.settings.explain)amResetDraft();A.phase=1;render();};
   if($('#am-change-target'))$('#am-change-target').onclick=()=>amClear(true);
   if($('#am-next-options'))$('#am-next-options').onclick=()=>{A.phase=2;render().then(()=>$('#am-workspace')?.scrollIntoView({block:'start'}));};
   if($('#am-back-options'))$('#am-back-options').onclick=()=>{A.phase=2;render();};
@@ -289,13 +303,14 @@ after.ambient = () => {
   if ($('#am-open-enrol')) $('#am-open-enrol').onclick = () => openMode('enrol-namespace');
   if ($('#am-enrol-all')) $('#am-enrol-all').onclick = () => { amCapture(); const o=amTarget(); A.settings.enrolNamespaces=A.inventory.namespaces.filter(n=>n.cluster===o.cluster).map(n=>n.name); amInvalidate(); render(); };
   if ($('#am-enrol-none')) $('#am-enrol-none').onclick = () => { amCapture(); A.settings.enrolNamespaces=[]; amInvalidate(); render(); };
-  document.querySelectorAll('[data-amremedy]').forEach(b=>b.onclick=()=>{const a=JSON.parse(b.dataset.amremedy),step=A.result.steps[Number(b.closest('.am-check')?.id.replace('am-step-',''))],field=step?.evidence?.find(e=>e.ref.kind==='HTTPRoute')?.field,match=field?.match(/parentRefs\[(\d+)\]/);amResetDraft();A.tab='wizard';A.mode=a.id;A.phase=2;if(a.ref){A.repairRef=a.ref;A.settings.repairRoute=a.ref.name;A.settings.parentIndex=match?Number(match[1]):0;}render();});
+  document.querySelectorAll('[data-amremedy]').forEach(b=>b.onclick=()=>{const a=JSON.parse(b.dataset.amremedy),step=A.result.steps[Number(b.closest('.am-check')?.id.replace('am-step-',''))],field=step?.evidence?.find(e=>e.ref.kind==='HTTPRoute')?.field,match=field?.match(/parentRefs\[(\d+)\]/);amResetDraft();A.tab='wizard';if(a.id==='require-waypoint')A.tasks[a.id]=true;else A.mode=a.id;A.phase=2;if(a.ref){A.repairRef=a.ref;A.settings.repairRoute=a.ref.name;A.settings.parentIndex=match?Number(match[1]):0;}render();});
   document.querySelectorAll('[data-amedit]').forEach(b=>b.onclick=()=>{const e=A.result.editable[Number(b.dataset.amedit)];amResetDraft();A.key=JSON.stringify([e.request.cluster,e.request.namespace,e.request.service]);A.kind='Service';A.tab='wizard';A.phase=2;A.edit=e.request.edit;A.tasks=Object.fromEntries(e.request.tasks.map(t=>[t,true]));A.settings={...e.request,methods:e.request.methods?.join(',')};render();});
   for(const id of ['am-new-plan','am-back-wizard'])if($('#'+id))$('#'+id).onclick=()=>{amResetDraft();render();};
   document.querySelectorAll('[data-amtask]').forEach(b => b.onchange=()=>{try{amCapture();if(b.checked&&b.dataset.amtask==='global-service')A.tasks={};else if(b.checked)delete A.tasks['global-service'];A.tasks[b.dataset.amtask]=b.checked;amInvalidate();render();}catch(e){toast(e.message);}});
   document.querySelectorAll('#am-parameters input, #am-parameters select, #am-setup-parameters input, #am-setup-parameters select, #am-repair-parameters input, #am-repair-parameters select, #am-repair-parameters textarea').forEach(e=>e.onchange=()=>{try{amCapture();amInvalidate();if(['am-trafficMode','am-wpMode','am-wpClass','am-wpExisting','am-wpScope','am-targetNamespace','am-repairOperation','am-selectedPod'].includes(e.id)){if(e.id==='am-selectedPod')delete A.settings.selector;render();}}catch(err){toast(err.message);}});
   document.querySelectorAll('[data-amname]').forEach(el=>el.onchange=()=>{amCapture();const i=Number(el.closest('[data-ambackend]').dataset.ambackend),backend=A.settings.backends[i],svc=amService(),chosen=A.inventory.services.find(s=>s.cluster===svc.cluster&&s.namespace===svc.namespace&&s.name===backend.name);if(chosen&&!chosen.ports.includes(backend.port))backend.port=chosen.ports[0];amInvalidate();render();});
   for(const id of ['am-parentKind','am-parentGateway'])if($('#'+id))$('#'+id).onchange=()=>{amCapture();amInvalidate();render();};
+  for(const id of ['am-mirrorService','am-headerService'])if($('#'+id))$('#'+id).onchange=()=>{amCapture();amInvalidate();render();};
   if($('#am-add-backend')) $('#am-add-backend').onclick=()=>{amCapture();const s=amService();A.settings.backends.push({name:s.name,port:s.ports[0],weight:0});amInvalidate();render();};
   document.querySelectorAll('[data-amremove]').forEach(b=>b.onclick=()=>{amCapture();A.settings.backends.splice(Number(b.dataset.amremove),1);amInvalidate();render();});
   for(const id of ['am-generate','am-generate-setup','am-generate-repair'])if($('#'+id))$('#'+id).onclick=()=>amAction(async()=>{if(A.tasks['global-service']&&!A.mode){await amGenerateGlobalBatch();return;}A.plan=await apiPost('api/ambient/plan',amRead());A.validation=null;A.message='';A.phase=3;A.previewTab='summary';});
@@ -308,3 +323,21 @@ after.ambient = () => {
   document.querySelectorAll('[data-amstatus]').forEach(b=>b.onclick=()=>amAction(()=>amTestOperation('status',A.tests[Number(b.dataset.amstatus)])));
   document.querySelectorAll('[data-amcleanup]').forEach(b=>b.onclick=()=>amAction(()=>amTestOperation('cleanup',A.tests[Number(b.dataset.amcleanup)])));
 };
+
+function amRunbook(commands){return (commands||[]).length?`<details class="mt"><summary>Official troubleshooting commands · your own terminal</summary><p>Commands use the original context. Compare their output with the captured evidence below.</p>${commands.map(c=>`<p>${esc(c.evidence)}${c.mutates?' <strong>Changes live logging level.</strong>':''}</p>${amCommandBlock(c.command)}<a href="${esc(c.docs)}" target="_blank" rel="noopener">Official docs ↗</a>`).join('')}</details>`:'';}
+
+function amP1Fields(){
+  const A=S.ambient,F=A.settings,box=document.querySelector('#am-parameters .am-fields'),svc=amService();if(!box||!svc)return;
+  const selected=id=>A.tasks[id];let fields='';
+  if(selected('explain'))fields+=amInput('explainPorts','Repair destination ports (comma separated; captured ports only)',F.explainPorts??F.explain?.ports?.join(',')??'')+(F.explain?.paths?.length?amInput('explainPaths','Waypoint repair paths (comma separated)',F.explainPaths??F.explain.paths.join(',')):'');
+  if(selected('jwt'))fields+=amInput('issuer','Token issuer',F.issuer||'')+amInput('jwksUri','HTTPS JWKS URI (or use inline public JWKS)',F.jwksUri||'')+amInput('jwks','Inline public JWKS JSON (alternative to URI)',F.jwks||'')+amInput('requestPrincipals','Request principals (comma separated issuer/subject or issuer/*)',F.requestPrincipals||'')+amInput('paths','Optional paths (comma separated)',F.paths||'')+amInput('jwtMethods','Optional HTTP methods (comma separated)',F.jwtMethods||'');
+  if(selected('jwt')||selected('header-routing'))fields+=amInput('p1Headers','HTTP headers (JSON name/value object)',F.p1Headers||'{}');
+  if(selected('retries')){F.retryAttempts??=2;fields+=amInput('retryAttempts','Retry attempts (1–10)',F.retryAttempts,'number');}
+  for(const [task,prefix]of [['mirroring','mirror'],['header-routing','header']])if(selected(task)&&(task!=='header-routing'||!selected('weighted-routing'))){const others=A.inventory.services.filter(s=>s.cluster===svc.cluster&&s.namespace===svc.namespace&&(task!=='mirroring'||s.name!==svc.name));const chosen=others.find(s=>s.name===F[prefix+'Service'])||others[0];F[prefix+'Service']=chosen?.name||'';if(!chosen?.ports.includes(F[prefix+'Port']))F[prefix+'Port']=chosen?.ports[0];fields+=`<label>${task==='mirroring'?'Mirror':'Matching requests backend'} Service<select id="am-${prefix}Service">${amOpts(others.map(s=>s.name),F[prefix+'Service'])}</select></label><label>Backend Service port<select id="am-${prefix}Port">${amOpts(chosen?.ports||[],F[prefix+'Port'])}</select></label>`;}
+  box.insertAdjacentHTML('beforeend',fields);
+}
+
+async function amReviewExplanation(x){
+  const p=await apiPost('api/ambient/plan',{cluster:x.cluster,namespace:x.to.ref.namespace,service:x.to.ref.name,tasks:['explain'],explain:{from:x.from.label,to:x.to.label,...(x.fixScope||{})}});
+  amResetDraft();const A=S.ambient;if(S.cluster&&S.cluster!==x.cluster){S.cluster=x.cluster;$('#cluster').value=x.cluster;}A.clusterScope=S.cluster;A.key=JSON.stringify([x.cluster,x.to.ref.namespace,x.to.ref.name]);A.kind='Service';A.tab='wizard';A.phase=3;A.plan=p;A.tasks={explain:true};A.settings={...p.request};nav('ambient');
+}
