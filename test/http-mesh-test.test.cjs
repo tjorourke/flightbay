@@ -78,3 +78,31 @@ test('native request setup remains available when no kubeconfig contexts can be 
   vm.runInContext('drawHTTPTest=()=>{};',ctx);await ctx.amOpenHTTPTest({cluster:'captured',namespace:'payments',name:'checkout'});
   assert.equal(vm.runInContext('HTTP_TEST.mode',ctx),'public');assert.equal(vm.runInContext('HTTP_TEST.contexts.length',ctx),0);assert.equal(vm.runInContext('HTTP_TEST.nativeAttribution',ctx),false);
 });
+
+test('a Service with a live connection but no curl client defaults to a temporary Pod in its namespace',async()=>{
+  const ctx=setup({S:{ambient:{inventory:{services:[]}}},amKey:JSON.stringify,toast:message=>assert.fail(message),api:async url=>url.endsWith('contexts')?[{name:'kind-mesh1',liveCluster:'mesh1',server:'https://mesh1'}]:url.endsWith('profiles')?[]:{ports:[8080],dns:{localName:'web.shop.svc.cluster.local'},clients:[],gateways:[]}});
+  vm.runInContext('drawHTTPTest=()=>{};',ctx);await ctx.amOpenHTTPTest({cluster:'mesh1',namespace:'shop',name:'web'});
+  assert.equal(vm.runInContext('HTTP_TEST.mode',ctx),'ephemeral');assert.equal(vm.runInContext('HTTP_TEST.count',ctx),200);assert.equal(vm.runInContext('HTTP_TEST.ephemeralNamespace',ctx),'shop');
+});
+
+test('temporary Pod option explains the lifecycle and flags a namespace outside the mesh',()=>{
+  const ctx=setup({S:{ambient:{inventory:{namespaces:[{cluster:'mesh1',name:'shop'},{cluster:'mesh1',name:'tools'},{cluster:'mesh2',name:'other'}],enrolledNamespaces:[{cluster:'mesh1',name:'shop'}]}}}});
+  vm.runInContext('HTTP_TEST.mode="ephemeral";HTTP_TEST.service={cluster:"mesh1",namespace:"shop",name:"web"};HTTP_TEST.contexts=[{name:"kind-mesh1",liveCluster:"mesh1",server:"https://mesh1"}];HTTP_TEST.context="kind-mesh1";HTTP_TEST.options={dns:{localName:"web.shop.svc.cluster.local"},clients:[],gateways:[]};HTTP_TEST.ports=[8080];HTTP_TEST.port=8080;HTTP_TEST.ephemeralNamespace="shop";',ctx);
+  let html=ctx.httpTestMarkup();
+  assert.match(html,/<option value="ephemeral" selected >Temporary Pod · flightbay-http \(created now, deleted after\)/);assert.match(html,/<option value="mesh"[^>]*disabled>Existing Pod · in-mesh curl/);
+  assert.match(html,/id="http-ephemeral-ns"><option value="shop" selected>shop<\/option><option value="tools" >tools<\/option><\/select>/);assert.doesNotMatch(html,/value="other"/);
+  assert.match(html,/creates Pod flightbay-http-xxxxxx in shop using curlimages\/curl:8\.12\.1/);assert.match(html,/expires by itself after 15 minutes/);assert.doesNotMatch(html,/not labelled istio\.io\/dataplane-mode=ambient/);
+  vm.runInContext('HTTP_TEST.ephemeralNamespace="tools";',ctx);html=ctx.httpTestMarkup();assert.match(html,/Namespace tools is not labelled istio\.io\/dataplane-mode=ambient/);
+});
+
+test('temporary Pod run sends the namespace instead of a client and reports the deletion',async()=>{
+  const events=[{type:'start',requested:1,routes:[],warnings:['Temporary Pod shop/flightbay-http-abc123 was created for this test and is deleted when it ends.'],client:{pod:{cluster:'mesh1',namespace:'shop',name:'flightbay-http-abc123'},container:'curl'},ephemeral:{namespace:'shop',name:'flightbay-http-abc123'}},{type:'result',result:result(1,'v1')},{type:'complete',summary:{requested:1,completed:1,successful:1,failed:0,unknown:0,unattempted:0}},{type:'cleanup',pod:'flightbay-http-abc123',namespace:'shop',deleted:true}];
+  const bytes=new TextEncoder().encode(events.map(e=>JSON.stringify(e)).join('\n')+'\n');let delivered=false,sent;
+  const ctx=setup({fetch:async(url,options)=>{sent=JSON.parse(options.body);return {ok:true,body:{getReader:()=>({read:async()=>delivered?{done:true}:(delivered=true,{value:bytes,done:false}),releaseLock(){}})}};}});
+  vm.runInContext('httpPaintMesh=()=>{};HTTP_TEST.mode="ephemeral";HTTP_TEST.service={cluster:"mesh1",namespace:"shop",name:"web"};HTTP_TEST.context="kind-mesh1";HTTP_TEST.options={clients:[]};HTTP_TEST.ephemeralNamespace="shop";HTTP_TEST.count=1;HTTP_TEST.names=["web.shop.svc.cluster.local"];HTTP_TEST.port=8080;',ctx);
+  await ctx.httpRunMeshTest();
+  assert.deepEqual(sent.ephemeral,{namespace:'shop'});assert.equal(sent.client,undefined);assert.equal(sent.container,undefined);
+  assert.equal(vm.runInContext('HTTP_TEST.meshClient.pod.name',ctx),'flightbay-http-abc123');assert.equal(vm.runInContext('HTTP_TEST.meshCleanup.deleted',ctx),true);
+  let html=ctx.httpMeshDashboard();assert.match(html,/hm-ephemeral-status green[^>]*>Temporary Pod <code>shop\/flightbay-http-abc123<\/code> deleted/);assert.match(html,/temporary flightbay-http Pod|deleted when it ends/);
+  vm.runInContext('HTTP_TEST.meshCleanup={pod:"flightbay-http-abc123",namespace:"shop",deleted:false,error:"forbidden"};',ctx);html=ctx.httpMeshDashboard();assert.match(html,/hm-ephemeral-status red/);assert.match(html,/forbidden/);assert.match(html,/kubectl delete pod -n shop flightbay-http-abc123/);
+});

@@ -1,6 +1,9 @@
 'use strict';
 
 const HTTP_TEST={profiles:[],profile:{name:'',method:'GET',path:'/',headers:{},body:'',timeout:10},results:[],mode:'service',context:'',port:0,gateway:'',names:[],url:'',busy:false,error:'',count:200,client:'',meshSummary:null};
+// 'mesh' runs curl in an existing captured Pod; 'ephemeral' runs it in a
+// temporary flightbay-http Pod the server creates and deletes for this test.
+function httpInMesh(mode){return mode==='mesh'||mode==='ephemeral';}
 const httpSecretHeader=name=>/authorization|cookie|token|secret|key/i.test(name);
 
 async function amOpenHTTPTest(service){
@@ -10,7 +13,7 @@ async function amOpenHTTPTest(service){
     [T.options,T.profiles,T.contexts]=await Promise.all([api('api/ambient/http-options',{cluster:service.cluster,namespace:service.namespace,name:service.name}),api('api/ambient/http-profiles'),api('api/ambient/contexts').catch(()=>[])]);
     const svc=S.ambient.inventory?.services.find(s=>amKey(s)===amKey(service));T.ports=T.options.ports||svc?.ports||[];T.port=T.ports[0]||80;T.context=amLiveContext(service.cluster,T.contexts)?.name||'';
     const clients=T.options.clients||[],preferred=clients.findIndex(c=>c.pod.namespace===service.namespace&&c.ambient),index=preferred>=0?preferred:clients.findIndex(c=>c.ambient);T.client=index>=0?String(index):clients.length?'0':'';
-    T.names=[T.options.dns?.localName].filter(Boolean);T.gateway='';if(changed){T.mode=!T.contexts.length?'public':clients.length?'mesh':'service';T.count=T.mode==='mesh'?200:1;T.countByMode={};T.nativeAttribution=T.mode!=='public';}
+    T.names=[T.options.dns?.localName].filter(Boolean);T.gateway='';if(changed){T.mode=!T.contexts.length?'public':clients.length?'mesh':'ephemeral';T.count=httpInMesh(T.mode)?200:1;T.ephemeralNamespace=service.namespace;T.meshCleanup=null;T.countByMode={};T.nativeAttribution=T.mode!=='public';}
     if(!T.profile.name&&T.profile.path==='/')T.profile.path=T.options.defaultPath||'/';drawHTTPTest();
   }catch(e){toast(e.message);}
 }
@@ -18,7 +21,7 @@ function captureHTTPTest(){
   const T=HTTP_TEST,get=id=>document.querySelector('#http-'+id);if(!get('method'))return;
   T.profile={name:get('profile-name').value.trim(),method:get('method').value,path:get('path').value,timeout:Number(get('timeout').value),body:get('body').value,headers:{}};
   document.querySelectorAll('[data-http-header]').forEach(row=>{const name=row.querySelector('[data-http-name]').value.trim();if(name)T.profile.headers[name]=row.querySelector('[data-http-value]').value;});
-  T.mode=get('mode').value;T.context=get('context')?.value??T.context;T.port=Number(get('port').value);T.url=get('url').value;T.gateway=get('gateway').value;T.names=[...document.querySelectorAll('[data-http-dns]:checked')].map(e=>e.value);T.count=Number(get('count')?.value??T.count);T.client=get('client')?.value??T.client;
+  T.mode=get('mode').value;T.context=get('context')?.value??T.context;T.port=Number(get('port').value);T.url=get('url').value;T.gateway=get('gateway').value;T.names=[...document.querySelectorAll('[data-http-dns]:checked')].map(e=>e.value);T.count=Number(get('count')?.value??T.count);T.client=get('client')?.value??T.client;T.ephemeralNamespace=get('ephemeral-ns')?.value??T.ephemeralNamespace;
   if(get('attribute'))T.nativeAttribution=get('attribute').checked;
 }
 function drawHTTPTest(){
@@ -34,14 +37,15 @@ function drawHTTPTest(){
   if(T.busy)document.querySelectorAll('.http-test input,.http-test select,.http-test textarea,.http-test button:not(#http-stop):not([data-http-stop]):not([data-http-panel])').forEach(e=>e.disabled=true);
   if($('#http-stop'))$('#http-stop').onclick=()=>{T.abortController?.abort();};
   document.querySelectorAll('[data-http-stop]').forEach(b=>b.onclick=()=>T.abortController?.abort());
-  $('#http-mode').onchange=()=>{const oldMode=T.mode,oldCount=T.count;captureHTTPTest();T.countByMode??={};T.countByMode[oldMode]=oldCount;T.count=T.countByMode[T.mode]??(T.mode==='mesh'?200:1);T.nativeAttribution=T.mode!=='public';T.results=[];T.meshSummary=null;drawHTTPTest();};
+  $('#http-mode').onchange=()=>{const oldMode=T.mode,oldCount=T.count;captureHTTPTest();T.countByMode??={};T.countByMode[oldMode]=oldCount;T.count=T.countByMode[T.mode]??(httpInMesh(T.mode)?200:1);T.nativeAttribution=T.mode!=='public';T.results=[];T.meshSummary=null;drawHTTPTest();};
+  if($('#http-ephemeral-ns'))$('#http-ephemeral-ns').onchange=()=>{captureHTTPTest();drawHTTPTest();};
   if($('#http-attribute'))$('#http-attribute').onchange=()=>{captureHTTPTest();drawHTTPTest();};
   $('#http-profile').onchange=e=>{if(e.target.value===''){T.profile={name:'',method:'GET',path:'/',headers:{},body:'',timeout:10};}else{T.profile=JSON.parse(JSON.stringify(T.profiles[Number(e.target.value)]));}drawHTTPTest();};
   $('#http-add-header').onclick=()=>{captureHTTPTest();const row=document.createElement('div');row.className='http-header-row';row.dataset.httpHeader='';row.innerHTML='<input data-http-name aria-label="Header name" placeholder="Header name"><input data-http-value aria-label="Header value" placeholder="Value"><button>Remove</button>';$('#http-headers').appendChild(row);row.querySelector('button').onclick=()=>row.remove();row.querySelector('[data-http-name]').onchange=e=>row.querySelector('[data-http-value]').type=httpSecretHeader(e.target.value)?'password':'text';row.querySelector('input').focus();};
   document.querySelectorAll('[data-http-remove]').forEach(b=>b.onclick=()=>b.closest('[data-http-header]').remove());
   document.querySelectorAll('[data-http-name]').forEach(e=>e.onchange=()=>e.closest('[data-http-header]').querySelector('[data-http-value]').type=httpSecretHeader(e.value)?'password':'text');
   $('#http-save-profile').onclick=async()=>{captureHTTPTest();try{T.profiles=await apiPost('api/ambient/http-profiles',T.profile);T.error='';toast('Profile saved locally');}catch(e){T.error=e.message;}drawHTTPTest();};
-  $('#http-run').onclick=async()=>{captureHTTPTest();if(T.busy)return;T.busy=true;T.panel='results';T.error='';T.results=[];T.meshSummary=null;T.meshRequested=T.count*(T.mode==='public'?1:T.names.length);T.meshSnapshot={count:T.count,names:[...T.names],method:T.profile.method,path:T.profile.path};drawHTTPTest();try{if(T.mode==='mesh'){await httpRunMeshTest();}else{await httpRunNativeTest();}}catch(e){T.error=e.name==='AbortError'?'Test stopped. Completed responses are retained.':e.message;T.meshSummary={stopped:e.name==='AbortError',failed:e.name!=='AbortError',unattempted:Math.max(0,T.meshRequested-T.results.length),remainingUnconfirmed:true};}finally{T.busy=false;T.abortController=null;if(document.querySelector('.http-test'))drawHTTPTest();else toast('HTTP test finished. Reopen Test service to see the result.');}};
+  $('#http-run').onclick=async()=>{captureHTTPTest();if(T.busy)return;T.busy=true;T.panel='results';T.error='';T.results=[];T.meshSummary=null;T.meshCleanup=null;T.meshEphemeral=null;T.meshRequested=T.count*(T.mode==='public'?1:T.names.length);T.meshSnapshot={count:T.count,names:[...T.names],method:T.profile.method,path:T.profile.path};drawHTTPTest();try{if(httpInMesh(T.mode)){await httpRunMeshTest();}else{await httpRunNativeTest();}}catch(e){T.error=e.name==='AbortError'?'Test stopped. Completed responses are retained.':e.message;T.meshSummary={stopped:e.name==='AbortError',failed:e.name!=='AbortError',unattempted:Math.max(0,T.meshRequested-T.results.length),remainingUnconfirmed:true};}finally{T.busy=false;T.abortController=null;if(document.querySelector('.http-test'))drawHTTPTest();else toast('HTTP test finished. Reopen Test service to see the result.');}};
   document.querySelectorAll('[data-http-logs]').forEach(b=>b.onclick=()=>httpTestOpenLogs(Number(b.dataset.httpLogs)));
 }
 

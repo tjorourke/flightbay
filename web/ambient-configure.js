@@ -160,6 +160,9 @@ async function amTestAccessRule(access){
   HTTP_TEST.profile={name:'',method:to.methods?.[0]||'GET',path:(to.paths?.[0]||'/').replace(/\*$/,''),headers,body:'',timeout:10};
   HTTP_TEST.panel='request';
   await amOpenHTTPTest(service);
+  // Without an existing curl Pod, run from a temporary one in the Service's
+  // namespace so the request still goes through ztunnel and the waypoint.
   if((HTTP_TEST.options?.clients||[]).length){HTTP_TEST.mode='mesh';HTTP_TEST.count=5;if(typeof drawHTTPTest==='function')drawHTTPTest();}
+  else if((HTTP_TEST.contexts||[]).length){HTTP_TEST.mode='ephemeral';HTTP_TEST.ephemeralNamespace=service.namespace;HTTP_TEST.count=5;if(typeof drawHTTPTest==='function')drawHTTPTest();}
   toast(Object.keys(headers).length?'Headers from the rule are filled in. A DENY that works returns 403 from an in-mesh client.':'Fill in a request that matches the rule, then run it.');
 }

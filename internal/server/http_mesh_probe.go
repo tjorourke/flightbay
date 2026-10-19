@@ -20,6 +20,7 @@ import (
 	"github.com/tjorourke/flightbay/internal/collect"
 	"github.com/tjorourke/flightbay/internal/policy"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -82,6 +83,11 @@ type meshProbeRequest struct {
 	Port      int         `json:"port"`
 	Count     int         `json:"count"`
 	Profile   httpProfile `json:"profile"`
+	// Ephemeral asks for a temporary client Pod in this namespace, created
+	// for the test and deleted when it ends. Client and Container are ignored.
+	Ephemeral *struct {
+		Namespace string `json:"namespace"`
+	} `json:"ephemeral,omitempty"`
 }
 type meshRouteRule struct {
 	Route    ambient.Ref        `json:"route"`
@@ -452,7 +458,11 @@ func runMeshCurl(ctx context.Context, cfg *rest.Config, client kubernetes.Interf
 	id := hex.EncodeToString(random)
 	marker := "FLIGHTBAY_" + id
 	address := "http://" + net.JoinHostPort(name, strconv.Itoa(q.Port)) + q.Profile.Path
-	out := httpProbeResult{ID: id, Mode: "mesh", Name: name, Authority: net.JoinHostPort(name, strconv.Itoa(q.Port)), Connection: address, Started: time.Now().UTC(), Pod: &q.Client, Note: "Request executed by curl in the existing client Pod using cluster DNS and the normal Service/mesh path. No Pod is created. Responder identity is read from the response and matched to live Pod metadata."}
+	note := "Request executed by curl in the existing client Pod using cluster DNS and the normal Service/mesh path. No Pod is created. Responder identity is read from the response and matched to live Pod metadata."
+	if q.Ephemeral != nil {
+		note = "Request executed by curl in the temporary flightbay-http Pod using cluster DNS and the normal Service/mesh path. The Pod is deleted when the test ends. Responder identity is read from the response and matched to live Pod metadata."
+	}
+	out := httpProbeResult{ID: id, Mode: "mesh", Name: name, Authority: net.JoinHostPort(name, strconv.Itoa(q.Port)), Connection: address, Started: time.Now().UTC(), Pod: &q.Client, Note: note}
 	for k, v := range q.Profile.Headers {
 		if strings.EqualFold(k, "Host") {
 			out.Authority = v
@@ -583,16 +593,27 @@ func (s *Server) httpMeshProbe(w http.ResponseWriter, r *http.Request) {
 		seen[name] = true
 	}
 	var option *meshClientOption
-	for _, o := range s.meshClientOptions(q.Service.Cluster) {
-		if o.Pod == q.Client && o.Container == q.Container {
-			copy := o
-			option = &copy
-			break
+	ephemeralNS, ephemeralEnrolled := "", false
+	if q.Ephemeral != nil {
+		ephemeralNS = strings.TrimSpace(q.Ephemeral.Namespace)
+		ns := s.WS.Get(q.Service.Cluster, "", "namespaces", "", ephemeralNS)
+		if ephemeralNS == "" || ns == nil {
+			jerr(w, 400, "choose a captured namespace for the temporary test Pod")
+			return
 		}
-	}
-	if option == nil {
-		jerr(w, 400, "choose an existing captured Ready curl client Pod in the target cluster")
-		return
+		ephemeralEnrolled = ns.Labels()["istio.io/dataplane-mode"] == "ambient"
+	} else {
+		for _, o := range s.meshClientOptions(q.Service.Cluster) {
+			if o.Pod == q.Client && o.Container == q.Container {
+				copy := o
+				option = &copy
+				break
+			}
+		}
+		if option == nil {
+			jerr(w, 400, "choose an existing captured Ready curl client Pod in the target cluster")
+			return
+		}
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
 	defer cancel()
@@ -622,26 +643,61 @@ func (s *Server) httpMeshProbe(w http.ResponseWriter, r *http.Request) {
 		jerr(w, 400, "choose a captured TCP Service port")
 		return
 	}
-	source, err := client.CoreV1().Pods(q.Client.Namespace).Get(ctx, q.Client.Name, metav1.GetOptions{})
-	if err != nil || string(source.UID) != option.UID || source.DeletionTimestamp != nil {
-		jerr(w, 409, "client Pod identity changed; reopen the test")
-		return
-	}
-	ready := false
-	for _, c := range source.Status.Conditions {
-		ready = ready || c.Type == corev1.PodReady && c.Status == corev1.ConditionTrue
-	}
-	if !ready {
-		jerr(w, 409, "client Pod is no longer Ready")
-		return
-	}
-	containerOK := false
-	for _, c := range source.Spec.Containers {
-		containerOK = containerOK || c.Name == q.Container && (strings.Contains(c.Image, "curlimages/curl:") || strings.Contains(c.Image, "curlimages/curl@"))
-	}
-	if !containerOK {
-		jerr(w, 409, "client container changed; reopen the test")
-		return
+	var ephemeral map[string]string
+	preWarnings := []string{}
+	cleanup := func() (bool, error) { return false, nil }
+	if q.Ephemeral != nil {
+		removed := sweepStaleEphemeralClients(ctx, client, ephemeralNS, time.Now())
+		pod, err := startEphemeralClient(ctx, client, ephemeralNS, time.Second, ephemeralReadyTimeout)
+		if err != nil {
+			code := 502
+			if apierrors.IsForbidden(err) {
+				code = 403
+			}
+			jerr(w, code, err.Error())
+			return
+		}
+		done := false
+		cleanup = func() (bool, error) {
+			if done {
+				return false, nil
+			}
+			done = true
+			err := deleteEphemeralClient(client, ephemeralNS, pod.Name)
+			return err == nil, err
+		}
+		// Safety net for every early return and panic below; the normal path
+		// deletes synchronously and reports the result as a cleanup event.
+		defer cleanup()
+		q.Client = ambient.Ref{Cluster: q.Service.Cluster, Resource: "pods", Kind: "Pod", Namespace: ephemeralNS, Name: pod.Name}
+		q.Container = ephemeralContainer
+		option = &meshClientOption{Pod: q.Client, Container: ephemeralContainer, UID: string(pod.UID), Ambient: ephemeralEnrolled}
+		ephemeral = map[string]string{"namespace": ephemeralNS, "name": pod.Name}
+		preWarnings = append(preWarnings, "Temporary Pod "+ephemeralNS+"/"+pod.Name+" was created for this test and is deleted when it ends.")
+		if len(removed) > 0 {
+			preWarnings = append(preWarnings, "Removed "+strconv.Itoa(len(removed))+" leftover temporary test Pod(s) older than 15 minutes: "+strings.Join(removed, ", ")+".")
+		}
+		if !ephemeralEnrolled {
+			preWarnings = append(preWarnings, "Namespace "+ephemeralNS+" is not labelled istio.io/dataplane-mode=ambient, so the temporary Pod is not in the mesh and this is not an in-mesh test.")
+		}
+	} else {
+		source, err := client.CoreV1().Pods(q.Client.Namespace).Get(ctx, q.Client.Name, metav1.GetOptions{})
+		if err != nil || string(source.UID) != option.UID || source.DeletionTimestamp != nil {
+			jerr(w, 409, "client Pod identity changed; reopen the test")
+			return
+		}
+		if !podReady(source) {
+			jerr(w, 409, "client Pod is no longer Ready")
+			return
+		}
+		containerOK := false
+		for _, c := range source.Spec.Containers {
+			containerOK = containerOK || c.Name == q.Container && (strings.Contains(c.Image, "curlimages/curl:") || strings.Contains(c.Image, "curlimages/curl@"))
+		}
+		if !containerOK {
+			jerr(w, 409, "client container changed; reopen the test")
+			return
+		}
 	}
 	pods, err := client.CoreV1().Pods(q.Service.Namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
@@ -670,7 +726,8 @@ func (s *Server) httpMeshProbe(w http.ResponseWriter, r *http.Request) {
 		verifiedClusters = append(verifiedClusters, inventory.Cluster)
 	}
 	completeAttribution := len(inventories) == len(s.WS.Clusters())
-	if !option.Ambient {
+	warnings = append(preWarnings, warnings...)
+	if !option.Ambient && q.Ephemeral == nil {
 		warnings = append(warnings, "The captured client is not confirmed ambient-enrolled. Verify its mesh capture and waypoint path before interpreting this as a mesh routing test.")
 	}
 	w.Header().Set("Content-Type", "application/x-ndjson")
@@ -687,7 +744,11 @@ func (s *Server) httpMeshProbe(w http.ResponseWriter, r *http.Request) {
 		return true
 	}
 	total := q.Count * len(q.Names)
-	if !emit(map[string]any{"type": "start", "requested": total, "client": option, "routes": rules, "warnings": warnings, "attributionClusters": verifiedClusters}) {
+	start := map[string]any{"type": "start", "requested": total, "client": option, "routes": rules, "warnings": warnings, "attributionClusters": verifiedClusters}
+	if ephemeral != nil {
+		start["ephemeral"] = ephemeral
+	}
+	if !emit(start) {
 		return
 	}
 	results := []meshProbeResult{}
@@ -714,4 +775,12 @@ func (s *Server) httpMeshProbe(w http.ResponseWriter, r *http.Request) {
 	summary := summarizeMeshProbe(results, total)
 	summary.Stopped = ctx.Err() != nil
 	emit(map[string]any{"type": "complete", "summary": summary})
+	if ephemeral != nil {
+		deleted, err := cleanup()
+		event := map[string]any{"type": "cleanup", "pod": ephemeral["name"], "namespace": ephemeral["namespace"], "deleted": deleted}
+		if err != nil {
+			event["error"] = err.Error()
+		}
+		emit(event)
+	}
 }
