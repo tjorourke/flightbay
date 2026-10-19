@@ -64,9 +64,9 @@ func TestBookinfoRemovalChecksAllOwnershipBeforeAnyWrite(t *testing.T) {
 				s.SetUID("replacement")
 				_, _ = services.Update(context.Background(), s, metav1.UpdateOptions{})
 			case "foreign-consumer":
-				s, _ := services.Get(context.Background(), "leave-me-alone", metav1.GetOptions{})
-				s.SetLabels(map[string]string{})
-				_, _ = services.Update(context.Background(), s, metav1.UpdateOptions{})
+				// Objects inside the demo namespace go with it; a caller in
+				// another namespace bound to the demo waypoint must block.
+				_, _ = dc.Resource(schema.GroupVersionResource{Version: "v1", Resource: "services"}).Namespace("other").Create(context.Background(), &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": "outside", "namespace": "other", "labels": map[string]any{"istio.io/use-waypoint": "bookinfo-waypoint", "istio.io/use-waypoint-namespace": "bookinfo"}}}}, metav1.CreateOptions{})
 			case "changed-namespace":
 				nss := dc.Resource(schema.GroupVersionResource{Version: "v1", Resource: "namespaces"})
 				n, _ := nss.Get(context.Background(), "bookinfo", metav1.GetOptions{})
@@ -81,10 +81,10 @@ func TestBookinfoRemovalChecksAllOwnershipBeforeAnyWrite(t *testing.T) {
 				_, _ = gateways.Update(context.Background(), g, metav1.UpdateOptions{})
 			case "foreign-route":
 				c.mapper.(*meta.DefaultRESTMapper).Add(schema.GroupVersionKind{Group: ambient.GatewayGroup, Version: "v1", Kind: "HTTPRoute"}, meta.RESTScopeNamespace)
-				_, _ = dc.Resource(schema.GroupVersionResource{Group: ambient.GatewayGroup, Version: "v1", Resource: "httproutes"}).Namespace("bookinfo").Create(context.Background(), &unstructured.Unstructured{Object: map[string]any{"apiVersion": ambient.GatewayGroup + "/v1", "kind": "HTTPRoute", "metadata": map[string]any{"name": "external-route", "namespace": "bookinfo"}, "spec": map[string]any{"parentRefs": []any{map[string]any{"name": "bookinfo-waypoint"}}}}}, metav1.CreateOptions{})
+				_, _ = dc.Resource(schema.GroupVersionResource{Group: ambient.GatewayGroup, Version: "v1", Resource: "httproutes"}).Namespace("other").Create(context.Background(), &unstructured.Unstructured{Object: map[string]any{"apiVersion": ambient.GatewayGroup + "/v1", "kind": "HTTPRoute", "metadata": map[string]any{"name": "external-route", "namespace": "other"}, "spec": map[string]any{"parentRefs": []any{map[string]any{"name": "bookinfo-waypoint", "namespace": "bookinfo"}}}}}, metav1.CreateOptions{})
 			case "foreign-serviceentry":
 				c.mapper.(*meta.DefaultRESTMapper).Add(schema.GroupVersionKind{Group: "networking.istio.io", Version: "v1", Kind: "ServiceEntry"}, meta.RESTScopeNamespace)
-				_, _ = dc.Resource(schema.GroupVersionResource{Group: "networking.istio.io", Version: "v1", Resource: "serviceentries"}).Namespace("bookinfo").Create(context.Background(), &unstructured.Unstructured{Object: map[string]any{"apiVersion": "networking.istio.io/v1", "kind": "ServiceEntry", "metadata": map[string]any{"name": "external-entry", "namespace": "bookinfo"}}}, metav1.CreateOptions{})
+				_, _ = dc.Resource(schema.GroupVersionResource{Group: "networking.istio.io", Version: "v1", Resource: "serviceentries"}).Namespace("other").Create(context.Background(), &unstructured.Unstructured{Object: map[string]any{"apiVersion": "networking.istio.io/v1", "kind": "ServiceEntry", "metadata": map[string]any{"name": "external-entry", "namespace": "other", "labels": map[string]any{"istio.io/use-waypoint": "bookinfo-waypoint", "istio.io/use-waypoint-namespace": "bookinfo"}}}}, metav1.CreateOptions{})
 			}
 			dc.ClearActions()
 			if e := cleanupAmbient(context.Background(), c, r); e == nil {

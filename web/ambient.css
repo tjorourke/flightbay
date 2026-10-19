@@ -273,3 +273,4 @@
 .am-route-path{display:grid;grid-template-columns:170px minmax(220px,1fr) 170px;gap:8px;align-items:end}
 .am-changes td{vertical-align:top}.am-changes small{display:block;margin-top:3px}.am-changes .row{gap:6px}
 .am-global-weights{display:flex;flex-wrap:wrap;gap:12px}.am-global-weights label{display:inline-flex!important;flex-direction:row!important;gap:6px!important;align-items:center}.am-global-weights input{width:80px!important}
+.am-changes-bulk{gap:10px;margin:8px 0}.am-changes-bulk label{gap:6px}

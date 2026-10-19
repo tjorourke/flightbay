@@ -465,6 +465,16 @@ func (s *Server) ambientTests(w http.ResponseWriter, r *http.Request) {
 	}
 	out := []*ambientRecord{}
 	for _, rec := range s.ambientS.records {
+		// A change whose namespace no longer exists went with it: mark it so
+		// the Changes list does not keep offering Undo for nothing.
+		if rec.ApplyState == "applied" && rec.Plan != nil && rec.Plan.Request.Namespace != "" && s.WS != nil && time.Since(rec.ApplyFinished) > 2*time.Minute {
+			q := rec.Plan.Request
+			if s.WS.Get(q.Cluster, "", "namespaces", "", q.Namespace) == nil && s.WS.CollectionState(q.Cluster, "", "namespaces", "Namespace", false).State == store.StateComplete {
+				rec.ApplyState = "removed"
+				rec.ApplyError = "namespace " + q.Namespace + " was deleted, and this change with it"
+				_ = s.saveAmbientRecord(rec)
+			}
+		}
 		if len(rec.Created) > 0 || len(rec.Modified) > 0 {
 			out = append(out, rec)
 		}
@@ -808,8 +818,8 @@ func (s *Server) ambientForget(w http.ResponseWriter, r *http.Request) {
 		if rec == nil {
 			continue
 		}
-		if (rec.ApplyState == "applied" || rec.ApplyState == "applying") && !(q.Force && len(q.Tokens) == 1) {
-			jerr(w, 409, "a change that is still applied must be undone first, or forgotten on its own with force")
+		if (rec.ApplyState == "applied" || rec.ApplyState == "applying") && !q.Force {
+			jerr(w, 409, "a change that is still applied must be undone first, or forgotten with force (the cluster is left as it is)")
 			return
 		}
 		if err := os.Remove(filepath.Join(dir, rec.Token+".json")); err != nil && !os.IsNotExist(err) {

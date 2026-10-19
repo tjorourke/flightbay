@@ -99,7 +99,9 @@ func serviceDNS(ws *store.Workspace, svc *store.Object) ServiceDNS {
 		}
 		for _, host := range L(Path(entry.Obj, "spec", "hosts")) {
 			name := S(host)
-			if name != "" && !contains(d.GlobalNames, name) {
+			// With takeover the generated entry also lists the local
+			// cluster.local name; it is still the local name, not another one.
+			if name != "" && name != d.LocalName && !contains(d.GlobalNames, name) {
 				d.GlobalNames = append(d.GlobalNames, name)
 			}
 		}

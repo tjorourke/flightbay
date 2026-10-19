@@ -149,8 +149,10 @@ func bookinfoDeletePreflight(ctx context.Context, c ambientConnection, r *ambien
 	if err != nil {
 		return err
 	}
+	// Anything inside the demo namespace goes when the namespace is deleted,
+	// so only callers from other namespaces can block removal.
 	for _, s := range svcs.Items {
-		if services[s.GetNamespace()+"/"+s.GetName()] {
+		if services[s.GetNamespace()+"/"+s.GetName()] || s.GetNamespace() == ns {
 			continue
 		}
 		generated := false
@@ -173,7 +175,7 @@ func bookinfoDeletePreflight(ctx context.Context, c ambientConnection, r *ambien
 			}
 		}
 		for _, route := range routes.Items {
-			if own[route.GetNamespace()+"/"+route.GetName()] {
+			if own[route.GetNamespace()+"/"+route.GetName()] || route.GetNamespace() == ns {
 				continue
 			}
 			for _, p := range ambient.L(ambient.Path(route.Object, "spec", "parentRefs")) {
@@ -207,7 +209,7 @@ func bookinfoDeletePreflight(ctx context.Context, c ambientConnection, r *ambien
 	}
 	for _, se := range entries.Items {
 		lb := se.GetLabels()
-		generated := lb["solo.io/parent-service-namespace"] == ns && services[ns+"/"+lb["solo.io/parent-service"]]
+		generated := lb["solo.io/parent-service-namespace"] == ns || se.GetNamespace() == ns
 		if !generated && bound(lb, se.GetNamespace()) {
 			return fmt.Errorf("waypoint also serves unrelated ServiceEntry %s/%s; nothing removed", se.GetNamespace(), se.GetName())
 		}
@@ -351,7 +353,8 @@ func (s *Server) bookinfoRemoval(w http.ResponseWriter, r *http.Request) {
 	if nsDeleted {
 		for _, rec := range s.ambientS.records {
 			p := rec.Plan
-			if p.Request.Demo != nil && p.Request.Demo.Stage == "namespace" && p.Request.Cluster == q.Cluster && p.Request.Namespace == q.Namespace && rec.ApplyState != "removed" {
+			// Every change recorded in the deleted namespace went with it.
+			if p.Request.Cluster == q.Cluster && p.Request.Namespace == q.Namespace && rec.ApplyState != "removed" {
 				rec.ApplyState = "removed"
 				_ = s.saveAmbientRecord(rec)
 			}
