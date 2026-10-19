@@ -481,3 +481,27 @@ func TestTwoDesksOneBrowser(t *testing.T) {
 		}
 	}
 }
+
+func TestRBACAndResMapRoutes(t *testing.T) {
+	_, srv := newServer(t, false)
+	var ex map[string]any
+	if code := get(t, srv, "/api/rbac/serviceaccount?cluster=mesh1&namespace=payments&name=checkout", &ex); code != 200 {
+		t.Fatalf("sa code %d", code)
+	}
+	if code := get(t, srv, "/api/rbac/who?cluster=mesh1&namespace=payments&verb=get&resource=pods", &ex); code != 200 {
+		t.Fatalf("who code %d", code)
+	}
+	var m map[string]any
+	if code := get(t, srv, "/api/resources/map?cluster=mesh1", &m); code != 200 {
+		t.Fatalf("map code %d", code)
+	}
+	if code := get(t, srv, "/api/rbac/serviceaccount", nil); code != 400 {
+		t.Fatal("missing query not 400")
+	}
+	// post not allowed
+	req, _ := http.NewRequest("POST", srv.URL+"/api/rbac/serviceaccount", nil)
+	resp, _ := http.DefaultClient.Do(req)
+	if resp.StatusCode != 405 && resp.StatusCode != 401 {
+		t.Fatalf("post rbac got %d want 405", resp.StatusCode)
+	}
+}
