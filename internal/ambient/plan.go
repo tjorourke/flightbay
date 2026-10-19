@@ -118,6 +118,10 @@ func hasResource(ws *store.Workspace, c, g, r string) bool {
 	}
 	return false
 }
+
+// HasResource is the exported wrapper for use by resmap and others. Do not change DetectEnvironment.
+func HasResource(ws *store.Workspace, c, g, r string) bool { return hasResource(ws, c, g, r) }
+
 func Capabilities(ws *store.Workspace, c, ns, service string) []Task {
 	svc := ws.Get(c, "", "services", ns, service)
 	if svc == nil {
