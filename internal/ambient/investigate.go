@@ -78,6 +78,8 @@ type Inventory struct {
 	Services       []Service        `json:"services"`
 	Routes         []Ref            `json:"routes"`
 	Namespaces     []Ref            `json:"namespaces"`
+	// EnrolledNamespaces carry istio.io/dataplane-mode=ambient.
+	EnrolledNamespaces []Ref `json:"enrolledNamespaces"`
 }
 type WaypointChoice struct {
 	Ref
@@ -131,10 +133,13 @@ func defaultString(s, d string) string {
 }
 
 func List(ws *store.Workspace) Inventory {
-	r := Inventory{FixGuides: CommonFixes(), Services: []Service{}, Routes: []Ref{}, Namespaces: []Ref{}}
+	r := Inventory{FixGuides: CommonFixes(), Services: []Service{}, Routes: []Ref{}, Namespaces: []Ref{}, EnrolledNamespaces: []Ref{}}
 	for _, c := range ws.Clusters() {
 		for _, n := range ws.List(c, "", "namespaces", "", nil) {
 			r.Namespaces = append(r.Namespaces, reference(n))
+			if n.Labels()["istio.io/dataplane-mode"] == "ambient" {
+				r.EnrolledNamespaces = append(r.EnrolledNamespaces, reference(n))
+			}
 		}
 		for _, o := range ws.List(c, "", "services", "", nil) {
 			v := Service{Ref: reference(o), UID: S(Path(o.Obj, "metadata", "uid")), Ports: []int{}, Regions: regions(ws, o)}
