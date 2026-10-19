@@ -1,96 +1,132 @@
-// rbac explorer page and wire
+// RBAC explorer. Returns HTML for the desk render path. Never writes to document.body.
 (function(){
-  function rbacPage(){
-    const q = S.rbac || {};
-    const url = '/api/rbac/serviceaccount?cluster=' + encodeURIComponent(q.cluster||S.cluster||'') + '&namespace=' + encodeURIComponent(q.namespace||'') + '&name=' + encodeURIComponent(q.name||'');
-    fetch(url).then(r=>r.json()).then(d=>{
-      const root = document.getElementById('rbac-root') || document.body;
-      root.innerHTML = '';
-      const h = document.createElement('h2');
-      h.textContent = 'Service account ' + (d.namespace||'') + '/' + (d.name||'');
-      root.appendChild(h);
-      if (!d.found) {
-        const m = document.createElement('p');
-        m.textContent = 'This ServiceAccount is not in the capture.';
-        root.appendChild(m);
-      }
-      if (d.coverage && !d.coverage.complete) {
-        const n = document.createElement('div');
-        n.className = 'amber';
-        n.textContent = d.coverage.reason || 'incomplete';
-        root.appendChild(n);
-      }
-      // workloads
-      const wh = document.createElement('h3'); wh.textContent = 'Workloads'; root.appendChild(wh);
-      const wt = document.createElement('table');
-      wt.innerHTML = '<tr><th>Kind</th><th>Name</th><th>Pods</th></tr>';
-      (d.workloads||[]).forEach(w=>{
-        const tr = document.createElement('tr');
-        tr.innerHTML = '<td>'+w.ref.kind+'</td><td>'+w.ref.name+'</td><td>'+w.pods+'</td>';
-        tr.onclick = ()=> openObject(w.ref);
-        wt.appendChild(tr);
-      });
-      root.appendChild(wt);
-      // permissions
-      const ph = document.createElement('h3'); ph.textContent = 'Permissions'; root.appendChild(ph);
-      const ns = document.createElement('h4'); ns.textContent = 'In this namespace'; root.appendChild(ns);
-      const pt = document.createElement('table');
-      pt.innerHTML = '<tr><th>API group</th><th>Resource</th><th>Sub</th><th>Verb</th><th>Names</th><th>Binding</th><th>Flags</th></tr>';
-      (d.grants||[]).filter(g=>g.scope !== 'cluster').forEach(g=>{
-        const tr = document.createElement('tr');
-        const fl = (g.flags||[]).join(' ');
-        tr.innerHTML = '<td>'+(g.apiGroup||'')+'</td><td>'+g.resource+'</td><td>'+(g.subresource||'')+'</td><td>'+g.verb+'</td><td>'+(g.resourceNames||[]).join(',')+'</td><td><button data-bind="'+g.binding.name+'">'+g.binding.name+'</button></td><td class="'+(fl?'red':'')+'">'+fl+'</td>';
-        tr.querySelector('button').onclick = (e)=>{ e.stop(); openObject(g.binding); };
-        pt.appendChild(tr);
-      });
-      root.appendChild(pt);
-      const ch = document.createElement('h4'); ch.textContent = 'Cluster-wide'; root.appendChild(ch);
-      const ct = document.createElement('table');
-      ct.innerHTML = '<tr><th>API group</th><th>Resource</th><th>Sub</th><th>Verb</th><th>Names</th><th>Binding</th><th>Flags</th></tr>';
-      (d.grants||[]).filter(g=>g.scope === 'cluster').forEach(g=>{
-        const tr = document.createElement('tr');
-        const fl = (g.flags||[]).join(' ');
-        tr.innerHTML = '<td>'+(g.apiGroup||'')+'</td><td>'+g.resource+'</td><td>'+(g.subresource||'')+'</td><td>'+g.verb+'</td><td>'+(g.resourceNames||[]).join(',')+'</td><td><button data-bind="'+g.binding.name+'">'+g.binding.name+'</button></td><td class="'+(fl?'red':'')+'">'+fl+'</td>';
-        tr.querySelector('button').onclick = (e)=>{ e.stop(); openObject(g.binding); };
-        ct.appendChild(tr);
-      });
-      root.appendChild(ct);
-      // bindings
-      const bh = document.createElement('h3'); bh.textContent = 'Bindings'; root.appendChild(bh);
-      (d.bindings||[]).forEach(b=>{
-        const div = document.createElement('div');
-        div.textContent = b.binding.kind + ' ' + b.binding.name + ' ' + (b.why||'') + (b.roleMissing?' (role not captured)':'') + (b.invalidRoleRef?' (roleRef invalid)':'');
-        div.onclick = ()=> openObject(b.binding);
-        root.appendChild(div);
-      });
-      // who can
-      const woh = document.createElement('h3'); woh.textContent = 'Who can'; root.appendChild(woh);
-      const form = document.createElement('form');
-      form.innerHTML = 'verb <input name="verb" value="get"> resource <input name="resource" value="pods"> <button>query</button>';
-      form.onsubmit = function(ev){
-        ev.preventDefault();
-        const qq = new URLSearchParams(new FormData(form));
-        qq.set('cluster', q.cluster||S.cluster||'');
-        qq.set('namespace', q.namespace||'');
-        fetch('/api/rbac/who?'+qq).then(r=>r.json()).then(ww=>{
-          const tbl = document.createElement('table');
-          tbl.innerHTML = '<tr><th>Kind</th><th>NS</th><th>Name</th><th>Via</th><th>Bindings</th></tr>';
-          (ww.subjects||[]).forEach(su=>{
-            const tr = document.createElement('tr');
-            tr.innerHTML = '<td>'+su.kind+'</td><td>'+su.namespace+'</td><td>'+su.name+'</td><td>'+su.via+'</td><td>'+(su.bindings||[]).map(bb=>bb.name).join(',')+'</td>';
-            tbl.appendChild(tr);
-          });
-          root.appendChild(tbl);
-        });
-      };
-      root.appendChild(form);
-      // suggestion
-      const sh = document.createElement('h3'); sh.textContent = 'Suggestion'; root.appendChild(sh);
-      const note = document.createElement('p'); note.textContent = 'Review text only. Nothing is applied.'; root.appendChild(note);
-      const pre = document.createElement('pre'); pre.className='code'; pre.textContent = d.suggestion || ''; root.appendChild(pre);
-      const cp = document.createElement('button'); cp.id='d-copy'; cp.textContent='Copy YAML'; cp.onclick=()=>{ navigator.clipboard.writeText(pre.textContent); }; root.appendChild(cp);
-    }).catch(()=>{});
+  function saLink(cluster, namespace, name){
+    return 'rbac?cluster=' + encodeURIComponent(cluster || '') + '&namespace=' + encodeURIComponent(namespace || '') + '&name=' + encodeURIComponent(name || '');
   }
+  function grantRows(grants){
+    if (!grants.length) return '<p class="muted">None captured.</p>';
+    const body = grants.map(g => {
+      const fl = (g.flags || []).join(' ');
+      const names = (g.resourceNames || []).join(', ') || 'all';
+      return `<tr><td>${esc(g.apiGroup || 'core')}</td><td class="mono">${esc(g.resource)}</td><td>${esc(g.subresource || '')}</td><td>${esc(g.verb)}</td><td>${esc(names)}</td><td><button class="link" data-rbac-ref="${attr(g.binding)}">${esc(g.binding.kind)} ${esc(g.binding.name)}</button></td><td class="${fl ? 'red' : ''}">${esc(fl)}</td></tr>`;
+    }).join('');
+    return `<div class="table-scroll"><table><thead><tr><th>API group</th><th>Resource</th><th>Sub</th><th>Verb</th><th>Names</th><th>Binding</th><th>Flags</th></tr></thead><tbody>${body}</tbody></table></div>`;
+  }
+  function clusterNames(){
+    return (S.ws?.clusters || []).map(c => c.name).filter(Boolean);
+  }
+  function rbacCluster(){
+    if (S.cluster) return S.cluster;
+    return S.rbac?.cluster || clusterNames()[0] || '';
+  }
+  function accountToolbar(cluster, namespace, filter, nsOptions){
+    const clusters = clusterNames();
+    return `<div class="toolbar"><select id="rbac-cluster" aria-label="Cluster">${clusters.map(n => `<option value="${esc(n)}" ${n === cluster ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
+      <select id="rbac-ns" aria-label="Namespace"><option value="">All namespaces</option>${nsOptions.map(n => `<option ${n === namespace ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
+      <input id="rbac-q" placeholder="Filter by name (press /)" value="${esc(filter)}" aria-label="Filter" autocomplete="off" spellcheck="false"><button id="rbac-reset">Reset</button></div>`;
+  }
+  async function rbacPage(){
+    const q = S.rbac || (S.rbac = {});
+    const cluster = rbacCluster();
+    const namespace = q.listNs || '';
+    const filter = q.q || '';
+    const name = q.name || '';
+    const saNs = q.namespace || '';
+    let accounts = [];
+    try {
+      const listed = await api('api/objects', {cluster, group: '', resource: 'serviceaccounts'});
+      accounts = listed.rows || [];
+    } catch (_) { accounts = []; }
+    const nsOptions = [...new Set(accounts.map(a => a.namespace).filter(Boolean))].sort();
+    const words = filter.toLowerCase().split(/\s+/).filter(Boolean);
+    const shown = accounts.filter(a => (!namespace || a.namespace === namespace) && words.every(w => (a.namespace + '/' + a.name).toLowerCase().includes(w)));
+    const toolbar = accountToolbar(cluster, namespace, filter, nsOptions);
+    const listed = `<section class="panel"><div class="panel-head"><div class="row"><h2>Service accounts</h2><span class="badge">${shown.length}</span></div><span class="mono muted" style="font-size:10px">${esc(cluster)}</span></div>
+      <div class="table-scroll" style="max-height:42vh">${shown.length ? `<table><thead><tr><th>Namespace</th><th>Name</th></tr></thead><tbody>${shown.map(a => `<tr class="${a.name === name && a.namespace === saNs ? 'active' : ''}" data-rbac-sa="${attr({cluster: a.cluster, namespace: a.namespace, name: a.name})}"><td class="muted">${esc(a.namespace)}</td><td class="mono blue">${esc(a.name)}</td></tr>`).join('')}</tbody></table>` : '<div class="empty"><strong>No captured service accounts match</strong>Try another namespace or filter.</div>'}</div>
+      <div class="table-foot"><span>${accounts.length} captured in ${esc(cluster)}</span><span><kbd>/</kbd> filter</span></div></section>`;
+    if (!name || !saNs) {
+      return head('RBAC', 'One cluster at a time. Filter the captured ServiceAccounts, then open one.') + toolbar + listed;
+    }
+    let d;
+    try {
+      d = await api('api/rbac/serviceaccount', {cluster, namespace: saNs, name});
+    } catch (e) {
+      return head('RBAC', cluster + ' / ' + saNs + '/' + name) + toolbar + listed + `<div class="notice bad mt">${esc(e.message)}</div>`;
+    }
+    const title = 'Service account ' + (d.namespace || saNs) + '/' + (d.name || name);
+    if (!d.found) {
+      return head('RBAC', title) + toolbar + listed + `<div class="notice mt">This ServiceAccount is not in the capture.</div>` + whoPanel(saNs, nsOptions);
+    }
+    const cov = d.coverage && !d.coverage.complete ? `<div class="notice">${esc(d.coverage.reason || 'RBAC was not fully captured. Absence of a binding is not evidence that the permission is missing.')}</div>` : '';
+    const workloads = (d.workloads || []).length ? `<div class="table-scroll"><table><thead><tr><th>Kind</th><th>Name</th><th>Pods</th></tr></thead><tbody>${d.workloads.map(w => `<tr data-rbac-ref="${attr(w.ref)}"><td>${esc(w.ref.kind)}</td><td class="mono">${esc(w.ref.name)}</td><td>${esc(w.pods)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">No captured workload uses this account.</p>';
+    const nsGrants = (d.grants || []).filter(g => g.scope !== 'cluster');
+    const clGrants = (d.grants || []).filter(g => g.scope === 'cluster');
+    const bindings = (d.bindings || []).length ? (d.bindings || []).map(b => {
+      const extra = (b.roleMissing ? ' role not captured' : '') + (b.invalidRoleRef ? ' roleRef is not valid' : '');
+      return `<div><button class="link" data-rbac-ref="${attr(b.binding)}">${esc(b.binding.kind)} ${esc(b.binding.name)}</button> <span class="muted">${esc(b.why || '')}${esc(extra)}</span></div>`;
+    }).join('') : '<p class="muted">No bindings recorded.</p>';
+    return head('RBAC', title) + toolbar + listed + cov + `
+      <section class="panel"><div class="panel-head"><h2>Workloads</h2></div><div class="panel-body">${workloads}</div></section>
+      <section class="panel mt"><div class="panel-head"><h2>Permissions</h2></div><div class="panel-body">
+        <h3>In this namespace</h3>${grantRows(nsGrants)}
+        <h3 class="mt">Cluster-wide</h3>${grantRows(clGrants)}
+      </div></section>
+      <section class="panel mt"><div class="panel-head"><h2>Bindings</h2></div><div class="panel-body">${bindings}</div></section>
+      ${whoPanel(saNs, nsOptions)}
+      <section class="panel mt"><div class="panel-head"><h2>Suggestion</h2></div><div class="panel-body">
+        <p class="muted">Review text only. Nothing is applied.</p>
+        <pre class="code" id="rbac-suggestion">${esc(d.suggestion || '')}</pre>
+        <button id="rbac-copy" class="mt">Copy YAML</button>
+      </div></section>`;
+  }
+  function whoPanel(namespace, nsOptions){
+    const verbs = ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete', 'deletecollection'];
+    return `<section class="panel mt"><div class="panel-head"><h2>Who can</h2></div><div class="panel-body">
+      <form id="rbac-who" class="toolbar">
+        <select name="verb" aria-label="Verb">${verbs.map(v => `<option ${v === 'get' ? 'selected' : ''}>${v}</option>`).join('')}</select>
+        <input name="resource" value="pods" aria-label="Resource" placeholder="resource">
+        <select name="namespace" aria-label="Namespace">${(nsOptions || []).map(n => `<option ${n === namespace ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
+        <input name="group" value="" aria-label="API group" placeholder="API group">
+        <input name="subresource" value="" aria-label="Subresource" placeholder="subresource">
+        <input name="name" value="" aria-label="Object name" placeholder="object name">
+        <button type="submit">Query</button>
+      </form>
+      <div id="rbac-who-results"></div>
+    </div></section>`;
+  }
+  after.rbac = () => {
+    const q = S.rbac || (S.rbac = {});
+    const open = (cluster, namespace, name) => nav(saLink(cluster || rbacCluster(), namespace, name));
+    const clusterSel = $('#rbac-cluster');
+    if (clusterSel) clusterSel.onchange = () => { q.cluster = clusterSel.value; q.listNs = ''; q.name = ''; q.namespace = ''; if (S.cluster && S.cluster !== clusterSel.value) setCluster(clusterSel.value); else render(); };
+    const ns = $('#rbac-ns');
+    if (ns) ns.onchange = () => { q.listNs = ns.value; render(); };
+    const filter = $('#rbac-q');
+    if (filter) {
+      let t; filter.oninput = e => { clearTimeout(t); t = setTimeout(() => { const c = e.target.selectionStart, v = e.target.value; q.q = v; render().then(() => refocus('#rbac-q', c, v)); }, 200); };
+      filter.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); const row = document.querySelector('[data-rbac-sa]'); if (row) row.click(); } };
+    }
+    const reset = $('#rbac-reset');
+    if (reset) reset.onclick = () => { q.listNs = ''; q.q = ''; render(); };
+    document.querySelectorAll('[data-rbac-sa]').forEach(b => b.onclick = () => { const a = JSON.parse(b.dataset.rbacSa); q.cluster = a.cluster; open(a.cluster, a.namespace, a.name); });
+    document.querySelectorAll('[data-rbac-ref]').forEach(el => el.onclick = () => openObject(JSON.parse(el.dataset.rbacRef)));
+    const copy = $('#rbac-copy');
+    if (copy) copy.onclick = () => { navigator.clipboard.writeText($('#rbac-suggestion').textContent || ''); toast('YAML copied'); };
+    const form = $('#rbac-who');
+    if (!form) return;
+    form.onsubmit = ev => {
+      ev.preventDefault();
+      const qq = new URLSearchParams(new FormData(form));
+      qq.set('cluster', rbacCluster());
+      const box = $('#rbac-who-results');
+      box.innerHTML = '<p class="muted">Querying…</p>';
+      api('api/rbac/who?' + qq).then(ww => {
+        const subjects = ww.subjects || [];
+        if (!subjects.length) { box.innerHTML = '<p class="muted">No captured subject grants this.</p>' + ((ww.notes || []).length ? '<p class="muted">' + esc(ww.notes.join(' ')) + '</p>' : ''); return; }
+        box.innerHTML = `<div class="table-scroll mt"><table><thead><tr><th>Kind</th><th>Namespace</th><th>Name</th><th>Via</th><th>Bindings</th></tr></thead><tbody>${subjects.map(su => `<tr><td>${esc(su.kind)}</td><td>${esc(su.namespace)}</td><td class="mono">${esc(su.name)}</td><td>${esc(su.via)}</td><td>${esc((su.bindings || []).map(b => b.name).join(', '))}</td></tr>`).join('')}</tbody></table></div>` + ((ww.notes || []).length ? '<p class="muted">' + esc(ww.notes.join(' ')) + '</p>' : '');
+      }).catch(e => { box.innerHTML = '<div class="notice bad">' + esc(e.message) + '</div>'; });
+    };
+  };
   function rbacWireObject(o){
     if (!o || o.kind !== 'ServiceAccount') return;
     const desc = document.getElementById('d-describe');
@@ -99,15 +135,10 @@
     b.textContent = 'Service account RBAC';
     b.onclick = function(){
       closeDrawer();
-      const c = o.cluster || S.cluster || '';
-      nav('rbac?cluster='+encodeURIComponent(c)+'&namespace='+encodeURIComponent(o.namespace||'')+'&name='+encodeURIComponent(o.name||''));
+      nav(saLink(o.cluster || S.cluster || '', o.namespace || '', o.name || ''));
     };
     desc.parentNode.insertBefore(b, desc.nextSibling);
   }
-  // identity open
-  // hook in app.js
   window.rbacWireObject = rbacWireObject;
   window.rbacPage = rbacPage;
-  // also for workloads in identity block
-  // (hooked from app)
 })();

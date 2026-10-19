@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Flightbay · Snapshot workspace</title>
-<script>(function(){var t=localStorage.getItem('flightbay-theme')||('dark');document.documentElement.dataset.theme=t;})();</script>
+<script>(function(){var m=document.cookie.match(/(?:^|; )flightbay-theme=(light|dark)/);var c=m?m[1]:'';var s='';try{s=localStorage.getItem('flightbay-theme')||'';}catch(e){}var t=c||s||'dark';document.documentElement.dataset.theme=t;if(!c&&(s==='light'||s==='dark'))document.cookie='flightbay-theme='+s+'; Path=/; Max-Age=31536000; SameSite=Lax';})();</script>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">

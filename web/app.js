@@ -61,9 +61,9 @@ function parseHash() {
   if (view === 'resources' && p.has('tab')) S.res.tab = p.get('tab');
   if (view === 'rbac') {
     S.rbac = S.rbac || {};
-    if (p.has('cluster')) S.rbac.cluster = p.get('cluster');
-    if (p.has('namespace')) S.rbac.namespace = p.get('namespace');
-    if (p.has('name')) S.rbac.name = p.get('name');
+    S.rbac.cluster = p.get('cluster') || S.rbac.cluster || '';
+    S.rbac.namespace = p.has('namespace') ? p.get('namespace') : '';
+    S.rbac.name = p.has('name') ? p.get('name') : '';
   }
   if(view==='ambient'&&S.ambient){
     const kind=p.get('kind'),named=['Namespace','Service','Pod','Gateway','HTTPRoute','ServiceEntry'].includes(kind)&&p.has('name');
@@ -465,7 +465,7 @@ async function loadWorkspace() {
 
 // Agent mode (AGENT=1): only the views about agents. Links to any other
 // view land on Traffic.
-const AGENT_VIEWS = ['traffic', 'scorecard', 'resources', 'navigator', 'logs', 'search', 'review', 'ambient','proxies'];
+const AGENT_VIEWS = ['traffic', 'scorecard', 'resources', 'navigator', 'logs', 'search', 'review', 'ambient','proxies', 'rbac'];
 function istioAmbientAvailable(){return !!S.ws?.istioAmbient?.some(c=>c.available&&(!S.cluster||c.cluster===S.cluster));}
 function updateIstioAmbientNav(){document.querySelector('.nav [data-view="ambient"]')?.classList.toggle('hidden',!istioAmbientAvailable());}
 function agentMode() {
@@ -1364,7 +1364,7 @@ function rcDetail(a) {
   const yes = (b, good) => b ? `<span class="${good ? 'green' : 'amber'}">yes</span>` : `<span class="${good ? 'amber' : 'green'}">no</span>`;
   const lst = (xs, cls, none) => (xs || []).length ? xs.map(x => `<div class="${cls || ''}">${esc(x)}</div>`).join('') : `<span class="muted">${none || 'none'}</span>`;
   const identity = `<section class="panel"><div class="panel-head"><h2>Identity</h2><small class="muted">Service account, token, RBAC, Secrets and host access</small></div><div class="panel-body">
-    <dl class="metadata rc-id"><dt>Service account</dt><dd class="mono">${esc(id.serviceAccount || '—')}${id.principal ? `<br><small class="muted">${esc(id.principal)}</small>` : ''}</dd>
+    <dl class="metadata rc-id"><dt>Service account</dt><dd class="mono">${esc(id.serviceAccount || '—')}${id.principal ? `<br><small class="muted">${esc(id.principal)}</small>` : ''} <button class="ghost" data-open-rbac>RBAC</button></dd>
       <dt>In mesh</dt><dd>${yes(id.inMesh, true)}</dd>
       <dt>Token mounted</dt><dd>${yes(id.tokenMounted, false)}</dd>
       <dt>RBAC rules</dt><dd class="mono rc-small">${lst(id.rbac)}${id.rbacComplete === false ? '<div class="amber">RBAC was not fully captured</div>' : ''}</dd>
@@ -1808,6 +1808,14 @@ after.reach = () => {
   }
   const a = R.detail;
   if (!R.sel || !a || a.error) return;
+  document.querySelectorAll('[data-open-rbac]').forEach(b => b.onclick = () => {
+    const sa = (a.identity && a.identity.serviceAccount) || '';
+    if (!sa) return;
+    const parts = sa.split('/');
+    const ns = parts.length > 1 ? parts[0] : '';
+    const nm = parts.length > 1 ? parts[1] : sa;
+    nav('rbac?cluster=' + encodeURIComponent(a.cluster || '') + '&namespace=' + encodeURIComponent(ns) + '&name=' + encodeURIComponent(nm));
+  });
   if (R.scroll) { R.scroll = false; $('#rc-detail')?.scrollIntoView({block: 'start', behavior: 'smooth'}); }
   $('#rc-close').onclick = () => { location.hash = 'traffic?tab=agents'; };
   $('#rc-term').onclick = () => termRun('fbreach ' + rcName(a));
@@ -2012,6 +2020,7 @@ after.resources = () => {
   let t; $('#res-q').oninput = e => { clearTimeout(t); t = setTimeout(() => { const c = e.target.selectionStart, v = e.target.value; S.res.q = v; render().then(() => refocus('#res-q', c, v)); }, 250); };
   typeahead($('#res-q'), {scope: 'objects', keys: labelKey, alias: {l: 'label'}, extraQ: () => `kind:${S.res.resource}${S.res.group ? '.' + S.res.group : ''}${S.res.ns ? ' ns:' + S.res.ns : ''}`});
   $('#res-reset').onclick = () => { S.res.ns = ''; S.res.q = ''; render(); };
+  const rmap = $('#res-map'); if (rmap) rmap.onclick = () => { const c = S.cluster || (S.ws?.clusters || [])[0]?.name || ''; location.hash = 'resources?' + new URLSearchParams({tab: 'map', cluster: c, ns: S.res.ns}).toString(); };
   const rc = $('#res-cov'); if (rc) rc.onclick = () => nav('coverage');
   $('#res-k9s').onclick = () => openK9s(S.res.resource + (S.res.group ? '.' + S.res.group : ''), S.res.ns);
   const commands=(S.cluster?[S.cluster]:(S.ws?.clusters||[]).map(c=>c.name)).map(c=>mirrorKubectl(`get ${shellArg(S.res.resource+(S.res.group?'.'+S.res.group:''))} ${S.res.ns?'-n '+shellArg(S.res.ns):'-A'}`,c)).join('\n');
@@ -2020,7 +2029,6 @@ after.resources = () => {
 };
 
 // ---------- object drawer ----------
-  const rmap = $('#res-map'); if (rmap) rmap.onclick = () => { const c = S.cluster || (S.ws?.clusters || [])[0]?.name || ''; location.hash = 'resources?' + new URLSearchParams({tab: 'map', cluster: c, ns: S.res.ns}).toString(); };
 const workloadKinds = ['Deployment', 'DaemonSet', 'StatefulSet', 'ReplicaSet', 'Job', 'CronJob'];
 async function openObject(ref, tab = 'summary') {
   S.drawerOpen = true;
@@ -2059,6 +2067,7 @@ async function openObject(ref, tab = 'summary') {
     const dw = $('#d-wlogs'); if (dw) dw.onclick = () => openLogs({workload: `${o.kind}/${o.name}`, namespace: o.namespace});
     const dl = $('#d-logs'); if (dl) dl.onclick = () => { const prev = (d.streams || []).find(s => s.endsWith('/previous')); openLogs({pod: o.name, namespace: o.namespace, stream: prev ? 'previous' : ''}); };
     const dd = $('#d-describe'); if (dd) {const command=mirrorKubectl(`describe ${shellArg(o.resource+(o.group?'.'+o.group:''))} ${shellArg(o.name)}${o.namespace?' -n '+shellArg(o.namespace):''}`,o.cluster);dd.onclick=()=>{closeDrawer();termRun(command);};commandControls(dd,command);}
+    const dm = $('#d-map'); if (dm) dm.onclick = () => { closeDrawer(); rmShowOnMap({cluster: o.cluster, group: o.group, resource: o.resource, namespace: o.namespace, name: o.name}); };
     const dc = $('#d-compare'); if (dc) dc.onclick = () => { S.compare = {group: o.group, resource: o.resource, namespace: o.namespace, name: o.name, kind: o.kind}; closeDrawer(); nav('compare'); };
     const cp = $('#d-copy'); if (cp) cp.onclick = () => navigator.clipboard.writeText(d.yaml).then(() => toast('YAML copied'), () => toast('Clipboard unavailable'));
     if (typeof rvWireObject === 'function') rvWireObject();
@@ -2067,7 +2076,6 @@ async function openObject(ref, tab = 'summary') {
   };
   draw();
 }
-    const dm = $('#d-map'); if (dm) dm.onclick = () => { closeDrawer(); rmShowOnMap({cluster: o.cluster, group: o.group, resource: o.resource, namespace: o.namespace, name: o.name}); };
 function closeDrawer() { $('#overlay').innerHTML = ''; S.drawerOpen = false; }
 
 // ---------- logs ----------
@@ -2694,7 +2702,7 @@ function closeModal() { if(S.applyConfirmCancel)S.applyConfirmCancel();$('#modal
 
 function openSearch() {
   modal('Jump to an object or view', `<input id="gs" style="width:100%" placeholder="Any object: name, label, image, hostname. Try kind: ns: label:" autocomplete="off"><div id="gs-res" class="search-results"></div>`);
-  const views = ['navigator', 'search', 'overview', 'scorecard', ...(istioAmbientAvailable()?['ambient']:[]), ...(feature('traffic') || feature('reach') ? ['traffic'] : []), 'resources', 'logs', 'timeline', 'findings', 'compare', 'proxies', 'coverage'].filter(v => !S.ws?.agent || AGENT_VIEWS.includes(v));
+  const views = ['navigator', 'search', 'overview', 'scorecard', ...(istioAmbientAvailable()?['ambient']:[]), ...(feature('traffic') || feature('reach') ? ['traffic'] : []), 'resources', 'logs', 'timeline', 'findings', 'compare', 'proxies', 'coverage', 'rbac'].filter(v => !S.ws?.agent || AGENT_VIEWS.includes(v));
   const viewLabel=v=>({ambient:'Istio Ambient',proxies:'Proxy diagnostics',traffic:'Traffic · mesh and gateway'}[v]||v);
   let hits = [], sel = 0;
   const draw = () => {
@@ -2769,7 +2777,8 @@ function termRun(cmd) {
 // ---------- boot ----------
 function applyTheme(t) {
   document.documentElement.dataset.theme = t;
-  localStorage.setItem('flightbay-theme', t);
+  try { localStorage.setItem('flightbay-theme', t); } catch (_) { /* private mode */ }
+  document.cookie = 'flightbay-theme=' + t + '; Path=/; Max-Age=31536000; SameSite=Lax';
   $('#theme-toggle').textContent = t === 'light' ? '☾' : '☀';
   $('#theme-toggle').title = t === 'light' ? 'Switch to dark' : 'Switch to light';
 }

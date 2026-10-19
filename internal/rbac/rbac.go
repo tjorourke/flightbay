@@ -9,66 +9,86 @@ import (
 )
 
 type Ref struct {
-	Cluster, Group, Resource, Kind, Namespace, Name string
+	Cluster   string `json:"cluster"`
+	Group     string `json:"group"`
+	Resource  string `json:"resource"`
+	Kind      string `json:"kind"`
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
 }
 
 type Coverage struct {
-	Roles, RoleBindings, ClusterRoles, ClusterRoleBindings, ServiceAccounts string
-	Complete bool
-	Reason   string
+	Roles               string `json:"roles"`
+	RoleBindings        string `json:"roleBindings"`
+	ClusterRoles        string `json:"clusterRoles"`
+	ClusterRoleBindings string `json:"clusterRoleBindings"`
+	ServiceAccounts     string `json:"serviceAccounts"`
+	Complete            bool   `json:"complete"`
+	Reason              string `json:"reason,omitempty"`
 }
 
 type Grant struct {
-	Scope         string   // namespace name, or "cluster"
-	APIGroup      string
-	Resource      string
-	Subresource   string   // empty means the resource itself, not its subresources
-	Verb          string
-	ResourceNames []string // empty means all names
-	Binding       Ref
-	Role          Ref
-	Sources       []string // aggregated ClusterRole names, when any
-	Flags         []string
+	Scope         string   `json:"scope"`
+	APIGroup      string   `json:"apiGroup"`
+	Resource      string   `json:"resource"`
+	Subresource   string   `json:"subresource,omitempty"`
+	Verb          string   `json:"verb"`
+	ResourceNames []string `json:"resourceNames,omitempty"`
+	Binding       Ref      `json:"binding"`
+	Role          Ref      `json:"role"`
+	Sources       []string `json:"sources,omitempty"`
+	Flags         []string `json:"flags,omitempty"`
 }
 
 type BindingHit struct {
-	Binding        Ref
-	Role           Ref
-	Why            string // "ServiceAccount", "User system:serviceaccount:ns:name", "Group system:serviceaccounts", "Group system:serviceaccounts:ns", "Group system:authenticated"
-	RoleMissing    bool
-	InvalidRoleRef bool
+	Binding        Ref    `json:"binding"`
+	Role           Ref    `json:"role"`
+	Why            string `json:"why"`
+	RoleMissing    bool   `json:"roleMissing"`
+	InvalidRoleRef bool   `json:"invalidRoleRef"`
 }
 
 type Workload struct {
-	Ref  Ref
-	Pods int
+	Ref  Ref `json:"ref"`
+	Pods int `json:"pods"`
 }
 
 type Explain struct {
-	Cluster, Namespace, Name string
-	Found                    bool
-	Coverage                 Coverage
-	Workloads                []Workload
-	Grants                   []Grant
-	Bindings                 []BindingHit
-	Suggestion               string
-	Notes                    []string
+	Cluster    string       `json:"cluster"`
+	Namespace  string       `json:"namespace"`
+	Name       string       `json:"name"`
+	Found      bool         `json:"found"`
+	Coverage   Coverage     `json:"coverage"`
+	Workloads  []Workload   `json:"workloads"`
+	Grants     []Grant      `json:"grants"`
+	Bindings   []BindingHit `json:"bindings"`
+	Suggestion string       `json:"suggestion"`
+	Notes      []string     `json:"notes,omitempty"`
 }
 
 type WhoQuery struct {
-	Cluster, Namespace, Verb, Group, Resource, Subresource, Name string
+	Cluster     string `json:"cluster"`
+	Namespace   string `json:"namespace"`
+	Verb        string `json:"verb"`
+	Group       string `json:"group"`
+	Resource    string `json:"resource"`
+	Subresource string `json:"subresource,omitempty"`
+	Name        string `json:"name,omitempty"`
 }
 
 type WhoSubject struct {
-	Kind, Name, Namespace, Via string
-	Bindings                   []Ref
+	Kind      string `json:"kind"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+	Via       string `json:"via"`
+	Bindings  []Ref  `json:"bindings"`
 }
 
 type Who struct {
 	WhoQuery
-	Coverage Coverage
-	Subjects []WhoSubject
-	Notes    []string
+	Coverage Coverage     `json:"coverage"`
+	Subjects []WhoSubject `json:"subjects"`
+	Notes    []string     `json:"notes,omitempty"`
 }
 
 func m(v any) map[string]any { x, _ := v.(map[string]any); return x }
@@ -652,14 +672,18 @@ func collectWorkloads(ws *store.Workspace, cluster, namespace, saName string) []
 	// add bare pods as their own if not under template
 	for _, p := range pods {
 		sa := s(path(p.Obj, "spec", "serviceAccountName"))
-		if sa == "" { sa = "default" }
-		if sa != saName { continue }
+		if sa == "" {
+			sa = "default"
+		}
+		if sa != saName {
+			continue
+		}
 		top := findTopController(ws, cluster, p)
 		if top.Kind == "Pod" {
 			id := "Pod/" + p.Namespace + "/" + p.Name
 			if _, ok := templates[id]; !ok {
 				wsOut = append(wsOut, Workload{
-					Ref: Ref{Cluster: cluster, Group: "", Resource: "pods", Kind: "Pod", Namespace: p.Namespace, Name: p.Name},
+					Ref:  Ref{Cluster: cluster, Group: "", Resource: "pods", Kind: "Pod", Namespace: p.Namespace, Name: p.Name},
 					Pods: 1,
 				})
 			}
@@ -668,7 +692,9 @@ func collectWorkloads(ws *store.Workspace, cluster, namespace, saName string) []
 	// sort
 	sort.Slice(wsOut, func(i, j int) bool {
 		a, b := wsOut[i].Ref, wsOut[j].Ref
-		if a.Kind != b.Kind { return a.Kind < b.Kind }
+		if a.Kind != b.Kind {
+			return a.Kind < b.Kind
+		}
 		return a.Name < b.Name
 	})
 	return wsOut

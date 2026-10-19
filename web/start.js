@@ -367,7 +367,8 @@ function opening(title, detail) {
 // ---------- boot ----------
 function applyTheme(t) {
   document.documentElement.dataset.theme = t;
-  localStorage.setItem('flightbay-theme', t);
+  try { localStorage.setItem('flightbay-theme', t); } catch (_) { /* private mode */ }
+  document.cookie = 'flightbay-theme=' + t + '; Path=/; Max-Age=31536000; SameSite=Lax';
   $('#theme-toggle').textContent = t === 'light' ? '☾' : '☀';
   $('#theme-toggle').title = t === 'light' ? 'Switch to dark' : 'Switch to light';
 }
