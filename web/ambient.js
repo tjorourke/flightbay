@@ -119,7 +119,7 @@ function amGraph(target) {
 }
 const amTaskText={
   explain:['Traffic repair','Review the caller access repair and its scope.','Access'],
-  'require-waypoint':['Require waypoint','Only admit the captured waypoint service account at ztunnel.','Access'],
+  'require-waypoint':['Block traffic that skips the waypoint','Pods accept connections only from this Service\'s waypoint, so port-forwards, Pod IPs and ingress paths cannot get round its L7 policies.','Access'],
   jwt:['Require a JWT','Validate tokens and restrict request principals at the Istio waypoint.','Access'],
   retries:['Retry failed requests','Set retry attempts when the installed experimental schema permits it.','Resilience'],
   mirroring:['Mirror requests','Copy requests to a captured Service; ignore its responses.','Routing'],
@@ -504,5 +504,5 @@ function amWaypointStrip(unavailable){
   const A=S.ambient,sel=A.result?.environment?.selected,blocked=unavailable.filter(amNeedsIstioWaypoint);
   const product=sel?.product==='istio'?'Istio':sel?.product==='agentgateway'?(sel.edition==='enterprise'?'Enterprise agentgateway':'agentgateway'):sel?.product||'';
   const examples=blocked.slice(0,3).map(c=>amTaskText[c.id]?.[0]||c.title).join(', ');
-  return `<div class="am-waypoint-strip"><div><strong>Waypoint</strong> <span>${sel?esc(sel.name)+(product?' · '+esc(product):''):'None bound to this Service'}</span>${blocked.length?`<small>${blocked.length} L7 task${blocked.length===1?'':'s'} need an Istio waypoint: ${esc(examples)}${blocked.length>3?'…':''}. Deploy one for this Service or its namespace, or bind an existing one.</small>`:''}</div><div class="row"><button data-amwaypoint="existing">Use an existing waypoint…</button><button data-amwaypoint="new"${blocked.length?' data-amwpistio="1"':''}>${blocked.length?'Deploy an Istio waypoint…':'Deploy a new waypoint…'}</button></div></div>`;
+  return `<div class="am-waypoint-strip"><div><strong>Waypoint</strong> <span>${sel?esc(sel.name)+(product?' · '+esc(product):''):'None bound to this Service'}</span>${blocked.length?`<small>${blocked.length} L7 task${blocked.length===1?'':'s'} need an Istio waypoint: ${esc(examples)}${blocked.length>3?'…':''}. Change waypoint lets you bind an existing one or deploy an Istio waypoint for this Service or its namespace.</small>`:''}</div><button data-amwaypoint="${blocked.length?'new':'existing'}"${blocked.length?' data-amwpistio="1"':''} title="Bind an existing waypoint or deploy a new one, for this Service or its namespace">Change waypoint…</button></div>`;
 }

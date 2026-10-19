@@ -142,7 +142,7 @@ func Capabilities(ws *store.Workspace, c, ns, service string) []Task {
 	selector := len(M(Path(svc.Obj, "spec", "selector"))) > 0
 	globalSupported, globalReason := globalServiceSupport(ws, svc, env)
 	out := []Task{
-		{"require-waypoint", "Require the selected waypoint", "L4 ztunnel", security && selector && waypointPrincipal(ws, svc) != "", "Allows only the captured waypoint service account. Requires an unambiguous captured identity and trust domain. Existing ALLOW policies remain additive."},
+		{"require-waypoint", "Block traffic that skips the waypoint", "L4 ztunnel", security && selector && waypointPrincipal(ws, svc) != "", "Allows only the captured waypoint service account. Requires an unambiguous captured identity and trust domain. Existing ALLOW policies remain additive."},
 		{"jwt", "Require a JWT", "L7 Istio waypoint", istio && security && hasResource(ws, c, "security.istio.io", "requestauthentications"), "RequestAuthentication and requestPrincipals authorization on the Service. Agentgateway JWT generation is UNVERIFIED and unavailable: no tested installed-schema policy mapping is established."},
 		{"retries", "Retry failed requests", "L7 Istio waypoint", istio && routeField(ws, c, "retry", "attempts"), "Requires the experimental HTTPRoute retry.attempts field in the captured installed CRD schema and an Istio waypoint. Otherwise unavailable; agentgateway support is UNVERIFIED."},
 		{"mirroring", "Mirror requests", "L7 Istio waypoint", istio && routeField(ws, c, "filters", "requestMirror", "backendRef", "name"), "HTTPRoute RequestMirror to a captured Service. Agentgateway waypoint support is UNVERIFIED and unavailable."},
