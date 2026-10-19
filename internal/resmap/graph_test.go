@@ -279,3 +279,94 @@ func TestNamespaceWaypoint(t *testing.T) {
 		t.Fatal("pods only inherit when waypoint-for is workload or all")
 	}
 }
+
+func TestIstioPolicies(t *testing.T) {
+	ws := makeWS(t)
+	for _, r := range []bundle.APIResource{res("security.istio.io", "authorizationpolicies", "AuthorizationPolicy", true), res("networking.istio.io", "destinationrules", "DestinationRule", true)} {
+		complete(ws, r)
+	}
+	ws.AddObjects("c", res("", "services", "Service", true), []map[string]any{obj("Service", "shop", "web", nil)}, "svc")
+	ws.AddObjects("c", res("", "pods", "Pod", true), []map[string]any{
+		{"kind": "Pod", "metadata": map[string]any{"name": "web-1", "namespace": "shop", "labels": map[string]any{"app": "web"}}},
+	}, "p")
+	ws.AddObjects("c", res("gateway.networking.k8s.io", "gateways", "Gateway", true), []map[string]any{obj("Gateway", "shop", "wp", nil)}, "gw")
+	ws.AddObjects("c", res("security.istio.io", "authorizationpolicies", "AuthorizationPolicy", true), []map[string]any{
+		obj("AuthorizationPolicy", "shop", "at-waypoint", map[string]any{"targetRefs": []any{map[string]any{"kind": "Gateway", "group": "gateway.networking.k8s.io", "name": "wp"}}}),
+		obj("AuthorizationPolicy", "shop", "by-label", map[string]any{"selector": map[string]any{"matchLabels": map[string]any{"app": "web"}}}),
+		obj("AuthorizationPolicy", "shop", "deny-all", map[string]any{}),
+	}, "ap")
+	ws.AddObjects("c", res("networking.istio.io", "destinationrules", "DestinationRule", true), []map[string]any{
+		obj("DestinationRule", "shop", "web", map[string]any{"host": "web.shop.svc.cluster.local"}),
+		obj("DestinationRule", "shop", "gone", map[string]any{"host": "gone"}),
+	}, "dr")
+	g := Build(ws, "c", "shop", nil)
+	got := map[string]Edge{}
+	for _, e := range g.Edges {
+		if e.Kind == "policy" {
+			got[e.From[strings.LastIndex(e.From, "/")+1:]] = e
+		}
+	}
+	if got["at-waypoint"].To != "c/gateway.networking.k8s.io/gateways/shop/wp" {
+		t.Fatalf("targetRef to waypoint: %+v", got["at-waypoint"])
+	}
+	if got["by-label"].To != "c//pods/shop/web-1" {
+		t.Fatalf("selector to pod: %+v", got["by-label"])
+	}
+	if e := got["deny-all"]; e.To != "" || e.Broken || e.Label != "namespace-wide" {
+		t.Fatalf("namespace-wide: %+v", e)
+	}
+	if got["web"].To != "c//services/shop/web" {
+		t.Fatalf("DestinationRule host: %+v", got["web"])
+	}
+	if !got["gone"].Broken {
+		t.Fatalf("missing host should be broken: %+v", got["gone"])
+	}
+}
+
+func TestMoreRelationships(t *testing.T) {
+	ws := makeWS(t)
+	for _, r := range []bundle.APIResource{res("networking.k8s.io", "networkpolicies", "NetworkPolicy", true), res("networking.istio.io", "serviceentries", "ServiceEntry", true), res("kagent.dev", "agents", "Agent", true), res("kagent.dev", "modelconfigs", "ModelConfig", true)} {
+		complete(ws, r)
+	}
+	ws.AddObjects("c", res("", "pods", "Pod", true), []map[string]any{
+		{"kind": "Pod", "metadata": map[string]any{"name": "a", "namespace": "shop", "labels": map[string]any{"tier": "web"}}},
+		{"kind": "Pod", "metadata": map[string]any{"name": "b", "namespace": "shop", "labels": map[string]any{"tier": "db"}}},
+	}, "p")
+	ws.AddObjects("c", res("networking.k8s.io", "networkpolicies", "NetworkPolicy", true), []map[string]any{
+		obj("NetworkPolicy", "shop", "web-only", map[string]any{"podSelector": map[string]any{"matchExpressions": []any{map[string]any{"key": "tier", "operator": "In", "values": []any{"web"}}}}}),
+	}, "np")
+	ws.AddObjects("c", res("", "services", "Service", true), []map[string]any{
+		{"kind": "Service", "metadata": map[string]any{"name": "web", "namespace": "shop", "labels": map[string]any{"solo.io/service-scope": "global"}}},
+	}, "svc")
+	se := obj("ServiceEntry", "istio-system", "autogen.shop.web", nil)
+	se["metadata"].(map[string]any)["labels"] = map[string]any{"solo.io/parent-service": "web", "solo.io/parent-service-namespace": "shop"}
+	ws.AddObjects("c", res("networking.istio.io", "serviceentries", "ServiceEntry", true), []map[string]any{se}, "se")
+	ws.AddObjects("c", res("kagent.dev", "modelconfigs", "ModelConfig", true), []map[string]any{obj("ModelConfig", "shop", "default", nil)}, "mc")
+	ws.AddObjects("c", res("kagent.dev", "agents", "Agent", true), []map[string]any{obj("Agent", "shop", "helper", map[string]any{"declarative": map[string]any{"modelConfig": "default"}})}, "ag")
+	dep := obj("Deployment", "shop", "helper", nil)
+	dep["metadata"].(map[string]any)["ownerReferences"] = []any{map[string]any{"apiVersion": "kagent.dev/v1alpha2", "kind": "Agent", "name": "helper"}}
+	ws.AddObjects("c", res("apps", "deployments", "Deployment", true), []map[string]any{dep}, "d")
+	g := Build(ws, "c", "shop", nil)
+	has := func(from, to, kind string) bool {
+		for _, e := range g.Edges {
+			if e.From == from && e.To == to && e.Kind == kind {
+				return true
+			}
+		}
+		return false
+	}
+	if !has("c/networking.k8s.io/networkpolicies/shop/web-only", "c//pods/shop/a", "policy") || has("c/networking.k8s.io/networkpolicies/shop/web-only", "c//pods/shop/b", "policy") {
+		t.Fatal("matchExpressions selector")
+	}
+	if !has("c//services/shop/web", "c/networking.istio.io/serviceentries/istio-system/autogen.shop.web", "global") {
+		t.Fatal("global ServiceEntry edge")
+	}
+	if !has("c/kagent.dev/agents/shop/helper", "c/apps/deployments/shop/helper", "owner") || !has("c/kagent.dev/agents/shop/helper", "c/kagent.dev/modelconfigs/shop/default", "uses") {
+		t.Fatal("Agent owner and model config")
+	}
+	for _, n := range g.Nodes {
+		if n.Kind == "Service" && n.Name == "web" && n.Badge != "global" {
+			t.Fatalf("global badge: %+v", n)
+		}
+	}
+}

@@ -8,27 +8,32 @@
   const esc = window.esc || (s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])));
   const attrOf = window.attr || (o => esc(JSON.stringify(o)));
   const LANES = [
-    ['Policies', ['AgentgatewayPolicy', 'EnterpriseAgentgatewayPolicy']],
+    ['Policies', ['AuthorizationPolicy', 'PeerAuthentication', 'RequestAuthentication', 'NetworkPolicy', 'AgentgatewayPolicy', 'EnterpriseAgentgatewayPolicy', 'DestinationRule', 'Telemetry', 'WasmPlugin', 'Sidecar', 'BackendTLSPolicy', 'HorizontalPodAutoscaler', 'PodDisruptionBudget']],
     ['Gateways & ingress', ['Gateway', 'Ingress']],
     ['Routes', ['HTTPRoute', 'GRPCRoute', 'TCPRoute', 'TLSRoute']],
-    ['Services', ['Service']],
-    ['Endpoints', ['EndpointSlice', 'Endpoints']],
-    ['Pods', ['Pod']],
-    ['Replica sets & jobs', ['ReplicaSet', 'Job']],
-    ['Workloads', ['Deployment', 'StatefulSet', 'DaemonSet', 'CronJob']],
-    ['Config & identity', ['ServiceAccount', 'ConfigMap', 'Secret', 'PersistentVolumeClaim']],
+    ['Services & backends', ['Service', 'ServiceEntry', 'AgentgatewayBackend', 'EnterpriseAgentgatewayBackend']],
+    ['Pods & endpoints', ['Pod', 'WorkloadEntry']],
+    ['Workloads', ['Deployment', 'StatefulSet', 'DaemonSet', 'Job', 'CronJob']],
+    ['Agents & tools', ['Agent', 'RemoteMCPServer', 'MCPServer', 'ToolServer', 'ModelConfig']],
+    ['Config & identity', ['ServiceAccount', 'RoleBinding', 'Role', 'ClusterRole', 'ConfigMap', 'Secret', 'PersistentVolumeClaim']],
   ];
-  const DEFAULT_KINDS = ['Deployment', 'StatefulSet', 'DaemonSet', 'Job', 'CronJob', 'Pod', 'Service', 'Ingress', 'Gateway', 'HTTPRoute', 'GRPCRoute', 'ServiceAccount'];
+  // Plumbing the map bridges over rather than draws: Deployment → Pod skips
+  // the ReplicaSet, Service → Pod skips the EndpointSlice. Never offered.
+  const HIDDEN_KINDS = ['ReplicaSet', 'EndpointSlice', 'Endpoints', 'ControllerRevision', 'Event', 'Lease'];
+  const DEFAULT_KINDS = ['Deployment', 'StatefulSet', 'DaemonSet', 'Job', 'CronJob', 'Pod', 'WorkloadEntry', 'Service', 'ServiceEntry', 'AgentgatewayBackend', 'EnterpriseAgentgatewayBackend', 'Ingress', 'Gateway', 'HTTPRoute', 'GRPCRoute', 'TCPRoute', 'TLSRoute', 'ServiceAccount', 'Agent', 'RemoteMCPServer', 'MCPServer', 'ModelConfig'].concat(LANES[0][1]);
   // Edge kinds the server emits, with the chip label and the verbs a card uses
   // to describe its own links.
   const EDGE_KINDS = {
     parent: {label: 'Gateway → attached route', out: 'Parent of', in: 'Attached to'},
-    backend: {label: 'Route or Ingress → backend Service', out: 'Routes to', in: 'Backend of'},
-    endpoints: {label: 'Service → endpoints → Pod', out: 'Selects', in: 'Selected by'},
+    backend: {label: 'Route or Ingress → backend', out: 'Routes to', in: 'Backend of'},
+    endpoints: {label: 'Service or ServiceEntry → Pod', out: 'Selects', in: 'Selected by'},
     owner: {label: 'Owner → owned object', out: 'Owns', in: 'Owned by'},
-    uses: {label: 'Workload → ConfigMap, Secret, ServiceAccount', out: 'Uses', in: 'Used by'},
+    uses: {label: 'Uses config, identity or tools', out: 'Uses', in: 'Used by'},
     waypoint: {label: 'use-waypoint label → Gateway', out: 'Uses waypoint', in: 'Waypoint for'},
-    policy: {label: 'Policy → target', out: 'Targets', in: 'Targeted by'},
+    policy: {label: 'Policy → target', out: 'Applies to', in: 'Governed by'},
+    scales: {label: 'Autoscaler → workload', out: 'Scales', in: 'Scaled by'},
+    grants: {label: 'RoleBinding → Role, ServiceAccount', out: 'Binds', in: 'Bound by'},
+    global: {label: 'Global Service → ServiceEntry, WorkloadEntry', out: 'Published as', in: 'Published for'},
     selector: {label: 'Selector', out: 'Selects', in: 'Selected by'},
   };
   const TEAL = '#138b9d', RED = '#b42318';
@@ -42,7 +47,6 @@
   }
   // Focus mode hides only the plumbing kinds the map bridges over, so picking
   // a Job shows its Pods, ServiceAccount and ConfigMaps without touching Kinds.
-  const FOCUS_HIDDEN = ['ReplicaSet', 'EndpointSlice', 'Endpoints'];
   const DEPTHS = [[1, '1 hop'], [2, '2 hops'], [99, 'All linked']];
 
   // The selection is shareable: #resources?tab=map&cluster=…&ns=…&sel=id,id&depth=2.
@@ -152,14 +156,14 @@
     const nsNodes = d.nodes.filter(n => n.namespace === m.ns);
     const present = {};
     nsNodes.forEach(n => { present[n.kind] = (present[n.kind] || 0) + 1; });
-    const allKinds = Object.keys(present).sort();
+    const allKinds = Object.keys(present).filter(k => HIDDEN_KINDS.indexOf(k) < 0).sort();
     // Untouched kinds follow the defaults; a namespace with none of the default
     // kinds (say, only ConfigMaps) shows everything rather than an empty box.
     const defaultsPresent = allKinds.some(k => DEFAULT_KINDS.indexOf(k) >= 0);
     m.sel = (m.sel || []).filter(id => d.byId[id]);
     const nsIds = new Set(nsNodes.map(n => n.id));
     const sel = m.sel.filter(id => nsIds.has(id)), selSet = new Set(sel), focusing = sel.length > 0;
-    const kindOn = k => k in m.kinds ? m.kinds[k] : focusing ? FOCUS_HIDDEN.indexOf(k) < 0 : defaultsPresent ? DEFAULT_KINDS.indexOf(k) >= 0 : true;
+    const kindOn = k => HIDDEN_KINDS.indexOf(k) >= 0 ? false : k in m.kinds ? m.kinds[k] : focusing ? true : defaultsPresent ? DEFAULT_KINDS.indexOf(k) >= 0 : true;
     const q = (m.q || '').toLowerCase();
     const named = n => !q || n.name.toLowerCase().indexOf(q) >= 0;
     let visible;
@@ -168,10 +172,25 @@
       const reach = rmFocus(d, nsIds, sel, m.depth, shown);
       visible = nsNodes.filter(n => selSet.has(n.id) || (reach.has(n.id) && shown(n) && named(n)));
     } else visible = nsNodes.filter(n => kindOn(n.kind) && named(n));
+    // Linked objects in other namespaces (a waypoint elsewhere, the
+    // ServiceEntries a global Service publishes into istio-system) are drawn
+    // too, tagged with their namespace.
+    if (m.external !== false) {
+      const vis = new Set(visible.map(n => n.id)), extra = new Map();
+      d.edges.forEach(e => {
+        const a = d.byId[e.from], b = d.byId[e.to];
+        if (!a || !b) return;
+        if (vis.has(a.id) && b.namespace !== m.ns && kindOn(b.kind)) extra.set(b.id, b);
+        else if (vis.has(b.id) && a.namespace !== m.ns && kindOn(a.kind)) extra.set(a.id, a);
+      });
+      visible = visible.concat([...extra.values()]);
+    }
+    const nsWide = new Set(d.edges.filter(e => !e.to && !e.broken && e.label === 'namespace-wide').map(e => e.from));
     let links = rmLinks(d, nsNodes, visible);
     if (!m.unlinked && !focusing) {
       const linked = new Set();
       links.edges.forEach(e => { linked.add(e.from); if (e.to) linked.add(e.to); });
+      nsWide.forEach(id => linked.add(id));
       visible = visible.filter(n => linked.has(n.id));
     }
     const compact = m.view ? m.view === 'compact' : visible.length > 40;
@@ -192,15 +211,15 @@
       const reasons = broken[n.id] || [];
       const on = selSet.has(n.id);
       return `<article class="am-canvas-card rm-card${compact ? ' rm-compact' : ''}${reasons.length ? ' rm-card-broken' : ''}${on ? ' rm-card-selected' : ''}" data-rm-node="${esc(n.id)}" data-rm-kind="${esc(n.kind)}">
-        <div class="am-canvas-card-head"><span class="badge">${esc(n.kind)}</span>${n.badge ? `<span class="badge amber" title="${esc(n.badge)}">${esc(badgeLabel(n.badge))}</span>` : ''}<button class="rm-sel-btn" data-rm-sel="${esc(n.id)}" aria-pressed="${on}" title="${on ? 'Remove from the selection' : 'Add to the selection. ⌘, Ctrl or Shift + click a card does the same.'}">${on ? '✓ Selected' : '+ Select'}</button></div>
+        <div class="am-canvas-card-head"><span class="badge">${esc(n.kind)}</span>${n.badge ? `<span class="badge ${n.badge === 'global' ? 'blue' : 'amber'}" title="${esc(n.badge === 'global' ? 'solo.io/service-scope is set: published to the peered mesh' : n.badge)}">${esc(badgeLabel(n.badge))}</span>` : ''}${n.namespace !== m.ns ? `<span class="badge rm-ext" title="Linked from another namespace">${esc(n.namespace || 'cluster')}</span>` : ''}<button class="rm-sel-btn" data-rm-sel="${esc(n.id)}" aria-pressed="${on}" title="${on ? 'Remove from the selection' : 'Add to the selection. ⌘, Ctrl or Shift + click a card does the same.'}">${on ? '✓ Selected' : '+ Select'}</button></div>
         <button class="link rm-card-name" data-rm-open="${ref}" title="Open ${esc(n.kind)} ${esc(n.name)}">${esc(n.name)}</button>
-        ${compact ? '' : `<small>${esc(summary[n.id] || 'No captured relationship in this view')}</small>`}
+        ${compact ? '' : `<small>${esc([nsWide.has(n.id) ? 'Applies to the whole namespace' : '', summary[n.id]].filter(Boolean).join(' · ') || 'No captured relationship in this view')}</small>`}
         ${reasons.length ? `<small class="red">${esc(reasons.join(' · '))}</small>` : ''}
         ${compact ? '' : `<div class="row wrap"><button data-rm-open="${ref}">View object</button><button data-rm-yaml="${ref}">YAML</button><button data-rm-focus="${esc(n.id)}" title="Show only this object and what links to it">Focus</button></div>`}
       </article>`;
     };
     const laneHTML = shownLanes.map(l => `<div class="rm-lane"><h4 class="rm-lane-title">${esc(l.title)} <span class="badge">${l.nodes.length}</span></h4>${l.nodes.map(card).join('')}</div>`).join('');
-    const box = `<section class="am-cluster-box rm-box" style="left:24px;top:24px"><header>
+    const box = `<section class="am-cluster-box rm-box" style="left:10px;top:10px"><header class="rm-box-head">
         <div class="rm-box-title"><span class="am-cluster-symbol" aria-hidden="true">◫</span><span><strong>${esc(m.ns)}</strong><small>${esc(cluster)} · namespace</small></span></div>
         <div class="am-cluster-bar"><small>${focusing ? 'Focused on ' + sel.length + ' selected · ' + esc(depthLabel(m.depth)) + ' · ' : ''}${visible.length} of ${nsNodes.length} captured objects shown${links.outside ? ' · ' + links.outside + ' link' + (links.outside > 1 ? 's' : '') + ' leave this namespace' : ''}</small><div class="row"><button data-rm-view="cards" aria-pressed="${!compact}">Cards</button><button data-rm-view="compact" aria-pressed="${compact}">Compact</button></div></div>
       </header>${shownLanes.length ? `<div class="rm-lanes">${laneHTML}</div>` : `<p class="am-canvas-empty rm-empty">${focusing ? 'The selected objects are hidden by the current kinds or filter.' : 'Nothing in this namespace matches the current kinds and filter.'} Missing data does not prove absence.</p>`}</section>`;
@@ -208,16 +227,16 @@
       + (brokenTotal ? `<button class="am-connection-chip rm-broken-chip" data-rm-chip="broken" aria-pressed="${m.selected === 'broken'}" title="Highlight objects whose link resolves to nothing">⚠ Broken links <span class="rm-chip-n">${brokenTotal}</span></button>` : '');
 
     root.innerHTML = `<section class="panel am-topology rm-topology${m.fullscreen ? ' am-map-fullscreen' : ''}" id="rm-panel">
-      <div class="panel-head"><div><h2>Topology</h2><p class="muted">${esc(cluster)} · ${esc(m.ns)} · ${visible.length} objects · ${links.edges.length - brokenTotal} relationships drawn</p></div>
-        <div class="row wrap am-map-controls"><button id="rm-zoom-out" type="button" aria-label="Zoom out">−</button><output id="rm-zoom">${Math.round(m.zoom * 100)}%</output><button id="rm-zoom-in" type="button" aria-label="Zoom in">+</button><button id="rm-fit" type="button">Fit</button><button id="rm-reset" type="button">Reset layout</button><button id="rm-full" type="button">${m.fullscreen ? 'Exit full screen' : 'Full screen'}</button></div></div>
+      <div class="panel-head"><div class="rm-head-title"><h2>Topology</h2><span class="muted">${esc(cluster)} · ${esc(m.ns)} · ${visible.length} objects · ${links.edges.length - brokenTotal} relationships drawn</span></div>
+        <div class="row wrap am-map-controls"><button id="rm-zoom-out" type="button" aria-label="Zoom out">−</button><output id="rm-zoom">${Math.round(m.zoom * 100)}%</output><button id="rm-zoom-in" type="button" aria-label="Zoom in">+</button><button id="rm-fit" type="button">Fit</button><button id="rm-reset" type="button">Reset layout</button><button id="rm-refresh" type="button" title="Fetch the captured objects again and redraw">Refresh</button><button id="rm-full" type="button">${m.fullscreen ? 'Exit full screen' : 'Full screen'}</button></div></div>
       <div class="am-map-tools">
         <select id="rm-cluster" aria-label="Cluster">${clusters.map(c => { const n = c.name || c.context || c; return `<option ${n === cluster ? 'selected' : ''}>${esc(n)}</option>`; }).join('')}</select>
         <select id="rm-ns" aria-label="Namespace">${nss.map(n => `<option ${n === m.ns ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
         <input id="rm-search" type="search" placeholder="Filter by name" value="${esc(m.q || '')}" aria-label="Filter by name" autocomplete="off" spellcheck="false">
         <details class="rm-kind-menu"><summary>Kinds <span class="badge">${onCount}/${allKinds.length}</span></summary><div class="rm-kind-list"><div class="rm-kind-quick"><button class="link" data-rm-kinds="all">All</button><button class="link" data-rm-kinds="none">None</button><button class="link" data-rm-kinds="default">Defaults</button></div>${kindGroups(allKinds).map(([title, ks]) => `<h5 class="rm-menu-group">${esc(title)}</h5>` + ks.map(k => `<label><input type="checkbox" value="${esc(k)}" ${kindOn(k) ? 'checked' : ''}> <span>${esc(k)}</span><small>${present[k]}</small></label>`).join('')).join('')}</div></details>
         ${pickerHTML(nsNodes, selSet)}
-        ${focusing ? '' : `<label class="am-map-scope"><input id="rm-unlinked" type="checkbox" ${m.unlinked ? 'checked' : ''}> Show unlinked objects</label>`}
-        <span class="muted">${focusing ? 'Showing the selection and what links to it. ⌘, Ctrl or Shift + click a card to add or remove it.' : 'Pick objects to focus on them. Hover a card to trace its links. Drag to pan, ⌘ or Ctrl + wheel to zoom.'}</span>
+        ${focusing ? '' : `<label class="am-map-scope"><input id="rm-unlinked" type="checkbox" ${m.unlinked ? 'checked' : ''}> Unlinked objects</label>`}<label class="am-map-scope" title="Draw linked objects that live in other namespaces, such as a waypoint elsewhere or the ServiceEntries a global Service publishes"><input id="rm-external" type="checkbox" ${m.external !== false ? 'checked' : ''}> Other namespaces</label>
+        <span class="muted">${focusing ? '⌘, Ctrl or Shift + click a card to add or remove it' : 'Hover to trace · drag to pan · ⌘/Ctrl + wheel to zoom'}</span>
       </div>
       ${focusing ? selectionBar(sel, d) : ''}
       ${chips ? `<div class="am-map-connections">${chips}</div>` : ''}
@@ -227,7 +246,7 @@
     wire(links.edges, {present, allKinds});
   }
 
-  function badgeLabel(b){ return b === 'enterprise-agentgateway' ? 'Enterprise agentgateway' : b; }
+  function badgeLabel(b){ return b === 'enterprise-agentgateway' ? 'Enterprise agentgateway' : b === 'global' ? 'Global' : b; }
   function depthLabel(v){ const d = DEPTHS.find(([n]) => n === v); return d ? d[1] : v + ' hops'; }
   function laneIndex(kind){ const i = LANES.findIndex(([, ks]) => ks.indexOf(kind) >= 0); return i >= 0 ? i : /Policy$/.test(kind) ? 0 : LANES.length; }
   // Kinds in lane order, under the lane's title, so the menu reads like the map.
@@ -241,7 +260,7 @@
   // menu closes so the list does not jump while you choose.
   function pickerHTML(nsNodes, selSet){
     const byKind = {};
-    nsNodes.forEach(n => (byKind[n.kind] = byKind[n.kind] || []).push(n));
+    nsNodes.forEach(n => { if (HIDDEN_KINDS.indexOf(n.kind) < 0) (byKind[n.kind] = byKind[n.kind] || []).push(n); });
     const groups = kindGroups(Object.keys(byKind));
     const rows = groups.map(([, ks]) => ks.map(k => {
       const items = byKind[k].slice().sort((a, b) => a.name.localeCompare(b.name));
@@ -333,6 +352,7 @@
     });
     const openKinds = () => { const dt = document.querySelector('#rm-panel .rm-kind-menu:not(.rm-pick-menu)'); if (dt) dt.open = true; };
     wireSelection(panel, world);
+    document.getElementById('rm-external').onchange = e => { m.external = e.target.checked; paint(); };
     const unl = document.getElementById('rm-unlinked'); if (unl) unl.onchange = e => { m.unlinked = e.target.checked; paint(); };
     panel.querySelectorAll('[data-rm-view]').forEach(b => b.onclick = () => { m.view = b.dataset.rmView; paint(); });
     panel.querySelectorAll('[data-rm-open]').forEach(b => b.onclick = () => openObject(JSON.parse(b.dataset.rmOpen)));
@@ -374,6 +394,7 @@
     document.getElementById('rm-fit').onclick = fit;
     document.getElementById('rm-reset').onclick = () => { m.view = ''; m.selected = ''; m.zoom = 1; m.scrollLeft = m.scrollTop = 0; m.fitted = false; paint(); };
     const setFull = on => { m.fullscreen = on; panel.classList.toggle('am-map-fullscreen', on); document.getElementById('rm-full').textContent = on ? 'Exit full screen' : 'Full screen'; sizeViewport(); if (on) viewport.focus(); };
+    document.getElementById('rm-refresh').onclick = () => rmLoad(true);
     document.getElementById('rm-full').onclick = () => setFull(!m.fullscreen);
     viewport.onkeydown = e => { if (e.key === 'Escape' && m.fullscreen) { e.stopPropagation(); setFull(false); } };
     viewport.addEventListener('wheel', e => { if (!e.ctrlKey && !e.metaKey) return; e.preventDefault(); const r = viewport.getBoundingClientRect(); zoom(m.zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1), e.clientX - r.left, e.clientY - r.top); }, {passive: false});
@@ -390,9 +411,12 @@
     const sizeViewport = () => {
       if (!viewport.isConnected) return;
       if (!m.fullscreen) {
+        // Fill down to the terminal dock (or the window), leaving only the
+        // legend and a small margin below the viewport.
         const legend = panel.querySelector('.am-map-legend'), dock = document.getElementById('terminal');
-        const below = (legend ? legend.offsetHeight : 0) + (dock && !dock.classList.contains('hidden') ? dock.offsetHeight : 0) + 20;
-        const room = Math.max(360, Math.floor(innerHeight - viewport.getBoundingClientRect().top - below));
+        const dockTop = dock && !dock.classList.contains('hidden') && dock.offsetHeight ? dock.getBoundingClientRect().top : innerHeight;
+        const limit = Math.min(innerHeight, dockTop > 0 ? dockTop : innerHeight);
+        const room = Math.max(360, Math.floor(limit - viewport.getBoundingClientRect().top - (legend ? legend.offsetHeight : 0) - 10));
         if (viewport.style.height !== room + 'px') viewport.style.height = room + 'px';
         viewport.style.maxHeight = 'none';
       }

@@ -88,6 +88,8 @@ func kindToRes(kind string) (g, r string) {
 		return "networking.k8s.io", "ingresses"
 	case "Gateway", "HTTPRoute", "GRPCRoute":
 		return "gateway.networking.k8s.io", strings.ToLower(kind) + "s"
+	case "ServiceEntry":
+		return "networking.istio.io", "serviceentries"
 	case "AgentgatewayPolicy":
 		return "agentgateway.dev", "agentgatewaypolicies"
 	case "EnterpriseAgentgatewayPolicy":
@@ -159,40 +161,33 @@ func Build(ws *store.Workspace, cluster, namespace string, kinds []string) Graph
 
 	// build boxes later from counts of kept.
 
-	// 1. Owner chains
-	// walk pods etc for owners
+	// 1. Owners. Every object's controller ownerReference becomes one edge, so
+	// chains compose (Agent → Deployment → ReplicaSet → Pod). The owner is
+	// looked up by the reference's apiVersion group, so CRD owners such as a
+	// kagent Agent resolve too. Plumbing kinds whose owner is already drawn
+	// another way are skipped.
 	for _, o := range all {
-		if o.Cluster != cluster {
+		if o.Cluster != cluster || ownerSkip[o.Kind] {
 			continue
 		}
-		if o.Kind != "Pod" && o.Kind != "ReplicaSet" && o.Kind != "Job" {
-			continue
-		}
-		cur := o
-		depth := 0
-		for depth < 5 && cur != nil {
-			refs := l(path(cur.Obj, "metadata", "ownerReferences"))
-			next := (*store.Object)(nil)
-			for _, ref := range refs {
-				rm := m(ref)
-				k := s(rm["kind"])
-				n := s(rm["name"])
-				if k == "" || n == "" {
-					continue
-				}
-				kg, kr := kindToRes(k)
-				owner := ws.Get(cluster, kg, kr, cur.Namespace, n)
-				if owner != nil && (k == "Deployment" || k == "ReplicaSet" || k == "StatefulSet" || k == "DaemonSet" || k == "Job" || k == "CronJob") {
-					fromID := addNode(owner, "")
-					toID := addNode(cur, "")
-					if fromID != "" && toID != "" && filterKind(owner.Kind) && filterKind(cur.Kind) {
-						g.Edges = append(g.Edges, Edge{From: fromID, To: toID, Kind: "owner"})
-					}
-					next = owner
-				}
+		for _, ref := range l(path(o.Obj, "metadata", "ownerReferences")) {
+			rm := m(ref)
+			k, n := s(rm["kind"]), s(rm["name"])
+			if k == "" || n == "" {
+				continue
 			}
-			cur = next
-			depth++
+			og, or := kindToRes(k)
+			if av := s(rm["apiVersion"]); strings.Contains(av, "/") {
+				og = av[:strings.Index(av, "/")]
+			}
+			owner := ws.Get(cluster, og, or, o.Namespace, n)
+			if owner == nil {
+				continue
+			}
+			fromID, toID := addNode(owner, ""), addNode(o, "")
+			if filterKind(owner.Kind) && filterKind(o.Kind) {
+				g.Edges = append(g.Edges, Edge{From: fromID, To: toID, Kind: "owner"})
+			}
 		}
 	}
 
@@ -638,7 +633,261 @@ func Build(ws *store.Workspace, cluster, namespace string, kinds []string) Graph
 		}
 	}
 
-	// 14,15 badges and enterprise istio note
+	// 14. Istio and Gateway API policy objects: targetRefs, workload selectors
+	// and DestinationRule hosts. A policy with neither applies to the whole
+	// namespace; it gets a target-less, unbroken edge the UI reads as such.
+	for _, pol := range all {
+		if pol.Cluster != cluster || !policyKinds[pol.Kind] || (namespace != "" && pol.Namespace != namespace) {
+			continue
+		}
+		pid := addNode(pol, "")
+		spec := m(pol.Obj["spec"])
+		scoped := false
+		refs := l(spec["targetRefs"])
+		if tr := m(spec["targetRef"]); tr != nil {
+			refs = append(refs, tr)
+		}
+		for _, tr := range refs {
+			tm := m(tr)
+			k, n := s(tm["kind"]), s(tm["name"])
+			if k == "" || n == "" {
+				continue
+			}
+			scoped = true
+			tg, trs := kindToRes(k)
+			if gr := s(tm["group"]); gr != "" {
+				tg = gr
+			}
+			tns := s(tm["namespace"])
+			if tns == "" {
+				tns = pol.Namespace
+			}
+			tgt := ws.Get(cluster, tg, trs, tns, n)
+			tid, broken, reason := "", false, ""
+			if tgt != nil {
+				tid = addNode(tgt, "")
+			} else if ws.CollectionState(cluster, tg, trs, k, true).State == store.StateComplete {
+				broken, reason = true, "unresolved targetRef"
+			}
+			if tid != "" || broken {
+				g.Edges = append(g.Edges, Edge{From: pid, To: tid, Kind: "policy", Broken: broken, Reason: reason})
+			}
+		}
+		sel := m(spec["selector"])
+		if sel == nil {
+			sel = m(spec["workloadSelector"])
+		}
+		if ml := strMap(sel["matchLabels"]); len(ml) > 0 {
+			scoped = true
+			matched := false
+			for _, p := range ws.List(cluster, "", "pods", pol.Namespace, nil) {
+				if labelsMatch(p.Labels(), ml) {
+					matched = true
+					g.Edges = append(g.Edges, Edge{From: pid, To: addNode(p, ""), Kind: "policy", Label: "selector"})
+				}
+			}
+			if !matched && ws.CollectionState(cluster, "", "pods", "Pod", true).State == store.StateComplete {
+				g.Edges = append(g.Edges, Edge{From: pid, To: "", Kind: "policy", Broken: true, Reason: "selector matches nothing"})
+			}
+		}
+		if pol.Kind == "DestinationRule" {
+			if host := s(spec["host"]); host != "" {
+				scoped = true
+				parts := strings.Split(host, ".")
+				hns := pol.Namespace
+				if len(parts) > 1 && parts[1] != "" && parts[1] != "*" {
+					hns = parts[1]
+				}
+				if svc := ws.Get(cluster, "", "services", hns, parts[0]); svc != nil {
+					g.Edges = append(g.Edges, Edge{From: pid, To: addNode(svc, ""), Kind: "policy", Label: "host"})
+				} else if len(parts) <= 2 || strings.HasSuffix(host, ".svc.cluster.local") {
+					if ws.CollectionState(cluster, "", "services", "Service", true).State == store.StateComplete {
+						g.Edges = append(g.Edges, Edge{From: pid, To: "", Kind: "policy", Broken: true, Reason: "host matches no Service"})
+					}
+				}
+			}
+		}
+		if !scoped {
+			g.Edges = append(g.Edges, Edge{From: pid, To: "", Kind: "policy", Label: "namespace-wide"})
+		}
+	}
+
+	// 15. NetworkPolicy and PodDisruptionBudget select Pods; an empty
+	// NetworkPolicy podSelector covers the whole namespace.
+	for _, pol := range all {
+		if pol.Cluster != cluster || (pol.Kind != "NetworkPolicy" && pol.Kind != "PodDisruptionBudget") || (namespace != "" && pol.Namespace != namespace) {
+			continue
+		}
+		pid := addNode(pol, "")
+		key := "podSelector"
+		if pol.Kind == "PodDisruptionBudget" {
+			key = "selector"
+		}
+		sel := m(path(pol.Obj, "spec", key))
+		if len(sel) == 0 {
+			if pol.Kind == "NetworkPolicy" {
+				g.Edges = append(g.Edges, Edge{From: pid, To: "", Kind: "policy", Label: "namespace-wide"})
+			}
+			continue
+		}
+		matched := false
+		for _, p := range ws.List(cluster, "", "pods", pol.Namespace, nil) {
+			if selectorMatches(sel, p.Labels()) {
+				matched = true
+				g.Edges = append(g.Edges, Edge{From: pid, To: addNode(p, ""), Kind: "policy", Label: "selector"})
+			}
+		}
+		if !matched && ws.CollectionState(cluster, "", "pods", "Pod", true).State == store.StateComplete {
+			g.Edges = append(g.Edges, Edge{From: pid, To: "", Kind: "policy", Broken: true, Reason: "selector matches nothing"})
+		}
+	}
+
+	// 16. HorizontalPodAutoscaler → the workload it scales.
+	for _, h := range all {
+		if h.Cluster != cluster || h.Kind != "HorizontalPodAutoscaler" || (namespace != "" && h.Namespace != namespace) {
+			continue
+		}
+		ref := m(path(h.Obj, "spec", "scaleTargetRef"))
+		k, n := s(ref["kind"]), s(ref["name"])
+		if k == "" || n == "" {
+			continue
+		}
+		tg, tr := kindToRes(k)
+		hid := addNode(h, "")
+		if tgt := ws.Get(cluster, tg, tr, h.Namespace, n); tgt != nil {
+			g.Edges = append(g.Edges, Edge{From: hid, To: addNode(tgt, ""), Kind: "scales"})
+		} else if ws.CollectionState(cluster, tg, tr, k, true).State == store.StateComplete {
+			g.Edges = append(g.Edges, Edge{From: hid, To: "", Kind: "scales", Broken: true, Reason: "missing scale target"})
+		}
+	}
+
+	// 17. RoleBinding → its Role and the ServiceAccounts it grants.
+	for _, rb := range all {
+		if rb.Cluster != cluster || rb.Kind != "RoleBinding" || (namespace != "" && rb.Namespace != namespace) {
+			continue
+		}
+		bid := addNode(rb, "")
+		rr := m(path(rb.Obj, "roleRef"))
+		if k, n := s(rr["kind"]), s(rr["name"]); n != "" {
+			var role *store.Object
+			if k == "ClusterRole" {
+				role = ws.Get(cluster, "rbac.authorization.k8s.io", "clusterroles", "", n)
+			} else {
+				role = ws.Get(cluster, "rbac.authorization.k8s.io", "roles", rb.Namespace, n)
+			}
+			if role != nil {
+				g.Edges = append(g.Edges, Edge{From: bid, To: addNode(role, ""), Kind: "grants"})
+			}
+		}
+		for _, sub := range l(rb.Obj["subjects"]) {
+			sm := m(sub)
+			if s(sm["kind"]) != "ServiceAccount" {
+				continue
+			}
+			sns := s(sm["namespace"])
+			if sns == "" {
+				sns = rb.Namespace
+			}
+			if sa := ws.Get(cluster, "", "serviceaccounts", sns, s(sm["name"])); sa != nil {
+				g.Edges = append(g.Edges, Edge{From: bid, To: addNode(sa, ""), Kind: "grants"})
+			}
+		}
+	}
+
+	// 18. kagent Agents → their ModelConfig, MCP tool servers and header Secrets.
+	for _, a := range all {
+		if a.Cluster != cluster || a.Kind != "Agent" || a.Group != "kagent.dev" || (namespace != "" && a.Namespace != namespace) {
+			continue
+		}
+		aid := addNode(a, "")
+		decl := m(path(a.Obj, "spec", "declarative"))
+		if mc := s(decl["modelConfig"]); mc != "" {
+			if o := ws.Get(cluster, "kagent.dev", "modelconfigs", a.Namespace, mc); o != nil {
+				g.Edges = append(g.Edges, Edge{From: aid, To: addNode(o, ""), Kind: "uses"})
+			}
+		}
+		for _, t := range l(decl["tools"]) {
+			tm := m(t)
+			if ms := m(tm["mcpServer"]); ms != nil {
+				k, n := s(ms["kind"]), s(ms["name"])
+				grp := s(ms["apiGroup"])
+				if k == "" {
+					k = "MCPServer"
+				}
+				res := strings.ToLower(k) + "s"
+				if k == "Service" {
+					grp, res = "", "services"
+				}
+				if o := ws.Get(cluster, grp, res, a.Namespace, n); o != nil {
+					g.Edges = append(g.Edges, Edge{From: aid, To: addNode(o, ""), Kind: "uses", Label: "tools"})
+				}
+			}
+			if ag := m(tm["agent"]); ag != nil {
+				if o := ws.Get(cluster, "kagent.dev", "agents", a.Namespace, s(ag["name"])); o != nil {
+					g.Edges = append(g.Edges, Edge{From: aid, To: addNode(o, ""), Kind: "uses", Label: "agent tool"})
+				}
+			}
+			for _, hf := range l(tm["headersFrom"]) {
+				vf := m(m(hf)["valueFrom"])
+				if s(vf["type"]) == "Secret" {
+					if o := ws.Get(cluster, "", "secrets", a.Namespace, s(vf["name"])); o != nil {
+						g.Edges = append(g.Edges, Edge{From: aid, To: addNode(o, ""), Kind: "uses"})
+					}
+				}
+			}
+		}
+	}
+
+	// 19. Global Services: the controller writes ServiceEntries and remote
+	// WorkloadEntries (usually in istio-system) labelled with the parent
+	// Service. A plain ServiceEntry with a workloadSelector selects Pods.
+	for _, o := range all {
+		if o.Cluster != cluster || (o.Kind != "ServiceEntry" && o.Kind != "WorkloadEntry") {
+			continue
+		}
+		lb := o.Labels()
+		if parent := lb["solo.io/parent-service"]; parent != "" {
+			pns := lb["solo.io/parent-service-namespace"]
+			if namespace != "" && pns != namespace && o.Namespace != namespace {
+				continue
+			}
+			if svc := ws.Get(cluster, "", "services", pns, parent); svc != nil {
+				label := "published"
+				if o.Kind == "WorkloadEntry" {
+					label = "remote endpoints"
+					if c := lb["solo.io/source-cluster"]; c != "" {
+						label += " from " + c
+					}
+				}
+				g.Edges = append(g.Edges, Edge{From: addNode(svc, ""), To: addNode(o, ""), Kind: "global", Label: label})
+			}
+			continue
+		}
+		if o.Kind != "ServiceEntry" || (namespace != "" && o.Namespace != namespace) {
+			continue
+		}
+		if ws_ := strMap(path(o.Obj, "spec", "workloadSelector", "labels")); len(ws_) > 0 {
+			sid := addNode(o, "")
+			for _, p := range ws.List(cluster, "", "pods", o.Namespace, nil) {
+				if labelsMatch(p.Labels(), ws_) {
+					g.Edges = append(g.Edges, Edge{From: sid, To: addNode(p, ""), Kind: "endpoints", Label: "workloadSelector"})
+				}
+			}
+		}
+	}
+
+	// Badge Services published to the mesh.
+	for i := range g.Nodes {
+		if g.Nodes[i].Kind == "Service" && g.Nodes[i].Badge == "" {
+			if o := nodesByID[g.Nodes[i].ID]; o != nil {
+				if sc := o.Labels()["solo.io/service-scope"]; sc == "global" || sc == "global-only" {
+					g.Nodes[i].Badge = "global"
+				}
+			}
+		}
+	}
+
+	// 20 badges and enterprise istio note
 	if ambient.HasResource(ws, cluster, "admin.solo.io", "segments") {
 		g.Notes = append(g.Notes, "Solo Enterprise Istio CRDs are present. Segment and other enterprise Istio objects are not drawn; their fields were not confirmed.")
 	}
@@ -746,6 +995,55 @@ func gwBackendRefsLike(r *store.Object) []br {
 		}
 	}
 	return out
+}
+
+// Kinds whose ownerReference is drawn some other way, or is noise.
+var ownerSkip = map[string]bool{"EndpointSlice": true, "Endpoints": true, "Event": true, "Lease": true, "ControllerRevision": true}
+
+// selectorMatches evaluates a Kubernetes LabelSelector (matchLabels and
+// matchExpressions). An empty selector matches everything.
+func selectorMatches(sel map[string]any, have map[string]string) bool {
+	if !labelsMatch(have, strMap(sel["matchLabels"])) {
+		return false
+	}
+	for _, ex := range l(sel["matchExpressions"]) {
+		em := m(ex)
+		k, op := s(em["key"]), s(em["operator"])
+		v, ok := have[k]
+		in := false
+		for _, x := range l(em["values"]) {
+			if s(x) == v {
+				in = true
+			}
+		}
+		switch op {
+		case "In":
+			if !ok || !in {
+				return false
+			}
+		case "NotIn":
+			if ok && in {
+				return false
+			}
+		case "Exists":
+			if !ok {
+				return false
+			}
+		case "DoesNotExist":
+			if ok {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// Policy kinds whose targets the map draws generically. The agentgateway
+// policies have their own pass above.
+var policyKinds = map[string]bool{
+	"AuthorizationPolicy": true, "PeerAuthentication": true, "RequestAuthentication": true,
+	"DestinationRule": true, "Telemetry": true, "WasmPlugin": true, "Sidecar": true,
+	"BackendTLSPolicy": true, "BackendTrafficPolicy": true,
 }
 
 func isWorkload(k string) bool {

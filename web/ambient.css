@@ -232,3 +232,12 @@
 .am-global-facts{display:grid;grid-template-columns:120px 1fr;gap:6px 14px;margin:0;font-size:13px}.am-global-facts dt{color:var(--muted);font-size:12px}.am-global-facts dd{margin:0;min-width:0;overflow-wrap:anywhere}.am-global-facts ul{margin:0;padding:0;list-style:none;display:grid;gap:4px}
 .am-global-choice{display:flex;flex-wrap:wrap;gap:8px 18px}.am-global-choice label{display:inline-flex!important;flex-direction:row!important;align-items:center;gap:6px!important;font-size:13px;cursor:pointer}.am-global-choice input{width:16px!important;min-height:16px!important;margin:0}
 .am-global-current-row>p{margin:0;font-size:12px}
+/* Resources map: spend the height on the map, not on chrome. */
+.rm-topology>.panel-head{padding:6px 14px;min-height:0}.rm-head-title{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;min-width:0}.rm-head-title h2{margin:0}.rm-head-title .muted{font-size:12px}
+.rm-topology .am-map-controls button,.rm-topology .am-map-controls output{font-size:12px;padding:4px 10px;min-height:0}
+.rm-topology .am-map-tools{padding:6px 14px}.rm-topology .am-map-connections{padding:4px 14px}.rm-topology .am-map-legend{padding:5px 14px;line-height:1.4}
+.rm-box>header.rm-box-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:6px 12px;flex-wrap:wrap}
+.rm-box-head .rm-box-title{padding:0;gap:10px}.rm-box-head .rm-box-title strong{font-size:15px}.rm-box-head .am-cluster-symbol{width:28px;height:28px;font-size:14px}
+.rm-box-head .am-cluster-bar{padding:0;flex:1;justify-content:flex-end}
+.rm-lanes{padding:14px 16px 16px;gap:44px}.rm-lane{gap:14px}.rm-lane-title{margin-bottom:-2px}
+.badge.rm-ext{background:transparent;border:1px dashed var(--line-2,var(--line));color:var(--muted)}

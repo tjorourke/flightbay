@@ -1963,7 +1963,7 @@ function resTabs(active) {
 
 async function resources() {
   if (S.res.tab === 'map' || location.hash.includes('tab=map')) {
-    return head('Resources', 'One namespace drawn as a map: gateways, routes, Services, Pods, jobs, workloads and the config they reference, joined by the relationships the capture holds. Pick objects to draw just them and what links to them.', `<button id="rm-refresh" title="Fetch the captured objects again and redraw">Refresh</button>`) + resTabs('map') + `<div id="rm-root" data-morph="keep"></div>`;
+    return head('Resources', 'One namespace drawn as a map of the relationships the capture holds. Pick objects to draw just them and what links to them.') + resTabs('map') + `<div id="rm-root" data-morph="keep"></div>`;
   }
   const allTypes = await api('api/resources', {cluster: S.cluster});
   const {groups, hidden} = groupKinds(allTypes);
@@ -2002,7 +2002,6 @@ async function resources() {
 after.resources = () => {
   document.querySelectorAll('[data-restab]').forEach(b => b.onclick = e => { const t = b.dataset.restab; if (t === 'map') { location.hash = 'resources?tab=map'; } else if (t === 'navigator') { location.hash = 'navigator'; } else { S.res.tab = ''; render(); } });
   if (S.res.tab === 'map' || location.hash.includes('tab=map')) {
-    const rf = $('#rm-refresh'); if (rf) rf.onclick = () => { if (typeof rmLoad === 'function') rmLoad(true); };
     // A live refresh (S.morph) fetches the graph again behind the drawn map.
     if (typeof rmLoad === 'function') { const live = !!S.morph; setTimeout(() => rmLoad(live), 0); }
     return;
