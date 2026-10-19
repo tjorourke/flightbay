@@ -70,7 +70,7 @@ function amGlobalCurrentConfig(svc){
       :`<p class="muted">No local ${esc(svc.namespace+'/'+svc.name)} Service is captured. This cluster can still consume the global name; local workloads are needed only to contribute endpoints.</p><div class="am-global-missing-actions"><button data-amglobalsetup="${esc(row.cluster)}">Set up Service participation…</button></div>`}
     </article>`;
   };
-  return `<section class="am-global-current"><h3>Current publication</h3><p>Published from ${published.length} of ${rows.length} cluster${rows.length===1?'':'s'}: ${esc(published.map(r=>r.cluster).join(', ')||'none')}. Nothing is changed unless you pick a different option for a cluster below.</p>${rows.map(card).join('')}</section>
+  return `<section class="am-global-current"><div class="row between wrap"><h3>Current publication</h3>${published.length>1?'<button data-amglobalstopall>Stop publishing from every cluster</button>':''}</div><p>Published from ${published.length} of ${rows.length} cluster${rows.length===1?'':'s'}: ${esc(published.map(r=>r.cluster).join(', ')||'none')}. Nothing is changed unless you pick a different option for a cluster below.</p>${rows.map(card).join('')}</section>
     ${amGlobalRoutingMarkup(svc)}
     <div class="am-global-publication"><h3>Names</h3>${amDNSMarkup(A.result?.dns)}<p class="muted">Global names come from the generated ServiceEntries in the capture. Refresh after any change to see what the controller published.</p></div>`;
 }
@@ -111,12 +111,12 @@ function amGlobalBatchPanel(){
     <div class="panel-body"><p>Live cluster connections are reused automatically. Review and apply runs any required server dry-runs, then opens the final confirmation. Failures in one row do not roll back another cluster; successful changes appear in Active tests with undo available.</p>
     <div class="am-wizard-footer"><button id="am-global-validate-all" ${failedPreview||!pending.length||pending.some(r=>!r.context)?'disabled':''}>Dry-run only</button><button id="am-global-apply-all" class="primary" ${failedPreview||!pending.length||pending.some(r=>!r.context)?'disabled':''}>Review and apply…</button></div>
     ${rows.map((row,i)=>`<article class="am-global-plan">
-      <div class="row between wrap"><h3>${esc(row.cluster)}${row.action==='unpublish'?' · stop publishing':''}</h3><span class="badge ${row.applied||row.state==='Already global'?'green':'blue'}">${esc(row.state)}</span></div>
+      <div class="row between wrap"><h3>${esc(row.cluster)}${row.action==='unpublish'?' · stop publishing':''}</h3><span class="badge ${row.applied||amGlobalNoop(row)?'green':'blue'}">${esc(row.state)}</span></div>
       ${row.error?`<p class="red" role="alert">${esc(row.error)}</p>`:''}
       ${row.plan?`<p>${row.plan.changes?.length||0} existing resources to update · ${row.plan.objects.length} to create</p>
         <details class="am-global-yaml" open><summary>YAML for ${esc(row.cluster)}</summary><pre class="code">${esc(row.plan.yaml)}</pre></details>
-        ${row.state!=='Already global'?amContextControl(row.cluster,A.contexts,row.context,`data-amglobalcontext="${i}" ${row.applied?'disabled':''}`):''}
-        <div class="row wrap"><button data-amglobalcopy="${i}">Copy YAML</button>${row.state!=='Already global'?`<button data-amglobalvalidate="${i}" ${!row.context||row.applied?'disabled':''}>Dry-run only</button><button class="primary" data-amglobalapply="${i}" ${!row.context||row.applied?'disabled':''}>Review and apply to ${esc(row.cluster)}…</button>`:''}</div>
+        ${!amGlobalNoop(row)?amContextControl(row.cluster,A.contexts,row.context,`data-amglobalcontext="${i}" ${row.applied?'disabled':''}`):''}
+        <div class="row wrap"><button data-amglobalcopy="${i}">Copy YAML</button>${!amGlobalNoop(row)?`<button data-amglobalvalidate="${i}" ${!row.context||row.applied?'disabled':''}>Dry-run only</button><button class="primary" data-amglobalapply="${i}" ${!row.context||row.applied?'disabled':''}>Review and apply to ${esc(row.cluster)}…</button>`:''}</div>
         ${row.validation&&!row.applied?'<p class="green">Validated for this exact context and plan. Apply within ten minutes.</p>':''}`:''}
     </article>`).join('')}${amTaskLinks(['global-service'])}</div></section>`;
 }
@@ -134,7 +134,7 @@ async function amGlobalOperation(index,operation){
   // Once every cluster with changes is applied, go back to the Service's
   // configuration list, where Retest traffic and the new state are shown.
   const pending=(A.globalBatch||[]).filter(r=>r.plan&&(r.plan.changes?.length||r.plan.objects?.length));
-  if(operation==='apply'&&row.applied&&pending.every(r=>r.applied)&&typeof amRefreshAppliedConfiguration==='function'){await amRefreshAppliedConfiguration(row.plan);A.globalBatch=null;A.settings={};await render();$('#am-retest-current')?.scrollIntoView({block:'center'});}
+  if(operation==='apply'&&row.applied&&pending.every(r=>r.applied)&&typeof amRefreshAppliedConfiguration==='function'){await amGlobalWaitForCapture(amService(),pending);await amRefreshAppliedConfiguration(row.plan);A.globalBatch=null;A.settings={};await render();$('#am-retest-current')?.scrollIntoView({block:'center'});}
 }
 function amWireGlobalPublication(){
   const A=S.ambient;
@@ -147,11 +147,12 @@ function amWireGlobalPublication(){
   });
   // addEventListener: the generic parameter handler later replaces onchange.
   document.querySelectorAll('[data-amglobaledit]').forEach(input=>input.addEventListener('change',()=>{amCapture();amInvalidate();render();}));
+  document.querySelectorAll('[data-amglobalstopall]').forEach(b=>b.onclick=()=>{const svc=amService(),F=S.ambient.settings;F.globalEdits=Object.fromEntries(amGlobalTargets(svc).filter(r=>r.global).map(r=>[r.cluster,'unpublish']));amInvalidate();render();});
   document.querySelectorAll('[data-amglobalweight]').forEach(i=>i.addEventListener('change',()=>{const F=S.ambient.settings;F.globalWeights=F.globalWeights||{};F.globalWeights[i.dataset.amglobalweight]=Number(i.value)||0;amInvalidate();render();}));
   document.querySelectorAll('[data-amglobaldist], #am-global-takeover').forEach(input=>input.addEventListener('change',()=>{const F=S.ambient.settings,d=document.querySelector('[data-amglobaldist]:checked');if(d)F.globalDistribution=d.value;const t=$('#am-global-takeover');if(t)F.globalTakeover=t.checked;amInvalidate();render();}));
   document.querySelectorAll('[data-amglobalsetup]').forEach(b=>b.onclick=()=>amGlobalSetupGuide(b.dataset.amglobalsetup));
-  document.querySelectorAll('.am-global-plan').forEach((el,i)=>{const row=A.globalBatch[i],badge=el.querySelector('.badge'),ok=row.applied||!!row.validation||row.state==='Already global';badge.className='badge '+(row.error?'red':ok?'green':'blue');badge.textContent=(row.error?'✕ ':ok?'✓ ':'')+row.state;});
-  document.querySelectorAll('.am-global-plan').forEach((el,i)=>{const row=A.globalBatch[i];if(row.state!=='Already global')return;const evidence=publicationRows.find(r=>r.cluster===row.cluster),aliases=evidence?.publication?.globalAliases||[],allocated=aliases.length>0&&aliases.every(a=>a.addresses?.length),badge=el.querySelector('.badge');badge.className='badge '+(allocated?'blue':'amber');badge.textContent=amPublicationEvidenceLabel({...evidence,global:true});});
+  document.querySelectorAll('.am-global-plan').forEach((el,i)=>{const row=A.globalBatch[i],badge=el.querySelector('.badge'),ok=row.applied||!!row.validation||amGlobalNoop(row);badge.className='badge '+(row.error?'red':ok?'green':'blue');badge.textContent=(row.error?'✕ ':ok?'✓ ':'')+row.state;});
+  document.querySelectorAll('.am-global-plan').forEach((el,i)=>{const row=A.globalBatch[i];if(!amGlobalNoop(row))return;const evidence=publicationRows.find(r=>r.cluster===row.cluster),aliases=evidence?.publication?.globalAliases||[],allocated=aliases.length>0&&aliases.every(a=>a.addresses?.length),badge=el.querySelector('.badge');badge.className='badge '+(allocated?'blue':'amber');badge.textContent=amPublicationEvidenceLabel({...evidence,global:true});});
   document.querySelectorAll('[data-amglobalcluster]').forEach(box=>box.onchange=()=>{amCapture();A.globalBatch=null;amInvalidate();});
   document.querySelectorAll('[data-amglobalcontext]').forEach(select=>select.onchange=()=>{const row=A.globalBatch[Number(select.dataset.amglobalcontext)];row.context=select.value;row.validation=null;row.error='';row.state='Preview';render();});
   document.querySelectorAll('[data-amglobalcopy]').forEach(button=>button.onclick=()=>copyTerminalCommand(A.globalBatch[Number(button.dataset.amglobalcopy)].plan.yaml));
@@ -186,4 +187,16 @@ function amGlobalWeights(svc){const F=S.ambient.settings,rows=amGlobalTargets(sv
 function amGlobalWeightsMarkup(svc){
   const w=amGlobalWeights(svc),total=Object.values(w).reduce((a,b)=>a+Number(b||0),0);
   return `<div class="am-global-weights">${Object.keys(w).map(c=>`<label>${esc(c)} <input type="number" min="0" max="1000" data-amglobalweight="${esc(c)}" value="${esc(w[c])}"> <small class="muted">${total?Math.round(100*w[c]/total):0}%</small></label>`).join('')}</div><p class="muted">Each cluster gets a Service <code>${esc(svc.name)}-&lt;cluster&gt;</code> that selects only its own Pods, published globally, and an HTTPRoute on <code>${esc(svc.name)}</code> sends each request to one of those hostnames by weight. It needs an Istio waypoint on ${esc(svc.name)} in each cluster whose callers should be split, and is per request.</p>`;
+}
+
+function amGlobalNoop(row){return ['Already global','Already local'].includes(row.state)||!!row.plan&&!row.plan.changes?.length&&!row.plan.objects?.length;}
+// Wait until the live mirror shows the new publication state, so the
+// configuration list does not offer the same change again.
+async function amGlobalWaitForCapture(svc,rows){
+  for(let i=0;i<20;i++){
+    const inv=await api('api/ambient').catch(()=>null);
+    const ok=inv&&rows.every(r=>{const c=(inv.topology?.clusters||[]).find(x=>x.context===r.cluster);const s=c?.services.find(x=>x.namespace===svc.namespace&&x.name===svc.name);const global=!!s&&['global','global-only'].includes(s.scope);return r.action==='unpublish'?!global:global;});
+    if(ok){S.ambient.inventory=inv;return;}
+    await new Promise(res=>setTimeout(res,500));
+  }
 }

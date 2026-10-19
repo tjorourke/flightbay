@@ -46,9 +46,11 @@ func generateGlobalService(ws *store.Workspace, req Request) (*Plan, error) {
 		p.ServiceUID = S(Path(svc.Obj, "metadata", "uid"))
 		scope := svc.Labels()["solo.io/service-scope"]
 		if scope == "" {
+			// Clear the routing settings that only matter for a global Service.
+			change(p, svc, "Remove global routing settings left on this local Service", map[string]any{}, "/metadata/labels/solo.io~1service-takeover", "/metadata/annotations/networking.istio.io~1traffic-distribution")
 			p.Notes = append(p.Notes, "This Service has no solo.io/service-scope label in context "+req.Cluster+"; it is already local only.")
 		} else {
-			change(p, svc, "Stop publishing this Service from "+req.Cluster+" to the peered mesh", map[string]any{}, "/metadata/labels/solo.io~1service-scope")
+			change(p, svc, "Stop publishing this Service from "+req.Cluster+" to the peered mesh", map[string]any{}, "/metadata/labels/solo.io~1service-scope", "/metadata/labels/solo.io~1service-takeover", "/metadata/annotations/networking.istio.io~1traffic-distribution")
 		}
 		if scope == "global-only" {
 			p.Notes = append(p.Notes, "This Service used legacy global-only publication, which also took over the local name. Removing the label returns the local cluster.local name to this cluster's endpoints only.")
