@@ -25,7 +25,9 @@ type TopologyService struct {
 	ServiceSummary
 	GlobalHosts    []string `json:"globalHosts,omitempty"`
 	GlobalEvidence []Ref    `json:"globalEvidence,omitempty"`
-	identities     []string
+	// Policies are the Istio security policies that reach this Service.
+	Policies   []PolicyEntry `json:"policies,omitempty"`
+	identities []string
 }
 type TopologyCluster struct {
 	Context     string            `json:"context"`
@@ -79,7 +81,7 @@ func capturedTopology(ws *store.Workspace) Topology {
 			}
 		}
 		for _, svc := range ws.List(c, "", "services", "", nil) {
-			s := TopologyService{ServiceSummary: summariseService(ws, svc)}
+			s := TopologyService{ServiceSummary: summariseService(ws, svc), Policies: servicePolicies(ws, svc)}
 			if s.Scope == "global" || s.Scope == "global-only" {
 				for _, entry := range ws.List(c, "networking.istio.io", "serviceentries", "", nil) {
 					labels := entry.Labels()

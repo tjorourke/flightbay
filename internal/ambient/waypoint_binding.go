@@ -262,8 +262,8 @@ func servicePolicies(ws *store.Workspace, svc *store.Object) []PolicyEntry {
 					e.Scope, e.Reason, e.Enforced = "namespace", "no selector or targetRefs, so it applies to every workload in "+svc.Namespace, "ztunnel"
 				}
 				if e.Scope != "" && e.Enforced == "waypoint" {
-					if b := waypointBinding(ws, svc); b.Product != "" && b.Product != "istio" {
-						e.Warning = "Not enforced: " + b.Namespace + "/" + b.Name + " is an " + b.Product + " waypoint (" + b.Class + "), which does not apply Istio " + o.Kind + ". istiod still reports WaypointAccepted. Bind an Istio waypoint, or use the waypoint's own policy API."
+					if product, class := waypointProduct(ws, svc); product != "" && product != "istio" {
+						e.Warning = "Not enforced: " + wpNS + "/" + wpName + " is an " + product + " waypoint (" + class + "), which does not apply Istio " + o.Kind + ". istiod still reports WaypointAccepted. Bind an Istio waypoint, or use the waypoint's own policy API."
 					}
 				}
 				if e.Scope != "" {
@@ -288,4 +288,26 @@ func sortedPair(vals ...string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// waypointProduct is the implementation behind a Service's waypoint, without
+// the cluster-wide counting waypointBinding does.
+func waypointProduct(ws *store.Workspace, svc *store.Object) (product, class string) {
+	_, _, wp := Waypoint(ws, svc)
+	if wp == nil {
+		return "", ""
+	}
+	class = S(Path(wp.Obj, "spec", "gatewayClassName"))
+	gc := ws.Get(svc.Cluster, GatewayGroup, "gatewayclasses", "", class)
+	if gc == nil {
+		return "", class
+	}
+	ctrl := S(Path(gc.Obj, "spec", "controllerName"))
+	switch {
+	case strings.HasPrefix(ctrl, "istio.io/"):
+		return "istio", class
+	case strings.Contains(ctrl, "agentgateway"):
+		return "agentgateway", class
+	}
+	return ctrl, class
 }
