@@ -18,6 +18,36 @@ function amGlobalClusterChoices(svc){
   const A=S.ambient,chosen=A.settings.globalClusters||[svc.cluster];
   return `<section class="am-global-targets"><h3>Clusters contributing local endpoints</h3><p>Select existing Service instances that should contribute endpoints. A remote cluster can consume the published global Service without running its own local instance. This workflow does not copy Services or workloads between clusters.</p>${amGlobalTargets(svc).map(row=>`<label class="am-global-cluster"><input type="checkbox" data-amglobalcluster="${esc(row.cluster)}" ${chosen.includes(row.cluster)?'checked':''} ${row.service?'':'disabled'}><span><strong>${esc(row.cluster)}</strong><small>${row.global?'Already global · no label change required':row.service?'Local Service captured · review publication':'No local '+esc(svc.namespace+'/'+svc.name)+' Service is captured. This cluster can still consume the global name; local workloads are needed only to contribute endpoints.'}</small></span><span class="badge ${row.global?'green':row.service?'blue':'amber'}">${row.global?'Already global':row.service?'Ready to review':'No local Service captured'}</span></label>${!row.service?`<div class="am-global-missing-actions"><button data-amglobalsetup="${esc(row.cluster)}">Set up Service participation…</button></div>`:''}`).join('')}<p class="muted">Each contributing cluster gets its own preview, connection, validation and apply result. Live connections are reused automatically. There is no cross-cluster transaction.</p></section>`;
 }
+// When the Service is already published somewhere, the configure step shows
+// what is live instead of a fresh wizard: the label each cluster carries, the
+// names the controller generated, and a per-cluster choice to keep it, stop
+// publishing or start publishing. Clusters left on "keep" are not touched.
+function amGlobalPublished(svc){return amGlobalTargets(svc).some(r=>r.global);}
+function amGlobalEdits(){return S.ambient.settings.globalEdits||{};}
+function amGlobalPendingEdits(svc){const e=amGlobalEdits();return amGlobalTargets(svc).filter(r=>r.service&&(e[r.cluster]==='unpublish'&&r.global||e[r.cluster]==='publish'&&!r.global)).map(r=>({cluster:r.cluster,action:e[r.cluster]}));}
+function amGlobalEditLabel(edit){return (edit.action==='unpublish'?'Stop publishing from ':'Publish from ')+edit.cluster;}
+function amGlobalCurrentConfig(svc){
+  const A=S.ambient,rows=amGlobalTargets(svc),edits=amGlobalEdits(),published=rows.filter(r=>r.global);
+  const ref=row=>attr({cluster:row.cluster,group:'',resource:'services',namespace:svc.namespace,name:svc.name});
+  const card=row=>{
+    const scope=row.service?.scope||'',aliases=row.publication?.globalAliases||[],choice=edits[row.cluster]||'keep';
+    const status=row.global?['green','Published']:row.service?['blue','Local only']:['amber','No local Service captured'];
+    const options=row.global?[['keep','Keep publishing'],['unpublish','Stop publishing from this cluster']]:[['keep','Keep local only'],['publish','Publish from this cluster']];
+    const names=aliases.length?aliases.map(a=>`<li>${(a.hosts||[]).map(h=>`<code>${esc(h)}</code>`).join(' ')}${a.addresses?.length?` <small class="muted">${esc(a.addresses.join(', '))}</small>`:' <small class="amber">no address allocated yet</small>'}${a.ref?.name?` <button class="link" data-amevidence="${attr(a.ref)}">ServiceEntry</button>`:''}</li>`).join(''):'<li class="muted">None captured. The controller creates them after the label is set; refresh to check.</li>';
+    return `<article class="am-global-current-row${choice!=='keep'?' am-global-changing':''}">
+      <div class="row between wrap"><div class="row"><strong>${esc(row.cluster)}</strong><span class="badge ${status[0]}">${esc(status[1])}</span></div>
+        ${row.service?`<div class="row"><button data-amevidence="${ref(row)}">View object</button><button data-amyaml="${ref(row)}">YAML</button></div>`:''}</div>
+      ${row.service?`<dl class="am-global-facts"><dt>Label</dt><dd><code>solo.io/service-scope: ${esc(scope||'not set')}</code></dd>
+        <dt>Global names</dt><dd><ul>${row.global?names:'<li class="muted">Not published from this cluster.</li>'}</ul></dd>
+        ${row.global?`<dt>Evidence</dt><dd>${esc(amPublicationEvidenceLabel(row))}. API metadata alone does not prove proxy delivery or failover.</dd>`:''}</dl>
+      <div class="am-global-choice" role="radiogroup" aria-label="${esc(row.cluster)} publication">${options.map(([value,label])=>`<label><input type="radio" name="am-global-edit-${esc(row.cluster)}" data-amglobaledit="${esc(row.cluster)}" value="${value}" ${choice===value?'checked':''}> ${esc(label)}</label>`).join('')}</div>
+      ${choice==='unpublish'?`<p class="amber">Removes <code>solo.io/service-scope</code> from this Service only. Callers in other clusters stop reaching ${esc(row.cluster)}'s endpoints through the global name.</p>`:choice==='publish'?`<p class="muted">Sets <code>solo.io/service-scope: global</code> on this existing Service so it contributes endpoints. Other labels and settings are preserved.</p>`:''}`
+      :`<p class="muted">No local ${esc(svc.namespace+'/'+svc.name)} Service is captured. This cluster can still consume the global name; local workloads are needed only to contribute endpoints.</p><div class="am-global-missing-actions"><button data-amglobalsetup="${esc(row.cluster)}">Set up Service participation…</button></div>`}
+    </article>`;
+  };
+  return `<section class="am-global-current"><h3>Current publication</h3><p>Published from ${published.length} of ${rows.length} cluster${rows.length===1?'':'s'}: ${esc(published.map(r=>r.cluster).join(', ')||'none')}. Nothing is changed unless you pick a different option for a cluster below.</p>${rows.map(card).join('')}</section>
+    <div class="am-global-publication"><h3>Names</h3>${amDNSMarkup(A.result?.dns)}<p class="muted">Global names come from the generated ServiceEntries in the capture. Refresh after any change to see what the controller published.</p></div>`;
+}
 function amMissingServiceCommand(svc,context){const quote=s=>"'"+s.replaceAll("'","'\"'\"'")+"'";return context?`kubectl --context ${quote(context)} -n ${quote(svc.namespace)} get service ${quote(svc.name)} -o yaml`:'';}
 function amGlobalSetupMarkup(svc,cluster,contexts){
   const context=amLiveContext(cluster,contexts)?.name||'',command=amMissingServiceCommand(svc,context);
@@ -33,12 +63,14 @@ async function amGlobalSetupGuide(cluster){
   }catch(e){toast(e.message);}
 }
 async function amGenerateGlobalBatch(){
-  amCapture();const A=S.ambient,svc=amService(),selected=A.settings.globalClusters||[svc.cluster];
-  if(!selected.length)throw new Error('Select at least one participating cluster.');
+  amCapture();const A=S.ambient,svc=amService(),current=amGlobalPublished(svc),edits=current?amGlobalPendingEdits(svc):null;
+  const selected=current?edits.map(e=>e.cluster):A.settings.globalClusters||[svc.cluster];
+  if(!selected.length)throw new Error(current?'Nothing to change. Choose a cluster to stop or start publishing from.':'Select at least one participating cluster.');
   const rows=[];
   for(const cluster of selected){
-    const row={cluster,context:amLiveContext(cluster,A.contexts)?.name||'',plan:null,validation:null,state:'Preview',error:'',applied:false};
-    try{row.plan=await apiPost('api/ambient/plan',{cluster,namespace:svc.namespace,service:svc.name,tasks:['global-service']});if(!row.plan.changes?.length&&!row.plan.objects.length)row.state='Already global';}catch(e){row.error=e.message;row.state='Preview failed';}
+    const action=current?edits.find(e=>e.cluster===cluster).action:'publish';
+    const row={cluster,action,context:amLiveContext(cluster,A.contexts)?.name||'',plan:null,validation:null,state:'Preview',error:'',applied:false};
+    try{row.plan=await apiPost('api/ambient/plan',{cluster,namespace:svc.namespace,service:svc.name,tasks:['global-service'],...(action==='unpublish'?{unpublish:true}:{})});if(!row.plan.changes?.length&&!row.plan.objects.length)row.state=action==='unpublish'?'Already local':'Already global';}catch(e){row.error=e.message;row.state='Preview failed';}
     rows.push(row);
   }
   A.globalBatch=rows;A.plan=null;A.validation=null;A.phase=3;
@@ -49,11 +81,11 @@ function amGlobalBatchPanel(){
   const pending=rows.filter(r=>r.plan&&!r.applied&&(r.plan.changes?.length||r.plan.objects.length));
   const failedPreview=rows.some(r=>!r.plan);
   return `<section class="panel am-review am-global-review">
-    <div class="panel-head"><div><h2>Review global publication · ${esc(amService().namespace+'/'+amService().name)}</h2><p>Separate plans and operations per cluster. Already-global instances remain unchanged.</p></div><button id="am-back-options">← Edit clusters</button></div>
+    <div class="panel-head"><div><h2>Review global publication · ${esc(amService().namespace+'/'+amService().name)}</h2><p>Separate plans and operations per cluster. Clusters you left unchanged are not touched.</p></div><button id="am-back-options">← Edit clusters</button></div>
     <div class="panel-body"><p>Live cluster connections are reused automatically. Review and apply runs any required server dry-runs, then opens the final confirmation. Failures in one row do not roll back another cluster; successful changes appear in Active tests with undo available.</p>
     <div class="am-wizard-footer"><button id="am-global-validate-all" ${failedPreview||!pending.length||pending.some(r=>!r.context)?'disabled':''}>Dry-run only</button><button id="am-global-apply-all" class="primary" ${failedPreview||!pending.length||pending.some(r=>!r.context)?'disabled':''}>Review and apply…</button></div>
     ${rows.map((row,i)=>`<article class="am-global-plan">
-      <div class="row between wrap"><h3>${esc(row.cluster)}</h3><span class="badge ${row.applied||row.state==='Already global'?'green':'blue'}">${esc(row.state)}</span></div>
+      <div class="row between wrap"><h3>${esc(row.cluster)}${row.action==='unpublish'?' · stop publishing':''}</h3><span class="badge ${row.applied||row.state==='Already global'?'green':'blue'}">${esc(row.state)}</span></div>
       ${row.error?`<p class="red" role="alert">${esc(row.error)}</p>`:''}
       ${row.plan?`<p>${row.plan.changes?.length||0} existing resources to update · ${row.plan.objects.length} to create</p>
         <details><summary>Reviewed YAML for ${esc(row.cluster)}</summary><pre class="code">${esc(row.plan.yaml)}</pre></details>
@@ -83,6 +115,8 @@ function amWireGlobalPublication(){
     const badge=el.querySelector('.badge');if(badge){badge.className='badge '+(allocated?'blue':'amber');badge.textContent='Export label set';}
     el.querySelector('span')?.insertAdjacentHTML('beforeend',`<small class="am-publication-evidence" role="status">${esc(amPublicationEvidenceLabel(row))}. API metadata alone does not prove proxy delivery or failover.</small>`);
   });
+  // addEventListener: the generic parameter handler later replaces onchange.
+  document.querySelectorAll('[data-amglobaledit]').forEach(input=>input.addEventListener('change',()=>{amCapture();amInvalidate();render();}));
   document.querySelectorAll('[data-amglobalsetup]').forEach(b=>b.onclick=()=>amGlobalSetupGuide(b.dataset.amglobalsetup));
   document.querySelectorAll('.am-global-plan').forEach((el,i)=>{const row=A.globalBatch[i],badge=el.querySelector('.badge'),ok=row.applied||!!row.validation||row.state==='Already global';badge.className='badge '+(row.error?'red':ok?'green':'blue');badge.textContent=(row.error?'✕ ':ok?'✓ ':'')+row.state;});
   document.querySelectorAll('.am-global-plan').forEach((el,i)=>{const row=A.globalBatch[i];if(row.state!=='Already global')return;const evidence=publicationRows.find(r=>r.cluster===row.cluster),aliases=evidence?.publication?.globalAliases||[],allocated=aliases.length>0&&aliases.every(a=>a.addresses?.length),badge=el.querySelector('.badge');badge.className='badge '+(allocated?'blue':'amber');badge.textContent=amPublicationEvidenceLabel({...evidence,global:true});});

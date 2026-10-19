@@ -82,3 +82,30 @@ func TestServiceDNSUsesCapturedDomainsAndPublishedAliases(t *testing.T) {
 		t.Fatal("conflicting suffixes were guessed")
 	}
 }
+
+func TestGlobalUnpublishRemovesOnlyTheScopeLabel(t *testing.T) {
+	ws := fixture(t)
+	svc := Target(ws, "c", "Service", "app", "front")
+	M(svc.Obj["metadata"])["labels"] = map[string]any{"app": "front", "solo.io/service-scope": "global"}
+	before := Copy(svc.Obj)
+	// No Enterprise install is captured: removing the label must not need one.
+	p, err := Generate(ws, Request{Cluster: "c", Namespace: "app", Service: "front", Tasks: []string{"global-service"}, Unpublish: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Changes) != 1 || len(p.Changes[0].Fields) != 1 || len(p.Objects) != 0 {
+		t.Fatalf("unexpected change scope: %+v", p)
+	}
+	f := p.Changes[0].Fields[0]
+	if f.Path != "/metadata/labels/solo.io~1service-scope" || !f.BeforePresent || f.AfterPresent {
+		t.Fatalf("wrong unpublish field: %+v", f)
+	}
+	if !Equal(before, svc.Obj) {
+		t.Fatal("generating mutated the capture")
+	}
+	delete(M(svc.Obj["metadata"])["labels"].(map[string]any), "solo.io/service-scope")
+	p, err = Generate(ws, Request{Cluster: "c", Namespace: "app", Service: "front", Tasks: []string{"global-service"}, Unpublish: true})
+	if err != nil || len(p.Changes) != 0 {
+		t.Fatalf("unpublishing a local Service should be a no-op: %v %+v", err, p)
+	}
+}

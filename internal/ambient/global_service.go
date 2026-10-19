@@ -37,6 +37,23 @@ func generateGlobalService(ws *store.Workspace, req Request) (*Plan, error) {
 	if svc == nil {
 		return nil, fmt.Errorf("select a captured application Service")
 	}
+	if req.Unpublish {
+		// Taking a Service out of the global mesh needs none of the publish
+		// prerequisites: it removes one label and leaves everything else.
+		p := basePlan(req, svc)
+		p.ServiceUID = S(Path(svc.Obj, "metadata", "uid"))
+		scope := svc.Labels()["solo.io/service-scope"]
+		if scope == "" {
+			p.Notes = append(p.Notes, "This Service has no solo.io/service-scope label in context "+req.Cluster+"; it is already local only.")
+		} else {
+			change(p, svc, "Stop publishing this Service from "+req.Cluster+" to the peered mesh", map[string]any{}, "/metadata/labels/solo.io~1service-scope")
+		}
+		if scope == "global-only" {
+			p.Notes = append(p.Notes, "This Service used legacy global-only publication, which also took over the local name. Removing the label returns the local cluster.local name to this cluster's endpoints only.")
+		}
+		p.Notes = append(p.Notes, "Only this Service in context "+req.Cluster+" is changed. Other clusters keep publishing; callers there stop reaching this cluster's endpoints through the global name once the controller removes them.", "The mesh controller removes the generated ServiceEntry entries. Refresh inventory after applying to confirm the published names and addresses have gone.")
+		return finishPlan(p)
+	}
 	if ok, why := globalServiceSupport(ws, svc, DetectEnvironment(ws, req.Cluster, svc)); !ok {
 		return nil, fmt.Errorf("%s", why)
 	}

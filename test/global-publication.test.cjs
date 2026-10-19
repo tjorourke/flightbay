@@ -48,3 +48,21 @@ test('global validation immediately reports working and rejects Apply without dr
   const pending=context.amGlobalOperation(0,'validate');assert.match(A.globalBatch[0].state,/Validating/);assert.match(badge.innerHTML,/bd-spinner/);
   finish({token:'validated'});await pending;assert.equal(A.globalBatch[0].state,'Dry-run passed');assert.equal(badge.textContent,'Dry-run passed');assert.equal(A.globalBatch[0].validation.token,'validated');
 });
+
+test('an already-global Service only plans the clusters whose choice changed, and unpublish removes the label',async()=>{
+  const {context,A}=setup(),requests=[];
+  A.inventory.topology={clusters:[{context:'mesh1',services:[{namespace:'app',name:'web',scope:'global'}]},{context:'mesh2',services:[{namespace:'app',name:'web',scope:'global'}]},{context:'mesh3',services:[{namespace:'app',name:'web',scope:''}]}]};
+  A.inventory.services.push({cluster:'mesh3',namespace:'app',name:'web'});
+  const svc={cluster:'mesh1',namespace:'app',name:'web'};
+  assert.equal(context.amGlobalPublished(svc),true);
+  A.settings.globalEdits={mesh1:'keep',mesh2:'unpublish',mesh3:'publish'};
+  assert.deepEqual(JSON.parse(JSON.stringify(context.amGlobalPendingEdits(svc))),[{cluster:'mesh2',action:'unpublish'},{cluster:'mesh3',action:'publish'}]);
+  context.apiPost=async(route,request)=>{requests.push(request);return {id:request.cluster,request,changes:[{}],objects:[]};};
+  await context.amAction(()=>context.amGenerateGlobalBatch());
+  assert.equal(A.error,'');
+  assert.deepEqual(requests.map(r=>[r.cluster,!!r.unpublish]),[['mesh2',true],['mesh3',false]]);
+  // Nothing changed: no plan is generated and the reader is told why.
+  A.settings.globalEdits={mesh1:'keep',mesh2:'keep'};requests.length=0;
+  await context.amAction(()=>context.amGenerateGlobalBatch());
+  assert.equal(requests.length,0);assert.match(A.error,/Nothing to change/);
+});

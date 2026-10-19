@@ -55,23 +55,26 @@ type Request struct {
 	SelectedPod        string            `json:"selectedPod,omitempty"`
 	Workload           string            `json:"workload,omitempty"`
 	Replicas           int               `json:"replicas,omitempty"`
-	TargetPort         int               `json:"targetPort,omitempty"`
-	Route              string            `json:"route,omitempty"`
-	Edit               *EditTarget       `json:"edit,omitempty"`
-	Cluster            string            `json:"cluster"`
-	Namespace          string            `json:"namespace"`
-	Service            string            `json:"service"`
-	Port               int               `json:"port"`
-	Tasks              []string          `json:"tasks"`
-	Backends           []Backend         `json:"backends,omitempty"`
-	SourceNamespace    string            `json:"sourceNamespace,omitempty"`
-	Methods            []string          `json:"methods,omitempty"`
-	Requests           int               `json:"requests,omitempty"`
-	Unit               string            `json:"unit,omitempty"`
-	Algorithm          string            `json:"algorithm,omitempty"`
-	Timeout            string            `json:"timeout,omitempty"`
-	FromRegion         string            `json:"fromRegion,omitempty"`
-	ToRegion           string            `json:"toRegion,omitempty"`
+	// Unpublish reverses global-service publication for this one Service by
+	// removing its solo.io/service-scope label.
+	Unpublish       bool        `json:"unpublish,omitempty"`
+	TargetPort      int         `json:"targetPort,omitempty"`
+	Route           string      `json:"route,omitempty"`
+	Edit            *EditTarget `json:"edit,omitempty"`
+	Cluster         string      `json:"cluster"`
+	Namespace       string      `json:"namespace"`
+	Service         string      `json:"service"`
+	Port            int         `json:"port"`
+	Tasks           []string    `json:"tasks"`
+	Backends        []Backend   `json:"backends,omitempty"`
+	SourceNamespace string      `json:"sourceNamespace,omitempty"`
+	Methods         []string    `json:"methods,omitempty"`
+	Requests        int         `json:"requests,omitempty"`
+	Unit            string      `json:"unit,omitempty"`
+	Algorithm       string      `json:"algorithm,omitempty"`
+	Timeout         string      `json:"timeout,omitempty"`
+	FromRegion      string      `json:"fromRegion,omitempty"`
+	ToRegion        string      `json:"toRegion,omitempty"`
 }
 
 type ExplainRequest struct {
