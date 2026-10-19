@@ -183,6 +183,9 @@ function morphKids(cur, next) {
     if (/^(INPUT|TEXTAREA|SELECT)$/.test(o.tagName) && o !== document.activeElement) {
       if (o.type === 'checkbox' || o.type === 'radio') o.checked = n.checked; else if (o.value !== n.value) o.value = n.value;
     }
+    // A view that paints into a container itself (the resources map) keeps
+    // what it drew; its after() hook decides whether to redraw.
+    if (o.dataset.morph === 'keep') return;
     morphKids(o, n);
   });
   while (cur.childNodes.length > want.length) cur.removeChild(cur.lastChild);
@@ -1960,7 +1963,7 @@ function resTabs(active) {
 
 async function resources() {
   if (S.res.tab === 'map' || location.hash.includes('tab=map')) {
-    return head('Resources', 'Topology view of captured resources and their connections (re-uses ambient map helpers).') + resTabs('map') + `<div id="rm-root"></div>`;
+    return head('Resources', 'One namespace drawn as a map: gateways, routes, Services, Pods, jobs, workloads and the config they reference, joined by the relationships the capture holds. Pick objects to draw just them and what links to them.', `<button id="rm-refresh" title="Fetch the captured objects again and redraw">Refresh</button>`) + resTabs('map') + `<div id="rm-root" data-morph="keep"></div>`;
   }
   const allTypes = await api('api/resources', {cluster: S.cluster});
   const {groups, hidden} = groupKinds(allTypes);
@@ -1988,7 +1991,7 @@ async function resources() {
   <div class="resource-layout"><nav class="types" aria-label="Resource types">${groups.map(([area, ts]) => `<h3 style="margin:12px 8px 4px;font-size:10px;letter-spacing:.08em;text-transform:uppercase" class="muted">${esc(area)}</h3>` + ts.map(t => `<button class="${t.resource === cur.resource && t.group === cur.group ? 'active' : ''}" data-type="${attr({g: t.group, r: t.resource})}" title="${esc(t.name)} · ${esc(t.state)}"><span>${kindLabel(t)}</span><span><small>${t.count}</small> <span class="st state-${esc(t.state)}">●</span></span></button>`).join('')).join('')}
     ${hidden ? `<p class="muted" style="font-size:11px;margin:12px 8px">${hidden} types with no captured objects are hidden. <button class="link" id="res-cov">Coverage</button> shows which were excluded or failed.</p>` : ''}</nav>
   <div><div class="toolbar"><select id="res-ns" aria-label="Namespace"><option value="">All namespaces</option>${S.res.nsOptions.map(n => `<option ${n === S.res.ns ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
-    <input id="res-q" placeholder="Filter by name, status or label: (press /)" value="${esc(S.res.q)}" aria-label="Filter" autocomplete="off" spellcheck="false"><button id="res-reset">Reset</button></div>
+    <input id="res-q" placeholder="Filter by name, status or label: (press /)" value="${esc(S.res.q)}" aria-label="Filter" autocomplete="off" spellcheck="false"><button id="res-reset">Reset</button>${S.res.ns ? `<button id="res-map" title="Draw this namespace on the resources map">Map ${esc(S.res.ns)}</button>` : ''}</div>
     ${stateNote}
     <section class="panel"><div class="panel-head"><div class="row"><h2>${esc(cur.kind || cur.resource)}</h2><span class="badge">${list.rows.length}</span></div><span class="mono muted" style="font-size:10px">${esc(cur.group ? cur.group + '/' + cur.version : cur.version)} · ${esc(cur.name)}</span></div>
     <div class="table-scroll" style="max-height:62vh">${list.rows.length ? `<table><thead><tr>${multi ? '<th>Cluster</th>' : ''}${cur.namespaced ? '<th>Namespace</th>' : ''}${list.columns.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>
@@ -1997,21 +2000,13 @@ async function resources() {
     <div class="table-foot"><span>Captured ${fmtDateTime(S.ws?.snapshot)} · read-only</span><span><kbd>/</kbd> filter · <kbd>⌘K</kbd> jump</span></div></section></div></div>`;
 }
 after.resources = () => {
-  document.querySelectorAll('[data-type]').forEach(b => b.onclick = () => { const t = JSON.parse(b.dataset.type); S.res.group = t.g; S.res.resource = t.r; S.res.ns = ''; S.res.q = ''; render(); });
-  document.querySelectorAll('[data-obj]').forEach(tr => tr.onclick = () => openObject(JSON.parse(tr.dataset.obj)));
-  $('#res-ns').onchange = e => { S.res.ns = e.target.value; render(); };
-  let t; $('#res-q').oninput = e => { clearTimeout(t); t = setTimeout(() => { const c = e.target.selectionStart, v = e.target.value; S.res.q = v; render().then(() => refocus('#res-q', c, v)); }, 250); };
-  typeahead($('#res-q'), {scope: 'objects', keys: labelKey, alias: {l: 'label'}, extraQ: () => `kind:${S.res.resource}${S.res.group ? '.' + S.res.group : ''}${S.res.ns ? ' ns:' + S.res.ns : ''}`});
-  $('#res-reset').onclick = () => { S.res.ns = ''; S.res.q = ''; render(); };
-  const rc = $('#res-cov'); if (rc) rc.onclick = () => nav('coverage');
-  $('#res-k9s').onclick = () => openK9s(S.res.resource + (S.res.group ? '.' + S.res.group : ''), S.res.ns);
-  const commands=(S.cluster?[S.cluster]:(S.ws?.clusters||[]).map(c=>c.name)).map(c=>mirrorKubectl(`get ${shellArg(S.res.resource+(S.res.group?'.'+S.res.group:''))} ${S.res.ns?'-n '+shellArg(S.res.ns):'-A'}`,c)).join('\n');
-  $('#res-term').onclick = () => termRun(commands);
-  commandControls($('#res-term'),commands);
-};
-after.resources = () => {
   document.querySelectorAll('[data-restab]').forEach(b => b.onclick = e => { const t = b.dataset.restab; if (t === 'map') { location.hash = 'resources?tab=map'; } else if (t === 'navigator') { location.hash = 'navigator'; } else { S.res.tab = ''; render(); } });
-  if (S.res.tab === 'map' || location.hash.includes('tab=map')) { if (typeof rmLoad === 'function') setTimeout(rmLoad, 0); return; }
+  if (S.res.tab === 'map' || location.hash.includes('tab=map')) {
+    const rf = $('#rm-refresh'); if (rf) rf.onclick = () => { if (typeof rmLoad === 'function') rmLoad(true); };
+    // A live refresh (S.morph) fetches the graph again behind the drawn map.
+    if (typeof rmLoad === 'function') { const live = !!S.morph; setTimeout(() => rmLoad(live), 0); }
+    return;
+  }
   document.querySelectorAll('[data-type]').forEach(b => b.onclick = () => { const t = JSON.parse(b.dataset.type); S.res.group = t.g; S.res.resource = t.r; S.res.ns = ''; S.res.q = ''; render(); });
   document.querySelectorAll('[data-obj]').forEach(tr => tr.onclick = () => openObject(JSON.parse(tr.dataset.obj)));
   $('#res-ns').onchange = e => { S.res.ns = e.target.value; render(); };
@@ -2026,6 +2021,7 @@ after.resources = () => {
 };
 
 // ---------- object drawer ----------
+  const rmap = $('#res-map'); if (rmap) rmap.onclick = () => { const c = S.cluster || (S.ws?.clusters || [])[0]?.name || ''; location.hash = 'resources?' + new URLSearchParams({tab: 'map', cluster: c, ns: S.res.ns}).toString(); };
 const workloadKinds = ['Deployment', 'DaemonSet', 'StatefulSet', 'ReplicaSet', 'Job', 'CronJob'];
 async function openObject(ref, tab = 'summary') {
   S.drawerOpen = true;
@@ -2044,7 +2040,7 @@ async function openObject(ref, tab = 'summary') {
           ${o.object.spec?.nodeName ? `<dt>Node</dt><dd>${esc(o.object.spec.nodeName)}</dd>` : ''}${st.phase ? `<dt>Phase</dt><dd>${statusCell(st.phase)}</dd>` : ''}</dl>
           ${cs ? `<h3 class="mt">Containers</h3><div class="table-scroll"><table><thead><tr><th>Name</th><th>Ready</th><th>State</th><th>Restarts</th><th>Last termination</th></tr></thead><tbody>${cs}</tbody></table></div>` : ''}
           ${o.object['x-flightbay'] ? '<div class="notice info mt">Secret values were never collected. Only metadata' + (o.object['x-flightbay'].keys ? ', key names and byte lengths are' : ' is') + ' shown.</div>' : ''}
-          <div class="row wrap mt">${isPod ? `<button class="primary" id="d-logs">Open pod logs →</button>` : ''}${workloadKinds.includes(o.kind) ? `<button class="primary" id="d-wlogs">Open logs of all its pods →</button>` : ''}<button id="d-describe">&gt;_ kubectl describe</button>${(S.ws?.clusters || []).length > 1 ? '<button id="d-compare">Compare across clusters</button>' : ''}${typeof rvObjectButton === 'function' ? rvObjectButton(o) : ''}</div>`;
+          <div class="row wrap mt">${isPod ? `<button class="primary" id="d-logs">Open pod logs →</button>` : ''}${workloadKinds.includes(o.kind) ? `<button class="primary" id="d-wlogs">Open logs of all its pods →</button>` : ''}<button id="d-describe">&gt;_ kubectl describe</button>${o.namespace && typeof rmShowOnMap === 'function' ? '<button id="d-map" title="Open the resources map focused on this object and what links to it">Show on map</button>' : ''}${(S.ws?.clusters || []).length > 1 ? '<button id="d-compare">Compare across clusters</button>' : ''}${typeof rvObjectButton === 'function' ? rvObjectButton(o) : ''}</div>`;
       },
       yaml: () => `<div class="row between" style="margin-bottom:10px"><small>Captured object (redacted)</small><button id="d-copy">Copy YAML</button></div><pre class="code">${esc(d.yaml)}</pre>`,
       json: () => `<pre class="code">${esc(d.json)}</pre>`,
@@ -2072,6 +2068,7 @@ async function openObject(ref, tab = 'summary') {
   };
   draw();
 }
+    const dm = $('#d-map'); if (dm) dm.onclick = () => { closeDrawer(); rmShowOnMap({cluster: o.cluster, group: o.group, resource: o.resource, namespace: o.namespace, name: o.name}); };
 function closeDrawer() { $('#overlay').innerHTML = ''; S.drawerOpen = false; }
 
 // ---------- logs ----------
@@ -2784,7 +2781,7 @@ function boot() {
   $('#open-search').onclick = openSearch;
   // The Resources menu entry opens the tab (Browse or Keyboard) used last.
   const resLink = document.querySelector('.nav a[data-view="resources"]');
-  if (resLink) resLink.onclick = e => { let t = 'resources'; try { t = localStorage.getItem('flightbay-res-tab') || t; } catch (_) { /* private mode */ } if (t === 'navigator') { e.preventDefault(); nav('navigator'); } };
+  if (resLink) resLink.onclick = e => { let t = 'resources'; try { t = localStorage.getItem('flightbay-res-tab') || t; } catch (_) { /* private mode */ } if (t === 'navigator') { e.preventDefault(); nav('navigator'); } else if (t === 'map') { e.preventDefault(); location.hash = 'resources?tab=map'; } };
   $('#cluster').onchange = e => setCluster(e.target.value);
   $('#term-toggle').onclick = () => toggleTerminal();
   $('#term-k9s').onclick = () => openK9s('pods', '');

@@ -222,7 +222,7 @@ func TestUses(t *testing.T) {
 	ws.AddObjects("c", res("apps", "deployments", "Deployment", true), []map[string]any{
 		{"kind": "Deployment", "metadata": map[string]any{"name": "d", "namespace": "shop"}, "spec": map[string]any{"template": map[string]any{"spec": map[string]any{
 			"serviceAccountName": "app",
-			"volumes": []any{map[string]any{"configMap": map[string]any{"name": "cm1"}}, map[string]any{"secret": map[string]any{"secretName": "sec1"}}},
+			"volumes":            []any{map[string]any{"configMap": map[string]any{"name": "cm1"}}, map[string]any{"secret": map[string]any{"secretName": "sec1"}}},
 		}}}},
 	}, "d")
 	g := Build(ws, "c", "shop", nil)
@@ -242,4 +242,40 @@ func TestCollapse(t *testing.T) {
 			t.Fatal("41 should collapse")
 		}
 	}
-} 
+}
+
+func TestNamespaceWaypoint(t *testing.T) {
+	ws := makeWS(t)
+	ws.AddObjects("c", res("", "namespaces", "Namespace", false), []map[string]any{
+		{"kind": "Namespace", "metadata": map[string]any{"name": "shop", "labels": map[string]any{"istio.io/use-waypoint": "wp"}}},
+	}, "ns")
+	ws.AddObjects("c", res("", "services", "Service", true), []map[string]any{
+		{"kind": "Service", "metadata": map[string]any{"name": "a", "namespace": "shop"}},
+		{"kind": "Service", "metadata": map[string]any{"name": "b", "namespace": "shop", "labels": map[string]any{"istio.io/use-waypoint": "none"}}},
+		{"kind": "Service", "metadata": map[string]any{"name": "wp", "namespace": "shop", "labels": map[string]any{"gateway.networking.k8s.io/gateway-name": "wp"}}},
+	}, "svc")
+	ws.AddObjects("c", res("", "pods", "Pod", true), []map[string]any{
+		{"kind": "Pod", "metadata": map[string]any{"name": "p", "namespace": "shop"}},
+	}, "p")
+	ws.AddObjects("c", res("gateway.networking.k8s.io", "gateways", "Gateway", true), []map[string]any{obj("Gateway", "shop", "wp", nil)}, "gw")
+	g := Build(ws, "c", "shop", nil)
+	from := map[string]Edge{}
+	for _, e := range g.Edges {
+		if e.Kind == "waypoint" {
+			from[e.From] = e
+		}
+	}
+	a := from["c//services/shop/a"]
+	if a.To != "c/gateway.networking.k8s.io/gateways/shop/wp" || a.Label != "via namespace label" {
+		t.Fatalf("service a should inherit the namespace waypoint, got %+v (all %v)", a, from)
+	}
+	if _, ok := from["c//services/shop/b"]; ok {
+		t.Fatal("use-waypoint: none on the Service must opt out")
+	}
+	if _, ok := from["c//services/shop/wp"]; ok {
+		t.Fatal("the waypoint's own Service must not be bound to itself")
+	}
+	if _, ok := from["c//pods/shop/p"]; ok {
+		t.Fatal("pods only inherit when waypoint-for is workload or all")
+	}
+}

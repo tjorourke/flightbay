@@ -9,30 +9,37 @@ import (
 )
 
 type Graph struct {
-	Cluster    string
-	Namespaces []Box
-	Nodes      []Node
-	Edges      []Edge
-	Notes      []string
+	Cluster    string   `json:"cluster"`
+	Namespaces []Box    `json:"namespaces"`
+	Nodes      []Node   `json:"nodes"`
+	Edges      []Edge   `json:"edges"`
+	Notes      []string `json:"notes"`
 }
 
 type Box struct {
-	Namespace string
-	Count     int
-	Collapse  bool
+	Namespace string `json:"namespace"`
+	Count     int    `json:"count"`
+	Collapse  bool   `json:"collapse"`
 }
 
 type Node struct {
-	ID, Cluster, Group, Resource, Kind, Namespace, Name string
-	Badge string
+	ID        string `json:"id"`
+	Cluster   string `json:"cluster"`
+	Group     string `json:"group"`
+	Resource  string `json:"resource"`
+	Kind      string `json:"kind"`
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
+	Badge     string `json:"badge,omitempty"`
 }
 
 type Edge struct {
-	From, To string
-	Kind     string
-	Label    string
-	Broken   bool
-	Reason   string
+	From   string `json:"from"`
+	To     string `json:"to"`
+	Kind   string `json:"kind"`
+	Label  string `json:"label,omitempty"`
+	Broken bool   `json:"broken"`
+	Reason string `json:"reason,omitempty"`
 }
 
 func m(v any) map[string]any { x, _ := v.(map[string]any); return x }
@@ -129,7 +136,7 @@ func Build(ws *store.Workspace, cluster, namespace string, kinds []string) Graph
 		return id
 	}
 
-	// first pass: all nodes? but only add if keep, but spec: server returns all, ui hides; build keeps? 
+	// first pass: all nodes? but only add if keep, but spec: server returns all, ui hides; build keeps?
 	// "if kinds non-empty, keep nodes of those kinds and edges whose both ends remain"
 	// so collect all first? then filter? To simple, add all, filter after? But for efficiency add only kept.
 	// spec: "The server still returns the nodes. The UI hides them until expand." for collapse.
@@ -271,7 +278,7 @@ func Build(ws *store.Workspace, cluster, namespace string, kinds []string) Graph
 		addIngressBackend(ingID, db, ing.Namespace, ws, &g, cluster)
 		// rules
 		for _, rule := range l(path(ing.Obj, "spec", "rules")) {
-			for _, p := range l(m(rule)["http"].(map[string]any)["paths"]) {
+			for _, p := range l(m(m(rule)["http"])["paths"]) {
 				be := m(m(p)["backend"])
 				addIngressBackend(ingID, be, ing.Namespace, ws, &g, cluster)
 			}
@@ -469,13 +476,13 @@ func Build(ws *store.Workspace, cluster, namespace string, kinds []string) Graph
 		}
 		for _, ct := range append(l(sp["containers"]), l(sp["initContainers"])...) {
 			for _, e := range l(m(ct)["env"]) {
-				if n := s(m(m(e)["valueFrom"])["configMapKeyRef"].(map[string]any)["name"]); n != "" {
+				if n := s(m(m(m(e)["valueFrom"])["configMapKeyRef"])["name"]); n != "" {
 					cid := addNode(ws.Get(cluster, "", "configmaps", ns, n), "")
 					if fromID != "" && cid != "" {
 						g.Edges = append(g.Edges, Edge{From: fromID, To: cid, Kind: "uses"})
 					}
 				}
-				if n := s(m(m(e)["valueFrom"])["secretKeyRef"].(map[string]any)["name"]); n != "" {
+				if n := s(m(m(m(e)["valueFrom"])["secretKeyRef"])["name"]); n != "" {
 					cid := addNode(ws.Get(cluster, "", "secrets", ns, n), "")
 					if fromID != "" && cid != "" {
 						g.Edges = append(g.Edges, Edge{From: fromID, To: cid, Kind: "uses"})
@@ -483,13 +490,13 @@ func Build(ws *store.Workspace, cluster, namespace string, kinds []string) Graph
 				}
 			}
 			for _, ef := range l(m(ct)["envFrom"]) {
-				if n := s(m(ef)["configMapRef"].(map[string]any)["name"]); n != "" {
+				if n := s(m(m(ef)["configMapRef"])["name"]); n != "" {
 					cid := addNode(ws.Get(cluster, "", "configmaps", ns, n), "")
 					if fromID != "" && cid != "" {
 						g.Edges = append(g.Edges, Edge{From: fromID, To: cid, Kind: "uses"})
 					}
 				}
-				if n := s(m(ef)["secretRef"].(map[string]any)["name"]); n != "" {
+				if n := s(m(m(ef)["secretRef"])["name"]); n != "" {
 					cid := addNode(ws.Get(cluster, "", "secrets", ns, n), "")
 					if fromID != "" && cid != "" {
 						g.Edges = append(g.Edges, Edge{From: fromID, To: cid, Kind: "uses"})
@@ -523,25 +530,21 @@ func Build(ws *store.Workspace, cluster, namespace string, kinds []string) Graph
 		}
 	}
 
-	// 11. Waypoint labels
+	// 11. Waypoint labels. Istio resolves the waypoint from the object's own
+	// istio.io/use-waypoint label first, then from its namespace's label; an
+	// object label of "none" opts out of a namespace default.
 	for _, o := range all {
-		if o.Cluster != cluster {
+		if o.Cluster != cluster || o.Kind == "Namespace" {
 			continue
 		}
-		wp := s(o.Labels()["istio.io/use-waypoint"])
-		if wp == "" || wp == "none" {
+		wp, wpns, inherited := effectiveWaypoint(ws, cluster, o)
+		if wp == "" {
 			continue
-		}
-		wpns := s(o.Labels()["istio.io/use-waypoint-namespace"])
-		if wpns == "" {
-			wpns = o.Namespace
-			if lbls := m(path( ws.Get(cluster, "", "namespaces", "", o.Namespace).Obj , "metadata", "labels")); lbls != nil {
-				if v := s(lbls["istio.io/use-waypoint-namespace"]); v != "" {
-					wpns = v
-				}
-			}
 		}
 		gw := ws.Get(cluster, "gateway.networking.k8s.io", "gateways", wpns, wp)
+		if inherited && !inheritsNamespaceWaypoint(o, gw, wp) {
+			continue
+		}
 		oid := addNode(o, "")
 		gwid := addNode(gw, "")
 		broken := false
@@ -553,8 +556,12 @@ func Build(ws *store.Workspace, cluster, namespace string, kinds []string) Graph
 				reason = "unresolved use-waypoint"
 			}
 		}
+		label := ""
+		if inherited {
+			label = "via namespace label"
+		}
 		if oid != "" {
-			g.Edges = append(g.Edges, Edge{From: oid, To: gwid, Kind: "waypoint", Broken: broken, Reason: reason})
+			g.Edges = append(g.Edges, Edge{From: oid, To: gwid, Kind: "waypoint", Label: label, Broken: broken, Reason: reason})
 		}
 	}
 
@@ -601,11 +608,11 @@ func Build(ws *store.Workspace, cluster, namespace string, kinds []string) Graph
 				}
 				matchedAny := false
 				for _, cand := range ws.List(cluster, tg, trs, searchNS, nil) {
-				if labelsMatch(cand.Labels(), strMap(ml)) {
-					matchedAny = true
-					cid := addNode(cand, "")
-					g.Edges = append(g.Edges, Edge{From: pid, To: cid, Kind: "policy"})
-				}
+					if labelsMatch(cand.Labels(), strMap(ml)) {
+						matchedAny = true
+						cid := addNode(cand, "")
+						g.Edges = append(g.Edges, Edge{From: pid, To: cid, Kind: "policy"})
+					}
 				}
 				st := ws.CollectionState(cluster, tg, trs, k, namespaced)
 				if !matchedAny && st.State == store.StateComplete && len(ml) > 0 {
@@ -760,4 +767,58 @@ func strMap(v any) map[string]string {
 		out[k] = s(val)
 	}
 	return out
+}
+
+// effectiveWaypoint returns the waypoint an object is bound to, following
+// Istio's order: the object's own label, then its namespace's label. A
+// "none" on the object opts it out of the namespace default.
+func effectiveWaypoint(ws *store.Workspace, cluster string, o *store.Object) (name, ns string, inherited bool) {
+	lb := o.Labels()
+	name, ns = lb["istio.io/use-waypoint"], lb["istio.io/use-waypoint-namespace"]
+	var nsLabels map[string]string
+	if o.Namespace != "" {
+		if n := ws.Get(cluster, "", "namespaces", "", o.Namespace); n != nil {
+			nsLabels = n.Labels()
+		}
+	}
+	if name == "" && nsLabels != nil {
+		name, ns, inherited = nsLabels["istio.io/use-waypoint"], nsLabels["istio.io/use-waypoint-namespace"], true
+	}
+	if name == "" || name == "none" {
+		return "", "", false
+	}
+	if ns == "" && !inherited && nsLabels != nil {
+		ns = nsLabels["istio.io/use-waypoint-namespace"]
+	}
+	if ns == "" {
+		ns = o.Namespace
+	}
+	return name, ns, inherited
+}
+
+// inheritsNamespaceWaypoint says whether a namespace-level binding applies to
+// this object. Services and ServiceEntries take it for the default
+// waypoint-for "service"; Pods only when the waypoint serves workload or all
+// traffic. The waypoint's own Service and Pods are never bound to it.
+func inheritsNamespaceWaypoint(o *store.Object, gw *store.Object, wp string) bool {
+	lb := o.Labels()
+	if lb["gateway.networking.k8s.io/gateway-name"] != "" || lb["gateway.istio.io/managed"] != "" {
+		return false
+	}
+	if o.Kind == "Gateway" || o.Name == wp && (o.Kind == "Service" || o.Kind == "Deployment") {
+		return false
+	}
+	waypointFor := "service"
+	if gw != nil {
+		if v := gw.Labels()["istio.io/waypoint-for"]; v != "" {
+			waypointFor = v
+		}
+	}
+	switch o.Kind {
+	case "Service", "ServiceEntry":
+		return waypointFor == "service" || waypointFor == "all"
+	case "Pod":
+		return waypointFor == "workload" || waypointFor == "all"
+	}
+	return false
 }
