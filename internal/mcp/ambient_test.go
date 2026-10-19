@@ -43,6 +43,16 @@ func TestAmbientToolsProtocolAndReadOnlyBoundary(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": "preview", "request": req, "yaml": "kind: HTTPRoute"})
 		case "/api/ambient/tests":
 			_, _ = w.Write([]byte(`[{"token":"SECRET-VALIDATION-TOKEN","owner":"PRIVATE-OWNER","context":"mesh1","plan":{"id":"plan-a"},"created":[],"modified":[]}]`))
+		case "/api/rbac/serviceaccount":
+			if r.Method != "GET" {
+				t.Error("rbac explain must be GET")
+			}
+			_, _ = w.Write([]byte(`{"cluster":"mesh1","namespace":"app","name":"petstore","found":false,"coverage":{"complete":true},"grants":[],"bindings":[],"workloads":[],"suggestion":"# review only"}`))
+		case "/api/rbac/who":
+			if r.Method != "GET" {
+				t.Error("who must be GET")
+			}
+			_, _ = w.Write([]byte(`{"subjects":[],"notes":[]}`))
 		default:
 			t.Errorf("unexpected or mutating endpoint: %s", r.URL.Path)
 			w.WriteHeader(404)
@@ -95,4 +105,7 @@ func TestAmbientToolsProtocolAndReadOnlyBoundary(t *testing.T) {
 	if !strings.Contains(text, "missing-parent") {
 		t.Fatal(text)
 	}
+	// rbac tools
+	invoke("rbac_explain_serviceaccount", map[string]any{"cluster": "mesh1", "namespace": "app", "name": "petstore"})
+	invoke("rbac_who_can", map[string]any{"cluster": "mesh1", "namespace": "app", "verb": "get", "resource": "pods"})
 }

@@ -6,7 +6,7 @@ description: Give an AI agent read-only access to an open workspace over the Mod
 
 # MCP server
 
-`flightbay-desk mcp` makes the open workspace available to AI agents over the Model Context Protocol. Its 27 read-only tools cover objects, logs, SQL, findings, scores, reach, proxy configuration, ambient investigation, request paths and repair/demo previews. The workspace can be an offline bundle or a live read-only mirror. Objects, log streams, proxy dumps, findings, Scorecard checks and ambient failures are also `flightbay://` resources. Eight prompts guide common investigations. Stdio additionally offers `workspaces` to select an open desk.
+`flightbay-desk mcp` makes the open workspace available to AI agents over the Model Context Protocol. Its 29 read-only tools cover objects, logs, SQL, findings, scores, reach, proxy configuration, ambient investigation, request paths, repair/demo previews and RBAC. The workspace can be an offline bundle or a live read-only mirror. Objects, log streams, proxy dumps, findings, Scorecard checks and ambient failures are also `flightbay://` resources. Eight prompts guide common investigations. Stdio additionally offers `workspaces` to select an open desk.
 
 Use it when you want an assistant to do the legwork on a case: gather the evidence behind the findings, follow a trace across pods, or check whether a problem started with a change.
 

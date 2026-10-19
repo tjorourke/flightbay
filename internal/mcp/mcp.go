@@ -252,6 +252,20 @@ func tools() []tool {
 				}
 				return s.get("/api/reach", q)
 			}},
+		{Name: "rbac_explain_serviceaccount", Title: "Service account RBAC",
+			Description: "Effective permissions for one ServiceAccount from captured RoleBindings and ClusterRoleBindings, including group subjects and aggregated ClusterRoles. Returns rules, the binding that grants each, blast-radius flags, workloads using the account, and review-only YAML. Does not apply anything. Absence is not proof when RBAC collection is incomplete.",
+			InputSchema: obj(map[string]any{"cluster": str("cluster"), "namespace": str("namespace"), "name": str("ServiceAccount name")}),
+			call: func(s *Server, a map[string]any) (string, error) {
+				q := url.Values{"cluster": {arg(a, "cluster")}, "namespace": {arg(a, "namespace")}, "name": {arg(a, "name")}}
+				return s.get("/api/rbac/serviceaccount", q)
+			}},
+		{Name: "rbac_who_can", Title: "Who can",
+			Description: "Subjects whose captured bindings grant a verb on a resource in a namespace. Includes cluster-wide grants and the service accounts covered by system:serviceaccounts, system:serviceaccounts:<namespace>, and system:authenticated. resourceNames rules do not match when name is omitted. Does not change the cluster.",
+			InputSchema: obj(map[string]any{"cluster": str("cluster"), "namespace": str("namespace"), "verb": str("verb, for example get"), "group": str("API group, empty for core"), "resource": str("resource, for example secrets"), "subresource": str("subresource, for example log; omit for the resource itself"), "name": str("object name; omit unless asking about one named object")}),
+			call: func(s *Server, a map[string]any) (string, error) {
+				q := url.Values{"cluster": {arg(a, "cluster")}, "namespace": {arg(a, "namespace")}, "verb": {arg(a, "verb")}, "group": {arg(a, "group")}, "resource": {arg(a, "resource")}, "subresource": {arg(a, "subresource")}, "name": {arg(a, "name")}}
+				return s.get("/api/rbac/who", q)
+			}},
 		{Name: "agent_activity", Title: "Agent and tool activity",
 			Description: "From agentgateway request logs (gateways and agentgateway waypoints): who called which MCP tool, model or agent, as whom (mesh identity, JWT subject or address, resolved to a workload), how often, what was refused and why (with the agentgateway policies on the route, gateway or Service that could have refused it), what failed, and tokens and cost per model and caller. Tools are checked against the tools each kagent MCP server lists and against each declarative Agent's toolNames. With a baseline, tools added, removed or whose description changed (a rug pull). Pass view to trim: calls, tools, models, denials or changes. Needs Flightbay Enterprise.",
 			InputSchema: obj(map[string]any{"view": str("calls, tools, models, denials or changes; omit for everything")}),
