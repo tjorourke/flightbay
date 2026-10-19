@@ -142,9 +142,9 @@ function amTaskCards(){
   const installed=new Set(A.edit?[]:(A.result?.editable||[]).flatMap(e=>e.tasks||e.request?.tasks||[]));
   const supported=A.capabilities.filter(c=>c.supported&&!installed.has(c.id)&&(!allowed||allowed.includes(c.id))),unavailable=A.capabilities.filter(c=>!supported.includes(c)&&!installed.has(c.id));
   return `<section class="panel am-task-picker"><div class="panel-head"><div><h2>${A.edit?'Fields to change':'Add configuration'}</h2><p class="muted">${A.edit?'Choose the fields to update on this existing resource.':'Choose a new capability. Edit settings already configured from Current configuration above.'}</p></div></div>
-    <div class="panel-body"><div class="am-task-cards">${supported.map(c=>{const [title,desc,group]=amTaskText[c.id]||[c.title,c.reason,'Configuration'];return `<label class="am-task-card ${A.tasks[c.id]?'selected':''}"><input type="checkbox" data-amtask="${esc(c.id)}" ${A.tasks[c.id]?'checked':''}><span><small>${esc(group)} · ${esc(c.layer)}</small><strong>${esc(title)}</strong><span>${esc(desc)}</span></span></label>`;}).join('')}</div>
+    <div class="panel-body">${A.edit?'':amWaypointStrip(unavailable)}<div class="am-task-cards">${supported.map(c=>{const [title,desc,group]=amTaskText[c.id]||[c.title,c.reason,'Configuration'];return `<label class="am-task-card ${A.tasks[c.id]?'selected':''}"><input type="checkbox" data-amtask="${esc(c.id)}" ${A.tasks[c.id]?'checked':''}><span><small>${esc(group)} · ${esc(c.layer)}</small><strong>${esc(title)}</strong><span>${esc(desc)}</span></span></label>`;}).join('')}</div>
     ${supported.length?'':installed.size?'<p class="muted">Available capabilities are already configured. Use their Edit actions above.</p>':`<div class="notice info">No traffic templates match the captured waypoint and APIs. <button id="am-open-waypoint">Set up a waypoint</button></div>`}
-    <details class="am-unavailable"><summary>${unavailable.length} other tasks · why unavailable?</summary>${unavailable.map(c=>`<div><strong>${esc(c.title)}</strong><p>${esc(allowed&&!allowed.includes(c.id)?'This task edits another configuration. Return to Current configuration to choose it.':c.reason)}</p></div>`).join('')}</details>
+    <details class="am-unavailable"><summary>${unavailable.length} other tasks · why unavailable?</summary>${unavailable.map(c=>`<div><strong>${esc(c.title)}</strong><p>${esc(allowed&&!allowed.includes(c.id)?'This task edits another configuration. Return to Current configuration to choose it.':c.reason)}</p>${amNeedsIstioWaypoint(c)?'<button data-amwaypoint="new" data-amwpistio="1">Deploy an Istio waypoint…</button> <button data-amwaypoint="existing">Use an existing waypoint…</button>':''}</div>`).join('')}</details>
     <div class="am-wizard-footer"><button id="am-change-target">Change target</button><button id="am-next-options" class="primary" ${Object.values(A.tasks).some(Boolean)?'':'disabled'}>${A.edit?'Edit selected fields':'Configure selected tasks'} →</button></div></div></section>`;
 }
 function amEditors() {
@@ -391,6 +391,8 @@ after.ambient = () => {
   document.querySelectorAll('[data-amfix]').forEach(b => b.onclick = () => amDownload(A.result.steps[Number(b.dataset.amfix)].fixYaml,'ambient-parent-suggestion.yaml'));
    const openMode=mode=>{try{amSaveConfigurationDraft();amResetDraft(true);A.tab='wizard';A.mode=mode;A.phase=2;render();}catch(e){toast(e.message);}};
   if ($('#am-open-waypoint')) $('#am-open-waypoint').onclick = () => openMode('waypoint');
+  // Open Waypoint setup already on "use existing" or "deploy new", so the choice is one click.
+  document.querySelectorAll('[data-amwaypoint]').forEach(b=>b.onclick=()=>{const istio=b.dataset.amwpistio?(A.result?.environment?.classes||[]).find(c=>c.product==='istio'&&c.supported)?.name:'';openMode('waypoint');A.settings.wpMode=b.dataset.amwaypoint;if(istio&&b.dataset.amwaypoint==='new')A.settings.wpClass=istio;render();});
   if ($('#am-open-enrol')) $('#am-open-enrol').onclick = () => openMode('enrol-namespace');
   if ($('#am-enrol-all')) $('#am-enrol-all').onclick = () => { amCapture(); const o=amTarget(); A.settings.enrolNamespaces=A.inventory.namespaces.filter(n=>n.cluster===o.cluster).map(n=>n.name); amInvalidate(); render(); };
   if ($('#am-enrol-none')) $('#am-enrol-none').onclick = () => { amCapture(); A.settings.enrolNamespaces=[]; amInvalidate(); render(); };
@@ -493,4 +495,14 @@ function amWireAccessRule(){
   document.querySelectorAll('[data-amaccessheaderremove]').forEach(b=>b.onclick=()=>redraw(()=>{const [i,j]=b.dataset.amaccessheaderremove.split(':').map(Number);a.rules[i].headers.splice(j,1);}));
   // The radio changes the wording of the rule summary, so redraw on it.
   document.querySelectorAll('input[name="am-access-action"]').forEach(r=>r.addEventListener('change',()=>redraw(()=>{})));
+}
+
+// Which waypoint the selected Service uses, shown above the task cards so
+// the L7 tasks it unlocks or blocks are explained where you choose them.
+function amNeedsIstioWaypoint(c){return /Istio\/Envoy waypoint|Istio waypoint/.test(c.reason||'')||/Istio waypoint/.test(c.layer||'');}
+function amWaypointStrip(unavailable){
+  const A=S.ambient,sel=A.result?.environment?.selected,blocked=unavailable.filter(amNeedsIstioWaypoint);
+  const product=sel?.product==='istio'?'Istio':sel?.product==='agentgateway'?(sel.edition==='enterprise'?'Enterprise agentgateway':'agentgateway'):sel?.product||'';
+  const examples=blocked.slice(0,3).map(c=>amTaskText[c.id]?.[0]||c.title).join(', ');
+  return `<div class="am-waypoint-strip"><div><strong>Waypoint</strong> <span>${sel?esc(sel.name)+(product?' · '+esc(product):''):'None bound to this Service'}</span>${blocked.length?`<small>${blocked.length} L7 task${blocked.length===1?'':'s'} need an Istio waypoint: ${esc(examples)}${blocked.length>3?'…':''}. Deploy one for this Service or its namespace, or bind an existing one.</small>`:''}</div><div class="row"><button data-amwaypoint="existing">Use an existing waypoint…</button><button data-amwaypoint="new"${blocked.length?' data-amwpistio="1"':''}>${blocked.length?'Deploy an Istio waypoint…':'Deploy a new waypoint…'}</button></div></div>`;
 }
