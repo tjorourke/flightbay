@@ -58,6 +58,12 @@ type Request struct {
 	// Unpublish reverses global-service publication for this one Service by
 	// removing its solo.io/service-scope label.
 	Unpublish bool `json:"unpublish,omitempty"`
+	// GlobalDistribution sets networking.istio.io/traffic-distribution on a
+	// global Service: "" leaves it, "default" removes it (PreferNetwork),
+	// otherwise Any, PreferClose, PreferRegion or PreferNetwork.
+	GlobalDistribution string `json:"globalDistribution,omitempty"`
+	// GlobalTakeover sets (true) or removes (false) solo.io/service-takeover.
+	GlobalTakeover *bool `json:"globalTakeover,omitempty"`
 	// Access builds a Service-targeted AuthorizationPolicy from rules.
 	Access          *AccessRequest `json:"access,omitempty"`
 	TargetPort      int            `json:"targetPort,omitempty"`

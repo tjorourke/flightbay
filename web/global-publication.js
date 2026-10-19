@@ -24,8 +24,31 @@ function amGlobalClusterChoices(svc){
 // publishing or start publishing. Clusters left on "keep" are not touched.
 function amGlobalPublished(svc){return amGlobalTargets(svc).some(r=>r.global);}
 function amGlobalEdits(){return S.ambient.settings.globalEdits||{};}
-function amGlobalPendingEdits(svc){const e=amGlobalEdits();return amGlobalTargets(svc).filter(r=>r.service&&(e[r.cluster]==='unpublish'&&r.global||e[r.cluster]==='publish'&&!r.global)).map(r=>({cluster:r.cluster,action:e[r.cluster]}));}
-function amGlobalEditLabel(edit){return (edit.action==='unpublish'?'Stop publishing from ':'Publish from ')+edit.cluster;}
+function amGlobalPendingEdits(svc){
+  const e=amGlobalEdits(),r=amGlobalRouting(svc),wantDist=S.ambient.settings.globalDistribution,wantTake=S.ambient.settings.globalTakeover;
+  const routingChanged=row=>row.service&&((wantDist!==undefined&&wantDist!==(row.service.distribution||'default'))||(wantTake!==undefined&&wantTake!==!!row.service.takeover));
+  return amGlobalTargets(svc).filter(row=>row.service).map(row=>{
+    const a=e[row.cluster];
+    if(a==='unpublish'&&row.global)return {cluster:row.cluster,action:'unpublish'};
+    if(a==='publish'&&!row.global)return {cluster:row.cluster,action:'publish'};
+    if(row.global&&a!=='unpublish'&&routingChanged(row))return {cluster:row.cluster,action:'update'};
+    return null;
+  }).filter(Boolean);
+}
+function amGlobalEditLabel(edit){return (edit.action==='unpublish'?'Stop publishing from ':edit.action==='update'?'Change cross-cluster routing on ':'Publish from ')+edit.cluster;}
+// How requests to the global name pick a cluster, and whether the local name
+// is taken over. Applied to every cluster that publishes the Service.
+const AM_GLOBAL_DIST=[['default','Prefer this cluster, fail over to the others','PreferNetwork · default'],['Any','Spread evenly across every cluster','Any · round robin across all endpoints'],['PreferRegion','Prefer the same region, then others','PreferRegion'],['PreferClose','Prefer the same zone, then others','PreferClose']];
+function amGlobalRouting(svc){const rows=amGlobalTargets(svc).filter(r=>r.service);const first=rows.find(r=>r.global)||rows[0];return {distribution:first?.service?.distribution||'default',takeover:!!first?.service?.takeover,mixed:new Set(rows.map(r=>r.service.distribution||'default')).size>1||new Set(rows.map(r=>!!r.service.takeover)).size>1};}
+function amGlobalRoutingMarkup(svc){
+  const F=S.ambient.settings,cur=amGlobalRouting(svc),dist=F.globalDistribution??cur.distribution,take=F.globalTakeover??cur.takeover;
+  return `<section class="am-global-routing"><h3>Routing across clusters</h3>
+    <p class="muted">By default a caller uses this Service's endpoints in its own cluster and only goes to another cluster when none are healthy. Set on every cluster that publishes it.${cur.mixed?' <span class="amber">The clusters are set differently today.</span>':''}</p>
+    <div class="am-global-choice am-global-dist" role="radiogroup" aria-label="Traffic distribution">${AM_GLOBAL_DIST.map(([v,l,d])=>`<label><input type="radio" name="am-global-dist" data-amglobaldist value="${v}" ${dist===v?'checked':''}> <span><strong>${esc(l)}</strong><small>${esc(d)}</small></span></label>`).join('')}</div>
+    ${dist==='Any'?'<p class="muted">Spread is per endpoint, not per cluster: 3 Pods in one cluster and 1 in another is about 75/25. ztunnel balances per connection, so a client that reuses one connection stays on one backend; a waypoint balances per request.</p>':''}
+    <label class="row am-global-takeover"><input type="checkbox" id="am-global-takeover" ${take?'checked':''}> <span>Send the local name to the global Service too <small class="muted"><code>solo.io/service-takeover=true</code>: requests for <code>${esc(svc.name+'.'+svc.namespace+'.svc.cluster.local')}</code> use every cluster's endpoints, not just this cluster's.</small></span></label>
+  </section>`;
+}
 function amGlobalCurrentConfig(svc){
   const A=S.ambient,rows=amGlobalTargets(svc),edits=amGlobalEdits(),published=rows.filter(r=>r.global);
   const ref=row=>attr({cluster:row.cluster,group:'',resource:'services',namespace:svc.namespace,name:svc.name});
@@ -46,6 +69,7 @@ function amGlobalCurrentConfig(svc){
     </article>`;
   };
   return `<section class="am-global-current"><h3>Current publication</h3><p>Published from ${published.length} of ${rows.length} cluster${rows.length===1?'':'s'}: ${esc(published.map(r=>r.cluster).join(', ')||'none')}. Nothing is changed unless you pick a different option for a cluster below.</p>${rows.map(card).join('')}</section>
+    ${amGlobalRoutingMarkup(svc)}
     <div class="am-global-publication"><h3>Names</h3>${amDNSMarkup(A.result?.dns)}<p class="muted">Global names come from the generated ServiceEntries in the capture. Refresh after any change to see what the controller published.</p></div>`;
 }
 function amMissingServiceCommand(svc,context){const quote=s=>"'"+s.replaceAll("'","'\"'\"'")+"'";return context?`kubectl --context ${quote(context)} -n ${quote(svc.namespace)} get service ${quote(svc.name)} -o yaml`:'';}
@@ -65,12 +89,12 @@ async function amGlobalSetupGuide(cluster){
 async function amGenerateGlobalBatch(){
   amCapture();const A=S.ambient,svc=amService(),current=amGlobalPublished(svc),edits=current?amGlobalPendingEdits(svc):null;
   const selected=current?edits.map(e=>e.cluster):A.settings.globalClusters||[svc.cluster];
-  if(!selected.length)throw new Error(current?'Nothing to change. Choose a cluster to stop or start publishing from.':'Select at least one participating cluster.');
+  if(!selected.length)throw new Error(current?'Nothing to change. Choose a cluster to stop or start publishing from, or change the routing across clusters.':'Select at least one participating cluster.');
   const rows=[];
   for(const cluster of selected){
     const action=current?edits.find(e=>e.cluster===cluster).action:'publish';
     const row={cluster,action,context:amLiveContext(cluster,A.contexts)?.name||'',plan:null,validation:null,state:'Preview',error:'',applied:false};
-    try{row.plan=await apiPost('api/ambient/plan',{cluster,namespace:svc.namespace,service:svc.name,tasks:['global-service'],...(action==='unpublish'?{unpublish:true}:{})});if(!row.plan.changes?.length&&!row.plan.objects.length)row.state=action==='unpublish'?'Already local':'Already global';}catch(e){row.error=e.message;row.state='Preview failed';}
+    try{row.plan=await apiPost('api/ambient/plan',{cluster,namespace:svc.namespace,service:svc.name,tasks:['global-service'],...(action==='unpublish'?{unpublish:true}:amGlobalRoutingRequest(svc))});if(!row.plan.changes?.length&&!row.plan.objects.length)row.state=action==='unpublish'?'Already local':'Already global';}catch(e){row.error=e.message;row.state='Preview failed';}
     rows.push(row);
   }
   A.globalBatch=rows;A.plan=null;A.validation=null;A.phase=3;
@@ -88,9 +112,9 @@ function amGlobalBatchPanel(){
       <div class="row between wrap"><h3>${esc(row.cluster)}${row.action==='unpublish'?' · stop publishing':''}</h3><span class="badge ${row.applied||row.state==='Already global'?'green':'blue'}">${esc(row.state)}</span></div>
       ${row.error?`<p class="red" role="alert">${esc(row.error)}</p>`:''}
       ${row.plan?`<p>${row.plan.changes?.length||0} existing resources to update · ${row.plan.objects.length} to create</p>
-        <details><summary>Reviewed YAML for ${esc(row.cluster)}</summary><pre class="code">${esc(row.plan.yaml)}</pre></details>
+        <details class="am-global-yaml" open><summary>YAML for ${esc(row.cluster)}</summary><pre class="code">${esc(row.plan.yaml)}</pre></details>
         ${row.state!=='Already global'?amContextControl(row.cluster,A.contexts,row.context,`data-amglobalcontext="${i}" ${row.applied?'disabled':''}`):''}
-        <div class="row wrap"><button data-amglobaldownload="${i}">Download YAML</button>${row.state!=='Already global'?`<button data-amglobalvalidate="${i}" ${!row.context||row.applied?'disabled':''}>Dry-run only</button><button class="primary" data-amglobalapply="${i}" ${!row.context||row.applied?'disabled':''}>Review and apply to ${esc(row.cluster)}…</button>`:''}</div>
+        <div class="row wrap"><button data-amglobalcopy="${i}">Copy YAML</button>${row.state!=='Already global'?`<button data-amglobalvalidate="${i}" ${!row.context||row.applied?'disabled':''}>Dry-run only</button><button class="primary" data-amglobalapply="${i}" ${!row.context||row.applied?'disabled':''}>Review and apply to ${esc(row.cluster)}…</button>`:''}</div>
         ${row.validation&&!row.applied?'<p class="green">Validated for this exact context and plan. Apply within ten minutes.</p>':''}`:''}
     </article>`).join('')}${amTaskLinks(['global-service'])}</div></section>`;
 }
@@ -117,11 +141,13 @@ function amWireGlobalPublication(){
   });
   // addEventListener: the generic parameter handler later replaces onchange.
   document.querySelectorAll('[data-amglobaledit]').forEach(input=>input.addEventListener('change',()=>{amCapture();amInvalidate();render();}));
+  document.querySelectorAll('[data-amglobaldist], #am-global-takeover').forEach(input=>input.addEventListener('change',()=>{const F=S.ambient.settings,d=document.querySelector('[data-amglobaldist]:checked');if(d)F.globalDistribution=d.value;const t=$('#am-global-takeover');if(t)F.globalTakeover=t.checked;amInvalidate();render();}));
   document.querySelectorAll('[data-amglobalsetup]').forEach(b=>b.onclick=()=>amGlobalSetupGuide(b.dataset.amglobalsetup));
   document.querySelectorAll('.am-global-plan').forEach((el,i)=>{const row=A.globalBatch[i],badge=el.querySelector('.badge'),ok=row.applied||!!row.validation||row.state==='Already global';badge.className='badge '+(row.error?'red':ok?'green':'blue');badge.textContent=(row.error?'✕ ':ok?'✓ ':'')+row.state;});
   document.querySelectorAll('.am-global-plan').forEach((el,i)=>{const row=A.globalBatch[i];if(row.state!=='Already global')return;const evidence=publicationRows.find(r=>r.cluster===row.cluster),aliases=evidence?.publication?.globalAliases||[],allocated=aliases.length>0&&aliases.every(a=>a.addresses?.length),badge=el.querySelector('.badge');badge.className='badge '+(allocated?'blue':'amber');badge.textContent=amPublicationEvidenceLabel({...evidence,global:true});});
   document.querySelectorAll('[data-amglobalcluster]').forEach(box=>box.onchange=()=>{amCapture();A.globalBatch=null;amInvalidate();});
   document.querySelectorAll('[data-amglobalcontext]').forEach(select=>select.onchange=()=>{const row=A.globalBatch[Number(select.dataset.amglobalcontext)];row.context=select.value;row.validation=null;row.error='';row.state='Preview';render();});
+  document.querySelectorAll('[data-amglobalcopy]').forEach(button=>button.onclick=()=>copyTerminalCommand(A.globalBatch[Number(button.dataset.amglobalcopy)].plan.yaml));
   document.querySelectorAll('[data-amglobaldownload]').forEach(button=>button.onclick=()=>{const row=A.globalBatch[Number(button.dataset.amglobaldownload)];amDownload(row.plan.yaml,'flightbay-global-'+row.cluster.replace(/[^a-zA-Z0-9._-]/g,'_')+'.yaml');});
   for(const [attribute,operation]of [['amglobalvalidate','validate'],['amglobalapply','apply']])document.querySelectorAll('[data-'+attribute+']').forEach(button=>button.onclick=async()=>{
     if(A.busy)return;const index=Number(button.dataset[attribute]),row=A.globalBatch[index];
@@ -147,3 +173,5 @@ function amConfirmApply(entries){
     $('#am-confirm-cancel').onclick=()=>finish(false);$('#am-confirm-apply').onclick=()=>finish(true);$('#am-confirm-cancel').focus({preventScroll:true});
   });
 }
+
+function amGlobalRoutingRequest(svc){const F=S.ambient.settings,cur=amGlobalRouting(svc),out={};const d=F.globalDistribution??cur.distribution;if(F.globalDistribution!==undefined||d!=='default')out.globalDistribution=d;if(F.globalTakeover!==undefined)out.globalTakeover=F.globalTakeover;return out;}

@@ -59,11 +59,37 @@ func generateGlobalService(ws *store.Workspace, req Request) (*Plan, error) {
 	}
 	p := basePlan(req, svc)
 	p.ServiceUID = S(Path(svc.Obj, "metadata", "uid"))
+	values := map[string]any{}
+	remove := []string{}
 	if svc.Labels()["solo.io/service-scope"] == "global-only" {
 		p.Notes = append(p.Notes, "This Service already uses legacy global-only publication; its existing local-name takeover behaviour is preserved.")
 	} else {
-		change(p, svc, "Publish this Service across the peered mesh", map[string]any{"/metadata/labels/solo.io~1service-scope": "global"})
+		values["/metadata/labels/solo.io~1service-scope"] = "global"
 	}
-	p.Notes = append(p.Notes, "Only this Service in context "+req.Cluster+" is changed. The application is not copied to another cluster. Review the corresponding Service in each cluster that should contribute endpoints.", "The mesh controller generates the global ServiceEntry and DNS hostnames. This plan does not create or edit generated ServiceEntries, establish peering, or change service-takeover settings.", "After applying, refresh inventory to see the actual published global DNS names. Kubernetes dry-run validates the label patch, not the licence, peer connectivity or end-to-end traffic.")
+	switch d := req.GlobalDistribution; d {
+	case "":
+	case "default":
+		remove = append(remove, "/metadata/annotations/networking.istio.io~1traffic-distribution")
+	case "Any", "PreferClose", "PreferRegion", "PreferNetwork":
+		values["/metadata/annotations/networking.istio.io~1traffic-distribution"] = d
+		if d == "Any" {
+			p.Notes = append(p.Notes, "Any spreads connections round robin across every endpoint in every cluster, so the share follows replica counts, not clusters. ztunnel balances per connection; a client that keeps one connection open stays on one backend. Set the same value in each cluster that serves this Service.")
+		}
+		if td := S(Path(svc.Obj, "spec", "trafficDistribution")); td != "" {
+			p.Notes = append(p.Notes, "spec.trafficDistribution is "+td+" on this Service and takes precedence over the annotation; remove it for this setting to apply.")
+		}
+	default:
+		return nil, fmt.Errorf("traffic distribution must be Any, PreferClose, PreferRegion or PreferNetwork")
+	}
+	if req.GlobalTakeover != nil {
+		if *req.GlobalTakeover {
+			values["/metadata/labels/solo.io~1service-takeover"] = "true"
+			p.Notes = append(p.Notes, "Takeover sends requests for the local cluster.local name through the global hostname as well, so local callers use every cluster's endpoints. Solo recommends a traffic distribution other than PreferNetwork with takeover.")
+		} else {
+			remove = append(remove, "/metadata/labels/solo.io~1service-takeover")
+		}
+	}
+	change(p, svc, "Publish this Service across the peered mesh with the chosen routing", values, remove...)
+	p.Notes = append(p.Notes, "Only this Service in context "+req.Cluster+" is changed. The application is not copied to another cluster. Review the corresponding Service in each cluster that should contribute endpoints.", "Default routing for a global service is PreferNetwork: callers use endpoints in their own cluster and only go to another cluster when none are healthy.", "After applying, refresh inventory to see the actual published global DNS names. Kubernetes dry-run validates the change, not the licence, peer connectivity or end-to-end traffic.")
 	return finishPlan(p)
 }

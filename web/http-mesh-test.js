@@ -41,13 +41,13 @@ function httpMeshDestination(name,samples,count){
 }
 
 function httpMeshDashboard(){
-  const T=HTTP_TEST,run=T.meshSnapshot||{count:T.count,names:T.names,method:T.profile.method,path:T.profile.path},rows=T.results||[],total=T.meshRequested||run.count*run.names.length,ok=rows.filter(r=>!r.error&&r.status>=200&&r.status<300).length,unknown=rows.filter(r=>!r.responder).length;
-  const names=[...new Set([...run.names,...rows.map(r=>r.name)])],state=T.busy?'RUNNING':T.meshSummary?.failed?'FAILED':T.meshSummary?.stopped?'STOPPED':T.meshSummary?'COMPLETE':'WAITING';
+  const T=HTTP_TEST,run=T.meshSnapshot||{count:T.count,names:T.names,method:T.profile.method,path:T.profile.path},rows=T.results||[],total=T.meshRequested||run.count*run.names.length,ok=rows.filter(r=>!r.error&&r.status>=200&&r.status<300).length,denied=rows.filter(httpDenied).length,unknown=rows.filter(r=>!r.responder&&!httpDenied(r)).length;
+  const names=[...new Set([...run.names,...rows.map(r=>r.name)])],state=T.busy?'RUNNING':T.meshSummary&&denied&&denied===rows.length?'DENIED BY POLICY':T.meshSummary?.failed?'FAILED':T.meshSummary?.stopped?'STOPPED':T.meshSummary?'COMPLETE':'WAITING';
   return `<section class="http-mesh-dashboard"><header class="hm-result-head"><div><h3>Traffic distribution</h3><p><strong>${esc(run.method)}</strong> ${esc(run.path)} · ${total} requests planned</p>${T.meshClient?`<p class="hm-source-client">Source client: <strong>${esc(T.meshClient.pod.cluster||T.service?.cluster||'Unknown cluster')}</strong> · ${esc(T.meshClient.pod.namespace+'/'+T.meshClient.pod.name)}${T.mode==='ephemeral'?' · temporary':''}</p>`:''}</div><span class="hm-state ${T.busy?'running':''}">${T.busy?'<span class="bd-spinner" aria-hidden="true"></span>':''}${state}</span></header>
     ${httpTestDirection(rows)}
     ${httpEphemeralStatus()}
     ${!httpInMesh(T.mode)?`<div class="hm-connection-evidence"><strong>Traffic origin: Flightbay native HTTP client</strong><p>${esc(T.meshConnectionNote||'Requests run from the Flightbay host; no helper workloads are deployed.')}</p>${T.meshConnectionAddress?`<code>${esc(T.meshConnectionAddress)}</code>`:''}${T.meshConnectionPod?`<small>Connection target: ${esc(T.meshConnectionPod.cluster+'/'+T.meshConnectionPod.namespace+'/'+T.meshConnectionPod.name)}</small>`:''}</div>`:''}
-    <div class="hm-metrics"><div><strong>${rows.length}<span> / ${total}</span></strong><small>Requests completed</small></div><div><strong>${ok}</strong><small>HTTP 2xx</small></div><div class="${rows.length-ok?'hm-attention':''}"><strong>${rows.length-ok}</strong><small>HTTP / request errors</small></div><div class="${unknown?'hm-attention':''}"><strong>${unknown}</strong><small>Responder unidentified</small></div></div>
+    <div class="hm-metrics"><div><strong>${rows.length}<span> / ${total}</span></strong><small>Requests completed</small></div><div><strong>${ok}</strong><small>HTTP 2xx</small></div>${denied?`<div class="hm-denied"><strong>${denied}</strong><small>Denied by policy (403)</small></div>`:''}<div class="${rows.length-ok-denied?'hm-attention':''}"><strong>${rows.length-ok-denied}</strong><small>Other HTTP / request errors</small></div><div class="${unknown?'hm-attention':''}"><strong>${unknown}</strong><small>Responder unidentified${denied?' (denied requests have none)':''}</small></div></div>
     ${httpStatusBreakdown(rows)}
     <div class="hm-progress" role="progressbar" aria-label="Completed requests" aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${rows.length}"><span style="width:${100*rows.length/Math.max(total,1)}%"></span></div>
     ${T.meshSummary?.unattempted?`<p class="hm-run-note">${rows.length} responses retained. ${T.meshSummary.unattempted} ${T.meshSummary.remainingUnconfirmed?'remaining requests have no confirmed result.':'requests were not attempted.'}</p>`:''}
@@ -138,7 +138,10 @@ function httpTestMarkup(){
 function httpStatusBreakdown(rows){
   if(!rows.length)return '';
   const counts={};rows.forEach(r=>{const k=r.status?String(r.status):'error';counts[k]=(counts[k]||0)+1;});
-  const rbac=rows.some(r=>r.status===403&&/RBAC: access denied/i.test((r.body||r.note||r.error||'')+''));
+  const rbac=rows.some(httpDenied);
   const label=k=>k==='403'?(rbac?'denied by an authorization policy (RBAC: access denied)':'forbidden'):k==='200'?'OK':k==='503'?'unavailable':k==='error'?'no HTTP response':'';
   return `<p class="hm-status-codes"><strong>Status codes</strong> ${Object.keys(counts).sort().map(k=>`<span class="badge ${k==='403'?'red':/^2/.test(k)?'green':'amber'}">${esc(k)} × ${counts[k]}</span>${label(k)?` <small>${esc(label(k))}</small>`:''}`).join(' ')}</p>`;
 }
+
+// A 403 with Envoy's RBAC body is a policy decision, not an error.
+function httpDenied(r){return r.status===403&&/RBAC: access denied|authorization failed/i.test(String(r.body||r.note||r.error||''));}

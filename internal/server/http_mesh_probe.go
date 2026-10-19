@@ -548,7 +548,7 @@ func meshRouteEvidence(ctx context.Context, c ambientConnection, target ambient.
 		warnings = append(warnings, "Multiple Service-parent HTTPRoutes reference this Service. Check their matches and precedence; a newer weighted route does not necessarily replace the existing route.")
 	}
 	if len(rules) == 0 {
-		warnings = append(warnings, "No Service-parent HTTPRoute was found. Observed responses do not establish an expected configured split.")
+		// No route is the normal case (no split configured); not a notice.
 	}
 	return rules, backends, warnings
 }

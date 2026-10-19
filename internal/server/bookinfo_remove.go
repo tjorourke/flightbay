@@ -304,7 +304,7 @@ func (s *Server) bookinfoRemoval(w http.ResponseWriter, r *http.Request) {
 		descriptions = append(descriptions, map[string]any{"id": id, "planId": p.ID, "resources": rec.Created})
 	}
 	if q.Operation == "preview" {
-		writeJSON(w, 200, map[string]any{"cluster": q.Cluster, "namespace": q.Namespace, "context": q.Context, "installations": descriptions, "note": "Only recorded installer-owned Bookinfo resources will be removed. Namespace, mesh infrastructure and unrelated resources are retained. The demo namespace waypoint reference is cleared only if it still points to the removed demo waypoint."})
+		writeJSON(w, 200, map[string]any{"cluster": q.Cluster, "namespace": q.Namespace, "context": q.Context, "installations": descriptions, "note": "Removes the recorded Bookinfo resources, then deletes namespace " + q.Namespace + " that Flightbay created for it, with anything else inside it (for example policies you added while testing). Mesh infrastructure outside the namespace is kept."})
 		return
 	}
 	if len(chosen) != len(q.IDs) {
@@ -323,5 +323,41 @@ func (s *Server) bookinfoRemoval(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	writeJSON(w, 200, map[string]any{"message": "Recorded Bookinfo resources removed. Namespace and unrelated resources retained."})
+	// The installer created the namespace, so removing Bookinfo removes it too,
+	// guarded by the namespace UID recorded at install time and its labels.
+	nsDeleted := false
+	for _, rec := range chosen {
+		identity := strings.SplitN(rec.Plan.ServiceUID, "/", 2)
+		if len(identity) != 2 || identity[1] == "" {
+			continue
+		}
+		res := c.client.Resource(schema.GroupVersionResource{Version: "v1", Resource: "namespaces"})
+		ns, err := res.Get(ctx, q.Namespace, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			nsDeleted = true
+			break
+		}
+		if err != nil || string(ns.GetUID()) != identity[1] || ns.GetLabels()["flightbay.dev/demo"] != "bookinfo" || ns.GetLabels()["app.kubernetes.io/managed-by"] != "flightbay" {
+			continue
+		}
+		uid := ns.GetUID()
+		if err := res.Delete(ctx, q.Namespace, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}); err != nil && !apierrors.IsNotFound(err) {
+			jerr(w, 409, "workloads removed, but deleting namespace "+q.Namespace+" failed: "+err.Error())
+			return
+		}
+		nsDeleted = true
+		break
+	}
+	if nsDeleted {
+		for _, rec := range s.ambientS.records {
+			p := rec.Plan
+			if p.Request.Demo != nil && p.Request.Demo.Stage == "namespace" && p.Request.Cluster == q.Cluster && p.Request.Namespace == q.Namespace && rec.ApplyState != "removed" {
+				rec.ApplyState = "removed"
+				_ = s.saveAmbientRecord(rec)
+			}
+		}
+		writeJSON(w, 200, map[string]any{"message": "Bookinfo removed, including namespace " + q.Namespace + ". Everything left in it was deleted with it."})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"message": "Recorded Bookinfo resources removed. The namespace was kept because it no longer matches the one Flightbay created."})
 }

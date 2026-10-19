@@ -76,7 +76,7 @@ function parseHash() {
       S.ambient.key=key;S.ambient.kind=targetKind;
       if(p.has('service')||p.has('route'))S.ambient.route=p.get('route')||'';
     }
-    if(['investigate','map','path','demo','wizard'].includes(p.get('tab')))S.ambient.tab=p.get('tab');
+    if(['investigate','map','path','demo','wizard','changes'].includes(p.get('tab')))S.ambient.tab=p.get('tab');
     if(p.get('tab')==='path'&&typeof RP!=='undefined'){for(const [query,key]of [['caller','source'],['destination','destination'],['host','host'],['port','port'],['method','method'],['path','path']])if(p.has(query))RP[key]=p.get(query);}
     if(p.has('step'))S.ambient.pendingStep=p.get('step');
   }
