@@ -46,16 +46,7 @@ function amConfigurationHome(svc){
     ${applied&&A.currentRefreshPending?'<div class="notice info" role="status">The cluster was updated. This capture has not caught up yet; refresh before editing again.</div>':''}
     ${amWaypointPanel(A.result.waypointBinding,svc)}
     ${amPoliciesPanel(svc)}
-    <p class="am-current-context"><span>Configured resources are shown below. These values are not measured traffic.</span></p>
-    ${routes.length>1?`<div class="am-current-overlap" role="status">${routes.length} routing rules are configured for this Service. They may overlap. Choose the exact route to edit and check its request matches.</div>`:''}
-    ${entries.some(e=>!AM_POLICY_KINDS.includes(e.ref.kind))?`<div class="am-current-grid">${entries.map((e,i)=>{if(AM_POLICY_KINDS.includes(e.ref.kind))return '';
-      const tasks=amConfigurationTasks(e),editTasks=e.request?.tasks||[],labels={'weighted-routing':'Edit split',timeouts:'Edit timeout','load-balancing':'Edit balancing','endpoint-failover':'Edit ejection','strict-mtls':'Edit TLS','l4-allow-namespace':'Edit callers',methods:'Edit methods','rate-limit':'Edit rate limit','access-rule':'Edit rules'};
-      return `<article class="am-current-card"><div class="am-current-card-head"><h3>${esc(amConfigurationTitle(e))}</h3><span class="badge ${e.status==='Accepted'?'green':'blue'}">${esc(e.status||'Captured')}</span></div>
-        <p class="am-current-resource">${esc(e.ref.kind)} · ${esc(e.ref.namespace+'/'+e.ref.name)}${e.ref.kind==='HTTPRoute'?' · rule '+(e.rule+1):''}</p>
-        ${amConfigurationValues(e)}${e.ref.kind==='HTTPRoute'?`<p class="am-current-match">${esc(amConfigurationMatch(e))}</p>`:''}<p class="am-current-scope">${esc(e.scope||'Existing attachment scope is retained')}</p>
-        ${!e.supported?`<p class="am-current-readonly">${esc(e.reason)}</p>`:''}
-        <div class="am-current-actions">${e.supported?editTasks.map((task,j)=>`<button ${j===0?'class="primary"':''} data-am-edit-config="${i}" data-am-edit-task="${esc(task)}">${esc(labels[task]||'Edit settings')}</button>`).join(''):''}<button data-amyaml="${attr(e.ref)}">View YAML</button>${amConfigurationTasks(e).includes('access-rule')?`<button data-am-test-rule="${i}" title="Open Test service from an in-mesh Pod with this rule's headers filled in">Test this rule</button>`:''}</div></article>`;
-    }).join('')}</div>`:'<div class="am-current-empty"><h3>No custom routing configuration captured</h3><p>Add a capability below, or refresh the capture if you expect existing settings. Missing evidence does not prove that no configuration exists.</p></div>'}
+    ${amRoutingPanel(svc,entries,routes)}
     </div></section>
     ${entries.length?`<details class="panel am-current-add" id="am-add-config" ${A.createOpen?'open':''}><summary>Add another capability <span>Existing settings are edited above</span></summary>${amTaskCards()}</details>`:amTaskCards()}`;
 }
@@ -85,6 +76,7 @@ function amWireCurrentConfiguration(){
   const A=S.ambient;
   document.querySelectorAll('[data-am-edit-config]').forEach(b=>b.onclick=()=>amOpenConfiguration(A.result.editable[Number(b.dataset.amEditConfig)],b.dataset.amEditTask));
   if($('#am-retest-current'))$('#am-retest-current').onclick=()=>{const service=amService();if(!service)return;HTTP_TEST.panel='request';amOpenHTTPTest(service);};
+  document.querySelectorAll('[data-am-entry-yaml]').forEach(d=>d.addEventListener('toggle',async()=>{if(!d.open||d.dataset.loaded)return;d.dataset.loaded='1';const e=A.result.editable[Number(d.dataset.amEntryYaml)];try{const o=await api('api/object',e.ref);d.querySelector('pre').textContent=o.yaml;}catch(err){d.querySelector('pre').textContent=err.message;}}));
   document.querySelectorAll('[data-am-policy-yaml]').forEach(d=>d.addEventListener('toggle',async()=>{if(!d.open||d.dataset.loaded)return;d.dataset.loaded='1';const p=A.result.policies[Number(d.dataset.amPolicyYaml)];try{const o=await api('api/object',p.ref);d.querySelector('pre').textContent=o.yaml;}catch(e){d.querySelector('pre').textContent=e.message;}}));
   if($('[data-am-new-access]'))$('[data-am-new-access]').onclick=()=>{const cap=(A.capabilities||[]).find(c=>c.id==='access-rule');if(!cap?.supported){toast('Allow or deny requests needs an Istio waypoint for this Service. Use Change waypoint above.');return;}amSaveConfigurationDraft();amResetDraft(true);A.tab='wizard';A.tasks={'access-rule':true};A.phase=2;render();};
   document.querySelectorAll('[data-am-test-rule]').forEach(b=>b.onclick=()=>amTestAccessRule(A.result.editable[Number(b.dataset.amTestRule)].request?.access));
@@ -162,7 +154,27 @@ async function amTestAccessRule(access){
   await amOpenHTTPTest(service);
   // Without an existing curl Pod, run from a temporary one in the Service's
   // namespace so the request still goes through ztunnel and the waypoint.
-  if((HTTP_TEST.options?.clients||[]).length){HTTP_TEST.mode='mesh';HTTP_TEST.count=5;if(typeof drawHTTPTest==='function')drawHTTPTest();}
-  else if((HTTP_TEST.contexts||[]).length){HTTP_TEST.mode='ephemeral';HTTP_TEST.ephemeralNamespace=service.namespace;HTTP_TEST.count=5;if(typeof drawHTTPTest==='function')drawHTTPTest();}
+  if((HTTP_TEST.options?.clients||[]).length){HTTP_TEST.mode='mesh';HTTP_TEST.count=1;if(typeof drawHTTPTest==='function')drawHTTPTest();}
+  else if((HTTP_TEST.contexts||[]).length){HTTP_TEST.mode='ephemeral';HTTP_TEST.ephemeralNamespace=service.namespace;HTTP_TEST.count=1;if(typeof drawHTTPTest==='function')drawHTTPTest();}
   toast(Object.keys(headers).length?'Headers from the rule are filled in. A DENY that works returns 403 from an in-mesh client.':'Fill in a request that matches the rule, then run it.');
+}
+
+// Routing and traffic settings, drawn with the same card anatomy as the
+// security policies above: kind, name, status, then what it does, then
+// Edit / Open / YAML.
+function amRoutingPanel(svc,entries,routes){
+  const items=entries.map((e,i)=>({e,i})).filter(({e})=>!AM_POLICY_KINDS.includes(e.ref.kind));
+  const labels={'weighted-routing':'Edit split',timeouts:'Edit timeout','load-balancing':'Edit balancing','endpoint-failover':'Edit ejection','strict-mtls':'Edit TLS','l4-allow-namespace':'Edit callers',methods:'Edit methods','rate-limit':'Edit rate limit','access-rule':'Edit rules'};
+  const body=items.length?items.map(({e,i})=>{
+    const editTasks=e.request?.tasks||[];
+    return `<article class="am-policy-card">
+      <div class="row between wrap"><div class="row wrap"><span class="badge">${esc(e.ref.kind)}</span><strong>${esc(e.ref.namespace+'/'+e.ref.name)}</strong>${e.ref.kind==='HTTPRoute'?`<small class="muted">rule ${e.rule+1}</small>`:''}<span class="badge blue">${esc(amConfigurationTitle(e))}</span><span class="badge ${e.status==='Accepted'?'green':''}">${esc(e.status||'Captured')}</span></div>
+        <div class="row">${e.supported?editTasks.map((task,j)=>`<button ${j===0?'class="primary"':''} data-am-edit-config="${i}" data-am-edit-task="${esc(task)}">${esc(labels[task]||'Edit')}</button>`).join(''):''}<button data-amyaml="${attr(e.ref)}">Open</button></div></div>
+      ${e.ref.kind==='HTTPRoute'?`<p class="muted">Matches ${esc(amConfigurationMatch(e))}. ${esc(e.scope||'')}</p>`:e.scope?`<p class="muted">${esc(e.scope)}</p>`:''}
+      <div class="am-policy-values">${amConfigurationValues(e)}</div>
+      ${!e.supported?`<p class="am-current-readonly">${esc(e.reason)}</p>`:''}
+      <details class="am-policy-yaml" data-am-entry-yaml="${i}"><summary>YAML</summary><pre class="code">Loading…</pre></details>
+    </article>`;}).join(''):`<p class="muted">No HTTPRoute, DestinationRule or other routing captured for this Service. Traffic goes to its own endpoints with the controller defaults.</p>`;
+  return `<section class="am-policies"><div class="row between"><h3>Routing for this Service <span class="badge">${items.length}</span></h3></div>
+    ${routes.length>1?`<p class="amber" role="status">${routes.length} routing rules target this Service and may overlap. Check each rule's matches.</p>`:''}${body}</section>`;
 }

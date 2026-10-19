@@ -142,13 +142,17 @@ function amTaskCards(){
   const installed=new Set(A.edit?[]:(A.result?.editable||[]).flatMap(e=>e.tasks||e.request?.tasks||[]));
   const supported=A.capabilities.filter(c=>c.supported&&!installed.has(c.id)&&(!allowed||allowed.includes(c.id))),blockedAll=A.capabilities.filter(c=>!supported.includes(c)&&!installed.has(c.id));
   // Tasks that only need an Istio waypoint are shown as cards, not hidden.
-  const needsIstio=A.edit?[]:blockedAll.filter(amNeedsIstioWaypoint),unavailable=blockedAll.filter(c=>!needsIstio.includes(c));
+  // Only group tasks under "Needs an Istio waypoint" when the waypoint in
+  // use is not Istio; on an Istio waypoint those tasks are blocked for
+  // other reasons, which the list below says plainly.
+  const wpProduct=A.result?.waypointBinding?.product||'';
+  const needsIstio=A.edit||wpProduct==='istio'?[]:blockedAll.filter(amNeedsIstioWaypoint),unavailable=blockedAll.filter(c=>!needsIstio.includes(c));
   const wb=A.result?.waypointBinding,current=wb?.name?`${wb.namespace}/${wb.name} (${wb.product==='agentgateway'?'agentgateway':wb.product||'unknown'})`:'no waypoint';
   return `<section class="panel am-task-picker"><div class="panel-head"><div><h2>${A.edit?'Fields to change':'Add configuration'}</h2><p class="muted">${A.edit?'Choose the fields to update on this existing resource.':'Choose a new capability. Edit settings already configured from Current configuration above.'}</p></div></div>
     <div class="panel-body"><div class="am-task-cards">${supported.map(c=>{const [title,desc,group]=amTaskText[c.id]||[c.title,c.reason,'Configuration'];return `<label class="am-task-card ${A.tasks[c.id]?'selected':''}"><input type="checkbox" data-amtask="${esc(c.id)}" ${A.tasks[c.id]?'checked':''}><span><small>${esc(group)} · ${esc(c.layer)}</small><strong>${esc(title)}</strong><span>${esc(desc)}</span></span></label>`;}).join('')}</div>
     ${needsIstio.length?`<div class="am-istio-tasks"><div class="am-istio-tasks-head"><div><h3>Needs an Istio waypoint · ${needsIstio.length} task${needsIstio.length===1?'':'s'}</h3><p>This Service does have a waypoint, ${esc(current)}, but these tasks generate Istio policy and routing that only an Istio waypoint enforces. Bind an Istio waypoint to this Service (the namespace keeps its current one), then they become available.</p></div><button class="primary" data-amwaypoint="new" data-amwpistio="1">Deploy an Istio waypoint for ${esc(amService()?.name||'this Service')}…</button></div><div class="am-task-cards">${needsIstio.map(c=>{const [title,desc,group]=amTaskText[c.id]||[c.title,'','Configuration'];return `<div class="am-task-card am-task-blocked" aria-disabled="true"><span><small>${esc(group)} · ${esc(c.layer)}</small><strong>${esc(title)}</strong><span>${esc(desc||c.title)}</span><em>Needs an Istio waypoint</em></span></div>`;}).join('')}</div></div>`:''}
     ${supported.length?'':installed.size?'<p class="muted">Available capabilities are already configured. Use their Edit actions above.</p>':`<div class="notice info">No traffic templates match the captured waypoint and APIs. <button id="am-open-waypoint">Set up a waypoint</button></div>`}
-    ${unavailable.length?`<details class="am-unavailable"><summary>${unavailable.length} other task${unavailable.length===1?'':'s'} not available here · why?</summary>${unavailable.map(c=>`<div><strong>${esc(c.title)}</strong><p>${esc(allowed&&!allowed.includes(c.id)?'This task edits another configuration. Return to Current configuration to choose it.':c.reason)}</p>${amNeedsIstioWaypoint(c)?'<button data-amwaypoint="new" data-amwpistio="1">Deploy an Istio waypoint…</button> <button data-amwaypoint="existing">Use an existing waypoint…</button>':''}</div>`).join('')}</details>`:''}
+    ${unavailable.length?`<details class="am-unavailable"><summary>${unavailable.length} task${unavailable.length===1?'':'s'} not available for this Service · why?</summary>${unavailable.map(c=>{const why=amUnavailableKind(c,wpProduct);return `<div><strong>${esc(amTaskText[c.id]?.[0]||c.title)}</strong> <span class="badge ${why.tone}">${esc(why.label)}</span><p>${esc(allowed&&!allowed.includes(c.id)?'This task edits another configuration. Return to Current configuration to choose it.':why.text||c.reason)}</p>${amNeedsIstioWaypoint(c)?'<button data-amwaypoint="new" data-amwpistio="1">Deploy an Istio waypoint…</button> <button data-amwaypoint="existing">Use an existing waypoint…</button>':''}</div>`;}).join('')}</details>`:''}
     <div class="am-wizard-footer"><button id="am-change-target">Change target</button><button id="am-next-options" class="primary" ${Object.values(A.tasks).some(Boolean)?'':'disabled'}>${A.edit?'Edit selected fields':'Configure selected tasks'} →</button></div></div></section>`;
 }
 function amEditors() {
@@ -447,7 +451,7 @@ async function amReviewExplanation(x){
 // operation every field set must match. "Rules YAML" takes anything else.
 const AM_SOURCE_FIELDS=[['principals','Caller principal','notPrincipals','cluster.local/ns/NS/sa/ACCOUNT'],['namespaces','Caller namespace','notNamespaces','web, payments'],['services','Caller Service (resolved to its identities)','','namespace/name'],['serviceAccounts','Service account','notServiceAccounts','ns/account'],['requestPrincipals','JWT request principal','notRequestPrincipals','issuer/subject or issuer/*'],['ipBlocks','Source IP block','notIpBlocks','10.0.0.0/8'],['remoteIpBlocks','Remote IP block (X-Forwarded-For)','notRemoteIpBlocks','203.0.113.0/24']];
 const AM_OP_FIELDS=[['methods','Method','notMethods','GET, POST'],['paths','Path','notPaths','/api/*, /admin'],['ports','Port','notPorts','8080'],['hosts','Host','notHosts','api.example.com']];
-const AM_WHEN_KEYS=['request.headers[x-req-origin-type]','request.headers[','source.ip','remote.ip','source.namespace','source.principal','source.serviceAccount','request.auth.principal','request.auth.audiences','request.auth.presenter','request.auth.claims[iss]','destination.ip','destination.port','connection.sni'];
+const AM_WHEN_KEYS=['request.headers[','request.headers[x-env]','request.headers[user-agent]','source.ip','remote.ip','source.namespace','source.principal','source.serviceAccount','request.auth.principal','request.auth.audiences','request.auth.presenter','request.auth.claims[iss]','destination.ip','destination.port','connection.sni'];
 const amEmptyRule=()=>({from:[],to:[],when:[{key:'',op:'is',values:''}]});
 function amAccessDraft(){
   const F=S.ambient.settings;
@@ -480,16 +484,18 @@ function amAccessRuleMarkup(svc){
     ${agw?'<p class="muted am-access-agw">Who is calling: caller identity rules are generated for Istio waypoints only.</p>':block('from',AM_SOURCE_FIELDS,r.from,i,'Who is calling','<code>from</code> · any caller block may match; every field inside one must')}
     ${block('to',opFields,r.to,i,'What they ask for','<code>to</code> · any operation block may match')}
     <div class="am-access-block"><h5>Conditions <small><code>when</code> · all must match · keys such as <code>request.headers[name]</code>, <code>source.ip</code>, <code>request.auth.claims[iss]</code></small></h5>
-      ${r.when.map((c,k)=>`<div class="am-access-row" data-amaccesswhen="${i}:${k}"><input data-amaccessw="key" value="${esc(c.key)}" list="am-access-keys" placeholder="request.headers[x-req-origin-type]" aria-label="Condition key" autocomplete="off" spellcheck="false"><select data-amaccessw="op" aria-label="Match">${amOpts([{value:'is',label:'is one of'},{value:'not',label:'is not one of'}],c.op)}</select><input data-amaccessw="values" value="${esc(c.values)}" placeholder="be" aria-label="Values" autocomplete="off" spellcheck="false"><button class="link" data-amaccessdelwhen="${i}:${k}" aria-label="Remove condition">×</button></div>`).join('')}
+      ${r.when.map((c,k)=>`<div class="am-access-row" data-amaccesswhen="${i}:${k}"><input data-amaccessw="key" value="${esc(c.key)}" list="am-access-keys" placeholder="request.headers[x-env]" aria-label="Condition key" autocomplete="off" spellcheck="false"><select data-amaccessw="op" aria-label="Match">${amOpts([{value:'is',label:'is one of'},{value:'not',label:'is not one of'}],c.op)}</select><input data-amaccessw="values" value="${esc(c.values)}" placeholder="test, staging" aria-label="Values" autocomplete="off" spellcheck="false"><button class="link" data-amaccessdelwhen="${i}:${k}" aria-label="Remove condition">×</button></div>`).join('')}
       <button class="link" data-amaccessaddwhen="${i}">+ condition (and)</button></div>
   </article>`;
   return `<section class="am-access" id="am-access">
     ${agw?'<div class="notice info"><div><strong>Generated for the agentgateway waypoint</strong><p>This Service uses an agentgateway waypoint, so Flightbay writes an agentgateway authorization policy (CEL), not an Istio AuthorizationPolicy, which agentgateway would ignore. Headers, methods and paths are supported.</p></div></div>':''}<fieldset class="am-choice-group"><legend>When a rule matches the request</legend>${[['DENY','Deny it','Refused even if another policy allows it.'],['ALLOW','Allow it','Requests no ALLOW rule matches are refused.'],['AUDIT','Audit it','Marked for the audit provider; not allowed or denied.'],['CUSTOM','Ask an external authorizer','Sent to an extension provider from the mesh config.']].filter(x=>!agw||['DENY','ALLOW'].includes(x[0])).map(([v,l,d])=>`<label class="am-choice"><input type="radio" name="am-access-action" value="${v}" ${a.action===v?'checked':''}><span><strong>${l}</strong><small>${d}</small><code>${v}</code></span></label>`).join('')}</fieldset>
     ${a.action==='CUSTOM'?`<label>Extension provider name <input id="am-access-provider" value="${esc(a.provider)}" placeholder="my-ext-authz" autocomplete="off"></label>`:''}
+    <label class="am-access-sample">Start from a sample <select id="am-access-sample"><option value="">Choose a sample…</option>${amAccessSamples(agw,svc).map((x,i)=>`<option value="${i}">${esc(x[0])}</option>`).join('')}</select></label>
     <div class="ht-tabs am-access-mode" role="group" aria-label="Edit mode" ${agw?'hidden':''}><button data-amaccessmode="form" aria-pressed="${a.mode!=='yaml'}">Rules</button><button data-amaccessmode="yaml" aria-pressed="${a.mode==='yaml'}">Rules YAML</button></div>
     <datalist id="am-access-ns">${namespaces.map(n=>`<option value="${esc(n)}">`).join('')}</datalist><datalist id="am-access-svc">${services.map(n=>`<option value="${esc(n)}">`).join('')}</datalist><datalist id="am-access-keys">${AM_WHEN_KEYS.map(k=>`<option value="${esc(k)}">`).join('')}</datalist>
     ${a.mode==='yaml'?`<label>spec.rules <textarea id="am-access-yaml" rows="12" spellcheck="false" placeholder="- when:\n  - key: request.headers[x-req-origin-type]\n    values: [be]">${esc(a.yaml)}</textarea></label><p class="muted">Write the <code>rules</code> list exactly as in the AuthorizationPolicy. Flightbay checks it parses; the server dry-run validates every field.</p>`:`${a.rules.map(rule).join('')}<div class="row wrap"><button data-amaccessadd>Add another rule (or)</button><small class="muted">A request matching any rule gets the action above. Empty sections mean "any".</small></div>`}
     <p class="muted">Targets <code>${esc(svc.namespace+'/'+svc.name)}</code> with <code>targetRefs</code>, so the waypoint enforces it. Requests that skip the waypoint are not checked.</p>
+    <div class="am-access-live"><div class="row between"><h5>Live YAML</h5><small class="muted" id="am-access-live-state">Updates as you type</small></div><pre class="code" id="am-access-live-yaml">${esc(S.ambient.accessLive||'Rendering…')}</pre></div>
   </section>`;
 }
 function amCaptureAccessRule(){
@@ -520,6 +526,9 @@ function amWireAccessRule(){
   on('[data-amaccessaddwhen]',b=>a.rules[Number(b.dataset.amaccessaddwhen)].when.push({key:'',op:'is',values:''}));
   on('[data-amaccessdelwhen]',b=>{const [i,k]=b.dataset.amaccessdelwhen.split(':').map(Number);a.rules[i].when.splice(k,1);});
   on('[data-amaccessmode]',b=>{if(b.dataset.amaccessmode===a.mode)return;if(b.dataset.amaccessmode==='yaml'&&!a.yaml.trim())a.yaml=amRulesToYAML(amAccessRequest().rules);a.mode=b.dataset.amaccessmode;});
+  const sample=$('#am-access-sample');if(sample)sample.onchange=()=>{const x=amAccessSamples(A.result?.environment?.selected?.product==='agentgateway',amService())[Number(sample.value)];if(!x)return;S.ambient.settings.access=amAccessDraftFrom(x[1]);amInvalidate();render().then(amAccessLive);};
+  let liveTimer;$('#am-access').addEventListener('input',()=>{clearTimeout(liveTimer);liveTimer=setTimeout(amAccessLive,350);});$('#am-access').addEventListener('change',()=>{clearTimeout(liveTimer);liveTimer=setTimeout(amAccessLive,150);});
+  amAccessLive();
   // A field change can change the placeholder and whether "is not" exists.
   document.querySelectorAll('[data-amaccessf="field"], input[name="am-access-action"]').forEach(el=>el.addEventListener('change',()=>redraw(()=>{})));
 }
@@ -572,4 +581,39 @@ function amWaypointNameClash(cluster,ns,name){
   if(!name)return '';
   const hit=(S.ambient.inventory.waypoints||[]).find(w=>w.cluster===cluster&&w.namespace===ns&&w.name===name)||(S.ambient.inventory.objects||[]).find(o=>o.cluster===cluster&&o.namespace===ns&&o.kind==='Gateway'&&o.name===name);
   return hit?`<small class="red">A Gateway named ${esc(ns+'/'+name)} already exists${hit.class?' ('+esc(hit.class)+')':''}. Choose another name, or pick "Choose an existing waypoint" to reuse it.</small>`:'';
+}
+
+// Why a task cannot be configured here, in one of four plain buckets.
+function amUnavailableKind(c,product){
+  const r=c.reason||'';
+  if(/Not implemented in Flightbay/i.test(r))return {label:'Not built in Flightbay yet',tone:'',text:r.replace(/\s*Not implemented in Flightbay\.?/i,' ')+' Flightbay does not generate this yet.'};
+  if(c.id==='rate-limit'&&product==='istio')return {label:'Needs an agentgateway waypoint',tone:'amber',text:'This local rate limit is an agentgateway policy. Istio waypoints have no equivalent template in Flightbay.'};
+  if(c.id==='l4-allow-namespace')return {label:'Use Allow or deny requests',tone:'blue',text:'Behind a waypoint, ztunnel only sees the waypoint as the caller, so an L4 namespace rule cannot tell callers apart. Use Allow or deny requests with a caller namespace instead; the waypoint checks the original caller.'};
+  if(c.id==='retries')return {label:'Missing API field',tone:'amber',text:'Retries need the experimental HTTPRoute retry field, which the installed Gateway API CRDs in this cluster do not have. Install the experimental channel CRDs to enable it.'};
+  if(c.id==='locality-failover')return {label:'Needs two regions',tone:'amber',text:'Needs endpoints in at least two regions, with Nodes labelled topology.kubernetes.io/region. This cluster has one.'};
+  if(amNeedsIstioWaypoint(c)&&product!=='istio')return {label:'Needs an Istio waypoint',tone:'amber',text:r};
+  return {label:'Not available with this setup',tone:'',text:r};
+}
+
+// Generic starting points; nothing customer-specific.
+function amAccessSamples(agw,svc){
+  const ns=svc?.namespace||'default';
+  const all=[
+    ['Deny requests with a header value',{action:'DENY',rules:[{when:[{key:'request.headers[x-env]',values:['test']}]}]}],
+    ['Allow only GET and HEAD',{action:'ALLOW',rules:[{to:[{methods:['GET','HEAD']}]}]}],
+    ['Deny the /admin paths',{action:'DENY',rules:[{to:[{paths:['/admin','/admin/*']}]}]}],
+    ['Allow only callers from namespace '+ns,{action:'ALLOW',rules:[{from:[{namespaces:[ns]}]}]},true],
+    ['Deny a source IP range',{action:'DENY',rules:[{from:[{ipBlocks:['203.0.113.0/24']}]}]},true],
+    ['Allow requests with a JWT issuer claim',{action:'ALLOW',rules:[{when:[{key:'request.auth.claims[iss]',values:['https://issuer.example.com']}]}]},true],
+  ];
+  return all.filter(x=>!(agw&&x[2]));
+}
+// Ask the server for the exact YAML the current draft generates, so the
+// preview is what Review would show, errors included.
+async function amAccessLive(){
+  const pre=$('#am-access-live-yaml'),state=$('#am-access-live-state');if(!pre)return;
+  try{amCaptureAccessRule();amCapture();const req=amRead();state.textContent='Rendering…';
+    const plan=await apiPost('api/ambient/plan',req);if(!$('#am-access-live-yaml'))return;
+    S.ambient.accessLive=plan.yaml;pre.textContent=plan.yaml;pre.classList.remove('red');state.textContent='Up to date';
+  }catch(e){if(!$('#am-access-live-yaml'))return;pre.textContent=e.message;pre.classList.add('red');state.textContent='Not valid yet';}
 }

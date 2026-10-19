@@ -1,6 +1,6 @@
 'use strict';
 
-const HTTP_TEST={profiles:[],profile:{name:'',method:'GET',path:'/',headers:{},body:'',timeout:10},results:[],mode:'service',context:'',port:0,gateway:'',names:[],url:'',busy:false,error:'',count:200,client:'',meshSummary:null};
+const HTTP_TEST={profiles:[],profile:{name:'',method:'GET',path:'/',headers:{},body:'',timeout:10},results:[],mode:'service',context:'',port:0,gateway:'',names:[],url:'',busy:false,error:'',count:1,client:'',meshSummary:null};
 // 'mesh' runs curl in an existing captured Pod; 'ephemeral' runs it in a
 // temporary flightbay-http Pod the server creates and deletes for this test.
 function httpInMesh(mode){return mode==='mesh'||mode==='ephemeral';}
@@ -13,7 +13,7 @@ async function amOpenHTTPTest(service){
     [T.options,T.profiles,T.contexts]=await Promise.all([api('api/ambient/http-options',{cluster:service.cluster,namespace:service.namespace,name:service.name}),api('api/ambient/http-profiles'),api('api/ambient/contexts').catch(()=>[])]);
     const svc=S.ambient.inventory?.services.find(s=>amKey(s)===amKey(service));T.ports=T.options.ports||svc?.ports||[];T.port=T.ports[0]||80;T.context=amLiveContext(service.cluster,T.contexts)?.name||'';
     const clients=T.options.clients||[],preferred=clients.findIndex(c=>c.pod.namespace===service.namespace&&c.ambient),index=preferred>=0?preferred:clients.findIndex(c=>c.ambient);T.client=index>=0?String(index):clients.length?'0':'';
-    T.names=[T.options.dns?.localName].filter(Boolean);T.gateway='';if(changed){T.mode=!T.contexts.length?'public':clients.length?'mesh':'ephemeral';T.count=httpInMesh(T.mode)?200:1;T.ephemeralNamespace=service.namespace;T.meshCleanup=null;T.countByMode={};T.nativeAttribution=T.mode!=='public';}
+    T.names=[T.options.dns?.localName].filter(Boolean);T.gateway='';if(changed){T.mode=!T.contexts.length?'public':clients.length?'mesh':'ephemeral';T.count=1;T.ephemeralNamespace=service.namespace;T.meshCleanup=null;T.countByMode={};T.nativeAttribution=T.mode!=='public';}
     if(!T.profile.name&&T.profile.path==='/')T.profile.path=T.options.defaultPath||'/';drawHTTPTest();
   }catch(e){toast(e.message);}
 }
@@ -37,7 +37,7 @@ function drawHTTPTest(){
   if(T.busy)document.querySelectorAll('.http-test input,.http-test select,.http-test textarea,.http-test button:not(#http-stop):not([data-http-stop]):not([data-http-panel])').forEach(e=>e.disabled=true);
   if($('#http-stop'))$('#http-stop').onclick=()=>{T.abortController?.abort();};
   document.querySelectorAll('[data-http-stop]').forEach(b=>b.onclick=()=>T.abortController?.abort());
-  $('#http-mode').onchange=()=>{const oldMode=T.mode,oldCount=T.count;captureHTTPTest();T.countByMode??={};T.countByMode[oldMode]=oldCount;T.count=T.countByMode[T.mode]??(httpInMesh(T.mode)?200:1);T.nativeAttribution=T.mode!=='public';T.results=[];T.meshSummary=null;drawHTTPTest();};
+  $('#http-mode').onchange=()=>{const oldMode=T.mode,oldCount=T.count;captureHTTPTest();T.countByMode??={};T.countByMode[oldMode]=oldCount;T.count=T.countByMode[T.mode]??1;T.nativeAttribution=T.mode!=='public';T.results=[];T.meshSummary=null;drawHTTPTest();};
   if($('#http-ephemeral-ns'))$('#http-ephemeral-ns').onchange=()=>{captureHTTPTest();drawHTTPTest();};
   if($('#http-attribute'))$('#http-attribute').onchange=()=>{captureHTTPTest();drawHTTPTest();};
   $('#http-profile').onchange=e=>{if(e.target.value===''){T.profile={name:'',method:'GET',path:'/',headers:{},body:'',timeout:10};}else{T.profile=JSON.parse(JSON.stringify(T.profiles[Number(e.target.value)]));}drawHTTPTest();};

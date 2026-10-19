@@ -8,7 +8,6 @@
   const esc = window.esc || (s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])));
   const attrOf = window.attr || (o => esc(JSON.stringify(o)));
   const LANES = [
-    ['Policies', ['AuthorizationPolicy', 'PeerAuthentication', 'RequestAuthentication', 'NetworkPolicy', 'AgentgatewayPolicy', 'EnterpriseAgentgatewayPolicy', 'DestinationRule', 'Telemetry', 'WasmPlugin', 'Sidecar', 'BackendTLSPolicy', 'HorizontalPodAutoscaler', 'PodDisruptionBudget']],
     ['Gateways & ingress', ['Gateway', 'Ingress']],
     ['Routes', ['HTTPRoute', 'GRPCRoute', 'TCPRoute', 'TLSRoute']],
     ['Services & backends', ['Service', 'ServiceEntry', 'AgentgatewayBackend', 'EnterpriseAgentgatewayBackend']],
@@ -16,11 +15,12 @@
     ['Workloads', ['Deployment', 'StatefulSet', 'DaemonSet', 'Job', 'CronJob']],
     ['Agents & tools', ['Agent', 'RemoteMCPServer', 'MCPServer', 'ToolServer', 'ModelConfig']],
     ['Config & identity', ['ServiceAccount', 'RoleBinding', 'Role', 'ClusterRole', 'ConfigMap', 'Secret', 'PersistentVolumeClaim']],
+    ['Policies', ['AuthorizationPolicy', 'PeerAuthentication', 'RequestAuthentication', 'NetworkPolicy', 'AgentgatewayPolicy', 'EnterpriseAgentgatewayPolicy', 'DestinationRule', 'Telemetry', 'WasmPlugin', 'Sidecar', 'BackendTLSPolicy', 'HorizontalPodAutoscaler', 'PodDisruptionBudget']],
   ];
   // Plumbing the map bridges over rather than draws: Deployment → Pod skips
   // the ReplicaSet, Service → Pod skips the EndpointSlice. Never offered.
   const HIDDEN_KINDS = ['ReplicaSet', 'EndpointSlice', 'Endpoints', 'ControllerRevision', 'Event', 'Lease'];
-  const DEFAULT_KINDS = ['Deployment', 'StatefulSet', 'DaemonSet', 'Job', 'CronJob', 'Pod', 'WorkloadEntry', 'Service', 'ServiceEntry', 'AgentgatewayBackend', 'EnterpriseAgentgatewayBackend', 'Ingress', 'Gateway', 'HTTPRoute', 'GRPCRoute', 'TCPRoute', 'TLSRoute', 'ServiceAccount', 'Agent', 'RemoteMCPServer', 'MCPServer', 'ModelConfig'].concat(LANES[0][1]);
+  const DEFAULT_KINDS = ['Deployment', 'StatefulSet', 'DaemonSet', 'Job', 'CronJob', 'Pod', 'WorkloadEntry', 'Service', 'ServiceEntry', 'AgentgatewayBackend', 'EnterpriseAgentgatewayBackend', 'Ingress', 'Gateway', 'HTTPRoute', 'GRPCRoute', 'TCPRoute', 'TLSRoute', 'ServiceAccount', 'Agent', 'RemoteMCPServer', 'MCPServer', 'ModelConfig'].concat(LANES.find(l => l[0] === 'Policies')[1]);
   // Edge kinds the server emits, with the chip label and the verbs a card uses
   // to describe its own links.
   const EDGE_KINDS = {
@@ -199,7 +199,7 @@
     const brokenTotal = Object.values(broken).reduce((n, a) => n + a.length, 0);
     const summary = rmSummaries(d, links.edges);
     const lanes = LANES.map(([title]) => ({title, nodes: []})).concat([{title: 'Other', nodes: []}]);
-    const laneOf = kind => { const i = LANES.findIndex(([, ks]) => ks.indexOf(kind) >= 0); return i >= 0 ? i : /Policy$/.test(kind) ? 0 : LANES.length; };
+    const laneOf = kind => { const i = LANES.findIndex(([, ks]) => ks.indexOf(kind) >= 0); return i >= 0 ? i : /Policy$/.test(kind) ? LANES.findIndex(l => l[0] === 'Policies') : LANES.length; };
     visible.forEach(n => lanes[laneOf(n.kind)].nodes.push(n));
     lanes.forEach(l => l.nodes.sort((a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name)));
     const shownLanes = lanes.filter(l => l.nodes.length);
@@ -248,7 +248,7 @@
 
   function badgeLabel(b){ return b === 'enterprise-agentgateway' ? 'Enterprise agentgateway' : b === 'global' ? 'Global' : b; }
   function depthLabel(v){ const d = DEPTHS.find(([n]) => n === v); return d ? d[1] : v + ' hops'; }
-  function laneIndex(kind){ const i = LANES.findIndex(([, ks]) => ks.indexOf(kind) >= 0); return i >= 0 ? i : /Policy$/.test(kind) ? 0 : LANES.length; }
+  function laneIndex(kind){ const i = LANES.findIndex(([, ks]) => ks.indexOf(kind) >= 0); return i >= 0 ? i : /Policy$/.test(kind) ? LANES.findIndex(l => l[0] === 'Policies') : LANES.length; }
   // Kinds in lane order, under the lane's title, so the menu reads like the map.
   function kindGroups(kinds){
     const groups = {};

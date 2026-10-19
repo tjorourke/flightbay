@@ -36,8 +36,8 @@ func TestBookinfoPackagedPlansAndOwnership(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if len(p.Objects) != 19 {
-		t.Fatalf("expected waypoint, apps, route and traffic generator, got %d", len(p.Objects))
+	if len(p.Objects) != 18 {
+		t.Fatalf("expected waypoint, apps and traffic generator (no HTTPRoute), got %d", len(p.Objects))
 	}
 	for _, o := range p.Objects {
 		if S(Path(o, "metadata", "namespace")) != q.Namespace {
@@ -106,7 +106,7 @@ func TestBookinfoDedicatedWaypointsBindOnlyMainServices(t *testing.T) {
 			}
 		}
 	}
-	if len(gateways) != 4 || len(p.Objects) != 22 || len(p.Changes) != 0 {
+	if len(gateways) != 4 || len(p.Objects) != 21 || len(p.Changes) != 0 {
 		t.Fatalf("wrong dedicated plan: gateways=%v objects=%d changes=%v", gateways, len(p.Objects), p.Changes)
 	}
 	q.Demo.WaypointName = strings.Repeat("a", 60)

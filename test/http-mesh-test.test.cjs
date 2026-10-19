@@ -82,7 +82,7 @@ test('native request setup remains available when no kubeconfig contexts can be 
 test('a Service with a live connection but no curl client defaults to a temporary Pod in its namespace',async()=>{
   const ctx=setup({S:{ambient:{inventory:{services:[]}}},amKey:JSON.stringify,toast:message=>assert.fail(message),api:async url=>url.endsWith('contexts')?[{name:'kind-mesh1',liveCluster:'mesh1',server:'https://mesh1'}]:url.endsWith('profiles')?[]:{ports:[8080],dns:{localName:'web.shop.svc.cluster.local'},clients:[],gateways:[]}});
   vm.runInContext('drawHTTPTest=()=>{};',ctx);await ctx.amOpenHTTPTest({cluster:'mesh1',namespace:'shop',name:'web'});
-  assert.equal(vm.runInContext('HTTP_TEST.mode',ctx),'ephemeral');assert.equal(vm.runInContext('HTTP_TEST.count',ctx),200);assert.equal(vm.runInContext('HTTP_TEST.ephemeralNamespace',ctx),'shop');
+  assert.equal(vm.runInContext('HTTP_TEST.mode',ctx),'ephemeral');assert.equal(vm.runInContext('HTTP_TEST.count',ctx),1,'one request by default; larger counts are for load tests');assert.equal(vm.runInContext('HTTP_TEST.ephemeralNamespace',ctx),'shop');
 });
 
 test('temporary Pod option explains the lifecycle and flags a namespace outside the mesh',()=>{

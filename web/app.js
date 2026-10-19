@@ -2702,7 +2702,8 @@ function modal(title, body) {
   if(S.applyConfirmCancel)S.applyConfirmCancel();
   $('#modal-root').innerHTML = `<div class="modal-backdrop"><section class="modal" role="dialog" aria-modal="true" aria-label="${esc(title)}"><div class="panel-head"><h2>${esc(title)}</h2><button class="ghost" id="m-close" aria-label="Close">✕</button></div><div class="panel-body">${body}</div></section></div>`;
   wireKubectlBlocks($('#modal-root'));
-  $('.modal-backdrop').onclick = e => { if (e.target.classList.contains('modal-backdrop')) closeModal(); };
+  // Clicking outside does not close: modals hold tests and forms that are
+  // easy to lose. Use ✕ or Escape.
   $('#m-close').onclick = closeModal;
 }
 function closeModal() { if(S.applyConfirmCancel)S.applyConfirmCancel();$('#modal-root').innerHTML = ''; }

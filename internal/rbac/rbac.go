@@ -46,6 +46,10 @@ type BindingHit struct {
 	Why            string `json:"why"`
 	RoleMissing    bool   `json:"roleMissing"`
 	InvalidRoleRef bool   `json:"invalidRoleRef"`
+	// KubernetesDefault marks the bootstrap bindings every authenticated
+	// identity gets (discovery, self access review, public info). They are
+	// cluster-wide by design and are not grants made for this workload.
+	KubernetesDefault bool `json:"kubernetesDefault,omitempty"`
 }
 
 type Workload struct {
@@ -907,7 +911,7 @@ func ExplainSA(ws *store.Workspace, cluster, namespace, name string) Explain {
 			rref = Ref{Cluster: cluster, Group: role.Group, Resource: role.Resource, Kind: role.Kind, Namespace: role.Namespace, Name: role.Name}
 		}
 		for _, w := range whys {
-			h := BindingHit{Binding: bref, Role: rref, Why: w, RoleMissing: missing, InvalidRoleRef: invalid}
+			h := BindingHit{Binding: bref, Role: rref, Why: w, RoleMissing: missing, InvalidRoleRef: invalid, KubernetesDefault: kubernetesDefaultBinding(b, w)}
 			key := b.Namespace + "/" + b.Name + "/" + w
 			hitByBinding[key] = h
 			whyForBinding[b.Namespace+"/"+b.Name] = append(whyForBinding[b.Namespace+"/"+b.Name], w)
@@ -933,6 +937,11 @@ func ExplainSA(ws *store.Workspace, cluster, namespace, name string) Explain {
 				}
 			}
 			gs := grantFromRule(rule, scope, b, role, srcs)
+			if kubernetesDefaultBinding(b, strings.Join(whys, " ")) {
+				for i := range gs {
+					gs[i].Flags = append(gs[i].Flags, "kubernetes-default")
+				}
+			}
 			allGrants = append(allGrants, gs...)
 		}
 	}
@@ -1080,4 +1089,14 @@ func WhoCan(ws *store.Workspace, q WhoQuery) Who {
 		w.Notes = append(w.Notes, "cluster role collection is not complete; result is not proof that no other subject can.")
 	}
 	return w
+}
+
+// kubernetesDefaultBinding: a bootstrap ClusterRoleBinding
+// (kubernetes.io/bootstrapping=rbac-defaults) that reaches the workload only
+// through a group every identity is in.
+func kubernetesDefaultBinding(b *store.Object, why string) bool {
+	if b.Kind != "ClusterRoleBinding" || b.Labels()["kubernetes.io/bootstrapping"] != "rbac-defaults" {
+		return false
+	}
+	return strings.Contains(why, "system:authenticated") || strings.Contains(why, "Group system:serviceaccounts") && !strings.Contains(why, "system:serviceaccounts:")
 }

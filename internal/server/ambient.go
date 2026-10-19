@@ -482,6 +482,10 @@ func (s *Server) ambientTest(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
 	defer cancel()
 	if req.Operation == "validate" {
+		if req.Request.Demo != nil && req.Request.Demo.Preview {
+			jerr(w, 400, "a preview plan cannot be validated or applied; prepare the real plan first")
+			return
+		}
 		if req.Context == "" {
 			jerr(w, 400, "select a real kubeconfig context explicitly")
 			return

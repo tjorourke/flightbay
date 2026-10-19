@@ -28,7 +28,7 @@ function bdEntryMarkup(e,i){
     ${e.namespaceRecord?'<p class="green">Namespace ready.</p>':''}
     <div id="bd-progress-${i}">${bdProgress(e)}</div>
     ${amContextControl(e.cluster,BD.contexts,e.context,`data-bdcontext="${i}" ${BD.busy||e.record?'disabled':''}`)}
-    <details ${!e.record&&!e.applying?'open':''}><summary>Exact YAML to apply</summary><pre class="code">${esc(e.plan.yaml)}</pre><div class="bd-actions"><button data-bdcopy="${i}">Copy YAML</button><button data-bddownload="${i}">Download YAML</button></div></details>
+    <details ${!e.record&&!e.applying?'open':''}><summary>Exact YAML to apply · ${(e.plan.objects?.length||0)+(e.preview?.objects?.length||0)} resources</summary><pre class="code">${esc(e.plan.yaml+(e.preview?'\n---\n# Then, once the namespace exists:\n'+e.preview.yaml:''))}</pre><div class="bd-actions"><button data-bdcopy="${i}">Copy YAML</button><button data-bddownload="${i}">Download YAML</button></div></details>
     ${e.error?`<div class="notice bad" role="alert">${esc(e.error)}</div>`:''}${e.message?`<p role="status">${esc(e.message)}</p>`:''}
     ${e.record&&!namespaceStage?`<div class="bd-actions"><button data-bdstatus="${i}" ${BD.busy?'disabled':''}>Check deployment readiness</button><button data-bdexplore="${i}">Open demo request path →</button><button data-bdundo="${i}" ${BD.busy?'disabled':''}>Remove these demo workloads</button></div>`:''}
   </article>`;
@@ -70,31 +70,10 @@ function bookinfoAfter(){
   $('#bd-namespace').onchange=e=>{BD.namespace=e.target.value.trim();try{localStorage.setItem('flightbay.bookinfo.namespace',BD.namespace);}catch{}BD.catalog=null;bdInvalidate();render();};document.querySelectorAll('[data-bdcluster]').forEach(b=>b.onchange=()=>{BD.selected[b.dataset.bdcluster]=b.checked;bdInvalidate();if(!BD.catalog.clusters.filter(c=>BD.selected[c.cluster]).every(c=>c.globalSupported))BD.global=false;render();});
   document.querySelectorAll('[name="bd-waypoint-scope"]').forEach(b=>b.onchange=()=>{if(b.checked){BD.waypointScope=b.value;bdInvalidate();render();}});$('#bd-waypoint-name').onchange=e=>{BD.waypointName=e.target.value.trim();bdInvalidate();render();};
   document.querySelectorAll('[data-bdclass]').forEach(b=>b.onchange=()=>{BD.classes[b.dataset.bdclass]=b.value;bdInvalidate();render();});$('#bd-global').onchange=e=>{BD.global=e.target.checked;bdInvalidate();render();};$('#bd-traffic').onchange=e=>{BD.traffic=e.target.checked;bdInvalidate();render();};
-  $('#bd-review').onclick=()=>bdRun(async()=>{await bdRefresh();BD.contexts=await api('api/ambient/contexts');BD.entries=[];for(const row of BD.catalog.clusters.filter(c=>BD.selected[c.cluster])){if(row.namespaceState==='occupied'||row.installed)throw new Error(row.cluster+': namespace or Bookinfo resources already exist. Choose a fresh namespace; nothing will be overwritten.');const request={cluster:row.cluster,namespace:BD.namespace,targetKind:'Namespace',targetName:BD.namespace,tasks:['bookinfo-demo'],demo:{stage:row.namespaceState==='prepared'?'workloads':'namespace',waypointClass:BD.classes[row.cluster]||bdDefaultClass(row),waypointScope:BD.waypointScope,waypointName:BD.waypointName,global:BD.global,traffic:BD.traffic}};const plan=await apiPost('api/ambient/plan',request);BD.entries.push({cluster:row.cluster,request,plan,context:amLiveContext(row.cluster,BD.contexts)?.name||'',validation:null,record:null});}});
+  $('#bd-review').onclick=async()=>{await bdRun(async()=>{await bdRefresh();BD.contexts=await api('api/ambient/contexts');BD.entries=[];for(const row of BD.catalog.clusters.filter(c=>BD.selected[c.cluster])){if(row.namespaceState==='occupied'||row.installed)throw new Error(row.cluster+': namespace or Bookinfo resources already exist. Choose a fresh namespace; nothing will be overwritten.');const request={cluster:row.cluster,namespace:BD.namespace,targetKind:'Namespace',targetName:BD.namespace,tasks:['bookinfo-demo'],demo:{stage:row.namespaceState==='prepared'?'workloads':'namespace',waypointClass:BD.classes[row.cluster]||bdDefaultClass(row),waypointScope:BD.waypointScope,waypointName:BD.waypointName,global:BD.global,traffic:BD.traffic}};const plan=await apiPost('api/ambient/plan',request);const preview=request.demo.stage==='namespace'?await apiPost('api/ambient/plan',{...request,demo:{...request.demo,stage:'workloads',preview:true}}).catch(()=>null):null;BD.entries.push({cluster:row.cluster,request,plan,preview,context:amLiveContext(row.cluster,BD.contexts)?.name||'',validation:null,record:null});}});if(!BD.error)await bdDeploy();};
   document.querySelectorAll('[data-bdcontext]').forEach(b=>b.onchange=()=>{const e=BD.entries[Number(b.dataset.bdcontext)];e.context=b.value;e.validation=null;render();});
   if($('#bd-validate-all'))$('#bd-validate-all').onclick=()=>bdRun(()=>amValidatePlans(BD.entries.filter(e=>!e.record),true));
-  if($('#bd-apply-all'))$('#bd-apply-all').onclick=async()=>{
-    const entries=BD.entries.filter(e=>!e.record);S.ambient.contexts=BD.contexts;
-    if(BD.busy||!entries.length||entries.some(e=>!e.context))return;
-    await bdRun(()=>amValidatePlans(entries));
-    if(BD.error||entries.some(e=>!BD.entries.includes(e)||!amValidated(e))||!await amConfirmApply(entries))return;
-    // One confirmation covers both stages. When the confirmed plans create
-    // the namespace, the workload plans are prepared, dry-run and applied
-    // straight after, because Kubernetes cannot dry-run into a namespace
-    // that does not exist yet.
-    const creatingNamespace=entries.some(e=>e.request.demo.stage==='namespace');
-    await bdRun(async()=>{
-      await bdApplyEntries(entries);
-      await bdRefresh();await bdAdvance();
-      const next=BD.entries.filter(e=>!e.record&&!e.error&&e.request.demo.stage==='workloads'&&entries.some(x=>x.cluster===e.cluster));
-      if(creatingNamespace&&next.length){
-        for(const e of next)e.message='Dry-run of the workloads…';await render();
-        await amValidatePlans(next);
-        if(next.some(e=>!amValidated(e)))throw new Error('The workload dry-run failed. Nothing beyond the namespace was applied; see the cluster below.');
-        await bdApplyEntries(next);
-      }
-    });
-  };
+  if($('#bd-apply-all'))$('#bd-apply-all').onclick=()=>bdDeploy();
   if($('#bd-advance'))$('#bd-advance').onclick=()=>bdRun(bdAdvance);
   document.querySelectorAll('[data-bdcopy]').forEach(b=>b.onclick=()=>copyTerminalCommand(BD.entries[Number(b.dataset.bdcopy)].plan.yaml));document.querySelectorAll('[data-bddownload]').forEach(b=>b.onclick=()=>{const e=BD.entries[Number(b.dataset.bddownload)];amDownload(e.plan.yaml,'bookinfo-'+e.cluster+'-'+e.request.demo.stage+'.yaml');});document.querySelectorAll('[data-bdfile]').forEach(b=>b.onclick=()=>{const f=BD.catalog.files[Number(b.dataset.bdfile)];amDownload(f.yaml,f.name);});
   document.querySelectorAll('[data-bdstatus]').forEach(b=>b.onclick=async()=>{const e=BD.entries[Number(b.dataset.bdstatus)];e.pollStopped=false;e.pollStarted=Date.now();e.progress=null;await bdPoll();});
@@ -156,3 +135,26 @@ async function bdApplyEntries(entries){
 }
 // Keep "Per-resource progress" the way the reader left it across repaints.
 function bdWireResources(root){(root||document).querySelectorAll('[data-bd-resources]').forEach(d=>d.addEventListener('toggle',()=>{BD.resourcesClosed=BD.resourcesClosed||{};BD.resourcesClosed[d.dataset.bdResources]=!d.open;}));}
+
+async function bdDeploy(){
+    const entries=BD.entries.filter(e=>!e.record);S.ambient.contexts=BD.contexts;
+    if(BD.busy||!entries.length||entries.some(e=>!e.context))return;
+    await bdRun(()=>amValidatePlans(entries));
+    if(BD.error||entries.some(e=>!BD.entries.includes(e)||!amValidated(e))||!await amConfirmApply(entries.map(e=>e.preview?{...e,plan:{...e.plan,yaml:e.plan.yaml+'\n---\n# Then, once the namespace exists, dry-run and applied:\n'+e.preview.yaml}}:e)))return;
+    // One confirmation covers both stages. When the confirmed plans create
+    // the namespace, the workload plans are prepared, dry-run and applied
+    // straight after, because Kubernetes cannot dry-run into a namespace
+    // that does not exist yet.
+    const creatingNamespace=entries.some(e=>e.request.demo.stage==='namespace');
+    await bdRun(async()=>{
+      await bdApplyEntries(entries);
+      await bdRefresh();await bdAdvance();
+      const next=BD.entries.filter(e=>!e.record&&!e.error&&e.request.demo.stage==='workloads'&&entries.some(x=>x.cluster===e.cluster));
+      if(creatingNamespace&&next.length){
+        for(const e of next)e.message='Dry-run of the workloads…';await render();
+        await amValidatePlans(next);
+        if(next.some(e=>!amValidated(e)))throw new Error('The workload dry-run failed. Nothing beyond the namespace was applied; see the cluster below.');
+        await bdApplyEntries(next);
+      }
+    });
+  }

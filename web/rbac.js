@@ -59,17 +59,24 @@
     }
     const cov = d.coverage && !d.coverage.complete ? `<div class="notice">${esc(d.coverage.reason || 'RBAC was not fully captured. Absence of a binding is not evidence that the permission is missing.')}</div>` : '';
     const workloads = (d.workloads || []).length ? `<div class="table-scroll"><table><thead><tr><th>Kind</th><th>Name</th><th>Pods</th></tr></thead><tbody>${d.workloads.map(w => `<tr data-rbac-ref="${attr(w.ref)}"><td>${esc(w.ref.kind)}</td><td class="mono">${esc(w.ref.name)}</td><td>${esc(w.pods)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">No captured workload uses this account.</p>';
+    // Kubernetes' own bootstrap bindings reach every authenticated identity
+    // (API discovery, self access reviews, /version). They are cluster-wide by
+    // design and are kept apart so they are not mistaken for grants made to
+    // this account.
+    const isDefault = g => (g.flags || []).includes('kubernetes-default');
     const nsGrants = (d.grants || []).filter(g => g.scope !== 'cluster');
-    const clGrants = (d.grants || []).filter(g => g.scope === 'cluster');
-    const bindings = (d.bindings || []).length ? (d.bindings || []).map(b => {
-      const extra = (b.roleMissing ? ' role not captured' : '') + (b.invalidRoleRef ? ' roleRef is not valid' : '');
-      return `<div><button class="link" data-rbac-ref="${attr(b.binding)}">${esc(b.binding.kind)} ${esc(b.binding.name)}</button> <span class="muted">${esc(b.why || '')}${esc(extra)}</span></div>`;
-    }).join('') : '<p class="muted">No bindings recorded.</p>';
+    const clGrants = (d.grants || []).filter(g => g.scope === 'cluster' && !isDefault(g));
+    const defGrants = (d.grants || []).filter(isDefault);
+    const own = (d.bindings || []).filter(b => !b.kubernetesDefault), defs = (d.bindings || []).filter(b => b.kubernetesDefault);
+    const bindingRow = b => { const extra = (b.roleMissing ? ' role not captured' : '') + (b.invalidRoleRef ? ' roleRef is not valid' : ''); return `<div><button class="link" data-rbac-ref="${attr(b.binding)}">${esc(b.binding.kind)} ${esc(b.binding.name)}</button> <span class="muted">${esc(b.why || '')}${esc(extra)}</span></div>`; };
+    const bindings = (own.length ? own.map(bindingRow).join('') : `<p class="muted"><strong>No bindings name this ServiceAccount.</strong> It has no permissions of its own${defs.length ? ', only the Kubernetes defaults below' : ''}.</p>`)
+      + (defs.length ? `<details class="mt"><summary>Kubernetes defaults · ${defs.length} binding${defs.length === 1 ? '' : 's'} every authenticated identity gets</summary><p class="muted">These bootstrap ClusterRoleBindings (label <code>kubernetes.io/bootstrapping=rbac-defaults</code>) match the groups <code>system:authenticated</code> or <code>system:serviceaccounts</code>, which include every ServiceAccount in every namespace. They allow API discovery, checking your own access and reading /version. They do not allow reading or changing cluster objects, and they are not something this workload's YAML created.</p>${defs.map(bindingRow).join('')}</details>` : '');
     return head('RBAC', title) + toolbar + listed + cov + `
       <section class="panel"><div class="panel-head"><h2>Workloads</h2></div><div class="panel-body">${workloads}</div></section>
       <section class="panel mt"><div class="panel-head"><h2>Permissions</h2></div><div class="panel-body">
         <h3>In this namespace</h3>${grantRows(nsGrants)}
-        <h3 class="mt">Cluster-wide</h3>${grantRows(clGrants)}
+        <h3 class="mt">Cluster-wide</h3>${clGrants.length ? grantRows(clGrants) : '<p class="muted">None granted to this account.</p>'}
+        ${defGrants.length ? `<details class="mt"><summary>Kubernetes defaults · ${defGrants.length} permission${defGrants.length === 1 ? '' : 's'} every authenticated identity has</summary>${grantRows(defGrants)}</details>` : ''}
       </div></section>
       <section class="panel mt"><div class="panel-head"><h2>Bindings</h2></div><div class="panel-body">${bindings}</div></section>
       ${whoPanel(saNs, nsOptions)}

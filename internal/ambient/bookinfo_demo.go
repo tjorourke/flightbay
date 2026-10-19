@@ -20,6 +20,9 @@ type BookinfoRequest struct {
 	WaypointName  string `json:"waypointName,omitempty"`  // shared name or dedicated prefix
 	Global        bool   `json:"global"`
 	Traffic       bool   `json:"traffic"`
+	// Preview plans the workloads before the namespace exists, so one
+	// review can show everything. A preview cannot be validated or applied.
+	Preview bool `json:"preview,omitempty"`
 }
 
 var bookinfoServices = []string{"productpage", "details", "ratings", "reviews"}
@@ -125,7 +128,7 @@ func BookinfoOptions(ws *store.Workspace, ns string) BookinfoCatalog {
 		}
 		out.Clusters = append(out.Clusters, row)
 	}
-	for _, name := range []string{"bookinfo.yaml", "waypoint-istio.yaml", "waypoint-agentgateway.yaml", "routing.yaml", "client.yaml"} {
+	for _, name := range []string{"bookinfo.yaml", "waypoint-istio.yaml", "waypoint-agentgateway.yaml", "client.yaml"} {
 		b, _ := bookinfoFiles.ReadFile("demo/" + name)
 		out.Files = append(out.Files, DemoFile{name, string(b)})
 		for _, doc := range strings.Split(string(b), "\n---\n") {
@@ -182,16 +185,14 @@ func GenerateBookinfo(ws *store.Workspace, req Request) (*Plan, error) {
 		if ns != nil {
 			return nil, fmt.Errorf("namespace %s already exists; this installer does not adopt or overwrite an existing namespace", req.Namespace)
 		}
-		labels := map[string]any{"flightbay.dev/demo": "bookinfo", "istio.io/dataplane-mode": "ambient", "flightbay.dev/waypoint-scope": settings.WaypointScope, "flightbay.dev/waypoint-name": settings.WaypointName}
-		if n := ws.Get(req.Cluster, "", "namespaces", "", "istio-system"); n != nil && n.Labels()["topology.istio.io/network"] != "" {
-			labels["topology.istio.io/network"] = n.Labels()["topology.istio.io/network"]
-		}
-		p.Objects = append(p.Objects, map[string]any{"apiVersion": "v1", "kind": "Namespace", "metadata": map[string]any{"name": req.Namespace, "labels": labels}})
-		p.Notes = append(p.Notes, "Stage 1 creates only the named ambient namespace. Stage 2 has a separate preview, real server dry-run and confirmation before any application workloads are created. Namespace cleanup is manual; uninstalling workloads does not delete arbitrary namespace contents.")
+		p.Objects = append(p.Objects, map[string]any{"apiVersion": "v1", "kind": "Namespace", "metadata": map[string]any{"name": req.Namespace, "labels": bookinfoNamespaceLabels(ws, req.Cluster, settings)}})
 		return finishPlan(p)
 	}
 	if req.Demo.Stage != "workloads" {
 		return nil, fmt.Errorf("choose namespace or workloads stage")
+	}
+	if ns == nil && req.Demo.Preview {
+		ns = &store.Object{Cluster: req.Cluster, Version: "v1", Resource: "namespaces", Kind: "Namespace", Name: req.Namespace, Obj: map[string]any{"apiVersion": "v1", "kind": "Namespace", "metadata": map[string]any{"name": req.Namespace, "labels": bookinfoNamespaceLabels(ws, req.Cluster, settings)}}}
 	}
 	if ns == nil || ns.Labels()["flightbay.dev/demo"] != "bookinfo" {
 		return nil, fmt.Errorf("prepare this installer-owned namespace first, then refresh the live capture")
@@ -204,7 +205,9 @@ func GenerateBookinfo(ws *store.Workspace, req Request) (*Plan, error) {
 	if settings.WaypointScope == "namespace" && binding == "" {
 		change(p, ns, "Set the demo namespace default after its new waypoint is programmed", map[string]any{"/metadata/labels/istio.io~1use-waypoint": settings.WaypointName})
 	}
-	files := []string{"waypoint-istio.yaml", "bookinfo.yaml", "routing.yaml"}
+	// No routing.yaml: Bookinfo deploys without an HTTPRoute so traffic
+	// splitting can be set up and tested from Configure.
+	files := []string{"waypoint-istio.yaml", "bookinfo.yaml"}
 	if class.Product == "agentgateway" {
 		files[0] = "waypoint-agentgateway.yaml"
 	}
@@ -284,7 +287,7 @@ func GenerateBookinfo(ws *store.Workspace, req Request) (*Plan, error) {
 			p.Objects = append(p.Objects, o)
 		}
 	}
-	p.Notes = append(p.Notes, "Stage 2 creates only these named resources. Existing resources are never overwritten. Namespace and cluster identity are checked again before validation and apply.", "Reviews uses a Service-parent HTTPRoute on reviews:9080 with an equal split between reviews-v1 and reviews-v2. Productpage calls local details, reviews and ratings dependencies.", "Apply creates resources, not a guarantee of readiness. Check deployment status and exercise traffic after image pulls and waypoint reconciliation.")
+	p.Notes = append(p.Notes, "No HTTPRoute is created: reviews-v1 and reviews-v2 are ready for a traffic split from Configure.")
 	if settings.WaypointScope == "service" {
 		p.Notes = append(p.Notes, "Creates four new dedicated waypoints and binds the four main Services explicitly. The namespace has no waypoint default. reviews-v1/v2 are route backends, not independently enrolled frontends; they bypass further waypoint selection.")
 	} else {
@@ -294,4 +297,12 @@ func GenerateBookinfo(ws *store.Workspace, req Request) (*Plan, error) {
 		p.Notes = append(p.Notes, "The four primary Services are published globally in this cluster. Publish on both selected clusters to contribute both sets of endpoints. This does not create peering or alter local-name takeover.")
 	}
 	return finishPlan(p)
+}
+
+func bookinfoNamespaceLabels(ws *store.Workspace, cluster string, settings BookinfoRequest) map[string]any {
+	labels := map[string]any{"flightbay.dev/demo": "bookinfo", "istio.io/dataplane-mode": "ambient", "flightbay.dev/waypoint-scope": settings.WaypointScope, "flightbay.dev/waypoint-name": settings.WaypointName}
+	if n := ws.Get(cluster, "", "namespaces", "", "istio-system"); n != nil && n.Labels()["topology.istio.io/network"] != "" {
+		labels["topology.istio.io/network"] = n.Labels()["topology.istio.io/network"]
+	}
+	return labels
 }

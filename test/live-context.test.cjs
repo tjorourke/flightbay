@@ -31,9 +31,9 @@ for(const live of [false,true])test('shared configuration review '+(live?'reuses
 });
 
 test('Bookinfo preview reuses the live target even when the kubeconfig name differs',async()=>{
-  const elements=new Map();const ctx=vm.createContext({S:{view:'ambient',ambient:{tab:'demo'}},RP:{},after:{},esc:String,$:id=>{if(!elements.has(id))elements.set(id,{});return elements.get(id);},document:{querySelectorAll:()=>[]},render:async()=>{},api:async url=>url.endsWith('contexts')?connections:{clusters:[{cluster:'mesh2',namespaceState:'prepared',classes:[{name:'istio-waypoint'}]}]},apiPost:async(_,request)=>({id:'plan',request,objects:[],notes:[]}),setTimeout,clearTimeout});
+  const elements=new Map();const ctx=vm.createContext({S:{view:'ambient',ambient:{tab:'demo'}},RP:{},after:{},esc:String,$:id=>{if(!elements.has(id))elements.set(id,{});return elements.get(id);},document:{querySelectorAll:()=>[]},render:async()=>{},api:async url=>url.endsWith('contexts')?connections:{clusters:[{cluster:'mesh2',namespaceState:'prepared',classes:[{name:'istio-waypoint'}]}]},apiPost:async(_,request)=>({id:'plan',request,objects:[],notes:[]}),amConfirmApply:async()=>false,setTimeout,clearTimeout});
   vm.runInContext(require('./context-helpers.cjs'),ctx);load(ctx,'bookinfo-demo.js');vm.runInContext("BD.selected.mesh2=true;bookinfoAfter();",ctx);
-  await elements.get('#bd-review').onclick();assert.equal(vm.runInContext('BD.entries[0].context',ctx),'original/mesh2');assert.equal(vm.runInContext('BD.entries[0].validation',ctx),null);
+  await elements.get('#bd-review').onclick();assert.equal(vm.runInContext('BD.entries[0].context',ctx),'original/mesh2');assert.equal(vm.runInContext('BD.entries[0].record',ctx),null,'cancelling the one confirmation applies nothing');
 });
 
 test('Service HTTP tests reuse the destination live context without starting a probe',async()=>{
