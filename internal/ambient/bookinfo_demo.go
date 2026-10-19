@@ -113,6 +113,10 @@ func BookinfoOptions(ws *store.Workspace, ns string) BookinfoCatalog {
 			if n.Labels()["flightbay.dev/demo"] == "bookinfo" {
 				row.NamespaceState = "prepared"
 			}
+			// A namespace being deleted accepts nothing new; wait for it.
+			if Path(n.Obj, "metadata", "deletionTimestamp") != nil || S(Path(n.Obj, "status", "phase")) == "Terminating" {
+				row.NamespaceState = "terminating"
+			}
 		}
 		row.Installed = ws.Get(c, "apps", "deployments", ns, "productpage-v1") != nil
 		for _, r := range []struct{ g, res string }{{"", "services"}, {"", "serviceaccounts"}, {"apps", "deployments"}, {GatewayGroup, "gateways"}, {GatewayGroup, "httproutes"}} {

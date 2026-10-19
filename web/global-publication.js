@@ -131,6 +131,10 @@ async function amGlobalOperation(index,operation){
   }catch(e){row.error=e.message;row.validation=null;row.state=operation==='validate'?'Dry-run failed':'Apply failed';}
   if(badge){badge.className='badge '+(row.error?'red':'green');badge.textContent=row.state;}
   A.tests=await api('api/ambient/tests').catch(()=>A.tests);
+  // Once every cluster with changes is applied, go back to the Service's
+  // configuration list, where Retest traffic and the new state are shown.
+  const pending=(A.globalBatch||[]).filter(r=>r.plan&&(r.plan.changes?.length||r.plan.objects?.length));
+  if(operation==='apply'&&row.applied&&pending.every(r=>r.applied)&&typeof amRefreshAppliedConfiguration==='function'){await amRefreshAppliedConfiguration(row.plan);A.globalBatch=null;A.settings={};await render();$('#am-retest-current')?.scrollIntoView({block:'center'});}
 }
 function amWireGlobalPublication(){
   const A=S.ambient;
