@@ -19,6 +19,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/version"
@@ -286,6 +287,9 @@ func (c *Collector) objectAllowed(r bundle.APIResource) bool {
 	if r.Group == "" && r.Resource == "nodes" && pl.Selected(policy.CatNodes) {
 		return true
 	}
+	if c.Policy.RBACIdentityAllowed(r.Resource, r.Group) {
+		return true
+	}
 	return pl.Selected(policy.CatObjects) && c.Policy.ResourceAllowed(r.Resource, r.Group, r.Kind, r.Namespaced)
 }
 
@@ -429,6 +433,9 @@ func (c *Collector) CollectCluster(ctx context.Context, cluster string, cl Clien
 		return err
 	}
 	if err := c.collectScopedNamespaces(ctx, cluster, cl, selected); err != nil {
+		return err
+	}
+	if err := c.collectRBAC(ctx, cluster, cl, selected); err != nil {
 		return err
 	}
 	if plan.Selected(policy.CatEvents) {
@@ -959,6 +966,91 @@ func (c *Collector) collectScopedNamespaces(ctx context.Context, cluster string,
 	}
 	cov.Chunks, cov.Items = k.chunks, k.count
 	return c.Writer.Coverage(cov)
+}
+
+// collectRBAC ensures the five RBAC identity types are captured for the explorer
+// even when --cluster-scoped is false or they were omitted from --resources.
+// They are collected with the objects category (get,list[,watch]) only.
+func (c *Collector) collectRBAC(ctx context.Context, cluster string, cl Clients, selected []bundle.APIResource) error {
+	plan := c.Policy.Plan()
+	if !plan.Selected(policy.CatObjects) {
+		return nil
+	}
+	rbacTypes := []bundle.APIResource{
+		{Group: "", Version: "v1", Resource: "serviceaccounts", Kind: "ServiceAccount", Namespaced: true},
+		{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "roles", Kind: "Role", Namespaced: true},
+		{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "rolebindings", Kind: "RoleBinding", Namespaced: true},
+		{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterroles", Kind: "ClusterRole", Namespaced: false},
+		{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterrolebindings", Kind: "ClusterRoleBinding", Namespaced: false},
+	}
+	for _, r := range rbacTypes {
+		if !c.Policy.RBACIdentityAllowed(r.Resource, r.Group) {
+			continue
+		}
+		already := false
+		for _, s := range selected {
+			if s.Group == r.Group && s.Resource == r.Resource {
+				already = true
+				break
+			}
+		}
+		if already {
+			continue
+		}
+		// collect it
+		covID := cluster + ".resource." + r.Group + "." + r.Version + "." + r.Resource
+		if r.Group == "" {
+			covID = cluster + ".resource.core." + r.Version + "." + r.Resource
+		}
+		cov := bundle.Coverage{ID: covID, Cluster: cluster, Type: bundle.CoverageResource, Group: r.Group, Version: r.Version, Resource: r.Resource, Kind: r.Kind, State: bundle.StateComplete}
+		loc := fmt.Sprintf("clusters/%s/resources/%s", cluster, r.Resource)
+		k := &chunker{c: c, path: func(p int) string { return bundle.ResourcePath(cluster, r.Group, r.Version, r.Resource, p) },
+			list: map[string]any{"apiVersion": r.Group + "/" + r.Version, "kind": r.Kind + "List", "x-flightbay": map[string]any{"group": r.Group, "version": r.Version, "resource": r.Resource, "kind": r.Kind, "namespaced": r.Namespaced}}}
+		gvr := schema.GroupVersionResource{Group: r.Group, Version: r.Version, Resource: r.Resource}
+		add := func(obj map[string]any) error { return k.add(c.transform(loc, r, obj)) }
+		var err error
+		var l *unstructured.UnstructuredList
+		if r.Namespaced {
+			// use selected namespaces only
+			for _, ns := range c.Policy.ExplicitNamespaces() {
+				if !c.Policy.NamespaceAllowed(ns) {
+					continue
+				}
+				// list in ns
+				l, err = cl.Dynamic.Resource(gvr).Namespace(ns).List(ctx, metav1.ListOptions{})
+				if err != nil {
+					cov.State, cov.Reason = bundle.StateFailed, reason(err)
+					c.record(LogEntry{Cluster: cluster, Operation: "list", Target: r.Resource + " in " + ns, Result: "failed", Error: err.Error()})
+					break
+				}
+				for i := range l.Items {
+					if err := add(l.Items[i].Object); err != nil {
+						return err
+					}
+				}
+			}
+		} else {
+			l, err = cl.Dynamic.Resource(gvr).List(ctx, metav1.ListOptions{})
+			if err != nil {
+				cov.State, cov.Reason = bundle.StateFailed, reason(err)
+				c.record(LogEntry{Cluster: cluster, Operation: "list", Target: r.Resource, Result: "failed", Error: err.Error()})
+			} else {
+				for i := range l.Items {
+					if err := add(l.Items[i].Object); err != nil {
+						return err
+					}
+				}
+			}
+		}
+		if err := k.flush(); err != nil {
+			return err
+		}
+		cov.Chunks, cov.Items = k.chunks, k.count
+		if err := c.Writer.Coverage(cov); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func hasGlob(ns []string) bool {

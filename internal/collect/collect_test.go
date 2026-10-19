@@ -91,6 +91,7 @@ func discovery() *fakeDiscovery {
 		}},
 		{GroupVersion: "apps/v1", APIResources: []metav1.APIResource{res("deployments", "Deployment", true)}},
 		{GroupVersion: "gateway.networking.k8s.io/v1", APIResources: []metav1.APIResource{res("httproutes", "HTTPRoute", true)}},
+		{GroupVersion: "rbac.authorization.k8s.io/v1", APIResources: []metav1.APIResource{res("roles", "Role", true), res("rolebindings", "RoleBinding", true), res("clusterroles", "ClusterRole", false), res("clusterrolebindings", "ClusterRoleBinding", false)}},
 	}}
 }
 
@@ -102,8 +103,13 @@ var gvrs = map[schema.GroupVersionResource]string{
 	{Version: "v1", Resource: "nodes"}:                                          "NodeList",
 	{Version: "v1", Resource: "events"}:                                         "EventList",
 	{Version: "v1", Resource: "services"}:                                       "ServiceList",
+	{Version: "v1", Resource: "serviceaccounts"}:                                "ServiceAccountList",
 	{Group: "apps", Version: "v1", Resource: "deployments"}:                     "DeploymentList",
 	{Group: "gateway.networking.k8s.io", Version: "v1", Resource: "httproutes"}: "HTTPRouteList",
+	{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "roles"}:            "RoleList",
+	{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "rolebindings"}:     "RoleBindingList",
+	{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterroles"}:     "ClusterRoleList",
+	{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterrolebindings"}: "ClusterRoleBindingList",
 }
 
 func u(apiVersion, kind, ns, name string, extra map[string]any) *unstructured.Unstructured {
@@ -143,6 +149,11 @@ func objects() []runtime.Object {
 		u("v1", "Service", "payments", "checkout", nil),
 		u("apps/v1", "Deployment", "payments", "checkout", nil),
 		u("gateway.networking.k8s.io/v1", "HTTPRoute", "payments", "checkout-route", nil),
+		u("rbac.authorization.k8s.io/v1", "ClusterRole", "", "view", nil),
+		u("rbac.authorization.k8s.io/v1", "ClusterRoleBinding", "", "view", nil),
+		u("rbac.authorization.k8s.io/v1", "Role", "payments", "reader", nil),
+		u("rbac.authorization.k8s.io/v1", "RoleBinding", "payments", "reader", nil),
+		u("v1", "ServiceAccount", "payments", "default", nil),
 	}
 }
 
@@ -448,6 +459,40 @@ func TestClusterScopedOptInCollectsNodes(t *testing.T) {
 	}
 	if ns := items(t, files, "clusters/mesh1/resources/core/v1/namespaces/"); len(ns) != 1 {
 		t.Fatalf("namespace objects should be filtered to the selection: %v", ns)
+	}
+}
+
+func TestRBACIdentityCollectedWithoutClusterScoped(t *testing.T) {
+	h := newHarness()
+	p := standard(t)
+	p.ClusterScoped = false
+	// roles excluded
+	p.ExcludeResources = []string{"roles"}
+	files, _, _ := run(t, p, h, nil)
+	// still collects clusterroles, clusterrolebindings, rolebindings, serviceaccounts via objectAllowed even off
+	if len(items(t, files, "clusters/mesh1/resources/rbac.authorization.k8s.io/v1/clusterroles/")) == 0 {
+		t.Fatal("clusterroles collected even with ClusterScoped false")
+	}
+	if len(items(t, files, "clusters/mesh1/resources/core/v1/serviceaccounts/")) == 0 {
+		t.Fatal("serviceaccounts collected")
+	}
+	// excluded roles not
+	if len(items(t, files, "clusters/mesh1/resources/rbac.authorization.k8s.io/v1/roles/")) != 0 {
+		t.Fatal("excluded roles should not be collected")
+	}
+	// direct objectAllowed checks
+	c := &Collector{Policy: p}
+	if !c.objectAllowed(bundle.APIResource{Group: "rbac.authorization.k8s.io", Resource: "clusterroles", Kind: "ClusterRole", Namespaced: false}) {
+		t.Fatal("objectAllowed clusterrole")
+	}
+	if !c.objectAllowed(bundle.APIResource{Group: "", Resource: "serviceaccounts", Kind: "ServiceAccount", Namespaced: true}) {
+		t.Fatal("objectAllowed sa")
+	}
+	if c.objectAllowed(bundle.APIResource{Group: "", Resource: "nodes", Kind: "Node", Namespaced: false}) {
+		t.Fatal("nodes still need scoped")
+	}
+	if c.objectAllowed(bundle.APIResource{Group: "rbac.authorization.k8s.io", Resource: "roles", Kind: "Role", Namespaced: true}) {
+		t.Fatal("excluded roles false for objectAllowed")
 	}
 }
 

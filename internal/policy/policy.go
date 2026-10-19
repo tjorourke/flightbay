@@ -292,6 +292,26 @@ func (p *Policy) ResourceAllowed(resource, group, kind string, namespaced bool) 
 	return len(p.Resources) == 0 || resourceMatch(p.Resources, resource, group, kind)
 }
 
+// RBACIdentityAllowed returns true for the five RBAC identity types (serviceaccounts,
+// roles, rolebindings, clusterroles, clusterrolebindings) when objects category is
+// selected and the type is not excluded. It ignores ClusterScoped and the Resources
+// allow-list (but still honours ExcludeResources).
+func (p *Policy) RBACIdentityAllowed(resource, group string) bool {
+	if !p.Plan().Selected(CatObjects) {
+		return false
+	}
+	if resourceMatch(p.ExcludeResources, resource, group, "") {
+		return false
+	}
+	switch {
+	case group == "" && resource == "serviceaccounts":
+		return true
+	case group == "rbac.authorization.k8s.io" && (resource == "roles" || resource == "rolebindings" || resource == "clusterroles" || resource == "clusterrolebindings"):
+		return true
+	}
+	return false
+}
+
 // Plan is the resolved selection shown by --dry-run.
 type Plan struct {
 	Categories  []Category `json:"categories"`
@@ -460,6 +480,23 @@ func (p *Policy) RBACFor(discovered []APIResource, live bool) string {
 	if p.PortForward && (p.Has(CatProxies) || p.Has(CatControlPlane) || p.Has(CatMetrics)) {
 		nsRules.add("", "pods") // to find supported components among the selected pods
 		pfRules.add("", "pods/portforward")
+	}
+	// RBAC identity types are collected for the RBAC explorer even without --cluster-scoped
+	// and without naming them in --resources. They follow the objects category and exclusions.
+	for _, id := range []struct{ g, r string }{
+		{"", "serviceaccounts"},
+		{"rbac.authorization.k8s.io", "roles"},
+		{"rbac.authorization.k8s.io", "rolebindings"},
+		{"rbac.authorization.k8s.io", "clusterroles"},
+		{"rbac.authorization.k8s.io", "clusterrolebindings"},
+	} {
+		if p.RBACIdentityAllowed(id.r, id.g) {
+			if id.r == "clusterroles" || id.r == "clusterrolebindings" {
+				clusterRules.add(id.g, id.r)
+			} else {
+				nsRules.add(id.g, id.r)
+			}
+		}
 	}
 	namespaces := p.ExplicitNamespaces()
 	// The Namespace objects in scope are always read (their labels decide

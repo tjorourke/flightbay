@@ -22,7 +22,7 @@ Flightbay collects only what the collection policy selects. You choose the polic
 | standard | objects, events, logs, helm | full | scrubbed | keys | current and previous streams, last 24h, up to 20 MiB per stream (newest kept) |
 | custom | none until you choose | full | scrubbed | keys | not collected |
 
-Cluster-scoped objects (nodes, CRDs, ClusterRoles) need `--cluster-scoped`. Proxy dumps, control-plane debug output and metrics need `--diagnostics` (or the categories plus `--portforward`).
+Cluster-scoped objects (nodes, CRDs and most others) need `--cluster-scoped`. Roles, RoleBindings and ServiceAccounts in the selected namespaces, and ClusterRoles and ClusterRoleBindings, are read with the objects category even without `--cluster-scoped`, unless excluded. Proxy dumps, control-plane debug output and metrics need `--diagnostics` (or the categories plus `--portforward`).
 
 ## Categories
 

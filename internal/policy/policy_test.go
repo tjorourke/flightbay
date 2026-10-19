@@ -208,3 +208,33 @@ func TestRBACGrantsOnlySelectedCRDDefinitions(t *testing.T) {
 		t.Fatalf("no custom resources selected, yet CRDs granted:\n%s", out)
 	}
 }
+
+func TestRBACIdentityWithoutClusterScoped(t *testing.T) {
+	p, _ := Profile("standard")
+	p.ClusterScoped = false
+	p.Resources = []string{"pods"}
+	if !p.RBACIdentityAllowed("clusterroles", "rbac.authorization.k8s.io") {
+		t.Fatal("clusterroles identity allowed without cluster scoped or resources list")
+	}
+	if !p.RBACIdentityAllowed("serviceaccounts", "") {
+		t.Fatal("sa allowed")
+	}
+	out := p.RBAC(nil)
+	if !strings.Contains(out, "clusterroles") || !strings.Contains(out, "rolebindings") {
+		t.Fatalf("rbac identities missing from yaml:\n%s", out)
+	}
+	if strings.Contains(out, "create") || strings.Contains(out, "update") {
+		t.Fatal("no write verbs on rbac identities")
+	}
+	p.ExcludeResources = []string{"clusterroles"}
+	if p.RBACIdentityAllowed("clusterroles", "rbac.authorization.k8s.io") {
+		t.Fatal("excluded should be false")
+	}
+	out = p.RBAC(nil)
+	if strings.Contains(out, "clusterroles") && !strings.Contains(out, "clusterrolebindings") {
+		// still may have others
+	}
+	if strings.Contains(out, "name: flightbay-reader") && strings.Contains(out, "clusterroles") {
+		t.Fatalf("excluded clusterroles should be omitted from rbac:\n%s", out)
+	}
+}

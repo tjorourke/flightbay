@@ -55,7 +55,7 @@ func InventoryMarkdown() string {
 		}
 		w("| %s | %s | %s | %s | %s | %s |\n", name, strings.Join(cats, ", "), p.ObjectDetail, p.ConfigMaps, p.Secrets, logs)
 	}
-	w("\nCluster-scoped objects (nodes, CRDs, ClusterRoles) need `--cluster-scoped`. Proxy dumps, control-plane debug output and metrics need `--diagnostics` (or the categories plus `--portforward`).\n\n")
+	w("\nCluster-scoped objects (nodes, CRDs and most others) need `--cluster-scoped`. Roles, RoleBindings and ServiceAccounts in the selected namespaces, and ClusterRoles and ClusterRoleBindings, are read with the objects category even without `--cluster-scoped`, unless excluded. Proxy dumps, control-plane debug output and metrics need `--diagnostics` (or the categories plus `--portforward`).\n\n")
 
 	w("## Categories\n\n| Category | What is read |\n|---|---|\n")
 	w("| objects | `list` of each selected resource type in the selected namespaces, in bounded chunks. CRD definitions of selected custom resources (names and printer columns; only HTTPRoute retains its schema for routing capability checks). |\n")
