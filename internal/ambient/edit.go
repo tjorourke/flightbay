@@ -150,7 +150,14 @@ func editableConfigurations(ws *store.Workspace, svc *store.Object) []Editable {
 						entry.Supported = true
 					}
 				}
-				entry.Reason = "Only a single-rule, single-operation HTTP-method policy is edited; other policy shapes remain evidence-only."
+				entry.Reason = "Only Service-targeted policies whose rules use caller namespaces or principals, methods, paths and request headers are edited here; other policy shapes remain evidence-only."
+				if !entry.Supported && len(targets) > 0 {
+					if access, ok := accessFromPolicy(o); ok {
+						req.Tasks = []string{"access-rule"}
+						req.Access = access
+						entry.Supported = true
+					}
+				}
 				if len(targets) == 0 && defaultString(S(Path(o.Obj, "spec", "action")), "ALLOW") == "ALLOW" {
 					if len(rules) == 0 {
 						entry.Tasks = []string{"l4-default-deny"}
@@ -400,6 +407,10 @@ func editGenerated(ws *store.Workspace, p *Plan) error {
 		}
 		change(p, o, "Edit selected traffic-policy fields while preserving TLS and other settings", map[string]any{"/spec/trafficPolicy": tp})
 	case "AuthorizationPolicy":
+		if contains(req.Tasks, "access-rule") {
+			change(p, o, "Replace this policy's action and rules with the reviewed ones; targetRefs and metadata are preserved", map[string]any{"/spec/rules": Copy(Path(generated, "spec", "rules")), "/spec/action": S(Path(generated, "spec", "action"))})
+			break
+		}
 		rules := L(Copy(Path(o.Obj, "spec", "rules")))
 		if contains(req.Tasks, "l4-allow-namespace") {
 			from := M(L(M(rules[0])["from"])[0])

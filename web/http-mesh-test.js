@@ -47,6 +47,7 @@ function httpMeshDashboard(){
     ${httpTestDirection(rows)}
     ${T.mode!=='mesh'?`<div class="hm-connection-evidence"><strong>Traffic origin: Flightbay native HTTP client</strong><p>${esc(T.meshConnectionNote||'Requests run from the Flightbay host; no helper workloads are deployed.')}</p>${T.meshConnectionAddress?`<code>${esc(T.meshConnectionAddress)}</code>`:''}${T.meshConnectionPod?`<small>Connection target: ${esc(T.meshConnectionPod.cluster+'/'+T.meshConnectionPod.namespace+'/'+T.meshConnectionPod.name)}</small>`:''}</div>`:''}
     <div class="hm-metrics"><div><strong>${rows.length}<span> / ${total}</span></strong><small>Requests completed</small></div><div><strong>${ok}</strong><small>HTTP 2xx</small></div><div class="${rows.length-ok?'hm-attention':''}"><strong>${rows.length-ok}</strong><small>HTTP / request errors</small></div><div class="${unknown?'hm-attention':''}"><strong>${unknown}</strong><small>Responder unidentified</small></div></div>
+    ${httpStatusBreakdown(rows)}
     <div class="hm-progress" role="progressbar" aria-label="Completed requests" aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${rows.length}"><span style="width:${100*rows.length/Math.max(total,1)}%"></span></div>
     ${T.meshSummary?.unattempted?`<p class="hm-run-note">${rows.length} responses retained. ${T.meshSummary.unattempted} ${T.meshSummary.remainingUnconfirmed?'remaining requests have no confirmed result.':'requests were not attempted.'}</p>`:''}
     ${T.meshWarnings?.length?`<details class="hm-warning hm-disclosure" data-http-preserve="warnings"><summary>${T.meshWarnings.some(w=>w.includes('Multiple Service-parent'))?'Overlapping routes detected. Check route precedence when comparing weights.':T.meshWarnings.length+' test notice'+(T.meshWarnings.length===1?'':'s')}</summary>${T.meshWarnings.map(w=>`<p>${esc(w)}</p>`).join('')}</details>`:''}
@@ -113,4 +114,13 @@ function httpTestMarkup(){
     <div id="http-mesh-live">${T.busy||T.meshSummary||T.results.length?httpMeshDashboard():''}</div><div class="http-results"></div>
     ${!hasResults?'<div class="ht-empty">Run a request to see the response here.</div>':''}</section></div>
     <footer class="ht-footer">${T.error&&!(T.meshSummary?.stopped&&T.error.startsWith('Test stopped'))?`<p class="red" role="status">${esc(T.error)}</p>`:''}<div class="http-run"><span id="http-batch-status" role="status" aria-live="polite"></span>${results&&!T.busy?'<button data-http-panel="request">Edit request</button>':''}<button class="primary" id="http-run" ${T.busy?'disabled':''}>${T.busy?'<span class="bd-spinner" aria-hidden="true"></span>Running…':T.results.length?'Run again':'Run traffic test'}</button>${T.busy?'<button id="http-stop">Stop test</button>':''}</div></footer></div>`;
+}
+
+// "403 × 5 · denied by an AuthorizationPolicy" so a policy test reads at a glance.
+function httpStatusBreakdown(rows){
+  if(!rows.length)return '';
+  const counts={};rows.forEach(r=>{const k=r.status?String(r.status):'error';counts[k]=(counts[k]||0)+1;});
+  const rbac=rows.some(r=>r.status===403&&/RBAC: access denied/i.test((r.body||r.note||r.error||'')+''));
+  const label=k=>k==='403'?(rbac?'denied by an authorization policy (RBAC: access denied)':'forbidden'):k==='200'?'OK':k==='503'?'unavailable':k==='error'?'no HTTP response':'';
+  return `<p class="hm-status-codes"><strong>Status codes</strong> ${Object.keys(counts).sort().map(k=>`<span class="badge ${k==='403'?'red':/^2/.test(k)?'green':'amber'}">${esc(k)} × ${counts[k]}</span>${label(k)?` <small>${esc(label(k))}</small>`:''}`).join(' ')}</p>`;
 }

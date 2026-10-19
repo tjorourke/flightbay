@@ -65,6 +65,10 @@ type View struct {
 	Graph    Graph      `json:"graph"`
 	Editable []Editable `json:"editable"`
 	Recovery *Recovery  `json:"recovery,omitempty"`
+	// WaypointBinding is how this Service selects its waypoint, if it does.
+	WaypointBinding *WaypointBinding `json:"waypointBinding,omitempty"`
+	// Policies are the Istio security policies that reach this Service.
+	Policies []PolicyEntry `json:"policies,omitempty"`
 }
 
 func expandInventory(ws *store.Workspace, r *Inventory) {
@@ -127,6 +131,8 @@ func NewView(ws *store.Workspace, c, kind, ns, name, route string) (*View, error
 		v.DNS = &dns
 		v.Graph = serviceGraph(ws, o, r)
 		v.Editable = editableConfigurations(ws, o)
+		v.WaypointBinding = waypointBinding(ws, o)
+		v.Policies = servicePolicies(ws, o)
 		for i := range r.Steps {
 			s := &r.Steps[i]
 			switch {

@@ -138,11 +138,11 @@ const amTaskText={
   'rate-limit':['Limit request rate','Set a request budget per waypoint proxy.','Traffic limits']
 };
 function amTaskCards(){
-  const A=S.ambient,allowed=A.edit?(A.editTasks||{HTTPRoute:['weighted-routing','timeouts'],DestinationRule:['load-balancing','endpoint-failover'],AuthorizationPolicy:['methods'],PeerAuthentication:['strict-mtls'],AgentgatewayPolicy:['rate-limit'],EnterpriseAgentgatewayPolicy:['rate-limit']}[A.edit.ref.kind]||[]):null;
+  const A=S.ambient,allowed=A.edit?(A.editTasks||{HTTPRoute:['weighted-routing','timeouts'],DestinationRule:['load-balancing','endpoint-failover'],AuthorizationPolicy:['methods','access-rule'],PeerAuthentication:['strict-mtls'],AgentgatewayPolicy:['rate-limit'],EnterpriseAgentgatewayPolicy:['rate-limit']}[A.edit.ref.kind]||[]):null;
   const installed=new Set(A.edit?[]:(A.result?.editable||[]).flatMap(e=>e.tasks||e.request?.tasks||[]));
   const supported=A.capabilities.filter(c=>c.supported&&!installed.has(c.id)&&(!allowed||allowed.includes(c.id))),unavailable=A.capabilities.filter(c=>!supported.includes(c)&&!installed.has(c.id));
   return `<section class="panel am-task-picker"><div class="panel-head"><div><h2>${A.edit?'Fields to change':'Add configuration'}</h2><p class="muted">${A.edit?'Choose the fields to update on this existing resource.':'Choose a new capability. Edit settings already configured from Current configuration above.'}</p></div></div>
-    <div class="panel-body">${A.edit?'':amWaypointStrip(unavailable)}<div class="am-task-cards">${supported.map(c=>{const [title,desc,group]=amTaskText[c.id]||[c.title,c.reason,'Configuration'];return `<label class="am-task-card ${A.tasks[c.id]?'selected':''}"><input type="checkbox" data-amtask="${esc(c.id)}" ${A.tasks[c.id]?'checked':''}><span><small>${esc(group)} · ${esc(c.layer)}</small><strong>${esc(title)}</strong><span>${esc(desc)}</span></span></label>`;}).join('')}</div>
+    <div class="panel-body"><div class="am-task-cards">${supported.map(c=>{const [title,desc,group]=amTaskText[c.id]||[c.title,c.reason,'Configuration'];return `<label class="am-task-card ${A.tasks[c.id]?'selected':''}"><input type="checkbox" data-amtask="${esc(c.id)}" ${A.tasks[c.id]?'checked':''}><span><small>${esc(group)} · ${esc(c.layer)}</small><strong>${esc(title)}</strong><span>${esc(desc)}</span></span></label>`;}).join('')}</div>
     ${supported.length?'':installed.size?'<p class="muted">Available capabilities are already configured. Use their Edit actions above.</p>':`<div class="notice info">No traffic templates match the captured waypoint and APIs. <button id="am-open-waypoint">Set up a waypoint</button></div>`}
     <details class="am-unavailable"><summary>${unavailable.length} other tasks · why unavailable?</summary>${unavailable.map(c=>`<div><strong>${esc(c.title)}</strong><p>${esc(allowed&&!allowed.includes(c.id)?'This task edits another configuration. Return to Current configuration to choose it.':c.reason)}</p>${amNeedsIstioWaypoint(c)?'<button data-amwaypoint="new" data-amwpistio="1">Deploy an Istio waypoint…</button> <button data-amwaypoint="existing">Use an existing waypoint…</button>':''}</div>`).join('')}</details>
     <div class="am-wizard-footer"><button id="am-change-target">Change target</button><button id="am-next-options" class="primary" ${Object.values(A.tasks).some(Boolean)?'':'disabled'}>${A.edit?'Edit selected fields':'Configure selected tasks'} →</button></div></div></section>`;
@@ -181,6 +181,7 @@ function amOpenEdit(entry,task) {
   A.editTasks=entry.ref.kind==='HTTPRoute'?['weighted-routing','timeouts']:entry.ref.kind==='DestinationRule'?['load-balancing','endpoint-failover']:req.tasks;
   A.tasks=Object.fromEntries(req.tasks.map(t=>[t,true]));
   A.settings={...req,methods:req.methods?.join(',')};
+  if(req.access)A.settings.access=amAccessDraftFrom(req.access);
   const draft=A.editDrafts?.[amEditKey(req.edit)];if(draft){const saved=JSON.parse(JSON.stringify(draft));A.tasks=saved.tasks;A.settings=saved.settings;}
   if(task&&req.tasks.includes(task))A.tasks={[task]:true};
 }
@@ -362,7 +363,7 @@ after.ambient = () => {
   document.querySelectorAll('[data-amissue]').forEach(b=>b.onclick=()=>{const issues=(A.inventory.issues||[]).filter(x=>!S.cluster||x.subject.cluster===S.cluster),issue=issues[Number(b.dataset.amissue)];A.tab='investigate';A.pendingStep=issue.step.id;amChoose(issue.subject);});
   if(A.pendingStep&&A.tab==='investigate'&&amTarget()){const i=A.result.steps.findIndex(s=>s.id===A.pendingStep);A.pendingStep=null;if(i>=0){const step=$('#am-step-'+i);if(step){step.open=true;step.scrollIntoView({block:'start'});}}}
   document.querySelectorAll('.am-task-card').forEach(el=>{const id=el.querySelector('[data-amtask]')?.dataset.amtask;const holder=document.createElement('article');holder.className='am-task-option';el.replaceWith(holder);holder.appendChild(el);holder.insertAdjacentHTML('beforeend',amTaskLinks([id]));});
-  if(A.tab==='wizard'&&A.phase===1&&!$('#am-open-waypoint'))$('#am-change-target')?.insertAdjacentHTML('afterend','<button id="am-open-waypoint">Waypoint setup</button>');
+
   document.querySelectorAll('.am-unavailable>div').forEach(el=>{const task=A.capabilities?.find(c=>c.title===el.querySelector('strong')?.textContent);if(task)el.insertAdjacentHTML('beforeend',amTaskLinks([task.id]));});
   if(A.tab==='wizard'&&A.phase===3) $('#am-plan .panel-body')?.insertAdjacentHTML('beforeend',amTaskLinks(A.mode?[A.mode]:Object.keys(A.tasks).filter(k=>A.tasks[k])));
   if(A.tab==='wizard'&&A.phase===2){const box=$('#am-parameters')||$('#am-setup-parameters')||$('#am-repair-parameters');let docs=amTaskLinks(A.mode?[A.mode]:Object.keys(A.tasks).filter(k=>A.tasks[k]));if(A.mode==='waypoint'&&A.settings.wpMode==='new'){const cls=$('#am-wpClass')?.value;docs=amOfficial(A.result.environment?.classDocs?.[cls]);}box?.insertAdjacentHTML('beforeend',docs);}
@@ -437,66 +438,100 @@ async function amReviewExplanation(x){
 }
 
 // ---------- Allow or deny requests: a Service-targeted AuthorizationPolicy ----------
-// Rules are ORed; every condition inside one rule must match. The draft lives
-// in settings.access as plain strings so it survives re-renders.
-const AM_METHODS=['GET','HEAD','POST','PUT','PATCH','DELETE','OPTIONS'];
+// Covers the whole rules model: rules[] ORed; in each rule from[] ORed
+// sources, to[] ORed operations, when[] ANDed conditions. Inside one source or
+// operation every field set must match. "Rules YAML" takes anything else.
+const AM_SOURCE_FIELDS=[['principals','Caller principal','notPrincipals','cluster.local/ns/NS/sa/ACCOUNT'],['namespaces','Caller namespace','notNamespaces','web, payments'],['services','Caller Service (resolved to its identities)','','namespace/name'],['serviceAccounts','Service account','notServiceAccounts','ns/account'],['requestPrincipals','JWT request principal','notRequestPrincipals','issuer/subject or issuer/*'],['ipBlocks','Source IP block','notIpBlocks','10.0.0.0/8'],['remoteIpBlocks','Remote IP block (X-Forwarded-For)','notRemoteIpBlocks','203.0.113.0/24']];
+const AM_OP_FIELDS=[['methods','Method','notMethods','GET, POST'],['paths','Path','notPaths','/api/*, /admin'],['ports','Port','notPorts','8080'],['hosts','Host','notHosts','api.example.com']];
+const AM_WHEN_KEYS=['request.headers[x-req-origin-type]','request.headers[','source.ip','remote.ip','source.namespace','source.principal','source.serviceAccount','request.auth.principal','request.auth.audiences','request.auth.presenter','request.auth.claims[iss]','destination.ip','destination.port','connection.sni'];
+const amEmptyRule=()=>({from:[],to:[],when:[{key:'',op:'is',values:''}]});
 function amAccessDraft(){
   const F=S.ambient.settings;
-  F.access=F.access||{action:'DENY',rules:[{sourceNamespaces:'',sourceServices:'',principals:'',methods:[],paths:'',headers:[{name:'',op:'is',values:''}]}]};
+  F.access=F.access||{action:'DENY',provider:'',mode:'form',yaml:'',rules:[amEmptyRule()]};
   return F.access;
+}
+// Request (server shape) → editor draft. Used when editing an existing policy.
+function amAccessDraftFrom(a){
+  const join=v=>(v||[]).join(', '),rows=(o,fields)=>fields.flatMap(([pos,,neg])=>[o[pos]?.length?{field:pos,op:'is',values:join(o[pos])}:null,neg&&o[neg]?.length?{field:pos,op:'not',values:join(o[neg])}:null]).filter(Boolean);
+  return {action:a.action||'DENY',provider:a.provider||'',mode:a.rulesYaml?'yaml':'form',yaml:a.rulesYaml||'',rules:(a.rules||[]).map(r=>({
+    from:(r.from||[]).map(src=>({rows:rows(src,AM_SOURCE_FIELDS)})),
+    to:(r.to||[]).map(op=>({rows:rows(op,AM_OP_FIELDS)})),
+    when:(r.when||[]).map(c=>({key:c.key,op:c.notValues?.length&&!c.values?.length?'not':'is',values:join(c.values?.length?c.values:c.notValues)}))
+  }))};
 }
 function amAccessRuleMarkup(svc){
   const A=S.ambient,a=amAccessDraft(),inv=A.inventory||{};
   const namespaces=(inv.namespaces||[]).filter(n=>n.cluster===svc.cluster).map(n=>n.name);
   const services=(inv.services||[]).filter(s=>s.cluster===svc.cluster).map(s=>s.namespace+'/'+s.name);
-  const verb=a.action==='ALLOW'?'allowed':'denied';
+  const fieldRow=(fields,row,path)=>{const f=fields.find(x=>x[0]===row.field)||fields[0];return `<div class="am-access-row" data-amaccessrow="${path}">
+      <select data-amaccessf="field" aria-label="Field">${amOpts(fields.map(([v,l])=>({value:v,label:l})),row.field||fields[0][0])}</select>
+      <select data-amaccessf="op" aria-label="Match" ${f[2]?'':'disabled'}>${amOpts([{value:'is',label:'is one of'},{value:'not',label:'is not one of'}],f[2]?row.op:'is')}</select>
+      <input data-amaccessf="values" value="${esc(row.values)}" placeholder="${esc(f[3])}" list="${row.field==='namespaces'?'am-access-ns':row.field==='services'?'am-access-svc':''}" aria-label="Values" autocomplete="off" spellcheck="false">
+      <button class="link" data-amaccessdel="${path}" aria-label="Remove">×</button></div>`;};
+  const block=(kind,fields,items,i,label,hint)=>`<div class="am-access-block"><h5>${label} <small>${hint}</small></h5>${items.map((it,b)=>`<div class="am-access-group" data-amaccessgroup="${kind}:${i}:${b}">${b?'<span class="am-access-or">or</span>':''}${it.rows.map((row,k)=>fieldRow(fields,row,`${kind}:${i}:${b}:${k}`)).join('')}<div class="row"><button class="link" data-amaccessaddrow="${kind}:${i}:${b}">+ field (and)</button><button class="link" data-amaccessdelgroup="${kind}:${i}:${b}">remove ${kind==='from'?'caller':'operation'}</button></div></div>`).join('')}<button class="link" data-amaccessaddgroup="${kind}:${i}">+ ${items.length?'or another '+(kind==='from'?'caller':'operation'):(kind==='from'?'restrict who is calling':'restrict what they ask for')}</button></div>`;
   const rule=(r,i)=>`<article class="am-access-rule" data-amaccessrule="${i}">
     <div class="row between"><h4>Rule ${i+1}${i?' <small class="muted">or</small>':''}</h4>${a.rules.length>1?`<button class="link" data-amaccessremove="${i}">Remove rule</button>`:''}</div>
-    <div class="am-access-grid">
-      <h5>Who is calling</h5>
-      <label>Caller namespaces <input data-amaccess="sourceNamespaces" list="am-access-ns" value="${esc(r.sourceNamespaces)}" placeholder="any · comma separated" autocomplete="off"></label>
-      <label>Caller Services <input data-amaccess="sourceServices" list="am-access-svc" value="${esc(r.sourceServices)}" placeholder="namespace/name, … · resolved to their service accounts" autocomplete="off"></label>
-      <label>Caller principals <input data-amaccess="principals" value="${esc(r.principals)}" placeholder="cluster.local/ns/NS/sa/ACCOUNT, …" autocomplete="off" spellcheck="false"></label>
-      <h5>What they ask for</h5>
-      <div class="am-access-methods" role="group" aria-label="HTTP methods"><span>Methods</span>${AM_METHODS.map(m=>`<label><input type="checkbox" data-amaccessmethod="${m}" ${r.methods.includes(m)?'checked':''}> ${m}</label>`).join('')}<small class="muted">none ticked = any method</small></div>
-      <label>Paths <input data-amaccess="paths" value="${esc(r.paths)}" placeholder="any · /api/*, /admin, …" autocomplete="off" spellcheck="false"></label>
-      <h5>Request headers</h5>
-      ${r.headers.map((h,j)=>`<div class="am-access-header" data-amaccessheader="${j}"><input data-amaccessh="name" value="${esc(h.name)}" placeholder="header name, e.g. x-req-origin-type" aria-label="Header name" autocomplete="off" spellcheck="false"><select data-amaccessh="op" aria-label="Match">${amOpts([{value:'is',label:'is one of'},{value:'not',label:'is not one of'}],h.op)}</select><input data-amaccessh="values" value="${esc(h.values)}" placeholder="values, comma separated" aria-label="Header values" autocomplete="off" spellcheck="false"><button class="link" data-amaccessheaderremove="${i}:${j}" aria-label="Remove header">×</button></div>`).join('')}
-      <div><button class="link" data-amaccessheaderadd="${i}">+ Add header</button></div>
-    </div></article>`;
+    ${block('from',AM_SOURCE_FIELDS,r.from,i,'Who is calling','<code>from</code> · any caller block may match; every field inside one must')}
+    ${block('to',AM_OP_FIELDS,r.to,i,'What they ask for','<code>to</code> · any operation block may match')}
+    <div class="am-access-block"><h5>Conditions <small><code>when</code> · all must match · keys such as <code>request.headers[name]</code>, <code>source.ip</code>, <code>request.auth.claims[iss]</code></small></h5>
+      ${r.when.map((c,k)=>`<div class="am-access-row" data-amaccesswhen="${i}:${k}"><input data-amaccessw="key" value="${esc(c.key)}" list="am-access-keys" placeholder="request.headers[x-req-origin-type]" aria-label="Condition key" autocomplete="off" spellcheck="false"><select data-amaccessw="op" aria-label="Match">${amOpts([{value:'is',label:'is one of'},{value:'not',label:'is not one of'}],c.op)}</select><input data-amaccessw="values" value="${esc(c.values)}" placeholder="be" aria-label="Values" autocomplete="off" spellcheck="false"><button class="link" data-amaccessdelwhen="${i}:${k}" aria-label="Remove condition">×</button></div>`).join('')}
+      <button class="link" data-amaccessaddwhen="${i}">+ condition (and)</button></div>
+  </article>`;
   return `<section class="am-access" id="am-access">
-    <fieldset class="am-choice-group"><legend>When a rule matches the request</legend>${[['DENY','Deny it','Refused even if another policy allows it. Everything else is untouched.'],['ALLOW','Allow it','Once this Service has an ALLOW policy, requests that no ALLOW rule matches are refused.']].map(([v,l,d])=>`<label class="am-choice"><input type="radio" name="am-access-action" value="${v}" ${a.action===v?'checked':''}><span><strong>${l}</strong><small>${d}</small><code>${v}</code></span></label>`).join('')}</fieldset>
-    <datalist id="am-access-ns">${namespaces.map(n=>`<option value="${esc(n)}">`).join('')}</datalist><datalist id="am-access-svc">${services.map(n=>`<option value="${esc(n)}">`).join('')}</datalist>
-    ${a.rules.map(rule).join('')}
-    <div class="row wrap"><button data-amaccessadd>Add another rule</button><small class="muted">A request matching any rule is ${verb}. Inside one rule, every condition you fill in must match. Empty fields mean "any".</small></div>
-    <p class="muted">Applied by the waypoint for ${esc(svc.namespace+'/'+svc.name)}. Requests that skip the waypoint, such as ingress traffic without <code>istio.io/ingress-use-waypoint</code>, are not checked.</p>
+    <fieldset class="am-choice-group"><legend>When a rule matches the request</legend>${[['DENY','Deny it','Refused even if another policy allows it.'],['ALLOW','Allow it','Requests no ALLOW rule matches are refused.'],['AUDIT','Audit it','Marked for the audit provider; not allowed or denied.'],['CUSTOM','Ask an external authorizer','Sent to an extension provider from the mesh config.']].map(([v,l,d])=>`<label class="am-choice"><input type="radio" name="am-access-action" value="${v}" ${a.action===v?'checked':''}><span><strong>${l}</strong><small>${d}</small><code>${v}</code></span></label>`).join('')}</fieldset>
+    ${a.action==='CUSTOM'?`<label>Extension provider name <input id="am-access-provider" value="${esc(a.provider)}" placeholder="my-ext-authz" autocomplete="off"></label>`:''}
+    <div class="ht-tabs am-access-mode" role="group" aria-label="Edit mode"><button data-amaccessmode="form" aria-pressed="${a.mode!=='yaml'}">Rules</button><button data-amaccessmode="yaml" aria-pressed="${a.mode==='yaml'}">Rules YAML</button></div>
+    <datalist id="am-access-ns">${namespaces.map(n=>`<option value="${esc(n)}">`).join('')}</datalist><datalist id="am-access-svc">${services.map(n=>`<option value="${esc(n)}">`).join('')}</datalist><datalist id="am-access-keys">${AM_WHEN_KEYS.map(k=>`<option value="${esc(k)}">`).join('')}</datalist>
+    ${a.mode==='yaml'?`<label>spec.rules <textarea id="am-access-yaml" rows="12" spellcheck="false" placeholder="- when:\n  - key: request.headers[x-req-origin-type]\n    values: [be]">${esc(a.yaml)}</textarea></label><p class="muted">Write the <code>rules</code> list exactly as in the AuthorizationPolicy. Flightbay checks it parses; the server dry-run validates every field.</p>`:`${a.rules.map(rule).join('')}<div class="row wrap"><button data-amaccessadd>Add another rule (or)</button><small class="muted">A request matching any rule gets the action above. Empty sections mean "any".</small></div>`}
+    <p class="muted">Targets <code>${esc(svc.namespace+'/'+svc.name)}</code> with <code>targetRefs</code>, so the waypoint enforces it. Requests that skip the waypoint are not checked.</p>
   </section>`;
 }
 function amCaptureAccessRule(){
   const a=amAccessDraft();
   const action=document.querySelector('input[name="am-access-action"]:checked');if(action)a.action=action.value;
-  document.querySelectorAll('[data-amaccessrule]').forEach(el=>{
-    const r=a.rules[Number(el.dataset.amaccessrule)];if(!r)return;
-    el.querySelectorAll('[data-amaccess]').forEach(i=>{r[i.dataset.amaccess]=i.value;});
-    r.methods=[...el.querySelectorAll('[data-amaccessmethod]:checked')].map(i=>i.dataset.amaccessmethod);
-    r.headers=[...el.querySelectorAll('[data-amaccessheader]')].map(h=>({name:h.querySelector('[data-amaccessh="name"]').value,op:h.querySelector('[data-amaccessh="op"]').value,values:h.querySelector('[data-amaccessh="values"]').value}));
-  });
+  const prov=$('#am-access-provider');if(prov)a.provider=prov.value;
+  const y=$('#am-access-yaml');if(y)a.yaml=y.value;
+  document.querySelectorAll('[data-amaccessrow]').forEach(el=>{const [kind,i,b,k]=el.dataset.amaccessrow.split(':');const row=a.rules[i]?.[kind]?.[b]?.rows?.[k];if(!row)return;row.field=el.querySelector('[data-amaccessf="field"]').value;row.op=el.querySelector('[data-amaccessf="op"]').value;row.values=el.querySelector('[data-amaccessf="values"]').value;});
+  document.querySelectorAll('[data-amaccesswhen]').forEach(el=>{const [i,k]=el.dataset.amaccesswhen.split(':');const c=a.rules[i]?.when?.[k];if(!c)return;c.key=el.querySelector('[data-amaccessw="key"]').value;c.op=el.querySelector('[data-amaccessw="op"]').value;c.values=el.querySelector('[data-amaccessw="values"]').value;});
 }
+// Editor draft → request (server shape).
 function amAccessRequest(){
   const a=amAccessDraft(),list=v=>String(v||'').split(',').map(x=>x.trim()).filter(Boolean);
-  return {action:a.action,rules:a.rules.map(r=>({sourceNamespaces:list(r.sourceNamespaces),sourceServices:list(r.sourceServices),principals:list(r.principals),methods:r.methods,paths:list(r.paths),headers:r.headers.filter(h=>h.name.trim()||h.values.trim()).map(h=>({name:h.name.trim(),values:list(h.values),not:h.op==='not'}))}))};
+  if(a.mode==='yaml')return {action:a.action,provider:a.provider,rulesYaml:a.yaml};
+  const obj=(group,fields)=>{const o={};for(const row of group.rows){const f=fields.find(x=>x[0]===row.field);if(!f)continue;const key=row.op==='not'&&f[2]?f[2]:f[0];o[key]=(o[key]||[]).concat(list(row.values));}return o;};
+  return {action:a.action,provider:a.provider,rules:a.rules.map(r=>({from:r.from.map(g=>obj(g,AM_SOURCE_FIELDS)),to:r.to.map(g=>obj(g,AM_OP_FIELDS)),when:r.when.filter(c=>c.key.trim()||c.values.trim()).map(c=>c.op==='not'?{key:c.key.trim(),notValues:list(c.values)}:{key:c.key.trim(),values:list(c.values)})}))};
 }
 function amWireAccessRule(){
   if(!$('#am-access'))return;
-  const a=amAccessDraft(),redraw=change=>{amCaptureAccessRule();change();amInvalidate();render();};
-  $('[data-amaccessadd]').onclick=()=>redraw(()=>a.rules.push({sourceNamespaces:'',sourceServices:'',principals:'',methods:[],paths:'',headers:[]}));
-  document.querySelectorAll('[data-amaccessremove]').forEach(b=>b.onclick=()=>redraw(()=>a.rules.splice(Number(b.dataset.amaccessremove),1)));
-  document.querySelectorAll('[data-amaccessheaderadd]').forEach(b=>b.onclick=()=>redraw(()=>a.rules[Number(b.dataset.amaccessheaderadd)].headers.push({name:'',op:'is',values:''})));
-  document.querySelectorAll('[data-amaccessheaderremove]').forEach(b=>b.onclick=()=>redraw(()=>{const [i,j]=b.dataset.amaccessheaderremove.split(':').map(Number);a.rules[i].headers.splice(j,1);}));
-  // The radio changes the wording of the rule summary, so redraw on it.
-  document.querySelectorAll('input[name="am-access-action"]').forEach(r=>r.addEventListener('change',()=>redraw(()=>{})));
+  const a=amAccessDraft(),redraw=change=>{amCaptureAccessRule();change();amInvalidate();render();},at=s=>s.split(':').map((x,i)=>i===0&&isNaN(x)?x:Number(x));
+  const on=(sel,fn)=>document.querySelectorAll(sel).forEach(b=>b.onclick=()=>redraw(()=>fn(b)));
+  on('[data-amaccessadd]',()=>a.rules.push(amEmptyRule()));
+  on('[data-amaccessremove]',b=>a.rules.splice(Number(b.dataset.amaccessremove),1));
+  on('[data-amaccessaddgroup]',b=>{const [kind,i]=at(b.dataset.amaccessaddgroup);a.rules[i][kind].push({rows:[{field:(kind==='from'?AM_SOURCE_FIELDS:AM_OP_FIELDS)[0][0],op:'is',values:''}]});});
+  on('[data-amaccessdelgroup]',b=>{const [kind,i,g]=at(b.dataset.amaccessdelgroup);a.rules[i][kind].splice(g,1);});
+  on('[data-amaccessaddrow]',b=>{const [kind,i,g]=at(b.dataset.amaccessaddrow);a.rules[i][kind][g].rows.push({field:(kind==='from'?AM_SOURCE_FIELDS:AM_OP_FIELDS)[1][0],op:'is',values:''});});
+  on('[data-amaccessdel]',b=>{const [kind,i,g,k]=at(b.dataset.amaccessdel);a.rules[i][kind][g].rows.splice(k,1);if(!a.rules[i][kind][g].rows.length)a.rules[i][kind].splice(g,1);});
+  on('[data-amaccessaddwhen]',b=>a.rules[Number(b.dataset.amaccessaddwhen)].when.push({key:'',op:'is',values:''}));
+  on('[data-amaccessdelwhen]',b=>{const [i,k]=b.dataset.amaccessdelwhen.split(':').map(Number);a.rules[i].when.splice(k,1);});
+  on('[data-amaccessmode]',b=>{if(b.dataset.amaccessmode===a.mode)return;if(b.dataset.amaccessmode==='yaml'&&!a.yaml.trim())a.yaml=amRulesToYAML(amAccessRequest().rules);a.mode=b.dataset.amaccessmode;});
+  // A field change can change the placeholder and whether "is not" exists.
+  document.querySelectorAll('[data-amaccessf="field"], input[name="am-access-action"]').forEach(el=>el.addEventListener('change',()=>redraw(()=>{})));
 }
-
+// A small YAML writer for the rules list, so switching to Rules YAML starts
+// from what the form holds.
+function amRulesToYAML(rules){
+  const q=v=>/^[\w./*:\-\[\]@]+$/.test(v)&&!/^(true|false|null|yes|no|\d+)$/i.test(v)?v:JSON.stringify(v);
+  const out=[];
+  for(const r of rules||[]){
+    const parts=[];
+    const list=(o)=>Object.entries(o).filter(([,v])=>v?.length).map(([k,v])=>`${k}: [${v.map(q).join(', ')}]`);
+    if(r.from?.length)parts.push('from:\n'+r.from.map(s=>'  - source:\n'+list(s).map(l=>'      '+l).join('\n')).join('\n'));
+    if(r.to?.length)parts.push('to:\n'+r.to.map(o=>'  - operation:\n'+list(o).map(l=>'      '+l).join('\n')).join('\n'));
+    if(r.when?.length)parts.push('when:\n'+r.when.map(c=>`  - key: ${q(c.key)}\n    ${c.notValues?'notValues':'values'}: [${(c.notValues||c.values||[]).map(q).join(', ')}]`).join('\n'));
+    out.push(parts.length?'- '+parts.join('\n').replace(/\n/g,'\n  '):'- {}');
+  }
+  return out.join('\n')+'\n';
+}
 // Which waypoint the selected Service uses, shown above the task cards so
 // the L7 tasks it unlocks or blocks are explained where you choose them.
 function amNeedsIstioWaypoint(c){return /Istio\/Envoy waypoint|Istio waypoint/.test(c.reason||'')||/Istio waypoint/.test(c.layer||'');}

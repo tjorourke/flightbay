@@ -140,3 +140,72 @@ func TestAccessRuleBuildsServiceTargetedPolicy(t *testing.T) {
 		t.Fatalf("combined rule: %+v", rule)
 	}
 }
+
+func TestHeaderDenyPolicyLoadsIntoAccessEditorAndWaypointBinding(t *testing.T) {
+	ws := fixture(t)
+	policy := object("AuthorizationPolicy", "block-header-be", map[string]any{"targetRefs": []any{map[string]any{"group": "", "kind": "Service", "name": "front"}}, "action": "DENY", "rules": []any{map[string]any{"when": []any{map[string]any{"key": "request.headers[x-req-origin-type]", "values": []any{"be"}}}}}})
+	put(ws, "security.istio.io", "authorizationpolicies", "AuthorizationPolicy", policy)
+	v, err := NewView(ws, "c", "Service", "app", "front", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var req *Request
+	for _, e := range v.Editable {
+		if e.Ref.Name == "block-header-be" && e.Supported {
+			req = e.Request
+		}
+	}
+	if req == nil || req.Access == nil || req.Access.Action != "DENY" || req.Access.Rules[0].When[0].Key != "request.headers[x-req-origin-type]" || req.Access.Rules[0].When[0].Values[0] != "be" {
+		t.Fatalf("header DENY did not load into the access editor: %+v", req)
+	}
+	if v.WaypointBinding == nil {
+		t.Fatal("no waypoint binding reported")
+	}
+}
+
+func TestAccessRuleCoversTheWholeRulesModel(t *testing.T) {
+	ws := fixture(t)
+	svc := Target(ws, "c", "Service", "app", "front")
+	r := Request{Cluster: "c", Namespace: "app", Service: "front", Tasks: []string{"access-rule"}, Access: &AccessRequest{Action: "ALLOW", Rules: []AccessRule{{
+		From: []AccessSource{{NotNamespaces: []string{"app"}, IPBlocks: []string{"10.0.0.0/8"}}, {RequestPrincipals: []string{"https://issuer/*"}}},
+		To:   []AccessOperation{{NotPaths: []string{"/admin*"}, Ports: []string{"8080"}}},
+		When: []AccessCondition{{Key: "request.headers[X-Env]", NotValues: []string{"prod"}}, {Key: "request.auth.claims[groups]", Values: []string{"ops"}}},
+	}}}}
+	spec, _, err := generateAccessRule(ws, r, svc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rule := spec["rules"].([]any)[0].(map[string]any)
+	if len(rule["from"].([]any)) != 2 || rule["to"].([]any)[0].(map[string]any)["operation"].(map[string]any)["notPaths"] == nil {
+		t.Fatalf("from/to: %+v", rule)
+	}
+	when := rule["when"].([]any)
+	if when[0].(map[string]any)["key"] != "request.headers[x-env]" || when[1].(map[string]any)["key"] != "request.auth.claims[groups]" {
+		t.Fatalf("when: %+v", when)
+	}
+	r.Access.Rules[0].When = []AccessCondition{{Key: "made.up", Values: []string{"x"}}}
+	if _, _, err := generateAccessRule(ws, r, svc); err == nil {
+		t.Fatal("unknown condition key accepted")
+	}
+	r.Access = &AccessRequest{Action: "DENY", RulesYAML: "- to:\n  - operation:\n      notHosts: [a.example]\n"}
+	spec, _, err = generateAccessRule(ws, r, svc)
+	if err != nil || len(spec["rules"].([]any)) != 1 {
+		t.Fatalf("rules YAML: %v %+v", err, spec)
+	}
+}
+
+func TestServicePoliciesListsEveryScope(t *testing.T) {
+	ws := fixture(t)
+	put(ws, "security.istio.io", "authorizationpolicies", "AuthorizationPolicy",
+		object("AuthorizationPolicy", "by-target", map[string]any{"targetRefs": []any{map[string]any{"kind": "Service", "name": "front"}}, "action": "DENY", "rules": []any{map[string]any{}}}),
+		object("AuthorizationPolicy", "ns-wide", map[string]any{}),
+		object("AuthorizationPolicy", "other-target", map[string]any{"targetRefs": []any{map[string]any{"kind": "Service", "name": "nope"}}}))
+	svc := Target(ws, "c", "Service", "app", "front")
+	got := map[string]string{}
+	for _, p := range servicePolicies(ws, svc) {
+		got[p.Ref.Name] = p.Scope
+	}
+	if got["by-target"] != "service" || got["ns-wide"] != "namespace" || got["other-target"] != "" {
+		t.Fatalf("scopes: %v", got)
+	}
+}
