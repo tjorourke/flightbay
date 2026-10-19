@@ -1017,7 +1017,7 @@ func (c *Collector) collectRBAC(ctx context.Context, cluster string, cl Clients,
 					continue
 				}
 				// list in ns
-				l, err = cl.Dynamic.Resource(gvr).Namespace(ns).List(ctx, metav1.ListOptions{})
+				l, err = cl.Dynamic.Resource(gvr).Namespace(ns).List(ctx, metav1.ListOptions{Limit: 500})
 				if err != nil {
 					cov.State, cov.Reason = bundle.StateFailed, reason(err)
 					c.record(LogEntry{Cluster: cluster, Operation: "list", Target: r.Resource + " in " + ns, Result: "failed", Error: err.Error()})
@@ -1030,7 +1030,7 @@ func (c *Collector) collectRBAC(ctx context.Context, cluster string, cl Clients,
 				}
 			}
 		} else {
-			l, err = cl.Dynamic.Resource(gvr).List(ctx, metav1.ListOptions{})
+			l, err = cl.Dynamic.Resource(gvr).List(ctx, metav1.ListOptions{Limit: 500})
 			if err != nil {
 				cov.State, cov.Reason = bundle.StateFailed, reason(err)
 				c.record(LogEntry{Cluster: cluster, Operation: "list", Target: r.Resource, Result: "failed", Error: err.Error()})

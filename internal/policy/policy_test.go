@@ -135,10 +135,11 @@ func TestRBACNamespacedAndMinimal(t *testing.T) {
 			t.Fatalf("RBAC should not contain %q:\n%s", bad, out)
 		}
 	}
-	// The only cluster-wide grant is get on the named Namespace objects.
-	if strings.Count(out, "kind: ClusterRole\nmetadata") != 1 || !strings.Contains(out, "name: flightbay-namespace-reader") ||
+	// cluster reader for the RBAC types (roles etc) + the namespace reader
+	if strings.Count(out, "kind: ClusterRole\nmetadata") != 2 || !strings.Contains(out, "name: flightbay-cluster-reader") ||
+		!strings.Contains(out, "name: flightbay-namespace-reader") ||
 		!strings.Contains(out, "resourceNames:\n    - payments\n    verbs: [get]") {
-		t.Fatalf("namespace read should be one ClusterRole limited to the named namespaces:\n%s", out)
+		t.Fatalf("expected cluster-reader (for RBAC ids) + namespace-reader:\n%s", out)
 	}
 }
 
