@@ -96,19 +96,19 @@ func discovery() *fakeDiscovery {
 }
 
 var gvrs = map[schema.GroupVersionResource]string{
-	{Version: "v1", Resource: "pods"}:                                           "PodList",
-	{Version: "v1", Resource: "secrets"}:                                        "SecretList",
-	{Version: "v1", Resource: "configmaps"}:                                     "ConfigMapList",
-	{Version: "v1", Resource: "namespaces"}:                                     "NamespaceList",
-	{Version: "v1", Resource: "nodes"}:                                          "NodeList",
-	{Version: "v1", Resource: "events"}:                                         "EventList",
-	{Version: "v1", Resource: "services"}:                                       "ServiceList",
-	{Version: "v1", Resource: "serviceaccounts"}:                                "ServiceAccountList",
-	{Group: "apps", Version: "v1", Resource: "deployments"}:                     "DeploymentList",
-	{Group: "gateway.networking.k8s.io", Version: "v1", Resource: "httproutes"}: "HTTPRouteList",
-	{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "roles"}:            "RoleList",
-	{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "rolebindings"}:     "RoleBindingList",
-	{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterroles"}:     "ClusterRoleList",
+	{Version: "v1", Resource: "pods"}:                                                    "PodList",
+	{Version: "v1", Resource: "secrets"}:                                                 "SecretList",
+	{Version: "v1", Resource: "configmaps"}:                                              "ConfigMapList",
+	{Version: "v1", Resource: "namespaces"}:                                              "NamespaceList",
+	{Version: "v1", Resource: "nodes"}:                                                   "NodeList",
+	{Version: "v1", Resource: "events"}:                                                  "EventList",
+	{Version: "v1", Resource: "services"}:                                                "ServiceList",
+	{Version: "v1", Resource: "serviceaccounts"}:                                         "ServiceAccountList",
+	{Group: "apps", Version: "v1", Resource: "deployments"}:                              "DeploymentList",
+	{Group: "gateway.networking.k8s.io", Version: "v1", Resource: "httproutes"}:          "HTTPRouteList",
+	{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "roles"}:               "RoleList",
+	{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "rolebindings"}:        "RoleBindingList",
+	{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterroles"}:        "ClusterRoleList",
 	{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterrolebindings"}: "ClusterRoleBindingList",
 }
 

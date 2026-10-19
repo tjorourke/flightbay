@@ -24,7 +24,7 @@ func binding(kind, bns, bname, roleKind, roleName, subjKind, subjName, subjNS st
 		sub["namespace"] = subjNS
 	}
 	return map[string]any{
-		"kind": kind,
+		"kind":     kind,
 		"metadata": map[string]any{"name": bname, "namespace": bns},
 		"roleRef":  map[string]any{"apiGroup": "rbac.authorization.k8s.io", "kind": roleKind, "name": roleName},
 		"subjects": []any{sub},
@@ -162,7 +162,7 @@ func TestRoleBindingSubjectNamespaceDefaults(t *testing.T) {
 	}, "r")
 	ws.AddObjects("c", res("rbac.authorization.k8s.io", "rolebindings", "RoleBinding", true), []map[string]any{
 		{
-			"kind": "RoleBinding",
+			"kind":     "RoleBinding",
 			"metadata": map[string]any{"name": "rb", "namespace": "shop"},
 			"roleRef":  map[string]any{"apiGroup": "rbac.authorization.k8s.io", "kind": "Role", "name": "r"},
 			"subjects": []any{map[string]any{"kind": "ServiceAccount", "name": "app"}},
@@ -205,13 +205,13 @@ func TestAggregationUnion(t *testing.T) {
 	ws := makeWS(t)
 	ws.AddObjects("c", res("rbac.authorization.k8s.io", "clusterroles", "ClusterRole", false), []map[string]any{
 		{
-			"kind": "ClusterRole",
-			"metadata": map[string]any{"name": "mon", "labels": map[string]any{"aggregate": "mon"}},
+			"kind":            "ClusterRole",
+			"metadata":        map[string]any{"name": "mon", "labels": map[string]any{"aggregate": "mon"}},
 			"aggregationRule": map[string]any{"clusterRoleSelectors": []any{map[string]any{"matchLabels": map[string]any{"aggregate": "mon"}}}},
 			"rules":           []any{map[string]any{"verbs": []any{"get"}, "resources": []any{"configmaps"}}},
 		},
 		{
-			"kind": "ClusterRole",
+			"kind":     "ClusterRole",
 			"metadata": map[string]any{"name": "extra", "labels": map[string]any{"aggregate": "mon"}},
 			"rules":    []any{map[string]any{"verbs": []any{"get"}, "resources": []any{"pods"}}},
 		},
@@ -240,8 +240,8 @@ func TestAggregationSkipsSelf(t *testing.T) {
 	ws := makeWS(t)
 	ws.AddObjects("c", res("rbac.authorization.k8s.io", "clusterroles", "ClusterRole", false), []map[string]any{
 		{
-			"kind": "ClusterRole",
-			"metadata": map[string]any{"name": "selfy", "labels": map[string]any{"a": "b"}},
+			"kind":            "ClusterRole",
+			"metadata":        map[string]any{"name": "selfy", "labels": map[string]any{"a": "b"}},
 			"aggregationRule": map[string]any{"clusterRoleSelectors": []any{map[string]any{"matchLabels": map[string]any{"a": "b"}}}},
 			"rules":           []any{map[string]any{"verbs": []any{"get"}, "resources": []any{"configmaps"}}},
 		},
