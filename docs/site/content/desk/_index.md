@@ -119,7 +119,8 @@ The sidebar has every view:
 | [Overview](/desk/overview/) | Where to start: counts, the top findings, clusters and provenance |
 | [Search](/desk/search/) | Every object, by name, label or anything in spec and status |
 | [Resources: Keyboard tab](/desk/navigator/) | The keyboard-first, k9s-style view of the same objects |
-| [Resources](/desk/resources/) | Browse objects by type, with YAML, relations, events and logs |
+| [Resources](/desk/resources/) | Browse objects by type, with YAML, relations, events and logs; includes a Map tab |
+| [RBAC](/desk/rbac/) | ServiceAccount permissions explorer (what the SA can do, who can verb on a resource) |
 | [Log explorer](/desk/logs/) | Every log line, with a time axis |
 | [Timeline](/desk/timeline/) | Events, exits, rollouts and error spikes in order |
 | [Findings](/desk/findings/) | Rules that point at likely problems |

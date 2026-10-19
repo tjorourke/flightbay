@@ -17,7 +17,7 @@ func TestAmbientFeatureAssetsAreBundledAndLoaded(t *testing.T) {
 		"ambient.js", "ambient-configure.js", "ambient-map.js",
 		"global-publication.js", "bookinfo-demo.js", "request-path.js",
 		"request-path-map.js", "request-path.css", "request-path-transport.css", "http-test.js",
-		"http-mesh-test.js", "http-mesh-test.css",
+		"http-mesh-test.js", "http-mesh-test.css", "rbac.js", "resources-map.js",
 	} {
 		if !strings.Contains(string(index), `"static/`+name+`"`) {
 			t.Errorf("feature asset %s is no longer loaded by the desk", name)

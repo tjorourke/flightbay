@@ -66,3 +66,13 @@ The page header has two buttons:
 - **kubectl get** runs `kubectl get` for the current type in the terminal.
 
 See [Terminal](/desk/terminal/).
+
+## Map tab
+
+The Resources page has a **Map** tab that draws a topology of captured resources and their connections (owners, Services/Endpoints, Ingress/Gateway/HTTPRoute/GRPCRoute backends, "uses", waypoints). Broken edges are shown dashed. It re-uses the ambient map rendering helpers and the same open-object drawer.
+
+## RBAC
+
+A separate **RBAC** entry in the nav opens the ServiceAccount RBAC explorer: who the SA is, what it can do (namespaced + cluster), which bindings grant it, which workloads use it, and a suggestion (text only). From any ServiceAccount drawer there is a "Service account RBAC" button. The RBAC page also has a "Who can" form that answers the reverse: which subjects can verb on a resource in a namespace, via direct, group, or aggregated roles.
+
+See also the [RBAC](/desk/rbac/) desk page.

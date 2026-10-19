@@ -58,6 +58,13 @@ function parseHash() {
   if (view === 'posture' || view === 'bestpractices') { location.replace('#scorecard' + (query ? '?' + query : '')); }
   if ((view === 'scorecard' || view === 'posture') && p.has('tab')) S.pst.tab = p.get('tab');
   if (view === 'resources' && p.has('resource')) { S.res.resource = p.get('resource'); S.res.group = p.get('group') || ''; }
+  if (view === 'resources' && p.has('tab')) S.res.tab = p.get('tab');
+  if (view === 'rbac') {
+    S.rbac = S.rbac || {};
+    if (p.has('cluster')) S.rbac.cluster = p.get('cluster');
+    if (p.has('namespace')) S.rbac.namespace = p.get('namespace');
+    if (p.has('name')) S.rbac.name = p.get('name');
+  }
   if(view==='ambient'&&S.ambient){
     const kind=p.get('kind'),named=['Namespace','Service','Pod','Gateway','HTTPRoute','ServiceEntry'].includes(kind)&&p.has('name');
     if(named||p.has('service')){
@@ -95,7 +102,7 @@ async function render() {
   document.body.classList.toggle('ambient-view',S.view==='ambient');
   const navView = S.view === 'navigator' ? 'resources' : S.view;
   document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('active', a.dataset.view === navView));
-  const views = {navigator: resourceNavigator, search, overview, scorecard: posture, reach, resources, logs, timeline, findings, compare, proxies, coverage, ...(typeof reviewPage === 'function' ? {review: reviewPage} : {}), ...(typeof trafficPage === 'function' ? {traffic: trafficPage} : {}), ...(typeof ambientPage === 'function' ? {ambient: ambientPage} : {})};
+  const views = {navigator: resourceNavigator, search, overview, scorecard: posture, reach, resources, logs, timeline, findings, compare, proxies, coverage, rbac: (typeof rbacPage === 'function' ? rbacPage : overview), ...(typeof reviewPage === 'function' ? {review: reviewPage} : {}), ...(typeof trafficPage === 'function' ? {traffic: trafficPage} : {}), ...(typeof ambientPage === 'function' ? {ambient: ambientPage} : {})};
   const fn = views[S.view] || overview;
   $('#crumb').textContent = S.ws ? `Workspace / ${S.ws.case ? 'Case ' + S.ws.case : 'Snapshot'} / ${S.view}` : 'Workspace';
   try {
@@ -200,7 +207,7 @@ function morphKids(cur, next) {
 
 // Each view links to its page in the built-in documentation.
 const docPages = {overview: 'desk/overview/', search: 'desk/search/', navigator: 'desk/navigator/', resources: 'desk/resources/', logs: 'desk/logs/', timeline: 'desk/timeline/',
-  findings: 'desk/findings/', scorecard: 'desk/scorecard/', ambient: 'desk/ambient/', traffic: 'desk/traffic/', compare: 'desk/compare/', proxies: 'desk/proxy-configs/', coverage: 'desk/coverage/', review: 'collect/review/'};
+  findings: 'desk/findings/', scorecard: 'desk/scorecard/', ambient: 'desk/ambient/', traffic: 'desk/traffic/', compare: 'desk/compare/', proxies: 'desk/proxy-configs/', coverage: 'desk/coverage/', review: 'collect/review/', rbac: 'desk/rbac/'};
 function head(title, sub, actions = '') {
   const doc = docPages[S.view];
   const help = doc ? `<a class="help-link" href="/docs/${doc}" target="_blank" rel="noopener" title="How to use ${esc(title)}">? Docs</a>` : '';
@@ -1948,10 +1955,13 @@ after.search = () => {
 // is where the menu entry opens.
 function resTabs(active) {
   try { localStorage.setItem('flightbay-res-tab', active); } catch (_) { /* private mode */ }
-  return `<nav class="pst-tabs res-tabs"><a class="pst-tab ${active === 'resources' ? 'on' : ''}" href="#resources" data-restab="resources">Browse<small class="muted">mouse, every type</small></a><a class="pst-tab ${active === 'navigator' ? 'on' : ''}" href="#navigator" data-restab="navigator">Keyboard<small class="muted">k9s-style: : / Enter Esc</small></a></nav>`;
+  return `<nav class="pst-tabs res-tabs"><a class="pst-tab ${active === 'resources' ? 'on' : ''}" href="#resources" data-restab="resources">Browse<small class="muted">mouse, every type</small></a><a class="pst-tab ${active === 'navigator' ? 'on' : ''}" href="#navigator" data-restab="navigator">Keyboard<small class="muted">k9s-style: : / Enter Esc</small></a><a class="pst-tab ${active === 'map' ? 'on' : ''}" href="#resources?tab=map" data-restab="map">Map<small class="muted">topology</small></a></nav>`;
 }
 
 async function resources() {
+  if (S.res.tab === 'map' || location.hash.includes('tab=map')) {
+    return head('Resources', 'Topology view of captured resources and their connections (re-uses ambient map helpers).') + resTabs('map') + `<div id="rm-root"></div>`;
+  }
   const allTypes = await api('api/resources', {cluster: S.cluster});
   const {groups, hidden} = groupKinds(allTypes);
   // Only types with captured objects, unless one was opened explicitly (e.g. from a finding).
@@ -1987,6 +1997,21 @@ async function resources() {
     <div class="table-foot"><span>Captured ${fmtDateTime(S.ws?.snapshot)} · read-only</span><span><kbd>/</kbd> filter · <kbd>⌘K</kbd> jump</span></div></section></div></div>`;
 }
 after.resources = () => {
+  document.querySelectorAll('[data-type]').forEach(b => b.onclick = () => { const t = JSON.parse(b.dataset.type); S.res.group = t.g; S.res.resource = t.r; S.res.ns = ''; S.res.q = ''; render(); });
+  document.querySelectorAll('[data-obj]').forEach(tr => tr.onclick = () => openObject(JSON.parse(tr.dataset.obj)));
+  $('#res-ns').onchange = e => { S.res.ns = e.target.value; render(); };
+  let t; $('#res-q').oninput = e => { clearTimeout(t); t = setTimeout(() => { const c = e.target.selectionStart, v = e.target.value; S.res.q = v; render().then(() => refocus('#res-q', c, v)); }, 250); };
+  typeahead($('#res-q'), {scope: 'objects', keys: labelKey, alias: {l: 'label'}, extraQ: () => `kind:${S.res.resource}${S.res.group ? '.' + S.res.group : ''}${S.res.ns ? ' ns:' + S.res.ns : ''}`});
+  $('#res-reset').onclick = () => { S.res.ns = ''; S.res.q = ''; render(); };
+  const rc = $('#res-cov'); if (rc) rc.onclick = () => nav('coverage');
+  $('#res-k9s').onclick = () => openK9s(S.res.resource + (S.res.group ? '.' + S.res.group : ''), S.res.ns);
+  const commands=(S.cluster?[S.cluster]:(S.ws?.clusters||[]).map(c=>c.name)).map(c=>mirrorKubectl(`get ${shellArg(S.res.resource+(S.res.group?'.'+S.res.group:''))} ${S.res.ns?'-n '+shellArg(S.res.ns):'-A'}`,c)).join('\n');
+  $('#res-term').onclick = () => termRun(commands);
+  commandControls($('#res-term'),commands);
+};
+after.resources = () => {
+  document.querySelectorAll('[data-restab]').forEach(b => b.onclick = e => { const t = b.dataset.restab; if (t === 'map') { location.hash = 'resources?tab=map'; } else if (t === 'navigator') { location.hash = 'navigator'; } else { S.res.tab = ''; render(); } });
+  if (S.res.tab === 'map' || location.hash.includes('tab=map')) { if (typeof rmLoad === 'function') setTimeout(rmLoad, 0); return; }
   document.querySelectorAll('[data-type]').forEach(b => b.onclick = () => { const t = JSON.parse(b.dataset.type); S.res.group = t.g; S.res.resource = t.r; S.res.ns = ''; S.res.q = ''; render(); });
   document.querySelectorAll('[data-obj]').forEach(tr => tr.onclick = () => openObject(JSON.parse(tr.dataset.obj)));
   $('#res-ns').onchange = e => { S.res.ns = e.target.value; render(); };
@@ -2043,6 +2068,7 @@ async function openObject(ref, tab = 'summary') {
     const cp = $('#d-copy'); if (cp) cp.onclick = () => navigator.clipboard.writeText(d.yaml).then(() => toast('YAML copied'), () => toast('Clipboard unavailable'));
     if (typeof rvWireObject === 'function') rvWireObject();
     if (typeof ambientWireObject === 'function') ambientWireObject(o);
+    if (typeof window.rbacWireObject === 'function') window.rbacWireObject(o);
   };
   draw();
 }
