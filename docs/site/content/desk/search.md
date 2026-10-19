@@ -8,6 +8,8 @@ description: Find any captured object of any kind by name, namespace, label or a
 
 Search covers every captured object of every kind: names, namespaces, labels, and anything in spec and status, such as images, hostnames and status reasons. Use it when you know a word and not where it lives: which routes use a hostname, which pods run an image, what mentions a Secret.
 
+Search is a tab of **Resources**. Open it from the tabs at the top of that page, or with ⌘K. Old `#search` links still land here.
+
 ![Searching every object](/images/search.png)
 
 With an empty box the page lists every kind that has captured objects, grouped by area (Workloads, Networking, Gateway API, Istio, agentgateway and kgateway, kagent, other platform APIs, Config, access and storage). Click one to list it.

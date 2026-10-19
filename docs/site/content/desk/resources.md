@@ -8,7 +8,7 @@ description: Browse captured objects by type, and open any object for its YAML, 
 
 Resources lists captured objects one type at a time, with the same columns `kubectl get` prints. Use it to browse: what Gateways are there, which pods are not ready, what does this policy look like.
 
-The page has two tabs over the same objects. **Browse** (this page) is for the mouse: every type grouped on the left, a table, and a drawer for each object. **Keyboard** is the [k9s-style view](/desk/navigator/): `:` to switch type, `/` to filter, Enter to describe in place. The **Resources** menu entry opens whichever tab you used last.
+The page has four tabs over the same objects. **Browse** (this page) is for the mouse: every type grouped on the left, a table, and a drawer for each object. **[Search](/desk/search/)** looks through every field of every object. **Keyboard** is the [k9s-style view](/desk/navigator/): `:` to switch type, `/` to filter, Enter to describe in place. **Map** draws the topology (below). The **Resources** menu entry opens whichever tab you used last.
 
 ## The type list
 

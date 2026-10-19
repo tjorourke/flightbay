@@ -54,11 +54,13 @@ function parseHash() {
   if (view === 'logs') {
     for (const k of ['q', 'namespace', 'workload', 'pod', 'container', 'level', 'stream', 'from', 'to']) if (p.has(k)) S.logs[k] = p.get(k);
   }
-  if (view === 'search' && p.has('q')) S.search.q = p.get('q');
+  // Search is a tab of Resources now; keep old #search links working.
+  if (view === 'search') { if (p.has('q')) S.search.q = p.get('q'); location.replace('#' + searchHash(p.get('q') || '')); S.view = 'resources'; S.res.tab = 'search'; return; }
   if (view === 'posture' || view === 'bestpractices') { location.replace('#scorecard' + (query ? '?' + query : '')); }
   if ((view === 'scorecard' || view === 'posture') && p.has('tab')) S.pst.tab = p.get('tab');
   if (view === 'resources' && p.has('resource')) { S.res.resource = p.get('resource'); S.res.group = p.get('group') || ''; }
-  if (view === 'resources' && p.has('tab')) S.res.tab = p.get('tab');
+  if (view === 'resources') S.res.tab = p.get('tab') || '';
+  if (view === 'resources' && S.res.tab === 'search' && p.has('q')) S.search.q = p.get('q');
   if (view === 'rbac') {
     S.rbac = S.rbac || {};
     S.rbac.cluster = p.get('cluster') || S.rbac.cluster || '';
@@ -85,6 +87,9 @@ function parseHash() {
   if (S.ws?.agent && !AGENT_VIEWS.includes(S.view)) { location.replace('#traffic'); S.view = 'traffic'; }
 }
 
+// The hash of the Search tab of Resources, with the query when there is one.
+function searchHash(q) { return 'resources?tab=search' + (q ? '&q=' + encodeURIComponent(q) : ''); }
+
 function nav(view) {
   if (location.hash.slice(1) === view) render(); else location.hash = view;
 }
@@ -102,7 +107,7 @@ async function render() {
   document.body.classList.toggle('ambient-view',S.view==='ambient');
   const navView = S.view === 'navigator' ? 'resources' : S.view;
   document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('active', a.dataset.view === navView));
-  const views = {navigator: resourceNavigator, search, overview, scorecard: posture, reach, resources, logs, timeline, findings, compare, proxies, coverage, rbac: (typeof rbacPage === 'function' ? rbacPage : overview), ...(typeof reviewPage === 'function' ? {review: reviewPage} : {}), ...(typeof trafficPage === 'function' ? {traffic: trafficPage} : {}), ...(typeof ambientPage === 'function' ? {ambient: ambientPage} : {})};
+  const views = {navigator: resourceNavigator, overview, scorecard: posture, reach, resources, logs, timeline, findings, compare, proxies, coverage, rbac: (typeof rbacPage === 'function' ? rbacPage : overview), ...(typeof reviewPage === 'function' ? {review: reviewPage} : {}), ...(typeof trafficPage === 'function' ? {traffic: trafficPage} : {}), ...(typeof ambientPage === 'function' ? {ambient: ambientPage} : {})};
   const fn = views[S.view] || overview;
   $('#crumb').textContent = S.ws ? `Workspace / ${S.ws.case ? 'Case ' + S.ws.case : 'Snapshot'} / ${S.view}` : 'Workspace';
   try {
@@ -212,7 +217,7 @@ function morphKids(cur, next) {
 const docPages = {overview: 'desk/overview/', search: 'desk/search/', navigator: 'desk/navigator/', resources: 'desk/resources/', logs: 'desk/logs/', timeline: 'desk/timeline/',
   findings: 'desk/findings/', scorecard: 'desk/scorecard/', ambient: 'desk/ambient/', traffic: 'desk/traffic/', compare: 'desk/compare/', proxies: 'desk/proxy-configs/', coverage: 'desk/coverage/', review: 'collect/review/', rbac: 'desk/rbac/'};
 function head(title, sub, actions = '') {
-  const doc = docPages[S.view];
+  const doc = docPages[S.view === 'resources' && S.res.tab === 'search' ? 'search' : S.view];
   const help = doc ? `<a class="help-link" href="/docs/${doc}" target="_blank" rel="noopener" title="How to use ${esc(title)}">? Docs</a>` : '';
   return `<div class="page-head"><div><h1>${esc(title)}</h1><p>${sub}</p></div><div class="row wrap">${actions}${help}</div></div>`;
 }
@@ -465,7 +470,7 @@ async function loadWorkspace() {
 
 // Agent mode (AGENT=1): only the views about agents. Links to any other
 // view land on Traffic.
-const AGENT_VIEWS = ['traffic', 'scorecard', 'resources', 'navigator', 'logs', 'search', 'review', 'ambient','proxies', 'rbac'];
+const AGENT_VIEWS = ['traffic', 'scorecard', 'resources', 'navigator', 'logs', 'review', 'ambient','proxies', 'rbac'];
 function istioAmbientAvailable(){return !!S.ws?.istioAmbient?.some(c=>c.available&&(!S.cluster||c.cluster===S.cluster));}
 function updateIstioAmbientNav(){document.querySelector('.nav [data-view="ambient"]')?.classList.toggle('hidden',!istioAmbientAvailable());}
 function agentMode() {
@@ -1915,7 +1920,7 @@ async function search() {
   const examples = ['kind:pod', 'CrashLoopBackOff', 'kind:httproute', 'label:app', 'kind:deployment ns:istio-system', '"image"'];
   const bar = `<form class="query" id="obj-form"><span class="green">⌕</span><input id="obj-q" value="${esc(Q.q)}" placeholder='Search every object. Try kind: ns: label: name: or free text, e.g. kind:pod label:app=checkout' autocomplete="off" spellcheck="false" aria-label="Object search">${Q.q ? '<button type="button" class="ghost" id="obj-clear" title="Clear the search (Esc)">Clear ✕</button>' : ''}<button class="primary">Search ↵</button></form>
     <div class="help-row"><span>Try</span>${examples.map(x => `<button data-otry="${esc(x)}">${esc(x)}</button>`).join('')}</div>`;
-  const header = head('Search', 'Every captured object of every kind: names, namespaces, labels, and anything in spec and status (images, hostnames, status reasons).');
+  const header = head('Resources', 'Every captured object of every kind: names, namespaces, labels, and anything in spec and status (images, hostnames, status reasons).') + resTabs('search');
   if (!Q.q.trim()) {
     const types = await api('api/resources', {cluster: S.cluster});
     const {groups, hidden} = groupKinds(types);
@@ -1939,7 +1944,7 @@ async function search() {
 }
 after.search = () => {
   const Q = S.search;
-  const go = (q, keep) => { Q.q = q; Q.limit = 200; history.replaceState(null, '', '#search' + (q ? '?q=' + encodeURIComponent(q) : '')); render().then(() => { if (keep) refocus('#obj-q', keep.caret, keep.value); }); };
+  const go = (q, keep) => { Q.q = q; Q.limit = 200; history.replaceState(null, '', '#' + searchHash(q)); render().then(() => { if (keep) refocus('#obj-q', keep.caret, keep.value); }); };
   typeahead($('#obj-q'), {scope: 'objects', alias: objAlias, bareField: 'name', onAccept: i => go(i.value.trim(), {value: i.value, caret: i.selectionStart})});
   $('#obj-form').onsubmit = e => { e.preventDefault(); go($('#obj-q').value.trim()); };
   document.querySelectorAll('[data-otry]').forEach(b => b.onclick = () => go(b.dataset.otry));
@@ -1961,15 +1966,16 @@ after.search = () => {
 };
 
 // ---------- resources ----------
-// Resources has two ways in: Browse (mouse, grouped types, drawer) and
-// Keyboard (the k9s-style Navigator). The same objects; the last tab used
-// is where the menu entry opens.
+// Resources has four ways in: Browse (mouse, grouped types, drawer), Search
+// (every field of every object), Keyboard (the k9s-style Navigator) and Map.
+// The same objects; the last tab used is where the menu entry opens.
 function resTabs(active) {
   try { localStorage.setItem('flightbay-res-tab', active); } catch (_) { /* private mode */ }
-  return `<nav class="pst-tabs res-tabs"><a class="pst-tab ${active === 'resources' ? 'on' : ''}" href="#resources" data-restab="resources">Browse<small class="muted">mouse, every type</small></a><a class="pst-tab ${active === 'navigator' ? 'on' : ''}" href="#navigator" data-restab="navigator">Keyboard<small class="muted">k9s-style: : / Enter Esc</small></a><a class="pst-tab ${active === 'map' ? 'on' : ''}" href="#resources?tab=map" data-restab="map">Map<small class="muted">topology</small></a></nav>`;
+  return `<nav class="pst-tabs res-tabs"><a class="pst-tab ${active === 'resources' ? 'on' : ''}" href="#resources" data-restab="resources">Browse<small class="muted">mouse, every type</small></a><a class="pst-tab ${active === 'search' ? 'on' : ''}" href="#${searchHash(S.search.q)}" data-restab="search">Search<small class="muted">every field, ⌘K</small></a><a class="pst-tab ${active === 'navigator' ? 'on' : ''}" href="#navigator" data-restab="navigator">Keyboard<small class="muted">k9s-style: : / Enter Esc</small></a><a class="pst-tab ${active === 'map' ? 'on' : ''}" href="#resources?tab=map" data-restab="map">Map<small class="muted">topology</small></a></nav>`;
 }
 
 async function resources() {
+  if (S.res.tab === 'search') return search();
   if (S.res.tab === 'map' || location.hash.includes('tab=map')) {
     return head('Resources', 'One namespace drawn as a map of the relationships the capture holds. Pick objects to draw just them and what links to them.') + resTabs('map') + `<div id="rm-root" data-morph="keep"></div>`;
   }
@@ -2008,7 +2014,8 @@ async function resources() {
     <div class="table-foot"><span>Captured ${fmtDateTime(S.ws?.snapshot)} · read-only</span><span><kbd>/</kbd> filter · <kbd>⌘K</kbd> jump</span></div></section></div></div>`;
 }
 after.resources = () => {
-  document.querySelectorAll('[data-restab]').forEach(b => b.onclick = e => { const t = b.dataset.restab; if (t === 'map') { location.hash = 'resources?tab=map'; } else if (t === 'navigator') { location.hash = 'navigator'; } else { S.res.tab = ''; render(); } });
+  document.querySelectorAll('[data-restab]').forEach(b => b.onclick = e => { const t = b.dataset.restab; if (t === 'map') { location.hash = 'resources?tab=map'; } else if (t === 'navigator') { location.hash = 'navigator'; } else if (t === 'search') { e.preventDefault(); location.hash = searchHash(S.search.q); } else { e.preventDefault(); S.res.tab = ''; if (location.hash.includes('tab=')) location.hash = 'resources'; else render(); } });
+  if (S.res.tab === 'search') return after.search();
   if (S.res.tab === 'map' || location.hash.includes('tab=map')) {
     // A live refresh (S.morph) fetches the graph again behind the drawn map.
     if (typeof rmLoad === 'function') { const live = !!S.morph; setTimeout(() => rmLoad(live), 0); }
@@ -2702,14 +2709,14 @@ function closeModal() { if(S.applyConfirmCancel)S.applyConfirmCancel();$('#modal
 
 function openSearch() {
   modal('Jump to an object or view', `<input id="gs" style="width:100%" placeholder="Any object: name, label, image, hostname. Try kind: ns: label:" autocomplete="off"><div id="gs-res" class="search-results"></div>`);
-  const views = ['navigator', 'search', 'overview', 'scorecard', ...(istioAmbientAvailable()?['ambient']:[]), ...(feature('traffic') || feature('reach') ? ['traffic'] : []), 'resources', 'logs', 'timeline', 'findings', 'compare', 'proxies', 'coverage', 'rbac'].filter(v => !S.ws?.agent || AGENT_VIEWS.includes(v));
+  const views = ['navigator', 'overview', 'scorecard', ...(istioAmbientAvailable()?['ambient']:[]), ...(feature('traffic') || feature('reach') ? ['traffic'] : []), 'resources', 'logs', 'timeline', 'findings', 'compare', 'proxies', 'coverage', 'rbac'].filter(v => !S.ws?.agent || AGENT_VIEWS.includes(v));
   const viewLabel=v=>({ambient:'Istio Ambient',proxies:'Proxy diagnostics',traffic:'Traffic · mesh and gateway'}[v]||v);
   let hits = [], sel = 0;
   const draw = () => {
-    $('#gs-res').innerHTML = hits.map((h, i) => `<button class="${i === sel ? 'sel' : ''}" data-i="${i}">${h.all ? `<span class="green">⌕</span> Search everything for “${esc(h.all)}”<small>Search page</small>` : h.view ? `<span class="green">↗</span> ${esc(viewLabel(h.view))}<small>view</small>` : `<span class="badge">${esc(h.kind)}</span>${esc(h.namespace ? h.namespace + '/' : '')}${esc(h.name)}${h.snippet ? ` <span class="muted mono" style="font-size:10px">…${esc(h.snippet.slice(0, 70))}…</span>` : ''}<small>${esc(h.cluster)}</small>`}</button>`).join('');
+    $('#gs-res').innerHTML = hits.map((h, i) => `<button class="${i === sel ? 'sel' : ''}" data-i="${i}">${h.all ? `<span class="green">⌕</span> Search everything for “${esc(h.all)}”<small>Resources · Search</small>` : h.view ? `<span class="green">↗</span> ${esc(viewLabel(h.view))}<small>view</small>` : `<span class="badge">${esc(h.kind)}</span>${esc(h.namespace ? h.namespace + '/' : '')}${esc(h.name)}${h.snippet ? ` <span class="muted mono" style="font-size:10px">…${esc(h.snippet.slice(0, 70))}…</span>` : ''}<small>${esc(h.cluster)}</small>`}</button>`).join('');
     document.querySelectorAll('#gs-res [data-i]').forEach(b => b.onclick = () => pick(hits[+b.dataset.i]));
   };
-  const pick = h => { closeModal(); if (h.all) { S.search.q = h.all; nav('search'); } else if (h.view) nav(h.view); else if(S.view==='ambient'&&S.ambient.tab==='map'&&['Service','Namespace','Gateway','Pod','HTTPRoute','ServiceEntry'].includes(h.kind)){S.ambient.mapAllNamespaces=true;S.ambient.inventory=null;amChoose(h);}else openObject(h); };
+  const pick = h => { closeModal(); if (h.all) { S.search.q = h.all; nav(searchHash(h.all)); } else if (h.view) nav(h.view); else if(S.view==='ambient'&&S.ambient.tab==='map'&&['Service','Namespace','Gateway','Pod','HTTPRoute','ServiceEntry'].includes(h.kind)){S.ambient.mapAllNamespaces=true;S.ambient.inventory=null;amChoose(h);}else openObject(h); };
   let t;
   const input = $('#gs');
   typeahead(input, {scope: 'objects', alias: objAlias});
@@ -2787,9 +2794,9 @@ function boot() {
   applyTheme(document.documentElement.dataset.theme || 'dark');
   $('#theme-toggle').onclick = () => applyTheme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light');
   $('#open-search').onclick = openSearch;
-  // The Resources menu entry opens the tab (Browse or Keyboard) used last.
+  // The Resources menu entry opens the tab (Browse, Search, Keyboard or Map) used last.
   const resLink = document.querySelector('.nav a[data-view="resources"]');
-  if (resLink) resLink.onclick = e => { let t = 'resources'; try { t = localStorage.getItem('flightbay-res-tab') || t; } catch (_) { /* private mode */ } if (t === 'navigator') { e.preventDefault(); nav('navigator'); } else if (t === 'map') { e.preventDefault(); location.hash = 'resources?tab=map'; } };
+  if (resLink) resLink.onclick = e => { let t = 'resources'; try { t = localStorage.getItem('flightbay-res-tab') || t; } catch (_) { /* private mode */ } if (t === 'navigator') { e.preventDefault(); nav('navigator'); } else if (t === 'map') { e.preventDefault(); location.hash = 'resources?tab=map'; } else if (t === 'search') { e.preventDefault(); location.hash = searchHash(S.search.q); } };
   $('#cluster').onchange = e => setCluster(e.target.value);
   $('#term-toggle').onclick = () => toggleTerminal();
   $('#term-k9s').onclick = () => openK9s('pods', '');

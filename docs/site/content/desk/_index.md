@@ -142,7 +142,7 @@ The terminal sits along the bottom of every page. See [Terminal](/desk/terminal/
 | `/` | Focus the filter or search box on the current page |
 | Esc | Close a drawer or dialog |
 
-⌘K searches object names, labels and content as you type, and lists matching views. Enter opens the object; the last row searches everything on the Search page.
+⌘K searches object names, labels and content as you type, and lists matching views. Enter opens the object; the last row searches everything on the Search tab of Resources.
 
 ### Cluster picker
 
