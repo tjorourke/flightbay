@@ -85,11 +85,20 @@ func generateWaypoint(ws *store.Workspace, req Request) (*Plan, error) {
 		return map[string]any{"namespaces": map[string]any{"from": "Selector", "selector": map[string]any{"matchExpressions": []any{map[string]any{"key": "kubernetes.io/metadata.name", "operator": "In", "values": names}}}}}
 	}
 	wp := Target(ws, req.Cluster, "Gateway", wpNS, w.Name)
-	switch w.Mode {
-	case "new":
-		if wp != nil {
-			return nil, fmt.Errorf("Gateway %s/%s already exists; choose it as an existing waypoint or choose another name", wpNS, w.Name)
+	mode := w.Mode
+	if mode == "new" && wp != nil {
+		if !flightbayOwned(wp) || S(Path(wp.Obj, "spec", "gatewayClassName")) != w.Class {
+			return nil, fmt.Errorf("Gateway %s/%s already exists with different ownership or implementation; select it explicitly as an existing waypoint", wpNS, w.Name)
 		}
+		// Reapplying an owned waypoint binds/reuses it rather than recreating
+		// it. The existing path preserves access granted to other namespaces.
+		copy := *w
+		copy.GrantAccess = true
+		w = &copy
+		mode = "existing"
+	}
+	switch mode {
+	case "new":
 		observed := false
 		for _, cl := range DetectEnvironment(ws, req.Cluster, nil).Classes {
 			if cl.Name == w.Class && cl.Supported {

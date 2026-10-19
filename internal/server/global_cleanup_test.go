@@ -95,6 +95,27 @@ func TestCustomerServiceGlobalPublishStopAndUndo(t *testing.T) {
 	if main.GetLabels()["solo.io/service-scope"] != "global" {
 		t.Fatal("customer Service was not published")
 	}
+	// Updating an existing split is a patch, including from another desk;
+	// dry-run must not mutate it, and undo must retain the original UIDs.
+	q.GlobalWeights = map[string]int{"captured": 60, "another-customer-cluster": 40}
+	q.GlobalDistribution = "Any"
+	editToken := validateAmbient(t, srv, q)
+	if len(s.ambientS.records[editToken].Plan.Objects) != 0 {
+		t.Fatal("existing split was planned as a create")
+	}
+	for _, operation := range []string{"apply", "cleanup"} {
+		if code, out := ambientPost(t, srv, map[string]any{"operation": operation, "context": "chosen", "validation": editToken}); code != 200 {
+			t.Fatalf("split %s: %d %v", operation, code, out)
+		}
+	}
+	restored, _ := dc.Resource(routes).Namespace(ns).Get(ctx, beforeRoute.GetName(), metav1.GetOptions{})
+	if restored.GetUID() != beforeRoute.GetUID() || !ambient.Equal(restored.Object["spec"], beforeRoute.Object["spec"]) {
+		t.Fatal("updating/undoing replaced the route or lost its original configuration")
+	}
+	refresh(services, "Service", name)
+	refresh(routes, "HTTPRoute", beforeRoute.GetName())
+	q.GlobalWeights = map[string]int{"captured": 70, "another-customer-cluster": 30}
+	q.GlobalDistribution = ""
 	q.Unpublish = true
 	stopToken := validateAmbient(t, srv, q)
 	if _, err := dc.Resource(routes).Namespace(ns).Get(ctx, beforeRoute.GetName(), metav1.GetOptions{}); err != nil {

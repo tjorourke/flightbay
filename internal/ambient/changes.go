@@ -252,6 +252,10 @@ func Target(ws *store.Workspace, c, kind, ns, name string) *store.Object {
 		g, res = "apps", "deployments"
 	case "AuthorizationPolicy":
 		g, res = "security.istio.io", "authorizationpolicies"
+	case "RequestAuthentication":
+		g, res = "security.istio.io", "requestauthentications"
+	case "PeerAuthentication":
+		g, res = "security.istio.io", "peerauthentications"
 	case "DestinationRule":
 		g, res = "networking.istio.io", "destinationrules"
 	case "AgentgatewayPolicy":

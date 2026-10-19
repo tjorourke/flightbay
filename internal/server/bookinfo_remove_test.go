@@ -2,9 +2,13 @@ package server
 
 import (
 	"context"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/tjorourke/flightbay/internal/ambient"
+	"github.com/tjorourke/flightbay/internal/store"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -21,7 +25,7 @@ func bookinfoRemovalFixture(t *testing.T) (ambientConnection, *fake.FakeDynamicC
 	svc := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": "productpage", "namespace": "bookinfo", "uid": "svc", "labels": labels}}}
 	gw := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "gateway.networking.k8s.io/v1", "kind": "Gateway", "metadata": map[string]any{"name": "bookinfo-waypoint", "namespace": "bookinfo", "uid": "gw", "labels": labels}, "spec": map[string]any{"gatewayClassName": "istio-waypoint"}}}
 	other := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": "leave-me-alone", "namespace": "bookinfo", "uid": "other", "labels": map[string]any{"istio.io/use-waypoint": "none"}}}}
-	dc := fake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{{Version: "v1", Resource: "namespaces"}: "NamespaceList", {Version: "v1", Resource: "services"}: "ServiceList", {Group: ambient.GatewayGroup, Version: "v1", Resource: "httproutes"}: "HTTPRouteList", {Group: "networking.istio.io", Version: "v1", Resource: "serviceentries"}: "ServiceEntryList"}, ns, anchor, svc, other)
+	dc := fake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{{Version: "v1", Resource: "namespaces"}: "NamespaceList", {Version: "v1", Resource: "services"}: "ServiceList", {Version: "v1", Resource: "serviceaccounts"}: "ServiceAccountList", {Group: "apps", Version: "v1", Resource: "deployments"}: "DeploymentList", {Group: ambient.GatewayGroup, Version: "v1", Resource: "gateways"}: "GatewayList", {Group: ambient.GatewayGroup, Version: "v1", Resource: "httproutes"}: "HTTPRouteList", {Group: "networking.istio.io", Version: "v1", Resource: "serviceentries"}: "ServiceEntryList"}, ns, anchor, svc, other)
 	if err := dc.Tracker().Create(schema.GroupVersionResource{Group: ambient.GatewayGroup, Version: "v1", Resource: "gateways"}, gw, "bookinfo"); err != nil {
 		t.Fatal(err)
 	}
@@ -31,6 +35,63 @@ func bookinfoRemovalFixture(t *testing.T) (ambientConnection, *fake.FakeDynamicC
 	m.AddSpecific(schema.GroupVersionKind{Group: ambient.GatewayGroup, Version: "v1", Kind: "Gateway"}, schema.GroupVersionResource{Group: ambient.GatewayGroup, Version: "v1", Resource: "gateways"}, schema.GroupVersionResource{Group: ambient.GatewayGroup, Version: "v1", Resource: "gateway"}, meta.RESTScopeNamespace)
 	r := &ambientRecord{Plan: &ambient.Plan{ID: "plan", ServiceUID: "anchor/ns", Request: ambient.Request{Cluster: "mesh1", Namespace: "bookinfo", Demo: &ambient.BookinfoRequest{Stage: "workloads", WaypointClass: "istio-waypoint", WaypointScope: "namespace", WaypointName: "bookinfo-waypoint"}}}, Created: []ambientCreated{{APIVersion: "v1", Kind: "Service", Namespace: "bookinfo", Name: "productpage", UID: "svc"}, {APIVersion: ambient.GatewayGroup + "/v1", Kind: "Gateway", Namespace: "bookinfo", Name: "bookinfo-waypoint", UID: "gw"}}}
 	return ambientConnection{dc, m, "https://local"}, dc, r
+}
+
+func TestBookinfoRemovalFindsLiveDemoWithoutLocalHistory(t *testing.T) {
+	c, dc, installed := bookinfoRemovalFixture(t)
+	nss := dc.Resource(schema.GroupVersionResource{Version: "v1", Resource: "namespaces"})
+	ns, _ := nss.Get(context.Background(), "bookinfo", metav1.GetOptions{})
+	labels := ns.GetLabels()
+	labels["app.kubernetes.io/managed-by"] = "flightbay"
+	labels["flightbay.dev/test-id"] = "namespace-plan"
+	labels["flightbay.dev/waypoint-name"] = "bookinfo-waypoint"
+	labels["flightbay.dev/waypoint-scope"] = "namespace"
+	ns.SetLabels(labels)
+	if _, err := nss.Update(context.Background(), ns, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	// Bob's installation history exists only on Bob's laptop. Sarah uses a
+	// different local directory and a different kubeconfig context name.
+	bob := &Server{AmbientStateDir: t.TempDir()}
+	installed.Token = strings.Repeat("a", 48)
+	installed.Context, installed.Server = "bobs-mesh", c.host
+	if err := bob.saveAmbientRecord(installed); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{WS: store.New(), Token: tok, WorkDir: t.TempDir(), AmbientStateDir: t.TempDir()}
+	s.ambientS.connect = func(string) (ambientConnection, error) { return c, nil }
+	srv := httptest.NewServer(s.Handler())
+	t.Cleanup(func() { srv.Close(); s.Close(); s.WS.Close() })
+	dc.ClearActions()
+	code, out := ambientPostPath(t, srv, "/api/ambient/bookinfo/remove", map[string]any{"operation": "preview", "cluster": "sarah-mesh", "context": "sarah-context", "namespace": "bookinfo"})
+	if code != 200 {
+		t.Fatalf("preview: %d %v", code, out)
+	}
+	if rows, ok := out["installations"].([]any); !ok || len(rows) != 1 {
+		t.Fatalf("live installer-owned demo is invisible without history: %v", out)
+	}
+	row := out["installations"].([]any)[0].(map[string]any)
+	if row["recovered"] != true || len(row["resources"].([]any)) != 3 {
+		t.Fatalf("expected live Service, Gateway and namespace: %v", row)
+	}
+	for _, a := range dc.Actions() {
+		if a.GetVerb() == "delete" || a.GetVerb() == "patch" || a.GetVerb() == "create" {
+			t.Fatal("preview wrote to the cluster")
+		}
+	}
+	code, out = ambientPostPath(t, srv, "/api/ambient/bookinfo/remove", map[string]any{"operation": "remove", "cluster": "sarah-mesh", "context": "sarah-context", "namespace": "bookinfo", "ids": []string{row["id"].(string)}, "confirm": true})
+	if code != 200 {
+		t.Fatalf("Sarah could not remove Bob's demo: %d %v", code, out)
+	}
+	if _, err := nss.Get(context.Background(), "bookinfo", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatal("demo namespace remains", err)
+	}
+	if _, err := nss.Get(context.Background(), "kube-system", metav1.GetOptions{}); err != nil {
+		t.Fatal("mesh namespace was touched", err)
+	}
+	if err := bob.ambientRecords(); err != nil || len(bob.ambientS.records[installed.Token].Created) != 2 {
+		t.Fatal("test desks unexpectedly share installer history", err)
+	}
 }
 func TestBookinfoRemovalPreservesNamespaceAndUnrelatedService(t *testing.T) {
 	c, dc, r := bookinfoRemovalFixture(t)

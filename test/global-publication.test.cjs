@@ -114,3 +114,13 @@ test('global review distinguishes resource deletions from updates',()=>{
   assert.match(html,/# DELETE HTTPRoute app\/web-cluster-split/);
   assert.match(html,/data-amglobalapply/);
 });
+
+test('global editor loads live weights and plans only changed weights',()=>{
+  const {context,A}=setup(),svc={cluster:'mesh1',namespace:'app',name:'web'};
+  A.inventory.topology={clusters:['mesh1','mesh2'].map(cluster=>({context:cluster,services:[{...svc,scope:'global',globalWeights:{mesh1:60,mesh2:40}}]}))};
+  assert.equal(context.amGlobalRouting(svc).distribution,'weighted');
+  assert.equal(context.amGlobalWeights(svc).mesh1,60);
+  assert.equal(context.amGlobalPendingEdits(svc).length,0);
+  A.settings.globalWeights={mesh1:80,mesh2:20};
+  assert.equal(context.amGlobalPendingEdits(svc).length,2);
+});

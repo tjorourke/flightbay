@@ -101,6 +101,10 @@ func generateGlobalService(ws *store.Workspace, req Request) (*Plan, error) {
 		if err := globalWeightedSplit(ws, req, svc, p); err != nil {
 			return nil, err
 		}
+	} else if req.GlobalDistribution != "" {
+		for _, o := range globalSplitResources(ws, svc) {
+			deleteChange(p, o, "Replace weighted cluster routing with the selected traffic distribution")
+		}
 	}
 	p.Notes = append(p.Notes, "Only this Service in context "+req.Cluster+" is changed. The application is not copied to another cluster. Review the corresponding Service in each cluster that should contribute endpoints.", "Default routing for a global service is PreferNetwork: callers use endpoints in their own cluster and only go to another cluster when none are healthy.", "After applying, refresh inventory to see the actual published global DNS names. Kubernetes dry-run validates the change, not the licence, peer connectivity or end-to-end traffic.")
 	return finishPlan(p)
@@ -198,26 +202,77 @@ func globalWeightedSplit(ws *store.Workspace, req Request, svc *store.Object, p 
 		return fmt.Errorf("give at least two clusters a weight above zero")
 	}
 	own := GlobalClusterServiceName(svc.Name, req.Cluster)
-	labels := map[string]any{"app.kubernetes.io/managed-by": "flightbay", "solo.io/service-scope": "global", "flightbay.dev/cluster-split-for": svc.Name}
-	if ws.Get(req.Cluster, "", "services", svc.Namespace, own) == nil {
-		cleanPorts := []any{}
-		for _, pt := range ports {
-			pm := M(pt)
-			cp := map[string]any{"port": pm["port"]}
-			for _, k := range []string{"name", "protocol", "targetPort", "appProtocol"} {
-				if pm[k] != nil {
-					cp[k] = pm[k]
-				}
-			}
-			cleanPorts = append(cleanPorts, cp)
-		}
-		p.Objects = append(p.Objects, map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": own, "namespace": svc.Namespace, "labels": labels}, "spec": map[string]any{"selector": Path(svc.Obj, "spec", "selector"), "ports": cleanPorts}})
+	if own == svc.Name {
+		return fmt.Errorf("the per-cluster Service name collides with the application Service; choose a shorter Service name")
 	}
+	owned := globalSplitResources(ws, svc)
+	for _, existing := range []*store.Object{Target(ws, req.Cluster, "Service", svc.Namespace, own), Target(ws, req.Cluster, "HTTPRoute", svc.Namespace, svc.Name+"-cluster-split")} {
+		if existing == nil {
+			continue
+		}
+		matched := false
+		for _, o := range owned {
+			matched = matched || o == existing
+		}
+		if !matched {
+			return fmt.Errorf("%s %s/%s exists but is not the Flightbay-owned cluster split for this Service; inspect its ownership and attachment before editing", existing.Kind, existing.Namespace, existing.Name)
+		}
+	}
+	labels := map[string]any{"app.kubernetes.io/managed-by": "flightbay", "solo.io/service-scope": "global", "flightbay.dev/cluster-split-for": svc.Name}
+	cleanPorts := []any{}
+	for _, pt := range ports {
+		pm := M(pt)
+		cp := map[string]any{"port": pm["port"]}
+		for _, k := range []string{"name", "protocol", "targetPort", "appProtocol"} {
+			if pm[k] != nil {
+				cp[k] = pm[k]
+			}
+		}
+		cleanPorts = append(cleanPorts, cp)
+	}
+	p.Objects = append(p.Objects, map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": own, "namespace": svc.Namespace, "labels": labels}, "spec": map[string]any{"selector": Path(svc.Obj, "spec", "selector"), "ports": cleanPorts}})
 	backends := []any{}
 	for _, c := range clusters {
 		backends = append(backends, map[string]any{"group": "networking.istio.io", "kind": "Hostname", "name": GlobalClusterServiceName(svc.Name, c) + "." + svc.Namespace + "." + domain, "port": port, "weight": req.GlobalWeights[c]})
 	}
 	p.Objects = append(p.Objects, map[string]any{"apiVersion": "gateway.networking.k8s.io/v1", "kind": "HTTPRoute", "metadata": map[string]any{"name": svc.Name + "-cluster-split", "namespace": svc.Namespace, "labels": map[string]any{"app.kubernetes.io/managed-by": "flightbay", "flightbay.dev/cluster-split-for": svc.Name}}, "spec": map[string]any{"parentRefs": []any{map[string]any{"group": "", "kind": "Service", "name": svc.Name, "port": port}}, "rules": []any{map[string]any{"backendRefs": backends}}}})
-	p.Notes = append(p.Notes, "Weighted split: this plan adds "+own+" (a global Service selecting only "+req.Cluster+"'s Pods) and an HTTPRoute on "+svc.Name+" whose backends are each cluster's own global hostname. Every cluster in the split needs its "+svc.Name+"-<cluster> Service, so apply this in each one. The split covers callers in a cluster whose waypoint enforces the route; it is per request, so it holds even with connection reuse.")
+	p.Notes = append(p.Notes, "Weighted split: this plan creates or updates "+own+" (a global Service selecting only "+req.Cluster+"'s Pods) and its HTTPRoute. Matching existing configuration needs no change. Every cluster in the split needs its "+svc.Name+"-<cluster> Service, so review this in each one. The split covers callers in a cluster whose waypoint enforces the route; it is per request, so it holds even with connection reuse.")
+	return nil
+}
+
+func globalSplitWeights(ws *store.Workspace, svc *store.Object) map[string]int {
+	for _, o := range globalSplitResources(ws, svc) {
+		if o.Kind != "HTTPRoute" {
+			continue
+		}
+		rules := L(Path(o.Obj, "spec", "rules"))
+		if len(rules) != 1 {
+			return nil
+		}
+		weights := map[string]int{}
+		for _, ref := range L(M(rules[0])["backendRefs"]) {
+			b := M(ref)
+			if S(b["group"]) != "networking.istio.io" || S(b["kind"]) != "Hostname" {
+				return nil
+			}
+			found := ""
+			for _, cluster := range ws.Clusters() {
+				if strings.HasPrefix(S(b["name"]), GlobalClusterServiceName(svc.Name, cluster)+"."+svc.Namespace+".") {
+					if found != "" {
+						return nil
+					}
+					found = cluster
+				}
+			}
+			if found == "" {
+				return nil
+			}
+			weights[found] = 1
+			if value, ok := b["weight"]; ok {
+				weights[found] = N(value)
+			}
+		}
+		return weights
+	}
 	return nil
 }

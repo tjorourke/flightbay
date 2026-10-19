@@ -279,7 +279,17 @@ func (s *Server) bookinfoRemoval(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	chosen := []*ambientRecord{}
 	descriptions := []map[string]any{}
+	// The cluster is authoritative across laptops and desk restarts. Prefer
+	// live ownership over a possibly missing or stale local installer record.
+	recovered, err := recoverBookinfoRemoval(ctx, c, q.Cluster, q.Context, q.Namespace)
+	if err != nil {
+		jerr(w, 409, err.Error())
+		return
+	}
 	for _, rec := range s.ambientS.records {
+		if recovered != nil {
+			break
+		}
 		p := rec.Plan
 		if p.Request.Demo == nil || p.Request.Demo.Stage != "workloads" || p.Request.Cluster != q.Cluster || p.Request.Namespace != q.Namespace || rec.Context != q.Context || len(rec.Created) == 0 {
 			continue
@@ -305,8 +315,27 @@ func (s *Server) bookinfoRemoval(w http.ResponseWriter, r *http.Request) {
 		chosen = append(chosen, rec)
 		descriptions = append(descriptions, map[string]any{"id": id, "planId": p.ID, "resources": rec.Created})
 	}
+	if len(chosen) == 0 {
+		if recovered != nil {
+			id := bookinfoRecordID(recovered)
+			if q.Operation == "remove" && (len(q.IDs) != 1 || q.IDs[0] != id) {
+				jerr(w, 409, "the live Bookinfo installation changed; preview removal again")
+				return
+			}
+			if err := bookinfoDeletePreflight(ctx, c, recovered); err != nil {
+				jerr(w, 409, err.Error())
+				return
+			}
+			chosen = append(chosen, recovered)
+			// Include the namespace explicitly, including when a partial install
+			// or earlier cleanup has left only the demo namespace behind.
+			resources := append([]ambientCreated{}, recovered.Created...)
+			resources = append(resources, ambientCreated{APIVersion: "v1", Kind: "Namespace", Name: q.Namespace})
+			descriptions = append(descriptions, map[string]any{"id": id, "planId": recovered.Plan.ID, "resources": resources, "recovered": true})
+		}
+	}
 	if q.Operation == "preview" {
-		writeJSON(w, 200, map[string]any{"cluster": q.Cluster, "namespace": q.Namespace, "context": q.Context, "installations": descriptions, "note": "Removes the recorded Bookinfo resources, then deletes namespace " + q.Namespace + " that Flightbay created for it, with anything else inside it (for example policies you added while testing). Mesh infrastructure outside the namespace is kept."})
+		writeJSON(w, 200, map[string]any{"cluster": q.Cluster, "namespace": q.Namespace, "context": q.Context, "installations": descriptions, "note": "Removes the verified Flightbay-owned Bookinfo installation, then deletes its demo namespace " + q.Namespace + " with anything else inside it (for example policies or global split resources added while testing). Ownership is checked from local records or recovered from live demo labels and UIDs. Mesh infrastructure outside the namespace is kept."})
 		return
 	}
 	if len(chosen) != len(q.IDs) {
@@ -314,6 +343,13 @@ func (s *Server) bookinfoRemoval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, rec := range chosen {
+		// Persist recovered ownership before the first write, so a failed
+		// removal can be inspected and retried from this desk.
+		if err := s.saveAmbientRecord(rec); err != nil {
+			jerr(w, 500, err.Error())
+			return
+		}
+		s.ambientS.records[rec.Token] = rec
 		if err := cleanupAmbient(ctx, c, rec); err != nil {
 			_ = s.saveAmbientRecord(rec)
 			jerr(w, 409, err.Error())
@@ -342,10 +378,26 @@ func (s *Server) bookinfoRemoval(w http.ResponseWriter, r *http.Request) {
 		if err != nil || string(ns.GetUID()) != identity[1] || ns.GetLabels()["flightbay.dev/demo"] != "bookinfo" || ns.GetLabels()["app.kubernetes.io/managed-by"] != "flightbay" {
 			continue
 		}
-		uid := ns.GetUID()
-		if err := res.Delete(ctx, q.Namespace, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}); err != nil && !apierrors.IsNotFound(err) {
+		uid, rv := ns.GetUID(), ns.GetResourceVersion()
+		if err := res.Delete(ctx, q.Namespace, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid, ResourceVersion: &rv}}); err != nil && !apierrors.IsNotFound(err) {
 			jerr(w, 409, "workloads removed, but deleting namespace "+q.Namespace+" failed: "+err.Error())
 			return
+		}
+		for {
+			_, err := res.Get(ctx, q.Namespace, metav1.GetOptions{})
+			if apierrors.IsNotFound(err) {
+				break
+			}
+			if err != nil {
+				jerr(w, 409, "cannot confirm Bookinfo namespace deletion: "+err.Error())
+				return
+			}
+			select {
+			case <-ctx.Done():
+				jerr(w, 409, "Bookinfo namespace is still deleting; wait for it to disappear before deploying again")
+				return
+			case <-time.After(200 * time.Millisecond):
+			}
 		}
 		nsDeleted = true
 		break

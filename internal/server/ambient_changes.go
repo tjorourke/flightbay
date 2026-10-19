@@ -60,7 +60,7 @@ func ambientPatch(ctx context.Context, c ambientConnection, ch ambient.Change, u
 		return nil, fmt.Errorf("server supplied no resourceVersion for atomic field updates")
 	}
 	ops := []map[string]any{{"op": "test", "path": "/metadata/uid", "value": ch.UID}, {"op": "test", "path": "/metadata/resourceVersion", "value": live.GetResourceVersion()}}
-	labelsAdded := false
+	metadataAdded := map[string]bool{}
 	for _, f := range ch.Fields {
 		before, beforePresent, after, afterPresent := f.Before, f.BeforePresent, f.After, f.AfterPresent
 		if undo {
@@ -71,10 +71,12 @@ func ambientPatch(ctx context.Context, c ambientConnection, ch ambient.Change, u
 			return nil, fmt.Errorf("%s %s field %s changed outside this test; refusing to overwrite it", ch.Ref.Kind, ch.Ref.Name, f.Path)
 		}
 		if afterPresent {
-			if strings.HasPrefix(f.Path, "/metadata/labels/") {
-				if _, ok := ambient.Pointer(live.Object, "/metadata/labels"); !ok && !labelsAdded {
-					ops = append(ops, map[string]any{"op": "add", "path": "/metadata/labels", "value": map[string]any{}})
-					labelsAdded = true
+			for _, parent := range []string{"/metadata/labels", "/metadata/annotations"} {
+				if strings.HasPrefix(f.Path, parent+"/") {
+					if _, ok := ambient.Pointer(live.Object, parent); !ok && !metadataAdded[parent] {
+						ops = append(ops, map[string]any{"op": "add", "path": parent, "value": map[string]any{}})
+						metadataAdded[parent] = true
+					}
 				}
 			}
 			ops = append(ops, map[string]any{"op": "add", "path": f.Path, "value": after})

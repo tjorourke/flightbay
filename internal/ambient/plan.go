@@ -233,6 +233,14 @@ func Capabilities(ws *store.Workspace, c, ns, service string) []Task {
 }
 
 func Generate(ws *store.Workspace, req Request) (*Plan, error) {
+	p, err := generate(ws, req)
+	if err != nil {
+		return nil, err
+	}
+	return ReconcilePlan(ws, p)
+}
+
+func generate(ws *store.Workspace, req Request) (*Plan, error) {
 	if contains(req.Tasks, "global-service") {
 		return generateGlobalService(ws, req)
 	}

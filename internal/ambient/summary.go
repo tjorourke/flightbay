@@ -8,18 +8,19 @@ import (
 
 type ServiceSummary struct {
 	Ref
-	DNS            ServiceDNS `json:"dns"`
-	State          string     `json:"state"`
-	Detail         string     `json:"detail"`
-	Ready          int        `json:"ready"`
-	Total          int        `json:"total"`
-	Waypoint       string     `json:"waypoint,omitempty"`
-	WaypointClass  string     `json:"waypointClass,omitempty"`
-	Routes         int        `json:"routes"`
-	Infrastructure bool       `json:"infrastructure"`
-	Scope          string     `json:"scope,omitempty"`
-	Takeover       bool       `json:"takeover"`
-	GlobalCleanup  bool       `json:"globalCleanup"`
+	DNS            ServiceDNS     `json:"dns"`
+	State          string         `json:"state"`
+	Detail         string         `json:"detail"`
+	Ready          int            `json:"ready"`
+	Total          int            `json:"total"`
+	Waypoint       string         `json:"waypoint,omitempty"`
+	WaypointClass  string         `json:"waypointClass,omitempty"`
+	Routes         int            `json:"routes"`
+	Infrastructure bool           `json:"infrastructure"`
+	Scope          string         `json:"scope,omitempty"`
+	Takeover       bool           `json:"takeover"`
+	GlobalCleanup  bool           `json:"globalCleanup"`
+	GlobalWeights  map[string]int `json:"globalWeights,omitempty"`
 	// Distribution is networking.istio.io/traffic-distribution, if set.
 	Distribution string `json:"distribution,omitempty"`
 }
@@ -31,6 +32,7 @@ func summariseService(ws *store.Workspace, svc *store.Object) ServiceSummary {
 	r.Takeover = svc.Labels()["solo.io/service-takeover"] == "true"
 	r.Distribution = S(Path(svc.Obj, "metadata", "annotations", "networking.istio.io/traffic-distribution"))
 	r.GlobalCleanup = len(globalSplitResources(ws, svc)) > 0 || svc.Labels()["solo.io/service-takeover"] != "" || r.Distribution != ""
+	r.GlobalWeights = globalSplitWeights(ws, svc)
 	r.Infrastructure = svc.Labels()["gateway.networking.k8s.io/gateway-name"] != ""
 	for _, ep := range ws.List(svc.Cluster, "discovery.k8s.io", "endpointslices", svc.Namespace, nil) {
 		if ep.Labels()["kubernetes.io/service-name"] != svc.Name {

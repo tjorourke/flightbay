@@ -25,12 +25,12 @@ function amGlobalClusterChoices(svc){
 function amGlobalPublished(svc){return amGlobalTargets(svc).some(r=>r.global||r.cleanup);}
 function amGlobalEdits(){return S.ambient.settings.globalEdits||{};}
 function amGlobalPendingEdits(svc){
-  const e=amGlobalEdits(),r=amGlobalRouting(svc),wantDist=S.ambient.settings.globalDistribution,wantTake=S.ambient.settings.globalTakeover;
-  const routingChanged=row=>row.service&&((wantDist!==undefined&&wantDist!==(row.service.distribution||'default'))||(wantTake!==undefined&&wantTake!==!!row.service.takeover));
+  const e=amGlobalEdits(),r=amGlobalRouting(svc),wantDist=S.ambient.settings.globalDistribution??r.distribution,wantTake=S.ambient.settings.globalTakeover;
+  const routingChanged=row=>row.service&&((S.ambient.settings.globalDistribution!==undefined&&(row.service.globalWeights||wantDist!==(row.service.distribution||'default')))||(wantTake!==undefined&&wantTake!==!!row.service.takeover));
   return amGlobalTargets(svc).filter(row=>row.service).map(row=>{
     const a=e[row.cluster];
     if(a==='unpublish'&&(row.global||row.cleanup))return {cluster:row.cluster,action:'unpublish'};
-    if(wantDist==='weighted'&&a!=='unpublish')return {cluster:row.cluster,action:row.global?'update':'publish'};
+    if(wantDist==='weighted'&&a!=='unpublish')return !row.global||!amGlobalWeightsEqual(amGlobalWeights(svc),row.service.globalWeights)||(wantTake!==undefined&&wantTake!==!!row.service.takeover)?{cluster:row.cluster,action:row.global?'update':'publish'}:null;
     if(a==='publish'&&!row.global)return {cluster:row.cluster,action:'publish'};
     if(row.global&&a!=='unpublish'&&routingChanged(row))return {cluster:row.cluster,action:'update'};
     return null;
@@ -40,7 +40,8 @@ function amGlobalEditLabel(edit){return (edit.action==='unpublish'?'Stop publish
 // How requests to the global name pick a cluster, and whether the local name
 // is taken over. Applied to every cluster that publishes the Service.
 const AM_GLOBAL_DIST=[['default','Prefer this cluster, fail over to the others','PreferNetwork · default'],['Any','Spread evenly across every cluster','Any · round robin across all endpoints'],['weighted','Split by weight, e.g. 70/30','HTTPRoute through the Istio waypoint'],['PreferRegion','Prefer the same region, then others','PreferRegion'],['PreferClose','Prefer the same zone, then others','PreferClose']];
-function amGlobalRouting(svc){const rows=amGlobalTargets(svc).filter(r=>r.service);const first=rows.find(r=>r.global)||rows[0];return {distribution:first?.service?.distribution||'default',takeover:!!first?.service?.takeover,mixed:new Set(rows.map(r=>r.service.distribution||'default')).size>1||new Set(rows.map(r=>!!r.service.takeover)).size>1};}
+function amGlobalWeightsEqual(a,b){if(!a||!b)return false;return [...new Set([...Object.keys(a),...Object.keys(b)])].every(c=>Number(a[c]||0)===Number(b[c]||0));}
+function amGlobalRouting(svc){const rows=amGlobalTargets(svc).filter(r=>r.service),first=rows.find(r=>r.global)||rows[0],dist=r=>r?.service?.globalWeights?'weighted':r?.service?.distribution||'default';return {distribution:dist(first),weights:first?.service?.globalWeights,takeover:!!first?.service?.takeover,mixed:new Set(rows.map(dist)).size>1||new Set(rows.map(r=>!!r.service.takeover)).size>1||rows.some(r=>dist(r)==='weighted'&&!amGlobalWeightsEqual(r.service.globalWeights,first?.service?.globalWeights))};}
 function amGlobalRoutingMarkup(svc){
   const F=S.ambient.settings,cur=amGlobalRouting(svc),dist=F.globalDistribution??cur.distribution,take=F.globalTakeover??cur.takeover;
   return `<section class="am-global-routing"><h3>Routing across clusters</h3>
@@ -183,7 +184,7 @@ function amConfirmApply(entries){
 }
 
 function amGlobalRoutingRequest(svc){const F=S.ambient.settings,cur=amGlobalRouting(svc),out={};const d=F.globalDistribution??cur.distribution;if(d==='weighted')out.globalWeights=amGlobalWeights(svc);else if(F.globalDistribution!==undefined||d!=='default')out.globalDistribution=d;if(F.globalTakeover!==undefined)out.globalTakeover=F.globalTakeover;return out;}
-function amGlobalWeights(svc){const F=S.ambient.settings,rows=amGlobalTargets(svc).filter(r=>r.service);F.globalWeights=F.globalWeights||Object.fromEntries(rows.map((r,i)=>[r.cluster,i===0?70:Math.round(30/Math.max(rows.length-1,1))]));return F.globalWeights;}
+function amGlobalWeights(svc){const F=S.ambient.settings,rows=amGlobalTargets(svc).filter(r=>r.service),live=amGlobalRouting(svc).weights;F.globalWeights=F.globalWeights||(live?{...live}:Object.fromEntries(rows.map((r,i)=>[r.cluster,i===0?70:Math.round(30/Math.max(rows.length-1,1))])));return F.globalWeights;}
 function amGlobalWeightsMarkup(svc){
   const w=amGlobalWeights(svc),total=Object.values(w).reduce((a,b)=>a+Number(b||0),0);
   return `<div class="am-global-weights">${Object.keys(w).map(c=>`<label>${esc(c)} <input type="number" min="0" max="1000" data-amglobalweight="${esc(c)}" value="${esc(w[c])}"> <small class="muted">${total?Math.round(100*w[c]/total):0}%</small></label>`).join('')}</div><p class="muted">Each cluster gets a Service <code>${esc(svc.name)}-&lt;cluster&gt;</code> that selects only its own Pods, published globally, and an HTTPRoute on <code>${esc(svc.name)}</code> sends each request to one of those hostnames by weight. It needs an Istio waypoint on ${esc(svc.name)} in each cluster whose callers should be split, and is per request.</p>`;
@@ -195,7 +196,7 @@ function amGlobalNoop(row){return ['Already global','Already local'].includes(ro
 async function amGlobalWaitForCapture(svc,rows){
   for(let i=0;i<20;i++){
     const inv=await api('api/ambient').catch(()=>null);
-    const ok=inv&&rows.every(r=>{const c=(inv.topology?.clusters||[]).find(x=>x.context===r.cluster);const s=c?.services.find(x=>x.namespace===svc.namespace&&x.name===svc.name);const global=!!s&&['global','global-only'].includes(s.scope);return r.action==='unpublish'?!!s&&!global&&!s.globalCleanup:global;});
+    const ok=inv&&rows.every(r=>{const c=(inv.topology?.clusters||[]).find(x=>x.context===r.cluster);const s=c?.services.find(x=>x.namespace===svc.namespace&&x.name===svc.name);const global=!!s&&['global','global-only'].includes(s.scope),q=r.plan?.request||{};if(r.action==='unpublish')return !!s&&!global&&!s.globalCleanup;if(!global)return false;if(q.globalWeights&&!amGlobalWeightsEqual(q.globalWeights,s.globalWeights))return false;if(q.globalDistribution&&(s.globalWeights||(s.distribution||'default')!==q.globalDistribution))return false;return q.globalTakeover===undefined||!!s.takeover===q.globalTakeover;});
     if(ok){S.ambient.inventory=inv;return;}
     await new Promise(res=>setTimeout(res,500));
   }

@@ -11,6 +11,14 @@ import (
 )
 
 func (s *Server) generateReviewedPlan(req ambient.Request) (*ambient.Plan, error) {
+	p, err := s.generateConfigurationPlan(req)
+	if err != nil {
+		return nil, err
+	}
+	return ambient.ReconcilePlan(s.WS, p)
+}
+
+func (s *Server) generateConfigurationPlan(req ambient.Request) (*ambient.Plan, error) {
 	if req.Demo != nil {
 		if req.Explain != nil || req.Scorecard != nil {
 			return nil, fmt.Errorf("review Bookinfo separately from other repairs")
