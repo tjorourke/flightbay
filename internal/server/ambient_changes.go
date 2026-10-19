@@ -143,7 +143,7 @@ func waitAmbientWaypoint(ctx context.Context, c ambientConnection, p *ambient.Pl
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-deadline.C:
-			return fmt.Errorf("waypoint did not report Programmed before the test deadline; bindings were not changed")
+			return fmt.Errorf("waypoint %s/%s did not report Programmed within 90s; bindings were not changed. %s", ns, w.Name, waypointDiagnosis(ctx, c, ns, w.Name, obj.Object))
 		case <-time.After(time.Second):
 		}
 	}
@@ -167,4 +167,46 @@ func undoAmbientChanges(ctx context.Context, c ambientConnection, rec *ambientRe
 		return fmt.Errorf("undo needs attention: %s; created resources are retained until bindings can be restored", strings.Join(failures, "; "))
 	}
 	return nil
+}
+
+// waypointDiagnosis says why a waypoint is not Programmed, from what the
+// controller wrote and what exists, so the error names the next step.
+func waypointDiagnosis(ctx context.Context, c ambientConnection, ns, name string, gw map[string]any) string {
+	out := []string{}
+	for _, v := range ambient.L(ambient.Path(gw, "status", "conditions")) {
+		m := ambient.M(v)
+		if ambient.S(m["type"]) == "Programmed" {
+			out = append(out, "Controller says: "+ambient.S(m["reason"])+" "+ambient.S(m["message"]))
+		}
+	}
+	if len(out) == 0 {
+		out = append(out, "The controller has not written any status, so no controller is handling class "+ambient.S(ambient.Path(gw, "spec", "gatewayClassName"))+".")
+	}
+	sel := metav1.ListOptions{LabelSelector: "gateway.networking.k8s.io/gateway-name=" + name}
+	deps, derr := c.client.Resource(schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}).Namespace(ns).List(ctx, sel)
+	pods, perr := c.client.Resource(schema.GroupVersionResource{Version: "v1", Resource: "pods"}).Namespace(ns).List(ctx, sel)
+	switch {
+	case derr == nil && len(deps.Items) == 0:
+		out = append(out, "No waypoint Deployment was created. If the Service exists but the Deployment does not, the controller is likely holding stale state for this name (seen after deleting and recreating a namespace); restarting istiod clears it, or use another waypoint name.")
+	case perr == nil && len(pods.Items) == 0:
+		out = append(out, "The Deployment exists but has no Pods; check its ReplicaSet events and quotas.")
+	case perr == nil:
+		for _, p := range pods.Items {
+			phase := ambient.S(ambient.Path(p.Object, "status", "phase"))
+			why := ""
+			for _, cs := range ambient.L(ambient.Path(p.Object, "status", "containerStatuses")) {
+				if r := ambient.S(ambient.Path(ambient.M(cs), "state", "waiting", "reason")); r != "" {
+					why = r
+				}
+			}
+			for _, cond := range ambient.L(ambient.Path(p.Object, "status", "conditions")) {
+				m := ambient.M(cond)
+				if ambient.S(m["type"]) == "PodScheduled" && ambient.S(m["status"]) == "False" {
+					why = "not scheduled: " + ambient.S(m["message"])
+				}
+			}
+			out = append(out, "Pod "+p.GetName()+" is "+phase+map[bool]string{true: " (" + why + ")", false: ""}[why != ""]+".")
+		}
+	}
+	return strings.Join(out, " ")
 }

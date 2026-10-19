@@ -17,7 +17,7 @@ async function bookinfoPage(){
 }
 function bdPlans(){
   const pending=BD.entries.filter(e=>!e.record),advance=BD.entries.some(e=>e.record&&e.request.demo.stage==='namespace');
-  return `<section class="panel bd-review"><div class="panel-head"><div><h3>Review each cluster</h3><p class="bd-help">1. Prepare the namespace. 2. Review and deploy Bookinfo workloads. Review and apply runs each stage's dry-runs automatically, then opens its final confirmation.</p></div></div><div class="panel-body"><div class="bd-actions"><button id="bd-validate-all" ${BD.busy||!pending.length||pending.some(e=>!e.context)?'disabled':''}>Dry-run only</button><button class="primary" id="bd-apply-all" ${BD.busy||!pending.length||pending.some(e=>!e.context)?'disabled':''}>Review and apply…</button>${advance?`<button id="bd-advance" ${BD.busy?'disabled':''}>Continue to Bookinfo workloads →</button>`:''}</div>
+  return `<section class="panel bd-review"><div class="panel-head"><div><h3>Review each cluster</h3><p class="bd-help">One confirmation deploys everything: the namespace first, then the workloads and waypoint, each with a server dry-run before it is applied.</p></div></div><div class="panel-body"><div class="bd-actions"><button id="bd-validate-all" ${BD.busy||!pending.length||pending.some(e=>!e.context)?'disabled':''}>Dry-run only</button><button class="primary" id="bd-apply-all" ${BD.busy||!pending.length||pending.some(e=>!e.context)?'disabled':''}>Deploy Bookinfo…</button>${advance?`<button id="bd-advance" ${BD.busy?'disabled':''}>Continue to Bookinfo workloads →</button>`:''}</div>
   ${BD.entries.map(bdEntryMarkup).join('')}</div></section>`;
 }
 function bdEntryMarkup(e,i){
@@ -25,25 +25,24 @@ function bdEntryMarkup(e,i){
   return `<article class="bd-entry">
     <div class="bd-entry-title"><h3>${esc(e.cluster)}</h3><span id="bd-state-${i}" class="badge ${e.error?'red':e.progress?.state==='ready'?'green':'blue'}">${esc(bdEntryState(e))}</span></div>
     <p><strong>${namespaceStage?'Stage 1 · Prepare namespace':'Stage 2 · Deploy Bookinfo'}</strong> · ${esc(e.request.namespace)} · ${e.plan.objects.length+(e.plan.changes?.length||0)} resources</p>
-    ${e.namespaceRecord?'<p class="green">Stage 1 complete: namespace prepared and captured.</p>':''}
+    ${e.namespaceRecord?'<p class="green">Namespace ready.</p>':''}
     <div id="bd-progress-${i}">${bdProgress(e)}</div>
     ${amContextControl(e.cluster,BD.contexts,e.context,`data-bdcontext="${i}" ${BD.busy||e.record?'disabled':''}`)}
     <details ${!e.record&&!e.applying?'open':''}><summary>Exact YAML to apply</summary><pre class="code">${esc(e.plan.yaml)}</pre><div class="bd-actions"><button data-bdcopy="${i}">Copy YAML</button><button data-bddownload="${i}">Download YAML</button></div></details>
-    <details><summary>Scope and configuration notes</summary>${e.plan.notes.map(n=>`<p>${esc(n)}</p>`).join('')}</details>
     ${e.error?`<div class="notice bad" role="alert">${esc(e.error)}</div>`:''}${e.message?`<p role="status">${esc(e.message)}</p>`:''}
     ${e.record&&!namespaceStage?`<div class="bd-actions"><button data-bdstatus="${i}" ${BD.busy?'disabled':''}>Check deployment readiness</button><button data-bdexplore="${i}">Open demo request path →</button><button data-bdundo="${i}" ${BD.busy?'disabled':''}>Remove these demo workloads</button></div>`:''}
   </article>`;
 }
 function bdStatus(rows){return `<div class="table-scroll"><table><thead><tr><th>Resource</th><th>State</th></tr></thead><tbody>${rows.map(row=>{const o=row.object||row.changed||{},s=row.status||{};let state=row.changed?'Updated':'Created';if(row.error)state=row.error;else if(o.kind==='Deployment')state=s.observedGeneration>=row.generation&&(s.availableReplicas||0)>0?'Ready':'Waiting for ready Pods';else if(['Gateway','HTTPRoute'].includes(o.kind)){const types=o.kind==='Gateway'?['Accepted','Programmed']:['Accepted','ResolvedRefs'];const conditions=o.kind==='Gateway'?(s.conditions||[]):(s.parents||[]).flatMap(p=>p.conditions||[]);state=types.every(t=>conditions.some(c=>c.type===t&&c.status==='True'&&c.observedGeneration===row.generation))?'Ready':'Waiting for controller status';}return `<tr><td>${esc(o.kind)} ${esc(o.namespace?o.namespace+'/':'')}${esc(o.name)}</td><td>${esc(state)}</td></tr>`;}).join('')}</tbody></table></div>`;}
 function bdEntryState(e){return e.error||e.progress?.state==='failed'?'Needs attention':e.applying?'Applying…':e.queued?'Queued for Apply':e.progress?.state==='ready'?'Bookinfo ready':e.progress?.state==='namespace-ready'?'Namespace ready · workloads not deployed':e.record?(e.request.demo.stage==='namespace'?'Namespace created · workloads not deployed':'Applied · checking readiness'):e.validation?'Dry-run passed · not applied':'Preview only';}
-function bdProgress(e){const p=e.progress;if(!p)return e.applying?'<p role="status"><span class="bd-spinner" aria-hidden="true"></span>Creating reviewed resources. Waiting for live progress…</p>':'';return `<div class="bd-progress" role="status" aria-live="polite"><strong>${!['ready','namespace-ready','failed'].includes(p.state)?'<span class="bd-spinner" aria-hidden="true"></span>':''}${esc(p.message)}</strong><p>${p.created}/${p.expected} configuration resources recorded · ${p.ready}/${p.expected} ready · checked ${esc(new Date(p.checkedAt).toLocaleTimeString())}</p>${e.pollStopped?'<p>Automatic checks paused after ten minutes. Check readiness again to resume.</p>':''}<details><summary>Per-resource progress</summary><table><tbody>${(p.resources||[]).map(r=>`<tr><td>${esc(r.ref.kind)} ${esc(r.ref.name)}</td><td>${esc(r.state)} · ${esc(r.detail)}</td></tr>`).join('')}</tbody></table></details></div>`;}
+function bdProgress(e){const p=e.progress;if(!p)return e.applying?'<p role="status"><span class="bd-spinner" aria-hidden="true"></span>Creating reviewed resources. Waiting for live progress…</p>':'';return `<div class="bd-progress" role="status" aria-live="polite"><strong>${!['ready','namespace-ready','failed'].includes(p.state)?'<span class="bd-spinner" aria-hidden="true"></span>':''}${esc(p.message)}</strong><p>${p.created}/${p.expected} configuration resources recorded · ${p.ready}/${p.expected} ready · checked ${esc(new Date(p.checkedAt).toLocaleTimeString())}</p>${e.pollStopped?'<p>Automatic checks paused after ten minutes. Check readiness again to resume.</p>':''}<details class="bd-resources" data-bd-resources="${esc(e.cluster)}" ${BD.resourcesClosed?.[e.cluster]?'':'open'}><summary>Per-resource progress</summary><table><tbody>${(p.resources||[]).map(r=>`<tr><td>${esc(r.ref.kind)} ${esc(r.ref.name)}</td><td>${esc(r.state)} · ${esc(r.detail)}</td></tr>`).join('')}</tbody></table></details></div>`;}
 async function bdRecover(){
   const records=await api('api/ambient/bookinfo/installations',{namespace:BD.namespace});
   if(BD.entries.length)return;
   const latest=new Map();for(const r of records){const q=r.plan?.request;if(!q?.demo||q.namespace!==BD.namespace||r.applyState==='removed'||(!r.applyState&&!(r.created||[]).length&&!(r.modified||[]).length))continue;const prev=latest.get(q.cluster);if(!prev||q.demo.stage==='workloads'&&prev.plan.request.demo.stage==='namespace'||q.demo.stage===prev.plan.request.demo.stage&&new Date(r.validated)>new Date(prev.validated))latest.set(q.cluster,r);}
   if(!latest.size)return;
   BD.contexts=await api('api/ambient/contexts');
-  BD.entries=[...latest.values()].map(r=>({cluster:r.plan.request.cluster,context:r.context,request:r.plan.request,plan:r.plan,record:r.applyState==='failed'&&!(r.created||[]).length&&!(r.modified||[]).length?null:r,validation:null,applying:r.applyState==='applying',error:r.applyState==='failed'?r.applyError:'',message:r.applyState==='failed'?'Earlier Apply failed. Inspect the error and validate again before retrying.':'Recovered recorded installation. Checking live readiness…'}));
+  BD.entries=[...latest.values()].map(r=>({cluster:r.plan.request.cluster,context:r.context,request:r.plan.request,plan:r.plan,record:r.applyState==='failed'&&!(r.created||[]).length&&!(r.modified||[]).length?null:r,validation:null,applying:r.applyState==='applying',error:r.applyState==='failed'?r.applyError:'',message:r.applyState==='failed'?'Earlier Apply failed. Inspect the error and validate again before retrying.':''}));
 }
 function bdSchedulePoll(){clearTimeout(BD.pollTimer);if(S.view!=='ambient'||S.ambient.tab!=='demo'||BD.polling)return;if(BD.entries.some(e=>(e.record||e.applying)&&!e.pollStopped&&!['ready','namespace-ready','failed'].includes(e.progress?.state)))BD.pollTimer=setTimeout(bdPoll,2000);}
 async function bdPoll(){
@@ -52,20 +51,21 @@ async function bdPoll(){
     e.pollStarted||=Date.now();const plan=e.plan;
     try{const progress=await api('api/ambient/bookinfo/progress',{cluster:e.cluster,namespace:e.request.namespace,context:e.context,planId:plan.id});if(e.plan!==plan||!BD.entries.includes(e))return;e.progress=progress;e.pollError='';if(!['pending','applying'].includes(progress.state))e.applying=false;}catch(err){e.pollError='Live readiness check failed: '+err.message;}
     if(Date.now()-e.pollStarted>600000)e.pollStopped=true;
-    const i=BD.entries.indexOf(e),el=$('#bd-progress-'+i);if(el)el.innerHTML=(e.pollError?`<p role="alert">${esc(e.pollError)}</p>`:'')+bdProgress(e);const badge=$('#bd-state-'+i);if(badge){badge.textContent=bdEntryState(e);badge.className='badge '+(e.error||e.progress?.state==='failed'?'red':e.progress?.state==='ready'?'green':'blue');}
+    const i=BD.entries.indexOf(e),el=$('#bd-progress-'+i);if(el){el.innerHTML=(e.pollError?`<p role="alert">${esc(e.pollError)}</p>`:'')+bdProgress(e);bdWireResources(el);}const badge=$('#bd-state-'+i);if(badge){badge.textContent=bdEntryState(e);badge.className='badge '+(e.error||e.progress?.state==='failed'?'red':e.progress?.state==='ready'?'green':'blue');}
   }));}finally{BD.polling=false;bdSchedulePoll();}
 }
 async function bdAdvance(){for(const e of BD.entries.filter(e=>e.record&&!e.error&&e.request.demo.stage==='namespace')){
-  e.message='Namespace created. Waiting for capture before preparing the workload review…';await render();let row;
+  e.message='Namespace created. Preparing the workloads…';await render();let row;
   for(let i=0;i<30;i++){await bdRefresh();row=BD.catalog.clusters.find(c=>c.cluster===e.cluster);if(row?.namespaceState==='prepared')break;await new Promise(r=>setTimeout(r,1000));}
   if(row?.namespaceState!=='prepared')throw new Error(e.cluster+': namespace created, but capture is not ready. Use Continue to prepare the workload preview.');
   const request={...e.request,demo:{...e.request.demo,stage:'workloads'}},plan=await apiPost('api/ambient/plan',request);
-  e.namespaceRecord=e.record;e.request=request;e.plan=plan;e.record=null;e.validation=null;e.progress=null;e.pollStarted=null;e.message='Stage 1 complete. Review and validate these workloads, then confirm Stage 2 to deploy Bookinfo.';
+  e.namespaceRecord=e.record;e.request=request;e.plan=plan;e.record=null;e.validation=null;e.progress=null;e.pollStarted=null;e.message='';
 }}
 function bdInvalidate(){BD.entries=[];BD.error='';}
 async function bdRun(fn){if(BD.busy)return;BD.busy=true;BD.error='';try{await render();await fn();}catch(e){BD.error=e.message;}finally{BD.busy=false;await render();}}
 async function bdRefresh(){BD.catalog=await api('api/ambient/bookinfo',{namespace:BD.namespace});S.ambient.inventory=null;RP.options=null;}
 function bookinfoAfter(){
+  bdWireResources();
   document.querySelectorAll('[data-amtab]').forEach(b=>b.onclick=()=>{S.ambient.tab=b.dataset.amtab;render();});$('#am-start-new').onclick=()=>amClear(true);$('#am-refresh').onclick=()=>bdRun(async()=>{await bdRefresh();});
   $('#bd-namespace').onchange=e=>{BD.namespace=e.target.value.trim();try{localStorage.setItem('flightbay.bookinfo.namespace',BD.namespace);}catch{}BD.catalog=null;bdInvalidate();render();};document.querySelectorAll('[data-bdcluster]').forEach(b=>b.onchange=()=>{BD.selected[b.dataset.bdcluster]=b.checked;bdInvalidate();if(!BD.catalog.clusters.filter(c=>BD.selected[c.cluster]).every(c=>c.globalSupported))BD.global=false;render();});
   document.querySelectorAll('[name="bd-waypoint-scope"]').forEach(b=>b.onchange=()=>{if(b.checked){BD.waypointScope=b.value;bdInvalidate();render();}});$('#bd-waypoint-name').onchange=e=>{BD.waypointName=e.target.value.trim();bdInvalidate();render();};
@@ -78,17 +78,21 @@ function bookinfoAfter(){
     if(BD.busy||!entries.length||entries.some(e=>!e.context))return;
     await bdRun(()=>amValidatePlans(entries));
     if(BD.error||entries.some(e=>!BD.entries.includes(e)||!amValidated(e))||!await amConfirmApply(entries))return;
+    // One confirmation covers both stages. When the confirmed plans create
+    // the namespace, the workload plans are prepared, dry-run and applied
+    // straight after, because Kubernetes cannot dry-run into a namespace
+    // that does not exist yet.
+    const creatingNamespace=entries.some(e=>e.request.demo.stage==='namespace');
     await bdRun(async()=>{
-      let failed=false;for(const e of entries){e.queued=true;e.message='Confirmed. Waiting for earlier selected clusters before applying this plan.';}
-      for(const e of entries){
-        e.queued=false;e.applying=true;e.error='';e.progress=null;e.pollStarted=null;e.pollStopped=false;e.message='Confirmed. Applying the reviewed '+e.request.demo.stage+' plan to '+e.context+'…';await render();
-        try{const result=await apiPost('api/ambient/test',{operation:'apply',context:e.context,validation:e.validation.token});e.record=result.test;e.validation=null;e.message=result.message;}
-        catch(err){e.error=err.message;e.validation=null;if(err.body?.test)e.record=err.body.test;failed=true;break;}
-        finally{e.applying=false;}
-      }
-      for(const e of entries)if(e.queued){e.queued=false;e.validation=null;e.message='Not attempted because an earlier cluster failed. Validate and confirm again to continue.';}
+      await bdApplyEntries(entries);
       await bdRefresh();await bdAdvance();
-      if(failed)throw new Error('Installation stopped after a cluster failed. Inspect the per-cluster results; earlier successful changes remain.');
+      const next=BD.entries.filter(e=>!e.record&&!e.error&&e.request.demo.stage==='workloads'&&entries.some(x=>x.cluster===e.cluster));
+      if(creatingNamespace&&next.length){
+        for(const e of next)e.message='Dry-run of the workloads…';await render();
+        await amValidatePlans(next);
+        if(next.some(e=>!amValidated(e)))throw new Error('The workload dry-run failed. Nothing beyond the namespace was applied; see the cluster below.');
+        await bdApplyEntries(next);
+      }
     });
   };
   if($('#bd-advance'))$('#bd-advance').onclick=()=>bdRun(bdAdvance);
@@ -137,3 +141,18 @@ async function bdRemoveBookinfo(cluster,chosenContext){
 // Bookinfo is an ambient demo: default to the Istio waypoint so Istio
 // AuthorizationPolicy, JWT and routing behave as they do in a customer mesh.
 function bdDefaultClass(row){return ((row.classes||[]).find(c=>c.product==='istio')||(row.classes||[])[0])?.name;}
+
+// Apply validated plans one cluster at a time; stop at the first failure.
+async function bdApplyEntries(entries){
+  let failed=false;for(const e of entries){e.queued=true;e.message='';}
+  for(const e of entries){
+    e.queued=false;e.applying=true;e.error='';e.progress=null;e.pollStarted=null;e.pollStopped=false;e.message='Applying the '+(e.request.demo.stage==='namespace'?'namespace':'workloads')+' to '+e.context+'…';await render();
+    try{const result=await apiPost('api/ambient/test',{operation:'apply',context:e.context,validation:e.validation.token});e.record=result.test;e.validation=null;e.message='';}
+    catch(err){e.error=err.message;e.validation=null;if(err.body?.test)e.record=err.body.test;failed=true;break;}
+    finally{e.applying=false;}
+  }
+  for(const e of entries)if(e.queued){e.queued=false;e.validation=null;e.message='Not attempted because an earlier cluster failed.';}
+  if(failed)throw new Error('Installation stopped after a cluster failed. Earlier successful changes remain.');
+}
+// Keep "Per-resource progress" the way the reader left it across repaints.
+function bdWireResources(root){(root||document).querySelectorAll('[data-bd-resources]').forEach(d=>d.addEventListener('toggle',()=>{BD.resourcesClosed=BD.resourcesClosed||{};BD.resourcesClosed[d.dataset.bdResources]=!d.open;}));}

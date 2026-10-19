@@ -5,16 +5,18 @@ const fs=require('node:fs');
 const path=require('node:path');
 const source=fs.readFileSync(path.join(__dirname,'../web/bookinfo-demo.js'),'utf8');
 
-test('namespace Apply automatically prepares separate workload previews without applying them',async()=>{
+test('one confirmation applies the namespace, then dry-runs and applies the workloads',async()=>{
   const elements=new Map(),calls=[];let confirmations=0;
   const context=vm.createContext({S:{view:'ambient',ambient:{tab:'demo'}},RP:{},$:id=>{if(!elements.has(id))elements.set(id,{});return elements.get(id);},document:{querySelectorAll:()=>[]},render:async()=>{},api:async()=>{},apiPost:async(_,q)=>{calls.push(q);if(q.operation==='validate')return {token:q.context,context:q.context,plan:{id:q.planId},validated:new Date().toISOString()};if(q.operation==='apply')return {test:{context:q.context},message:'Namespace created'};return {id:'workloads-'+q.cluster,request:q,objects:[],notes:[]};},amConfirmApply:async()=>{confirmations++;return true;},setTimeout,clearTimeout});
   vm.runInContext(require('./context-helpers.cjs'),context);
   vm.runInContext(source,context);
   vm.runInContext(`bdSchedulePoll=()=>{};bdRefresh=async()=>{BD.catalog={clusters:['mesh1','mesh2'].map(cluster=>({cluster,namespaceState:'prepared'}))};};BD.entries=['mesh1','mesh2'].map(cluster=>({cluster,context:cluster,request:{cluster,namespace:'bookinfo',demo:{stage:'namespace'}},plan:{id:cluster,objects:[],notes:[]},validation:null}));bookinfoAfter();`,context);
   await elements.get('#bd-apply-all').onclick();
-  assert.equal(confirmations,1);assert.equal(calls.filter(q=>q.operation==='validate').length,2,'primary action must perform the missing dry-runs automatically');assert.equal(calls.filter(q=>q.operation==='apply').length,2);assert.equal(calls.filter(q=>q.demo?.stage==='workloads').length,2);
-  assert.equal(vm.runInContext('BD.entries.every(e=>e.namespaceRecord&&!e.record&&!e.validation&&e.request.demo.stage==="workloads")',context),true);
-  assert.match(vm.runInContext('BD.entries[0].message',context),/confirm Stage 2/);
+  assert.equal(confirmations,1,'one confirmation covers both stages');
+  assert.equal(calls.filter(q=>q.operation==='validate').length,4,'namespace and workload plans are both dry-run before apply');
+  assert.equal(calls.filter(q=>q.operation==='apply').length,4,'namespace then workloads, per cluster');
+  assert.equal(calls.filter(q=>q.demo?.stage==='workloads').length,2);
+  assert.equal(vm.runInContext('BD.entries.every(e=>e.namespaceRecord&&e.record&&e.request.demo.stage==="workloads")',context),true);
 });
 
 test('reload recovers workload records and automatic checks distinguish readiness from traffic',async()=>{
