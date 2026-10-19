@@ -62,11 +62,11 @@ async function ambientPage() {
   if(A.tab==='path')body=await requestPathPage();
   if(A.tab==='demo')body=await bookinfoPage();
   if(A.tab==='changes')body=`<section class="panel"><div class="panel-head"><div><h2>Changes</h2><p class="muted">Every change Flightbay applied from this machine: what it changed, where, its live status, and undo. Undo restores only fields that are still as Flightbay left them.</p></div></div></section>`+(A.tests.length?amTests():'<p class="muted">No changes applied yet.</p>');
-  if(!target && A.tab==='investigate') body=body+amKnownIssues()+amFixCatalogue();
+  if(!target && A.tab==='investigate') body=body+amKnownIssues();
   if (target && !['path','demo','changes'].includes(A.tab)) {
     A.result = await api('api/ambient/investigate', amQuery());
     if (A.tab === 'investigate') body = amInvestigation(target);
-    else if (A.tab === 'map') body = amClusterCanvas(target) + (target.kind==='Namespace'||target.kind==='Gateway'?'':`<details class="am-map-details"><summary>Routes, policies and workloads for ${esc(target.name)}</summary>${amGraph(target)}</details>`);
+    else if (A.tab === 'map') body = amClusterCanvas(target) + (target.kind==='Namespace'||target.kind==='Gateway'?'':`<details class="am-map-details" data-amkeepopen="map-details" ${S.ambient.keepOpen?.["map-details"]?"open":""}><summary>Routes, policies and workloads for ${esc(target.name)}</summary>${amGraph(target)}</details>`);
     else if(A.phase===3&&A.globalBatch)body=amGlobalBatchPanel();
     else if(A.phase===3&&A.plan)body=amPlanPanel();
     else if (A.mode === 'waypoint' || A.mode === 'enrol-namespace') body = amWaypoint(target);
@@ -124,7 +124,7 @@ const amTaskText={
   jwt:['Require a JWT','Validate tokens and restrict request principals at the Istio waypoint.','Access'],
   retries:['Retry failed requests','Set retry attempts when the installed experimental schema permits it.','Resilience'],
   mirroring:['Mirror requests','Copy requests to a captured Service; ignore its responses.','Routing'],
-  'header-routing':['Route by header','Send requests matching exact HTTP headers to a selected backend.','Routing'],
+  'header-routing':['Route matching requests','Send requests that match a path, method, header or query parameter to another backend.','Routing'],
   'global-service':['Publish a global Service','Review the export label for this Service in the selected cluster.','Multicluster'],
   'l4-default-deny':['Deny by default','Require an explicit allow policy for this workload.','Access'],
   'l4-allow-namespace':['Allow a namespace','Permit callers from a selected namespace.','Access'],
@@ -263,7 +263,14 @@ function amPlanPanel() {
   return `<section class="panel am-review" id="am-plan"><div class="panel-head"><div><h2>Review your configuration</h2><p class="muted">Nothing has been applied. Download the YAML or test it on a cluster.</p></div><button id="am-back-options">← Edit options</button></div><div class="am-preview-tabs"><button data-ampreview="summary" class="${A.previewTab==='summary'?'on':''}">Change summary</button><button data-ampreview="yaml" class="${A.previewTab==='yaml'?'on':''}">Generated YAML</button><span class="spacer"></span><button id="am-copy">Copy YAML</button><button id="am-download">Download YAML</button></div><div class="panel-body">${A.previewTab==='yaml'?`<pre class="code am-yaml">${esc(p.yaml)}</pre>`:summary}</div></section>
     <details class="panel am-test-panel mt" ${A.validation||A.message?'open':''}><summary><strong>Review and apply</strong><span>Automatic dry-run, then final confirmation</span></summary><div class="panel-body"><p>Review and apply checks the target cluster identity and runs any required server dry-run before opening the final confirmation. Dry-run only checks the plan without applying it.</p>${amContextControl(A.plan.request.cluster,A.contexts,A.context,'id="am-context"')}<div class="am-wizard-footer"><button id="am-validate" ${A.busy||!A.context||noChange?'disabled':''}>Dry-run only</button><button class="primary" id="am-apply" ${A.busy||!A.context||noChange?'disabled':''}>Review and apply…</button></div>${A.validation?`<p class="green">Validated for ${esc(A.validation.context)}. Review and apply will recheck if validation expires.</p>`:''}${A.message?`<p role="status">${esc(A.message)}</p>`:''}</div></details>`;
 }
-function amTests() { const A = S.ambient; return `<section class="panel mt"><div class="panel-head"><h2>Active tests and changes</h2></div><div class="panel-body"><p>Recorded in your local Flightbay home so they can be inspected and undone after reopening the desk.</p>${A.tests.length ? A.tests.map((t,i) => `<div class="notice info"><div><strong>${esc(t.context)}</strong> · ${esc(t.plan.request.namespace)}/${esc(t.plan.request.service || t.plan.request.targetName || '')}<div class="mono">${(t.created || []).map(o => esc('Created '+o.kind+' '+o.name)).concat((t.modified || []).map(c => esc('Changed '+c.ref.kind+' '+c.ref.name))).join('<br>')}</div><div class="row mt"><button data-amstatus="${i}">Refresh status</button><button data-amcleanup="${i}">${(t.modified || []).length ? 'Undo changes and remove test resources' : 'Remove these test resources'}</button></div></div></div>`).join('') : '<p class="muted">No active tests recorded.</p>'}${A.status ? `<pre class="code">${esc(JSON.stringify(A.status,null,2))}</pre>` : ''}</div></section>`; }
+function amTests() { const A = S.ambient;
+  const state=t=>({applied:['green','Applied'],removed:['','Undone'],failed:['red','Failed · rolled back'],applying:['blue','Applying']})[t.applyState]||['blue',t.applyState||'Recorded'];
+  const when=t=>{const d=t.applyFinished&&!String(t.applyFinished).startsWith('0001')?t.applyFinished:t.validated;return d?new Date(d).toLocaleString():'';};
+  const what=t=>{const q=t.plan?.request||{};const tasks=(q.tasks||[]).map(k=>amTaskText[k]?.[0]||k).join(', ');return tasks||(q.demo?'Bookinfo '+q.demo.stage:'Change');};
+  const done=A.tests.filter(t=>t.applyState==='removed'||t.applyState==='failed');
+  return `<section class="panel mt"><div class="panel-body"><div class="row between wrap"><p class="muted">Each change is a record in <code>~/.flightbay/ambient-tests</code> on this machine, written when you apply it. It lists the objects created and the fields changed, with their previous values, so Undo works after the desk restarts. Undo reverts the cluster; Forget only deletes the record.</p>${done.length?`<button data-amforgetdone>Forget ${done.length} undone or failed</button>`:''}</div>
+    <div class="table-scroll"><table class="am-changes"><thead><tr><th>State</th><th>When</th><th>What</th><th>Where</th><th>Objects</th><th></th></tr></thead><tbody>${A.tests.map((t,i)=>{const [tone,label]=state(t);const q=t.plan?.request||{};return `<tr><td><span class="badge ${tone}">${esc(label)}</span>${t.applyError?`<small class="red" title="${esc(t.applyError)}">${esc(t.applyError.slice(0,90))}${t.applyError.length>90?'…':''}</small>`:''}</td><td class="muted">${esc(when(t))}</td><td>${esc(what(t))}</td><td>${esc(t.context)}<br><small class="muted">${esc((q.namespace||'')+'/'+(q.service||q.targetName||''))}</small></td><td class="mono">${(t.created||[]).map(o=>esc('+ '+o.kind+' '+o.name)).concat((t.modified||[]).map(c=>esc('~ '+c.ref.kind+' '+c.ref.name))).join('<br>')}</td><td><div class="row">${t.applyState==='applied'?`<button data-amcleanup="${i}">Undo</button><button data-amstatus="${i}">Status</button>`:''}${t.applyState!=='applied'&&t.applyState!=='applying'?`<button data-amforget="${i}">Forget</button>`:''}</div></td></tr>`;}).join('')}</tbody></table></div>
+    ${A.status ? `<details open><summary>Live status</summary><pre class="code">${esc(JSON.stringify(A.status,null,2))}</pre></details>` : ''}</div></section>`; }
 
 function amCapture() {
   const F = S.ambient.settings, get = id => $('#am-'+id);
@@ -274,6 +281,7 @@ function amCapture() {
   if(document.querySelectorAll)document.querySelectorAll('[data-ammethods]').forEach(g=>{F[g.dataset.ammethods]=[...g.querySelectorAll('input:checked')].map(i=>i.value).join(',');});
   if(document.querySelectorAll)document.querySelectorAll('[data-amheaders]').forEach(g=>{const o={};g.querySelectorAll('[data-amheaderrow]').forEach(r=>{const n=r.querySelector('[data-amh="name"]').value.trim();if(n)o[n]=r.querySelector('[data-amh="value"]').value;});F[g.dataset.amheaders]=JSON.stringify(o);});
   const jm=document.querySelector?.('input[name="am-jwksMode"]:checked');if(jm)F.jwksMode=jm.value;
+  if(document.querySelector?.('#am-route-match'))amCaptureRouteMatch(F);
   const text = ['source','methods','timeout','backendTimeout','algorithm','unit','fromRegion','toRegion','trafficMode','mtlsMode','methodAction','wpMode','wpScope','wpExisting','wpNamespace','wpName','wpClass','targetNamespace','repairOperation','selectedPod','workload','repairRoute'];
   text.push('parentKind','parentGateway','parentSection');
   text.push('issuer','jwksUri','jwks','requestPrincipals','paths','jwtMethods','p1Headers','mirrorService','headerService','explainPorts','explainPaths');
@@ -306,6 +314,7 @@ function amRead() {
   if (A.edit) req.edit = A.edit;
   if(A.tasks.jwt){req.issuer=F.issuer;req.jwksUri=F.jwksUri;req.jwks=F.jwks;req.requestPrincipals=(F.requestPrincipals||'').split(',').map(x=>x.trim()).filter(Boolean);if(!req.requestPrincipals.length&&F.issuer)req.requestPrincipals=[F.issuer.trim()+'/*'];if(F.jwksMode==='inline')req.jwksUri='';else req.jwks='';req.paths=(F.paths||'').split(',').map(x=>x.trim()).filter(Boolean);req.methods=(F.jwtMethods||'').split(',').map(x=>x.trim()).filter(Boolean);}
   if(A.tasks.jwt||A.tasks['header-routing'])req.headers=JSON.parse(F.p1Headers||'{}');
+  if(A.tasks['header-routing'])req.routeMatch=amRouteMatchRequest(F);
   if(A.tasks.retries)req.retryAttempts=F.retryAttempts;
   if(A.tasks.mirroring)req.mirror={name:F.mirrorService,port:F.mirrorPort};
   if(A.tasks['header-routing']&&!A.tasks['weighted-routing'])req.backends=[{name:F.headerService,port:F.headerPort}];
@@ -358,6 +367,10 @@ after.ambient = () => {
   amWireGlobalPublication();
   amWireAccessRule();
   amWireFormHelpers();
+  document.querySelectorAll('[data-amkeepopen]').forEach(d=>d.addEventListener('toggle',()=>{S.ambient.keepOpen=S.ambient.keepOpen||{};S.ambient.keepOpen[d.dataset.amkeepopen]=d.open;}));
+  const forget=async tokens=>{try{await apiPost('api/ambient/tests',{tokens});S.ambient.tests=await api('api/ambient/tests');render();}catch(e){toast(e.message);}};
+  document.querySelectorAll('[data-amforget]').forEach(b=>b.onclick=()=>forget([S.ambient.tests[Number(b.dataset.amforget)].token]));
+  document.querySelectorAll('[data-amforgetdone]').forEach(b=>b.onclick=()=>forget(S.ambient.tests.filter(t=>t.applyState==='removed'||t.applyState==='failed').map(t=>t.token)));
   amWireLive();
   const testPanel=document.querySelector('.am-test-panel');if(testPanel){if(A.testOpen)testPanel.open=true;testPanel.ontoggle=()=>A.testOpen=testPanel.open;}
   if($('#am-apply'))$('#am-apply').textContent='Review and apply…';
@@ -447,7 +460,7 @@ function amP1Fields(){
       <section class="am-form-block"><h4>3 · Who may call</h4>${amInput('requestPrincipals','Allowed subjects (comma separated, empty = any subject from this issuer)',F.requestPrincipals||'')}<p class="muted am-field-help">Each entry is <code>issuer/subject</code>, or <code>issuer/*</code> for anyone the issuer signs. Requests without a valid token are refused.</p></section>
       <section class="am-form-block"><h4>4 · Only for some requests (optional)</h4>${amInput('paths','Paths (comma separated, empty = all)',F.paths||'')}${amMethodChips('jwtMethods','Methods (none ticked = all)',F.jwtMethods||'')}<h5>Also require these headers</h5>${amHeaderRows('p1Headers',F.p1Headers)}</section>`;
   }
-  if(selected('header-routing'))fields+=`<section class="am-form-block"><h4>Requests to match</h4><p class="muted am-field-help">Requests with every header below (exact values) go to the backend you choose. Everything else keeps its normal route.</p>${amHeaderRows('p1Headers',F.p1Headers)}</section>`;
+  if(selected('header-routing'))fields+=amRouteMatchMarkup(F);
   if(selected('retries')){F.retryAttempts??=2;fields+=amInput('retryAttempts','Retry attempts (1–10)',F.retryAttempts,'number');}
   for(const [task,prefix]of [['mirroring','mirror'],['header-routing','header']])if(selected(task)&&(task!=='header-routing'||!selected('weighted-routing'))){const infra=new Set((A.inventory.topology?.clusters||[]).flatMap(c=>c.services.filter(x=>x.infrastructure).map(x=>c.context+'/'+x.namespace+'/'+x.name)));const others=A.inventory.services.filter(s=>s.cluster===svc.cluster&&s.namespace===svc.namespace&&!infra.has(s.cluster+'/'+s.namespace+'/'+s.name)&&!/waypoint/.test(s.name)&&(task!=='mirroring'||s.name!==svc.name));const chosen=others.find(s=>s.name===F[prefix+'Service'])||others[0];F[prefix+'Service']=chosen?.name||'';if(!chosen?.ports.includes(F[prefix+'Port']))F[prefix+'Port']=chosen?.ports[0];fields+=`<label>${task==='mirroring'?'Mirror requests to':'Send matching requests to'} Service<select id="am-${prefix}Service">${amOpts(others.map(s=>s.name),F[prefix+'Service'])}</select></label><label>Backend Service port<select id="am-${prefix}Port">${amOpts(chosen?.ports||[],F[prefix+'Port'])}</select></label>`;}
   box.insertAdjacentHTML('beforeend',fields);
@@ -632,6 +645,8 @@ function amHeaderRows(id,json){
 }
 function amWireFormHelpers(){
   const A=S.ambient,F=A.settings;
+  document.querySelectorAll('[data-amrmadd]').forEach(b=>b.onclick=()=>{amCapture();const k=b.dataset.amrmadd;F.routeMatch[k].push({name:'',type:'Exact',value:''});amInvalidate();render();});
+  document.querySelectorAll('[data-amrmdel]').forEach(b=>b.onclick=()=>{amCapture();const [k,i]=b.dataset.amrmdel.split(':');F.routeMatch[k].splice(Number(i),1);amInvalidate();render();});
   document.querySelectorAll('[data-amheaderadd]').forEach(b=>b.onclick=()=>{amCapture();const id=b.dataset.amheaderadd,o=JSON.parse(F[id]||'{}');o['']='';F[id]=JSON.stringify(o);amInvalidate();render();});
   document.querySelectorAll('[data-amheaderdel]').forEach(b=>b.onclick=()=>{amCapture();const [id,i]=b.dataset.amheaderdel.split(':'),o=Object.entries(JSON.parse(F[id]||'{}'));o.splice(Number(i),1);F[id]=JSON.stringify(Object.fromEntries(o));amInvalidate();render();});
   document.querySelectorAll('input[name="am-jwksMode"]').forEach(r=>r.addEventListener('change',()=>{amCapture();amInvalidate();render();}));
@@ -650,3 +665,20 @@ function amWireLive(){
   let t;const later=ms=>{clearTimeout(t);t=setTimeout(amLiveRender,ms);};
   box.addEventListener('input',()=>later(350));box.addEventListener('change',()=>later(150));later(50);
 }
+
+// Route matching requests: one HTTPRouteMatch. Every part filled in must
+// match; empty parts match anything.
+function amRouteMatchDraft(F){F.routeMatch=F.routeMatch||{pathType:'PathPrefix',path:'',method:'',headers:[{name:'',type:'Exact',value:''}],query:[]};return F.routeMatch;}
+function amRouteMatchMarkup(F){
+  const m=amRouteMatchDraft(F),types=[{value:'Exact',label:'equals'},{value:'RegularExpression',label:'matches regex'}];
+  const rows=(k,label,ph)=>`<h5>${label}</h5>${m[k].map((r,i)=>`<div class="am-header-row" data-amrmrow="${k}:${i}"><input data-amrm="name" value="${esc(r.name)}" placeholder="${ph}" aria-label="${label} name" autocomplete="off" spellcheck="false"><select data-amrm="type" aria-label="Match type">${amOpts(types,r.type)}</select><input data-amrm="value" value="${esc(r.value)}" placeholder="${r.type==='RegularExpression'?'^canary.*':'canary'}" aria-label="${label} value" autocomplete="off" spellcheck="false"><button class="link" data-amrmdel="${k}:${i}" aria-label="Remove">×</button></div>`).join('')}<button class="link" data-amrmadd="${k}">+ Add ${k==='headers'?'header':'query parameter'}</button>`;
+  return `<section class="am-form-block" id="am-route-match"><h4>Requests to match</h4><p class="muted am-field-help">A request must match every part you fill in. Matching requests go to the backend below; everything else keeps its normal route.</p>
+    <div class="am-route-path"><label>Path <select id="am-rm-pathType">${amOpts([{value:'PathPrefix',label:'starts with'},{value:'Exact',label:'is exactly'},{value:'RegularExpression',label:'matches regex'}],m.pathType)}</select></label><label>&nbsp;<input id="am-rm-path" value="${esc(m.path)}" placeholder="/reviews (empty = any path)" autocomplete="off" spellcheck="false"></label><label>Method <select id="am-rm-method">${amOpts([{value:'',label:'Any method'},'GET','HEAD','POST','PUT','PATCH','DELETE','OPTIONS'],m.method)}</select></label></div>
+    ${rows('headers','Headers','x-env')}${rows('query','Query parameters','version')}</section>`;
+}
+function amCaptureRouteMatch(F){
+  const m=amRouteMatchDraft(F);
+  m.pathType=$('#am-rm-pathType')?.value||'PathPrefix';m.path=$('#am-rm-path')?.value||'';m.method=$('#am-rm-method')?.value||'';
+  for(const k of ['headers','query'])document.querySelectorAll(`[data-amrmrow^="${k}:"]`).forEach(el=>{const i=Number(el.dataset.amrmrow.split(':')[1]);m[k][i]={name:el.querySelector('[data-amrm="name"]').value,type:el.querySelector('[data-amrm="type"]').value,value:el.querySelector('[data-amrm="value"]').value};});
+}
+function amRouteMatchRequest(F){const m=amRouteMatchDraft(F),keep=l=>l.filter(r=>r.name.trim()||r.value.trim());return {pathType:m.pathType,path:m.path.trim(),method:m.method,headers:keep(m.headers),query:keep(m.query)};}

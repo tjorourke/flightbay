@@ -230,3 +230,19 @@ func TestAgentgatewayAccessBuildsCEL(t *testing.T) {
 		t.Fatal("caller rules must be refused on agentgateway")
 	}
 }
+
+func TestBuildRouteMatch(t *testing.T) {
+	m, err := buildRouteMatch(RouteMatch{PathType: "RegularExpression", Path: "^/reviews/[0-9]+$", Method: "GET", Headers: []RouteMatchKV{{Name: "x-env", Type: "RegularExpression", Value: "^canary"}}, Query: []RouteMatchKV{{Name: "v", Value: "2"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if M(m["path"])["type"] != "RegularExpression" || m["method"] != "GET" || len(m["headers"].([]any)) != 1 || len(m["queryParams"].([]any)) != 1 {
+		t.Fatalf("%+v", m)
+	}
+	if _, err := buildRouteMatch(RouteMatch{Headers: []RouteMatchKV{{Name: "x", Type: "RegularExpression", Value: "("}}}); err == nil {
+		t.Fatal("bad regex accepted")
+	}
+	if _, err := buildRouteMatch(RouteMatch{}); err == nil {
+		t.Fatal("empty match accepted")
+	}
+}

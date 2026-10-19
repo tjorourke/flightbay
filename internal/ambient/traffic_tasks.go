@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -191,6 +192,14 @@ func routeOptions(ws *store.Workspace, req Request, selected map[string]bool, ru
 			}
 			rule["backendRefs"] = []any{map[string]any{"name": req.Backends[0].Name, "port": req.Backends[0].Port}}
 		}
+		if req.RouteMatch != nil {
+			m, err := buildRouteMatch(*req.RouteMatch)
+			if err != nil {
+				return err
+			}
+			rule["matches"] = []any{m}
+			return nil
+		}
 		if len(req.Headers) == 0 {
 			return fmt.Errorf("choose at least one exact header match")
 		}
@@ -245,4 +254,86 @@ func clusterTrustDomain(ws *store.Workspace, cluster string) string {
 		}
 	}
 	return td
+}
+
+type RouteMatch struct {
+	PathType string         `json:"pathType,omitempty"` // PathPrefix, Exact, RegularExpression
+	Path     string         `json:"path,omitempty"`
+	Method   string         `json:"method,omitempty"`
+	Headers  []RouteMatchKV `json:"headers,omitempty"`
+	Query    []RouteMatchKV `json:"query,omitempty"`
+}
+
+type RouteMatchKV struct {
+	Name  string `json:"name"`
+	Type  string `json:"type,omitempty"` // Exact or RegularExpression
+	Value string `json:"value"`
+}
+
+// buildRouteMatch turns the form into one Gateway API HTTPRouteMatch. Every
+// part set must match (Gateway API ANDs them); regular expressions are RE2.
+func buildRouteMatch(m RouteMatch) (map[string]any, error) {
+	out := map[string]any{}
+	if strings.TrimSpace(m.Path) != "" {
+		t := defaultString(m.PathType, "PathPrefix")
+		if t != "PathPrefix" && t != "Exact" && t != "RegularExpression" {
+			return nil, fmt.Errorf("path match must be PathPrefix, Exact or RegularExpression")
+		}
+		if t != "RegularExpression" && !strings.HasPrefix(m.Path, "/") {
+			return nil, fmt.Errorf("paths start with /")
+		}
+		if t == "RegularExpression" {
+			if _, err := regexp.Compile(m.Path); err != nil {
+				return nil, fmt.Errorf("path regular expression: %v", err)
+			}
+		}
+		out["path"] = map[string]any{"type": t, "value": m.Path}
+	}
+	if m.Method != "" {
+		if !contains(httpMethods, m.Method) {
+			return nil, fmt.Errorf("unsupported HTTP method %q", m.Method)
+		}
+		out["method"] = m.Method
+	}
+	kv := func(list []RouteMatchKV, what string, check func(string) bool) ([]any, error) {
+		res := []any{}
+		for _, h := range list {
+			name := strings.TrimSpace(h.Name)
+			if name == "" && h.Value == "" {
+				continue
+			}
+			t := defaultString(h.Type, "Exact")
+			if t != "Exact" && t != "RegularExpression" {
+				return nil, fmt.Errorf("%s match must be Exact or RegularExpression", what)
+			}
+			if !check(name) || h.Value == "" {
+				return nil, fmt.Errorf("choose a valid %s name and a value", what)
+			}
+			if t == "RegularExpression" {
+				if _, err := regexp.Compile(h.Value); err != nil {
+					return nil, fmt.Errorf("%s %s regular expression: %v", what, name, err)
+				}
+			}
+			res = append(res, map[string]any{"type": t, "name": name, "value": h.Value})
+		}
+		return res, nil
+	}
+	hs, err := kv(m.Headers, "header", headerName)
+	if err != nil {
+		return nil, err
+	}
+	if len(hs) > 0 {
+		out["headers"] = hs
+	}
+	qs, err := kv(m.Query, "query parameter", func(n string) bool { return n != "" && !strings.ContainsAny(n, "&=? ") })
+	if err != nil {
+		return nil, err
+	}
+	if len(qs) > 0 {
+		out["queryParams"] = qs
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("set at least one of path, method, header or query parameter to match")
+	}
+	return out, nil
 }

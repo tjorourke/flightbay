@@ -27,6 +27,7 @@ function amGlobalEdits(){return S.ambient.settings.globalEdits||{};}
 function amGlobalPendingEdits(svc){
   const e=amGlobalEdits(),r=amGlobalRouting(svc),wantDist=S.ambient.settings.globalDistribution,wantTake=S.ambient.settings.globalTakeover;
   const routingChanged=row=>row.service&&((wantDist!==undefined&&wantDist!==(row.service.distribution||'default'))||(wantTake!==undefined&&wantTake!==!!row.service.takeover));
+  if(wantDist==='weighted')return amGlobalTargets(svc).filter(row=>row.service&&e[row.cluster]!=='unpublish').map(row=>({cluster:row.cluster,action:row.global?'update':'publish'}));
   return amGlobalTargets(svc).filter(row=>row.service).map(row=>{
     const a=e[row.cluster];
     if(a==='unpublish'&&row.global)return {cluster:row.cluster,action:'unpublish'};
@@ -38,13 +39,14 @@ function amGlobalPendingEdits(svc){
 function amGlobalEditLabel(edit){return (edit.action==='unpublish'?'Stop publishing from ':edit.action==='update'?'Change cross-cluster routing on ':'Publish from ')+edit.cluster;}
 // How requests to the global name pick a cluster, and whether the local name
 // is taken over. Applied to every cluster that publishes the Service.
-const AM_GLOBAL_DIST=[['default','Prefer this cluster, fail over to the others','PreferNetwork · default'],['Any','Spread evenly across every cluster','Any · round robin across all endpoints'],['PreferRegion','Prefer the same region, then others','PreferRegion'],['PreferClose','Prefer the same zone, then others','PreferClose']];
+const AM_GLOBAL_DIST=[['default','Prefer this cluster, fail over to the others','PreferNetwork · default'],['Any','Spread evenly across every cluster','Any · round robin across all endpoints'],['weighted','Split by weight, e.g. 70/30','HTTPRoute through the Istio waypoint'],['PreferRegion','Prefer the same region, then others','PreferRegion'],['PreferClose','Prefer the same zone, then others','PreferClose']];
 function amGlobalRouting(svc){const rows=amGlobalTargets(svc).filter(r=>r.service);const first=rows.find(r=>r.global)||rows[0];return {distribution:first?.service?.distribution||'default',takeover:!!first?.service?.takeover,mixed:new Set(rows.map(r=>r.service.distribution||'default')).size>1||new Set(rows.map(r=>!!r.service.takeover)).size>1};}
 function amGlobalRoutingMarkup(svc){
   const F=S.ambient.settings,cur=amGlobalRouting(svc),dist=F.globalDistribution??cur.distribution,take=F.globalTakeover??cur.takeover;
   return `<section class="am-global-routing"><h3>Routing across clusters</h3>
     <p class="muted">By default a caller uses this Service's endpoints in its own cluster and only goes to another cluster when none are healthy. Set on every cluster that publishes it.${cur.mixed?' <span class="amber">The clusters are set differently today.</span>':''}</p>
     <div class="am-global-choice am-global-dist" role="radiogroup" aria-label="Traffic distribution">${AM_GLOBAL_DIST.map(([v,l,d])=>`<label><input type="radio" name="am-global-dist" data-amglobaldist value="${v}" ${dist===v?'checked':''}> <span><strong>${esc(l)}</strong><small>${esc(d)}</small></span></label>`).join('')}</div>
+    ${dist==='weighted'?amGlobalWeightsMarkup(svc):''}
     ${dist==='Any'?'<p class="muted">Spread is per endpoint, not per cluster: 3 Pods in one cluster and 1 in another is about 75/25. ztunnel balances per connection, so a client that reuses one connection stays on one backend; a waypoint balances per request.</p>':''}
     <label class="row am-global-takeover"><input type="checkbox" id="am-global-takeover" ${take?'checked':''}> <span>Send the local name to the global Service too <small class="muted"><code>solo.io/service-takeover=true</code>: requests for <code>${esc(svc.name+'.'+svc.namespace+'.svc.cluster.local')}</code> use every cluster's endpoints, not just this cluster's.</small></span></label>
   </section>`;
@@ -141,6 +143,7 @@ function amWireGlobalPublication(){
   });
   // addEventListener: the generic parameter handler later replaces onchange.
   document.querySelectorAll('[data-amglobaledit]').forEach(input=>input.addEventListener('change',()=>{amCapture();amInvalidate();render();}));
+  document.querySelectorAll('[data-amglobalweight]').forEach(i=>i.addEventListener('change',()=>{const F=S.ambient.settings;F.globalWeights=F.globalWeights||{};F.globalWeights[i.dataset.amglobalweight]=Number(i.value)||0;amInvalidate();render();}));
   document.querySelectorAll('[data-amglobaldist], #am-global-takeover').forEach(input=>input.addEventListener('change',()=>{const F=S.ambient.settings,d=document.querySelector('[data-amglobaldist]:checked');if(d)F.globalDistribution=d.value;const t=$('#am-global-takeover');if(t)F.globalTakeover=t.checked;amInvalidate();render();}));
   document.querySelectorAll('[data-amglobalsetup]').forEach(b=>b.onclick=()=>amGlobalSetupGuide(b.dataset.amglobalsetup));
   document.querySelectorAll('.am-global-plan').forEach((el,i)=>{const row=A.globalBatch[i],badge=el.querySelector('.badge'),ok=row.applied||!!row.validation||row.state==='Already global';badge.className='badge '+(row.error?'red':ok?'green':'blue');badge.textContent=(row.error?'✕ ':ok?'✓ ':'')+row.state;});
@@ -174,4 +177,9 @@ function amConfirmApply(entries){
   });
 }
 
-function amGlobalRoutingRequest(svc){const F=S.ambient.settings,cur=amGlobalRouting(svc),out={};const d=F.globalDistribution??cur.distribution;if(F.globalDistribution!==undefined||d!=='default')out.globalDistribution=d;if(F.globalTakeover!==undefined)out.globalTakeover=F.globalTakeover;return out;}
+function amGlobalRoutingRequest(svc){const F=S.ambient.settings,cur=amGlobalRouting(svc),out={};const d=F.globalDistribution??cur.distribution;if(d==='weighted')out.globalWeights=amGlobalWeights(svc);else if(F.globalDistribution!==undefined||d!=='default')out.globalDistribution=d;if(F.globalTakeover!==undefined)out.globalTakeover=F.globalTakeover;return out;}
+function amGlobalWeights(svc){const F=S.ambient.settings,rows=amGlobalTargets(svc).filter(r=>r.service);F.globalWeights=F.globalWeights||Object.fromEntries(rows.map((r,i)=>[r.cluster,i===0?70:Math.round(30/Math.max(rows.length-1,1))]));return F.globalWeights;}
+function amGlobalWeightsMarkup(svc){
+  const w=amGlobalWeights(svc),total=Object.values(w).reduce((a,b)=>a+Number(b||0),0);
+  return `<div class="am-global-weights">${Object.keys(w).map(c=>`<label>${esc(c)} <input type="number" min="0" max="1000" data-amglobalweight="${esc(c)}" value="${esc(w[c])}"> <small class="muted">${total?Math.round(100*w[c]/total):0}%</small></label>`).join('')}</div><p class="muted">Each cluster gets a Service <code>${esc(svc.name)}-&lt;cluster&gt;</code> that selects only its own Pods, published globally, and an HTTPRoute on <code>${esc(svc.name)}</code> sends each request to one of those hostnames by weight. It needs an Istio waypoint on ${esc(svc.name)} in each cluster whose callers should be split, and is per request.</p>`;
+}

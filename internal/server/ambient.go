@@ -449,8 +449,12 @@ func (s *Server) saveAmbientRecord(rec *ambientRecord) error {
 	return os.Rename(name, filepath.Join(dir, rec.Token+".json"))
 }
 func (s *Server) ambientTests(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		s.ambientForget(w, r)
+		return
+	}
 	if r.Method != http.MethodGet {
-		jerr(w, 405, "GET only")
+		jerr(w, 405, "GET or POST only")
 		return
 	}
 	s.ambientS.mu.Lock()
@@ -773,4 +777,47 @@ func cleanupAmbient(ctx context.Context, c ambientConnection, rec *ambientRecord
 	}
 	rec.Created = left
 	return errs
+}
+
+// ambientForget stops tracking change records: the local JSON is deleted and
+// nothing in any cluster is touched. Records still applied can only be
+// forgotten one at a time with force, so live changes are not orphaned by a
+// bulk clear.
+func (s *Server) ambientForget(w http.ResponseWriter, r *http.Request) {
+	var q struct {
+		Tokens []string `json:"tokens"`
+		Force  bool     `json:"force"`
+	}
+	if !ambientBody(w, r, &q) {
+		return
+	}
+	s.ambientS.mu.Lock()
+	defer s.ambientS.mu.Unlock()
+	if err := s.ambientRecords(); err != nil {
+		jerr(w, 500, err.Error())
+		return
+	}
+	dir, err := s.ambientDir()
+	if err != nil {
+		jerr(w, 500, err.Error())
+		return
+	}
+	forgotten := 0
+	for _, t := range q.Tokens {
+		rec := s.ambientS.records[t]
+		if rec == nil {
+			continue
+		}
+		if (rec.ApplyState == "applied" || rec.ApplyState == "applying") && !(q.Force && len(q.Tokens) == 1) {
+			jerr(w, 409, "a change that is still applied must be undone first, or forgotten on its own with force")
+			return
+		}
+		if err := os.Remove(filepath.Join(dir, rec.Token+".json")); err != nil && !os.IsNotExist(err) {
+			jerr(w, 500, err.Error())
+			return
+		}
+		delete(s.ambientS.records, t)
+		forgotten++
+	}
+	writeJSON(w, 200, map[string]any{"forgotten": forgotten})
 }

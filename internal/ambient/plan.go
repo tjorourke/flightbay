@@ -62,8 +62,15 @@ type Request struct {
 	// global Service: "" leaves it, "default" removes it (PreferNetwork),
 	// otherwise Any, PreferClose, PreferRegion or PreferNetwork.
 	GlobalDistribution string `json:"globalDistribution,omitempty"`
+	// GlobalWeights splits requests to this Service across clusters by weight
+	// (cluster name → weight), through the Service's Istio waypoint.
+	GlobalWeights map[string]int `json:"globalWeights,omitempty"`
 	// GlobalTakeover sets (true) or removes (false) solo.io/service-takeover.
 	GlobalTakeover *bool `json:"globalTakeover,omitempty"`
+	// RouteMatch is the full HTTPRoute match for Route by request: path,
+	// method, headers and query parameters, each Exact or RegularExpression.
+	// When set it replaces the exact-only Headers map.
+	RouteMatch *RouteMatch `json:"routeMatch,omitempty"`
 	// Access builds a Service-targeted AuthorizationPolicy from rules.
 	Access          *AccessRequest `json:"access,omitempty"`
 	TargetPort      int            `json:"targetPort,omitempty"`
@@ -152,7 +159,7 @@ func Capabilities(ws *store.Workspace, c, ns, service string) []Task {
 		{"jwt", "Require a JWT", "L7 Istio waypoint", istio && security && hasResource(ws, c, "security.istio.io", "requestauthentications"), "RequestAuthentication and requestPrincipals authorization on the Service. Agentgateway JWT generation is UNVERIFIED and unavailable: no tested installed-schema policy mapping is established."},
 		{"retries", "Retry failed requests", "L7 Istio waypoint", istio && routeField(ws, c, "retry", "attempts"), "Requires the experimental HTTPRoute retry.attempts field in the captured installed CRD schema and an Istio waypoint. Otherwise unavailable; agentgateway support is UNVERIFIED."},
 		{"mirroring", "Mirror requests", "L7 Istio waypoint", istio && routeField(ws, c, "filters", "requestMirror", "backendRef", "name"), "HTTPRoute RequestMirror to a captured Service. Agentgateway waypoint support is UNVERIFIED and unavailable."},
-		{"header-routing", "Route by HTTP header", "L7 waypoint", (istio || agent) && routeField(ws, c, "matches", "headers", "value"), "Exact HTTPRoute header matches. Requires the captured installed HTTPRoute schema."},
+		{"header-routing", "Route matching requests", "L7 waypoint", (istio || agent) && routeField(ws, c, "matches", "headers", "value"), "HTTPRoute match on path, method, headers and query parameters (exact or regular expression) to another backend. Requires the captured installed HTTPRoute schema."},
 		{"global-service", "Publish as a global Service", "Multicluster", globalSupported, globalReason},
 		{"l4-default-deny", "Deny by default for the selected workload", "L4 ztunnel", security && selector, "Creates an empty ALLOW policy on the Service's workload selector. Other ALLOW policies are additive; this does not override them."},
 		{"l4-allow-namespace", "Allow calls from a namespace", "L4 ztunnel", security && selector && wpName == "", "For direct ambient traffic without a selected waypoint. Behind a waypoint, ztunnel sees the waypoint identity; use an L7 policy for original callers."},
