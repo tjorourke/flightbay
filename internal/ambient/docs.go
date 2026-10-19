@@ -39,8 +39,8 @@ func TaskDocs(e Environment, id string) []DocLink {
 		return istioGuide(e, "ambient/usage/l4-policy/", "security/authorization/ztunnel-authz/", "L4 authorization")
 	case "strict-mtls":
 		return istioGuide(e, "ambient/usage/verify-mtls-enabled/", "security/verify-mtls/", "Ambient mutual TLS")
-	case "methods":
-		return istioGuide(e, "ambient/usage/l7-features/", "security/authorization/waypoint-authz/", "L7 waypoint authorization")
+	case "methods", "access-rule":
+		return append(istioGuide(e, "ambient/usage/l7-features/", "security/authorization/waypoint-authz/", "L7 waypoint authorization"), DocLink{"AuthorizationPolicy reference", istioDocs + "reference/config/security/authorization-policy/", "Istio shared API"})
 	case "jwt":
 		return []DocLink{{"JWT validation", istioDocs + "reference/config/security/request_authentication/", "Istio shared API"}, {"JWT authorization", istioDocs + "tasks/security/authorization/authz-jwt/", "Istio OSS"}}
 	case "retries", "mirroring", "header-routing":

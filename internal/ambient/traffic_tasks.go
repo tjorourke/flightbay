@@ -62,33 +62,7 @@ func waypointPrincipal(ws *store.Workspace, svc *store.Object) string {
 		}
 		sa = v
 	}
-	for _, cm := range ws.List(svc.Cluster, "", "configmaps", "", nil) {
-		// Mesh config is YAML, parsed rather than inferred from a context name.
-		if cm.Name != "istio" && !strings.HasPrefix(cm.Name, "istio-") {
-			continue
-		}
-		v := meshTrustDomain(S(Path(cm.Obj, "data", "mesh")))
-		if v != "" {
-			if td != "" && td != v {
-				return ""
-			}
-			td = v
-		}
-	}
-	for _, edge := range ws.AccessEdges(svc.Cluster) {
-		for _, id := range []string{edge.SrcIdentity, edge.DstIdentity} {
-			if !strings.HasPrefix(id, "spiffe://") {
-				continue
-			}
-			v, _, ok := strings.Cut(strings.TrimPrefix(id, "spiffe://"), "/ns/")
-			if ok {
-				if td != "" && td != v {
-					return ""
-				}
-				td = v
-			}
-		}
-	}
+	td = clusterTrustDomain(ws, svc.Cluster)
 	if sa == "" || td == "" {
 		return ""
 	}
@@ -237,3 +211,38 @@ func routeOptions(ws *store.Workspace, req Request, selected map[string]bool, ru
 	return nil
 }
 func hasPortOrFalse(o *store.Object, port int) bool { return o != nil && hasPort(o, port) }
+
+// clusterTrustDomain reads the mesh trust domain from the captured mesh
+// config, or from observed SPIFFE identities. Empty when it is ambiguous or
+// unknown, so callers never guess.
+func clusterTrustDomain(ws *store.Workspace, cluster string) string {
+	td := ""
+	for _, cm := range ws.List(cluster, "", "configmaps", "", nil) {
+		// Mesh config is YAML, parsed rather than inferred from a context name.
+		if cm.Name != "istio" && !strings.HasPrefix(cm.Name, "istio-") {
+			continue
+		}
+		v := meshTrustDomain(S(Path(cm.Obj, "data", "mesh")))
+		if v != "" {
+			if td != "" && td != v {
+				return ""
+			}
+			td = v
+		}
+	}
+	for _, edge := range ws.AccessEdges(cluster) {
+		for _, id := range []string{edge.SrcIdentity, edge.DstIdentity} {
+			if !strings.HasPrefix(id, "spiffe://") {
+				continue
+			}
+			v, _, ok := strings.Cut(strings.TrimPrefix(id, "spiffe://"), "/ns/")
+			if ok {
+				if td != "" && td != v {
+					return ""
+				}
+				td = v
+			}
+		}
+	}
+	return td
+}

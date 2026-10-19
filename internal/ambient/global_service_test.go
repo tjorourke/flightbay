@@ -109,3 +109,34 @@ func TestGlobalUnpublishRemovesOnlyTheScopeLabel(t *testing.T) {
 		t.Fatalf("unpublishing a local Service should be a no-op: %v %+v", err, p)
 	}
 }
+
+func TestAccessRuleBuildsServiceTargetedPolicy(t *testing.T) {
+	ws := fixture(t)
+	r := Request{Cluster: "c", Namespace: "app", Service: "front", Tasks: []string{"access-rule"}, Access: &AccessRequest{Action: "DENY", Rules: []AccessRule{{Headers: []HeaderMatch{{Name: "X-Req-Origin-Type", Values: []string{"be"}}}}}}}
+	svc := Target(ws, "c", "Service", "app", "front")
+	spec, _, err := generateAccessRule(ws, r, svc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rule := spec["rules"].([]any)[0].(map[string]any)
+	when := rule["when"].([]any)[0].(map[string]any)
+	if spec["action"] != "DENY" || when["key"] != "request.headers[x-req-origin-type]" || when["values"].([]string)[0] != "be" {
+		t.Fatalf("unexpected spec: %+v", spec)
+	}
+	if spec["targetRefs"].([]any)[0].(map[string]any)["name"] != "front" {
+		t.Fatalf("not Service-targeted: %+v", spec)
+	}
+	r.Access.Rules = []AccessRule{{}}
+	if _, _, err := generateAccessRule(ws, r, svc); err == nil {
+		t.Fatal("an empty rule would match everything and must be refused")
+	}
+	r.Access.Rules = []AccessRule{{Headers: []HeaderMatch{{Name: "x-env", Values: []string{"prod"}, Not: true}}, Methods: []string{"POST"}, SourceNamespaces: []string{"app"}}}
+	spec, _, err = generateAccessRule(ws, r, svc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rule = spec["rules"].([]any)[0].(map[string]any)
+	if rule["from"] == nil || rule["to"] == nil || rule["when"].([]any)[0].(map[string]any)["notValues"] == nil {
+		t.Fatalf("combined rule: %+v", rule)
+	}
+}

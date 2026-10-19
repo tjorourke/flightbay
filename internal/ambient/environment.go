@@ -208,7 +208,7 @@ func DetectEnvironment(ws *store.Workspace, c string, target *store.Object) Envi
 	e.Evidence = append(e.Evidence, "CRDs can coexist without active controllers. The selected waypoint/controller determines policy YAML; API-server dry-run still validates the installed schema.")
 	e.TaskDocs = map[string][]DocLink{}
 	e.TaskDocs["global-service"] = TaskDocs(e, "global-service")
-	for _, id := range []string{"require-waypoint", "jwt", "retries", "mirroring", "header-routing", "l4-default-deny", "l4-allow-namespace", "strict-mtls", "methods", "weighted-routing", "timeouts", "load-balancing", "endpoint-failover", "locality-failover", "rate-limit", "service-failover", "global-rate-limit", "waypoint", "enrol-namespace", "endpoints", "route-parent", "service-selector", "service-port", "scale-workload"} {
+	for _, id := range []string{"require-waypoint", "jwt", "retries", "mirroring", "header-routing", "l4-default-deny", "l4-allow-namespace", "strict-mtls", "methods", "access-rule", "weighted-routing", "timeouts", "load-balancing", "endpoint-failover", "locality-failover", "rate-limit", "service-failover", "global-rate-limit", "waypoint", "enrol-namespace", "endpoints", "route-parent", "service-selector", "service-port", "scale-workload"} {
 		e.TaskDocs[id] = TaskDocs(e, id)
 	}
 	e.ClassDocs = map[string][]DocLink{}

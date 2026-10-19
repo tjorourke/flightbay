@@ -57,24 +57,26 @@ type Request struct {
 	Replicas           int               `json:"replicas,omitempty"`
 	// Unpublish reverses global-service publication for this one Service by
 	// removing its solo.io/service-scope label.
-	Unpublish       bool        `json:"unpublish,omitempty"`
-	TargetPort      int         `json:"targetPort,omitempty"`
-	Route           string      `json:"route,omitempty"`
-	Edit            *EditTarget `json:"edit,omitempty"`
-	Cluster         string      `json:"cluster"`
-	Namespace       string      `json:"namespace"`
-	Service         string      `json:"service"`
-	Port            int         `json:"port"`
-	Tasks           []string    `json:"tasks"`
-	Backends        []Backend   `json:"backends,omitempty"`
-	SourceNamespace string      `json:"sourceNamespace,omitempty"`
-	Methods         []string    `json:"methods,omitempty"`
-	Requests        int         `json:"requests,omitempty"`
-	Unit            string      `json:"unit,omitempty"`
-	Algorithm       string      `json:"algorithm,omitempty"`
-	Timeout         string      `json:"timeout,omitempty"`
-	FromRegion      string      `json:"fromRegion,omitempty"`
-	ToRegion        string      `json:"toRegion,omitempty"`
+	Unpublish bool `json:"unpublish,omitempty"`
+	// Access builds a Service-targeted AuthorizationPolicy from rules.
+	Access          *AccessRequest `json:"access,omitempty"`
+	TargetPort      int            `json:"targetPort,omitempty"`
+	Route           string         `json:"route,omitempty"`
+	Edit            *EditTarget    `json:"edit,omitempty"`
+	Cluster         string         `json:"cluster"`
+	Namespace       string         `json:"namespace"`
+	Service         string         `json:"service"`
+	Port            int            `json:"port"`
+	Tasks           []string       `json:"tasks"`
+	Backends        []Backend      `json:"backends,omitempty"`
+	SourceNamespace string         `json:"sourceNamespace,omitempty"`
+	Methods         []string       `json:"methods,omitempty"`
+	Requests        int            `json:"requests,omitempty"`
+	Unit            string         `json:"unit,omitempty"`
+	Algorithm       string         `json:"algorithm,omitempty"`
+	Timeout         string         `json:"timeout,omitempty"`
+	FromRegion      string         `json:"fromRegion,omitempty"`
+	ToRegion        string         `json:"toRegion,omitempty"`
 }
 
 type ExplainRequest struct {
@@ -149,6 +151,7 @@ func Capabilities(ws *store.Workspace, c, ns, service string) []Task {
 		{"l4-default-deny", "Deny by default for the selected workload", "L4 ztunnel", security && selector, "Creates an empty ALLOW policy on the Service's workload selector. Other ALLOW policies are additive; this does not override them."},
 		{"l4-allow-namespace", "Allow calls from a namespace", "L4 ztunnel", security && selector && wpName == "", "For direct ambient traffic without a selected waypoint. Behind a waypoint, ztunnel sees the waypoint identity; use an L7 policy for original callers."},
 		{"strict-mtls", "Require mutual TLS", "L4 ztunnel", selector && hasResource(ws, c, "security.istio.io", "peerauthentications"), "STRICT PeerAuthentication for the selected workload. Ambient does not support DISABLE mode."},
+		{"access-rule", "Allow or deny requests by caller, header, path or method", "L7 Istio waypoint", istio && security, "Service-targeted AuthorizationPolicy with your own rules: caller namespaces, caller Services or principals, methods, paths and request headers. ALLOW or DENY."},
 		{"methods", "Allow selected HTTP methods", "L7 Istio waypoint", istio && security, "Service-targeted AuthorizationPolicy on an Istio waypoint. Other ALLOW policies remain additive."},
 		{"weighted-routing", "Balance traffic between Services", "L7 waypoint", (istio || agent) && hasResource(ws, c, GatewayGroup, "httproutes"), "Service-parent HTTPRoute with weighted backends in the same namespace. Weight zero is not primary/backup failover."},
 		{"timeouts", "Set a request timeout", "L7 waypoint", (istio || agent) && hasResource(ws, c, GatewayGroup, "httproutes"), "HTTPRoute request timeout, combined with weighted routing when selected. Existing routes may compete; inspect attachment status."},
@@ -177,10 +180,10 @@ func Capabilities(ws *store.Workspace, c, ns, service string) []Task {
 			if wpName != "" {
 				why = "This direct-path template is disabled because a waypoint is selected. For this topology, use a waypoint policy that checks the original caller; Flightbay does not generate that namespace rule here. Do not remove the waypoint just to enable this card."
 			}
-		case "methods", "load-balancing", "endpoint-failover", "locality-failover":
+		case "methods", "access-rule", "load-balancing", "endpoint-failover", "locality-failover":
 			if !istio {
 				why = "This Flightbay generator requires an Istio/Envoy waypoint. To use this template, select or deploy a supported Istio waypoint and review the binding change. Keeping agentgateway requires a tested agentgateway-specific generator in Flightbay; installing Istio CRDs alone is not enough."
-			} else if out[i].ID == "methods" {
+			} else if out[i].ID == "methods" || out[i].ID == "access-rule" {
 				why = "AuthorizationPolicy was not found in captured API discovery. Confirm the supported Istio security API is installed, then refresh inventory or collect that API."
 			} else if !dr {
 				why = "DestinationRule was not found in captured API discovery. Confirm the supported Istio networking API is installed, then refresh inventory or collect that API."
@@ -280,7 +283,7 @@ func Generate(ws *store.Workspace, req Request) (*Plan, error) {
 	if selected["l4-default-deny"] || selected["l4-allow-namespace"] || selected["strict-mtls"] {
 		p.Notes = append(p.Notes, "L4 workload-selector policies affect every Service targeting those Pods, not only the selected Service VIP.")
 	}
-	if selected["methods"] || selected["rate-limit"] {
+	if selected["methods"] || selected["rate-limit"] || selected["access-rule"] {
 		p.Notes = append(p.Notes, "Waypoint L7 policies only apply to traffic that traverses that waypoint. Direct Pod-IP traffic or other bypass paths need separate L4 controls.")
 	}
 	obj := func(api, kind, suffix string, spec map[string]any) {
@@ -332,6 +335,18 @@ func Generate(ws *store.Workspace, req Request) (*Plan, error) {
 			return nil, fmt.Errorf("method action must be ALLOW or DENY")
 		}
 		obj("security.istio.io/v1", "AuthorizationPolicy", "-methods", map[string]any{"targetRefs": target, "action": action, "rules": []any{map[string]any{"to": []any{map[string]any{"operation": map[string]any{"methods": req.Methods}}}}}})
+	}
+	if selected["access-rule"] {
+		spec, notes, err := generateAccessRule(ws, req, svc)
+		if err != nil {
+			return nil, err
+		}
+		suffix := "-allow-rule"
+		if S(spec["action"]) == "DENY" {
+			suffix = "-deny-rule"
+		}
+		obj("security.istio.io/v1", "AuthorizationPolicy", suffix, spec)
+		p.Notes = append(p.Notes, notes...)
 	}
 	if selected["weighted-routing"] || selected["timeouts"] || selected["retries"] || selected["mirroring"] || selected["header-routing"] {
 		backends := []any{map[string]any{"name": req.Service, "port": req.Port, "weight": 100}}
