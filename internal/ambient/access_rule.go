@@ -1,6 +1,7 @@
 package ambient
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"sort"
@@ -349,4 +350,114 @@ func dedupe(in []string) []string {
 		}
 	}
 	return out
+}
+
+// agentgatewayAccess builds the agentgateway equivalent of an access rule:
+// an (Enterprise)AgentgatewayPolicy traffic.authorization with one CEL
+// expression. Rules are ORed and conditions ANDed, as in Istio. Verified on
+// kind-mesh1 with enterprise-agentgateway-waypoint: header, method and path
+// expressions deny with 403. Caller identity has no verified CEL mapping
+// here, so from-rules are refused rather than guessed.
+func agentgatewayAccess(req Request) (map[string]any, []string, error) {
+	a := req.Access
+	if a == nil || len(a.Rules) == 0 || strings.TrimSpace(a.RulesYAML) != "" {
+		return nil, nil, fmt.Errorf("an agentgateway waypoint needs rules from the form; Rules YAML is Istio AuthorizationPolicy syntax")
+	}
+	action := map[string]string{"ALLOW": "Allow", "DENY": "Deny"}[defaultString(a.Action, "DENY")]
+	if action == "" {
+		return nil, nil, fmt.Errorf("an agentgateway waypoint supports Allow and Deny; AUDIT and CUSTOM need an Istio waypoint")
+	}
+	lit := func(v string) string { b, _ := json.Marshal(v); return string(b) }
+	set := func(vs []string) string {
+		q := []string{}
+		for _, v := range vs {
+			q = append(q, lit(v))
+		}
+		return "[" + strings.Join(q, ", ") + "]"
+	}
+	pathExpr := func(p string, negate bool) string {
+		e := ""
+		switch {
+		case p == "*":
+			e = "true"
+		case strings.HasSuffix(p, "*"):
+			e = "request.path.startsWith(" + lit(strings.TrimSuffix(p, "*")) + ")"
+		case strings.HasPrefix(p, "*"):
+			e = "request.path.endsWith(" + lit(strings.TrimPrefix(p, "*")) + ")"
+		default:
+			e = "request.path == " + lit(p)
+		}
+		if negate {
+			return "!(" + e + ")"
+		}
+		return e
+	}
+	ors := []string{}
+	for i, raw := range a.Rules {
+		n := i + 1
+		r := raw.fold()
+		for _, s := range r.From {
+			if len(cleanList(s.Principals))+len(cleanList(s.Namespaces))+len(cleanList(s.Services))+len(cleanList(s.ServiceAccounts))+len(cleanList(s.RequestPrincipals))+len(cleanList(s.IPBlocks))+len(cleanList(s.RemoteIPBlocks))+len(cleanList(s.NotPrincipals))+len(cleanList(s.NotNamespaces))+len(cleanList(s.NotServiceAccounts))+len(cleanList(s.NotRequestPrincipals))+len(cleanList(s.NotIPBlocks))+len(cleanList(s.NotRemoteIPBlocks)) > 0 {
+				return nil, nil, fmt.Errorf("rule %d: caller conditions (who is calling) are generated for Istio waypoints only; on agentgateway use headers, methods and paths, or bind an Istio waypoint", n)
+			}
+		}
+		ands := []string{}
+		opOr := []string{}
+		for _, o := range r.To {
+			if len(cleanList(o.Hosts))+len(cleanList(o.NotHosts))+len(cleanList(o.Ports))+len(cleanList(o.NotPorts)) > 0 {
+				return nil, nil, fmt.Errorf("rule %d: host and port conditions are generated for Istio waypoints only", n)
+			}
+			parts := []string{}
+			if m := cleanList(o.Methods); len(m) > 0 {
+				parts = append(parts, "request.method in "+set(m))
+			}
+			if m := cleanList(o.NotMethods); len(m) > 0 {
+				parts = append(parts, "!(request.method in "+set(m)+")")
+			}
+			if ps := cleanList(o.Paths); len(ps) > 0 {
+				alts := []string{}
+				for _, p := range ps {
+					alts = append(alts, pathExpr(p, false))
+				}
+				parts = append(parts, "("+strings.Join(alts, " || ")+")")
+			}
+			for _, p := range cleanList(o.NotPaths) {
+				parts = append(parts, pathExpr(p, true))
+			}
+			if len(parts) > 0 {
+				opOr = append(opOr, "("+strings.Join(parts, " && ")+")")
+			}
+		}
+		if len(opOr) > 0 {
+			ands = append(ands, "("+strings.Join(opOr, " || ")+")")
+		}
+		for _, c := range r.When {
+			key := strings.TrimSpace(c.Key)
+			if !strings.HasPrefix(key, "request.headers[") || !strings.HasSuffix(key, "]") {
+				return nil, nil, fmt.Errorf("rule %d: %s has no verified agentgateway mapping; request.headers[name] conditions are supported", n, key)
+			}
+			name := strings.ToLower(key[len("request.headers[") : len(key)-1])
+			if !headerName(name) {
+				return nil, nil, fmt.Errorf("rule %d: %q is not a valid header name", n, name)
+			}
+			has, val := lit(name)+" in request.headers", "request.headers["+lit(name)+"]"
+			if v := cleanList(c.Values); len(v) > 0 {
+				ands = append(ands, "("+has+" && "+val+" in "+set(v)+")")
+			}
+			if v := cleanList(c.NotValues); len(v) > 0 {
+				ands = append(ands, "(!("+has+") || !("+val+" in "+set(v)+"))")
+			}
+		}
+		if len(ands) == 0 {
+			return nil, nil, fmt.Errorf("rule %d is empty; an empty %s rule would match every request", n, action)
+		}
+		ors = append(ors, "("+strings.Join(ands, " && ")+")")
+	}
+	expr := strings.Join(ors, " || ")
+	spec := map[string]any{"targetRefs": []any{map[string]any{"group": "", "kind": "Service", "name": req.Service}}, "traffic": map[string]any{"authorization": map[string]any{"action": action, "policy": map[string]any{"matchExpressions": []string{expr}}}}}
+	notes := []string{"Generated for the agentgateway waypoint as a CEL authorization policy: " + expr, "Header names are matched lowercase; values match exactly.", "Enforced by the waypoint only. Traffic that skips it (Pod IPs, port-forwards, an ingress calling Pod IPs) is not checked."}
+	if action == "Allow" {
+		notes = append(notes, "Allow refuses every request that no rule matches.")
+	}
+	return spec, notes, nil
 }

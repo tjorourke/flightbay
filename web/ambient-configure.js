@@ -147,7 +147,7 @@ function amWaypointPanel(b,svc){
         <dt>Implementation</dt><dd>${esc(product)}${b.class?` <small class="muted">${esc(b.class)}</small>`:''}</dd>
         <dt>How it is selected</dt><dd>${scope}. <code>${esc(b.label)}</code> on ${esc(b.labelOn)}${b.central?`. The waypoint runs centrally in namespace ${esc(b.namespace)}`:''}.</dd>
         <dt>Handles</dt><dd>${esc(b.for||'service')} traffic${b.for==='workload'?' only, so requests to the Service name skip it':''}</dd>
-        ${istioOnly?`<dt>Policies</dt><dd class="amber">This is not an Istio waypoint, so Istio L7 policies (Allow or deny requests, JWT, retries, mirroring) are unavailable. Bind an Istio waypoint to use them.</dd>`:'<dt>Policies</dt><dd>Istio L7 policies such as Allow or deny requests apply here. Traffic that skips the waypoint is not checked.</dd>'}
+        ${istioOnly?`<dt>Policies</dt><dd>${b.product==='agentgateway'?'Allow or deny requests and rate limits are written as agentgateway policies, which this waypoint enforces. <span class="amber">Istio AuthorizationPolicies are accepted by istiod but not enforced here; JWT, retries, mirroring and caller-identity rules need an Istio waypoint.</span>':'<span class="amber">Not an Istio waypoint, so Istio L7 policies are not enforced here.</span>'}</dd>`:'<dt>Policies</dt><dd>Istio L7 policies such as Allow or deny requests apply here. Traffic that skips the waypoint is not checked.</dd>'}
       </dl></div>
     <div class="row">${b.ref?`<button data-amyaml="${attr(b.ref)}">Waypoint YAML</button>`:''}<button id="am-current-waypoint">Change waypoint…</button>${istioOnly?'<button data-amwaypoint="new" data-amwpistio="1">Deploy an Istio waypoint…</button>':''}</div></section>`;
 }

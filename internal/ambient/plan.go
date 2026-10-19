@@ -151,7 +151,7 @@ func Capabilities(ws *store.Workspace, c, ns, service string) []Task {
 		{"l4-default-deny", "Deny by default for the selected workload", "L4 ztunnel", security && selector, "Creates an empty ALLOW policy on the Service's workload selector. Other ALLOW policies are additive; this does not override them."},
 		{"l4-allow-namespace", "Allow calls from a namespace", "L4 ztunnel", security && selector && wpName == "", "For direct ambient traffic without a selected waypoint. Behind a waypoint, ztunnel sees the waypoint identity; use an L7 policy for original callers."},
 		{"strict-mtls", "Require mutual TLS", "L4 ztunnel", selector && hasResource(ws, c, "security.istio.io", "peerauthentications"), "STRICT PeerAuthentication for the selected workload. Ambient does not support DISABLE mode."},
-		{"access-rule", "Allow or deny requests by caller, header, path or method", "L7 Istio waypoint", istio && security, "Service-targeted AuthorizationPolicy with your own rules: caller namespaces, caller Services or principals, methods, paths and request headers. ALLOW or DENY."},
+		{"access-rule", "Allow or deny requests by caller, header, path or method", map[bool]string{true: "L7 agentgateway waypoint", false: "L7 Istio waypoint"}[agent], (istio && security) || (agent && agentPolicyAvailable), map[bool]string{true: "Service-targeted agentgateway authorization (CEL) with your rules: request headers, methods and paths. Allow or Deny. Caller identity rules need an Istio waypoint.", false: "Service-targeted AuthorizationPolicy with your own rules: caller namespaces, caller Services or principals, methods, paths and request headers. ALLOW, DENY, AUDIT or CUSTOM."}[agent]},
 		{"methods", "Allow selected HTTP methods", "L7 Istio waypoint", istio && security, "Service-targeted AuthorizationPolicy on an Istio waypoint. Other ALLOW policies remain additive."},
 		{"weighted-routing", "Balance traffic between Services", "L7 waypoint", (istio || agent) && hasResource(ws, c, GatewayGroup, "httproutes"), "Service-parent HTTPRoute with weighted backends in the same namespace. Weight zero is not primary/backup failover."},
 		{"timeouts", "Set a request timeout", "L7 waypoint", (istio || agent) && hasResource(ws, c, GatewayGroup, "httproutes"), "HTTPRoute request timeout, combined with weighted routing when selected. Existing routes may compete; inspect attachment status."},
@@ -336,7 +336,18 @@ func Generate(ws *store.Workspace, req Request) (*Plan, error) {
 		}
 		obj("security.istio.io/v1", "AuthorizationPolicy", "-methods", map[string]any{"targetRefs": target, "action": action, "rules": []any{map[string]any{"to": []any{map[string]any{"operation": map[string]any{"methods": req.Methods}}}}}})
 	}
-	if selected["access-rule"] {
+	if selected["access-rule"] && agentWaypoint(ws, req) {
+		api, kind, err := ratePolicy(ws, req.Cluster, req.Namespace, req.Service)
+		if err != nil {
+			return nil, err
+		}
+		spec, notes, err := agentgatewayAccess(req)
+		if err != nil {
+			return nil, err
+		}
+		obj(api, kind, "-access", spec)
+		p.Notes = append(p.Notes, notes...)
+	} else if selected["access-rule"] {
 		spec, notes, err := generateAccessRule(ws, req, svc)
 		if err != nil {
 			return nil, err
@@ -543,4 +554,14 @@ func regions(ws *store.Workspace, svc *store.Object) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// agentWaypoint reports whether the Service's waypoint is agentgateway.
+func agentWaypoint(ws *store.Workspace, req Request) bool {
+	svc := ws.Get(req.Cluster, "", "services", req.Namespace, req.Service)
+	if svc == nil {
+		return false
+	}
+	e := DetectEnvironment(ws, req.Cluster, svc)
+	return e.Selected != nil && e.Selected.Product == "agentgateway"
 }

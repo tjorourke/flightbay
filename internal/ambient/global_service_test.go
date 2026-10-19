@@ -209,3 +209,24 @@ func TestServicePoliciesListsEveryScope(t *testing.T) {
 		t.Fatalf("scopes: %v", got)
 	}
 }
+
+func TestAgentgatewayAccessBuildsCEL(t *testing.T) {
+	r := Request{Service: "front", Access: &AccessRequest{Action: "DENY", Rules: []AccessRule{{
+		When: []AccessCondition{{Key: "request.headers[X-Req-Origin-Type]", Values: []string{"be"}}},
+		To:   []AccessOperation{{Methods: []string{"GET"}, Paths: []string{"/reviews/*"}}},
+	}}}}
+	spec, _, err := agentgatewayAccess(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth := spec["traffic"].(map[string]any)["authorization"].(map[string]any)
+	expr := auth["policy"].(map[string]any)["matchExpressions"].([]string)[0]
+	want := `(((request.method in ["GET"] && (request.path.startsWith("/reviews/")))) && ("x-req-origin-type" in request.headers && request.headers["x-req-origin-type"] in ["be"]))`
+	if auth["action"] != "Deny" || expr != want {
+		t.Fatalf("got %s %s", auth["action"], expr)
+	}
+	r.Access.Rules = []AccessRule{{From: []AccessSource{{Namespaces: []string{"web"}}}}}
+	if _, _, err := agentgatewayAccess(r); err == nil {
+		t.Fatal("caller rules must be refused on agentgateway")
+	}
+}

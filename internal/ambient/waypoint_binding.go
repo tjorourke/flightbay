@@ -272,6 +272,41 @@ func servicePolicies(ws *store.Workspace, svc *store.Object) []PolicyEntry {
 			}
 		}
 	}
+	// agentgateway policies: authorization, rate limits and the rest, when
+	// they target this Service or its waypoint.
+	product, class := waypointProduct(ws, svc)
+	for _, k := range []struct{ g, res string }{{"agentgateway.dev", "agentgatewaypolicies"}, {"enterpriseagentgateway.solo.io", "enterpriseagentgatewaypolicies"}} {
+		for _, o := range ws.List(svc.Cluster, k.g, k.res, svc.Namespace, nil) {
+			for _, t := range L(Path(o.Obj, "spec", "targetRefs")) {
+				tm := M(t)
+				kind, name := S(tm["kind"]), S(tm["name"])
+				e := PolicyEntry{Ref: reference(o), Enforced: "waypoint"}
+				if kind == "Service" && name == svc.Name {
+					e.Scope, e.Reason = "service", "targetRefs names this Service"
+				} else if kind == "Gateway" && name == wpName && o.Namespace == wpNS {
+					e.Scope, e.Reason = "waypoint", "targetRefs names this Service's waypoint "+wpNS+"/"+wpName
+				} else {
+					continue
+				}
+				if a := S(Path(o.Obj, "spec", "traffic", "authorization", "action")); a != "" {
+					e.Action = strings.ToUpper(a)
+					e.Rules = len(L(Path(o.Obj, "spec", "traffic", "authorization", "policy", "matchExpressions")))
+				}
+				for _, an := range L(Path(o.Obj, "status", "ancestors")) {
+					for _, c := range L(M(an)["conditions"]) {
+						if S(M(c)["type"]) == "Accepted" {
+							e.Status = "Accepted: " + S(M(c)["message"])
+						}
+					}
+				}
+				if product == "istio" {
+					e.Warning = "Not enforced: " + wpNS + "/" + wpName + " is an Istio waypoint (" + class + "), which does not apply " + o.Kind + "."
+				}
+				out = append(out, e)
+				break
+			}
+		}
+	}
 	sort.SliceStable(out, func(i, j int) bool {
 		order := map[string]int{"service": 0, "waypoint": 1, "workload": 2, "namespace": 3, "mesh": 4}
 		return order[out[i].Scope] < order[out[j].Scope]
