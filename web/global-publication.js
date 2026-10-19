@@ -4,7 +4,7 @@ function amGlobalTargets(svc){
   return (S.ambient.inventory?.topology?.clusters||[]).map(cluster=>{
     const service=cluster.services.find(s=>s.namespace===svc.namespace&&s.name===svc.name);
     const captured=S.ambient.inventory?.services?.find(s=>s.cluster===cluster.context&&s.namespace===svc.namespace&&s.name===svc.name);
-    return {cluster:cluster.context,service,global:!!service&&['global','global-only'].includes(service.scope),publication:captured?.publication};
+    return {cluster:cluster.context,service,global:!!service&&['global','global-only'].includes(service.scope),cleanup:!!service?.globalCleanup,publication:captured?.publication};
   });
 }
 function amPublicationEvidenceLabel(row){
@@ -22,15 +22,15 @@ function amGlobalClusterChoices(svc){
 // what is live instead of a fresh wizard: the label each cluster carries, the
 // names the controller generated, and a per-cluster choice to keep it, stop
 // publishing or start publishing. Clusters left on "keep" are not touched.
-function amGlobalPublished(svc){return amGlobalTargets(svc).some(r=>r.global);}
+function amGlobalPublished(svc){return amGlobalTargets(svc).some(r=>r.global||r.cleanup);}
 function amGlobalEdits(){return S.ambient.settings.globalEdits||{};}
 function amGlobalPendingEdits(svc){
   const e=amGlobalEdits(),r=amGlobalRouting(svc),wantDist=S.ambient.settings.globalDistribution,wantTake=S.ambient.settings.globalTakeover;
   const routingChanged=row=>row.service&&((wantDist!==undefined&&wantDist!==(row.service.distribution||'default'))||(wantTake!==undefined&&wantTake!==!!row.service.takeover));
-  if(wantDist==='weighted')return amGlobalTargets(svc).filter(row=>row.service&&e[row.cluster]!=='unpublish').map(row=>({cluster:row.cluster,action:row.global?'update':'publish'}));
   return amGlobalTargets(svc).filter(row=>row.service).map(row=>{
     const a=e[row.cluster];
-    if(a==='unpublish'&&row.global)return {cluster:row.cluster,action:'unpublish'};
+    if(a==='unpublish'&&(row.global||row.cleanup))return {cluster:row.cluster,action:'unpublish'};
+    if(wantDist==='weighted'&&a!=='unpublish')return {cluster:row.cluster,action:row.global?'update':'publish'};
     if(a==='publish'&&!row.global)return {cluster:row.cluster,action:'publish'};
     if(row.global&&a!=='unpublish'&&routingChanged(row))return {cluster:row.cluster,action:'update'};
     return null;
@@ -57,7 +57,7 @@ function amGlobalCurrentConfig(svc){
   const card=row=>{
     const scope=row.service?.scope||'',aliases=row.publication?.globalAliases||[],choice=edits[row.cluster]||'keep';
     const status=row.global?['green','Published']:row.service?['blue','Local only']:['amber','No local Service captured'];
-    const options=row.global?[['keep','Keep publishing'],['unpublish','Stop publishing from this cluster']]:[['keep','Keep local only'],['publish','Publish from this cluster']];
+    const options=row.global?[['keep','Keep publishing'],['unpublish','Stop publishing from this cluster']]:[['keep','Keep local only'],['publish','Publish from this cluster'],...(row.cleanup?[['unpublish','Remove leftover global routing']]:[])];
     const names=aliases.length?aliases.map(a=>`<li>${(a.hosts||[]).map(h=>`<code>${esc(h)}</code>`).join(' ')}${a.addresses?.length?` <small class="muted">${esc(a.addresses.join(', '))}</small>`:' <small class="amber">no address allocated yet</small>'}${a.ref?.name?` <button class="link" data-amevidence="${attr(a.ref)}">ServiceEntry</button>`:''}</li>`).join(''):'<li class="muted">None captured. The controller creates them after the label is set; refresh to check.</li>';
     return `<article class="am-global-current-row${choice!=='keep'?' am-global-changing':''}">
       <div class="row between wrap"><div class="row"><strong>${esc(row.cluster)}</strong><span class="badge ${status[0]}">${esc(status[1])}</span></div>
@@ -66,11 +66,11 @@ function amGlobalCurrentConfig(svc){
         <dt>Global names</dt><dd><ul>${row.global?names:'<li class="muted">Not published from this cluster.</li>'}</ul></dd>
         ${row.global?`<dt>Evidence</dt><dd>${esc(amPublicationEvidenceLabel(row))}. API metadata alone does not prove proxy delivery or failover.</dd>`:''}</dl>
       <div class="am-global-choice" role="radiogroup" aria-label="${esc(row.cluster)} publication">${options.map(([value,label])=>`<label><input type="radio" name="am-global-edit-${esc(row.cluster)}" data-amglobaledit="${esc(row.cluster)}" value="${value}" ${choice===value?'checked':''}> ${esc(label)}</label>`).join('')}</div>
-      ${choice==='unpublish'?`<p class="amber">Removes <code>solo.io/service-scope</code> from this Service only. Callers in other clusters stop reaching ${esc(row.cluster)}'s endpoints through the global name.</p>`:choice==='publish'?`<p class="muted">Sets <code>solo.io/service-scope: global</code> on this existing Service so it contributes endpoints. Other labels and settings are preserved.</p>`:''}`
+      ${choice==='unpublish'?`<p class="amber">Removes global publication, takeover and traffic-distribution settings, plus this Service's Flightbay-owned weighted-split HTTPRoute and per-cluster Service. The application Service stays local. Other clusters keep their configuration until you stop them too.</p>`:choice==='publish'?`<p class="muted">Sets <code>solo.io/service-scope: global</code> on this existing Service so it contributes endpoints. Other labels and settings are preserved.</p>`:''}`
       :`<p class="muted">No local ${esc(svc.namespace+'/'+svc.name)} Service is captured. This cluster can still consume the global name; local workloads are needed only to contribute endpoints.</p><div class="am-global-missing-actions"><button data-amglobalsetup="${esc(row.cluster)}">Set up Service participation…</button></div>`}
     </article>`;
   };
-  return `<section class="am-global-current"><div class="row between wrap"><h3>Current publication</h3>${published.length>1?'<button data-amglobalstopall>Stop publishing from every cluster</button>':''}</div><p>Published from ${published.length} of ${rows.length} cluster${rows.length===1?'':'s'}: ${esc(published.map(r=>r.cluster).join(', ')||'none')}. Nothing is changed unless you pick a different option for a cluster below.</p>${rows.map(card).join('')}</section>
+  return `<section class="am-global-current"><div class="row between wrap"><h3>Current publication</h3>${rows.filter(r=>r.global||r.cleanup).length>1?'<button data-amglobalstopall>Stop publishing from every cluster</button>':''}</div><p>Published from ${published.length} of ${rows.length} cluster${rows.length===1?'':'s'}: ${esc(published.map(r=>r.cluster).join(', ')||'none')}. Nothing is changed unless you pick a different option for a cluster below.</p>${rows.map(card).join('')}</section>
     ${amGlobalRoutingMarkup(svc)}
     <div class="am-global-publication"><h3>Names</h3>${amDNSMarkup(A.result?.dns)}<p class="muted">Global names come from the generated ServiceEntries in the capture. Refresh after any change to see what the controller published.</p></div>`;
 }
@@ -113,7 +113,7 @@ function amGlobalBatchPanel(){
     ${rows.map((row,i)=>`<article class="am-global-plan">
       <div class="row between wrap"><h3>${esc(row.cluster)}${row.action==='unpublish'?' · stop publishing':''}</h3><span class="badge ${row.applied||amGlobalNoop(row)?'green':'blue'}">${esc(row.state)}</span></div>
       ${row.error?`<p class="red" role="alert">${esc(row.error)}</p>`:''}
-      ${row.plan?`<p>${row.plan.changes?.length||0} existing resources to update · ${row.plan.objects.length} to create</p>
+      ${row.plan?`<p>${(row.plan.changes||[]).filter(c=>!c.delete).length} existing resources to update · ${(row.plan.changes||[]).filter(c=>c.delete).length} to delete · ${row.plan.objects.length} to create</p>
         <details class="am-global-yaml" open><summary>YAML for ${esc(row.cluster)}</summary><pre class="code">${esc(row.plan.yaml)}</pre></details>
         ${!amGlobalNoop(row)?amContextControl(row.cluster,A.contexts,row.context,`data-amglobalcontext="${i}" ${row.applied?'disabled':''}`):''}
         <div class="row wrap"><button data-amglobalcopy="${i}">Copy YAML</button>${!amGlobalNoop(row)?`<button data-amglobalvalidate="${i}" ${!row.context||row.applied?'disabled':''}>Dry-run only</button><button class="primary" data-amglobalapply="${i}" ${!row.context||row.applied?'disabled':''}>Review and apply to ${esc(row.cluster)}…</button>`:''}</div>
@@ -147,7 +147,7 @@ function amWireGlobalPublication(){
   });
   // addEventListener: the generic parameter handler later replaces onchange.
   document.querySelectorAll('[data-amglobaledit]').forEach(input=>input.addEventListener('change',()=>{amCapture();amInvalidate();render();}));
-  document.querySelectorAll('[data-amglobalstopall]').forEach(b=>b.onclick=()=>{const svc=amService(),F=S.ambient.settings;F.globalEdits=Object.fromEntries(amGlobalTargets(svc).filter(r=>r.global).map(r=>[r.cluster,'unpublish']));amInvalidate();render();});
+  document.querySelectorAll('[data-amglobalstopall]').forEach(b=>b.onclick=()=>{const svc=amService(),F=S.ambient.settings;F.globalEdits=Object.fromEntries(amGlobalTargets(svc).filter(r=>r.global||r.cleanup).map(r=>[r.cluster,'unpublish']));amInvalidate();render();});
   document.querySelectorAll('[data-amglobalweight]').forEach(i=>i.addEventListener('change',()=>{const F=S.ambient.settings;F.globalWeights=F.globalWeights||{};F.globalWeights[i.dataset.amglobalweight]=Number(i.value)||0;amInvalidate();render();}));
   document.querySelectorAll('[data-amglobaldist], #am-global-takeover').forEach(input=>input.addEventListener('change',()=>{const F=S.ambient.settings,d=document.querySelector('[data-amglobaldist]:checked');if(d)F.globalDistribution=d.value;const t=$('#am-global-takeover');if(t)F.globalTakeover=t.checked;amInvalidate();render();}));
   document.querySelectorAll('[data-amglobalsetup]').forEach(b=>b.onclick=()=>amGlobalSetupGuide(b.dataset.amglobalsetup));
@@ -165,7 +165,7 @@ function amWireGlobalPublication(){
   for(const [id,operation]of [['am-global-validate-all','validate'],['am-global-apply-all','apply']])if($('#'+id))$('#'+id).onclick=async()=>{
     if(A.busy)return;const pending=A.globalBatch.filter(row=>row.plan&&!row.applied&&(row.plan.changes?.length||row.plan.objects.length));if(!pending.length)return;
     if(operation==='apply'){await amAction(()=>amValidatePlans(pending),'Checking all pending clusters before final confirmation…');if(A.error||pending.some(row=>!amValidated(row)||!A.globalBatch?.includes(row))||!await amConfirmApply(pending))return;}
-    return amAction(async()=>{for(let i=0;i<A.globalBatch.length;i++){const row=A.globalBatch[i];if(!row.plan||row.applied||(!row.plan.changes?.length&&!row.plan.objects.length))continue;await amGlobalOperation(i,operation);if(operation==='apply'&&row.error)break;}},operation==='validate'?'Dry-running each selected cluster. No changes are being saved…':'Applying confirmed cluster plans in sequence. Each row reports its own result…');
+    return amAction(async()=>{for(let i=0;i<(A.globalBatch?.length||0);i++){const row=A.globalBatch[i];if(!row.plan||row.applied||(!row.plan.changes?.length&&!row.plan.objects.length))continue;await amGlobalOperation(i,operation);if(operation==='apply'&&row.error)break;}},operation==='validate'?'Dry-running each selected cluster. No changes are being saved…':'Applying confirmed cluster plans in sequence. Each row reports its own result…');
   };
   const rows=A.globalBatch;if(rows&&$('.am-global-review .am-wizard-footer')){const pending=rows.filter(r=>r.plan&&!r.applied&&(r.plan.changes?.length||r.plan.objects.length)),reason=rows.some(r=>!r.plan)?'A preview failed. Edit clusters and regenerate before continuing.':!pending.length?'No pending changes. These Services are already global or their publication plans have been applied.':pending.some(r=>!r.context)?'Choose a context only for clusters without a matching live connection.':'Review and apply runs the required dry-runs automatically, then asks for confirmation. Dry-run only saves no changes.';$('.am-global-review .am-wizard-footer').insertAdjacentHTML('afterend',`<p class="am-global-prerequisite" role="status">${esc(reason)}</p>`);}
 }
@@ -195,7 +195,7 @@ function amGlobalNoop(row){return ['Already global','Already local'].includes(ro
 async function amGlobalWaitForCapture(svc,rows){
   for(let i=0;i<20;i++){
     const inv=await api('api/ambient').catch(()=>null);
-    const ok=inv&&rows.every(r=>{const c=(inv.topology?.clusters||[]).find(x=>x.context===r.cluster);const s=c?.services.find(x=>x.namespace===svc.namespace&&x.name===svc.name);const global=!!s&&['global','global-only'].includes(s.scope);return r.action==='unpublish'?!global:global;});
+    const ok=inv&&rows.every(r=>{const c=(inv.topology?.clusters||[]).find(x=>x.context===r.cluster);const s=c?.services.find(x=>x.namespace===svc.namespace&&x.name===svc.name);const global=!!s&&['global','global-only'].includes(s.scope);return r.action==='unpublish'?!!s&&!global&&!s.globalCleanup:global;});
     if(ok){S.ambient.inventory=inv;return;}
     await new Promise(res=>setTimeout(res,500));
   }

@@ -20,11 +20,14 @@ type FieldChange struct {
 	AfterPresent  bool   `json:"afterPresent"`
 }
 type Change struct {
-	Ref        Ref           `json:"ref"`
-	APIVersion string        `json:"apiVersion"`
-	UID        string        `json:"uid"`
-	Fields     []FieldChange `json:"fields"`
-	Reason     string        `json:"reason"`
+	// Delete retains the reviewed configuration for drift checks and undo.
+	Delete       bool           `json:"delete,omitempty"`
+	BeforeObject map[string]any `json:"beforeObject,omitempty"`
+	Ref          Ref            `json:"ref"`
+	APIVersion   string         `json:"apiVersion"`
+	UID          string         `json:"uid"`
+	Fields       []FieldChange  `json:"fields"`
+	Reason       string         `json:"reason"`
 }
 type EditTarget struct {
 	Ref         Ref    `json:"ref"`
@@ -77,6 +80,28 @@ func Equal(a, b any) bool {
 	x, _ := json.Marshal(a)
 	y, _ := json.Marshal(b)
 	return string(x) == string(y)
+}
+
+// RestorableObject excludes server bookkeeping, but retains configuration,
+// ownership and allocated Service addresses for exact review and undo.
+func RestorableObject(o map[string]any) map[string]any {
+	out := M(Copy(o))
+	delete(out, "status")
+	md := M(out["metadata"])
+	for _, key := range []string{"uid", "resourceVersion", "generation", "creationTimestamp", "managedFields", "deletionTimestamp", "deletionGracePeriodSeconds", "selfLink"} {
+		delete(md, key)
+	}
+	return out
+}
+
+func deleteChange(p *Plan, o *store.Object, reason string) {
+	api := o.Version
+	if o.Group != "" {
+		api = o.Group + "/" + o.Version
+	}
+	before := RestorableObject(o.Obj)
+	before["apiVersion"], before["kind"] = api, o.Kind
+	p.Changes = append(p.Changes, Change{Ref: reference(o), APIVersion: api, UID: S(Path(o.Obj, "metadata", "uid")), Fields: []FieldChange{}, Reason: reason, Delete: true, BeforeObject: before})
 }
 func change(p *Plan, o *store.Object, reason string, values map[string]any, remove ...string) {
 	c := Change{Ref: reference(o), APIVersion: o.Version, UID: S(Path(o.Obj, "metadata", "uid")), Reason: reason}
@@ -151,6 +176,16 @@ func finishPlan(p *Plan) (*Plan, error) {
 		}
 	}
 	for _, c := range p.Changes {
+		if c.Delete {
+			// Keep deletion review YAML non-applicable: kubectl apply must not
+			// accidentally recreate the object the reader intended to remove.
+			b, err := yaml.Marshal(c.BeforeObject)
+			if err != nil {
+				return nil, err
+			}
+			p.YAML += "# DELETE " + c.Ref.Kind + " " + c.Ref.Namespace + "/" + c.Ref.Name + ": " + c.Reason + "\n# Reviewed configuration (restored by Undo):\n# " + strings.ReplaceAll(strings.TrimSuffix(string(b), "\n"), "\n", "\n# ") + "\n"
+			continue
+		}
 		snippet := map[string]any{"apiVersion": c.APIVersion, "kind": c.Ref.Kind, "metadata": map[string]any{"name": c.Ref.Name}}
 		if c.Ref.Namespace != "" {
 			M(snippet["metadata"])["namespace"] = c.Ref.Namespace
@@ -168,7 +203,7 @@ func finishPlan(p *Plan) (*Plan, error) {
 		p.Notes = append(p.Notes, "No resources or fields will be changed; there is nothing to apply.")
 	}
 	if len(p.Changes) > 0 {
-		p.Notes = append(p.Notes, "This plan edits the listed existing fields. Preview includes their previous values. Testing uses UID and resourceVersion preconditions; undo restores only unchanged fields written by this test.")
+		p.Notes = append(p.Notes, "Existing-resource changes use UID and resourceVersion preconditions. Undo restores unchanged fields and recreates deleted resources only if their names are free.")
 	}
 	return p, nil
 }

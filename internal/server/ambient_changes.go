@@ -23,6 +23,12 @@ func ambientChangeResource(c ambientConnection, ch ambient.Change) (dynamic.Reso
 	if e != nil {
 		return nil, e
 	}
+	// Namespace deletion belongs exclusively to the separately confirmed
+	// Bookinfo teardown. Generic configuration changes can never request it,
+	// even through undo or a persisted record.
+	if ch.Delete && (ch.Ref.Namespace == "" || !((gv.Group == "" && ch.Ref.Kind == "Service") || (gv.Group == ambient.GatewayGroup && ch.Ref.Kind == "HTTPRoute"))) {
+		return nil, fmt.Errorf("configuration cleanup may delete only namespaced Services and HTTPRoutes, never namespaces")
+	}
 	mapping, e := c.mapper.RESTMapping(schema.GroupKind{Group: gv.Group, Kind: ch.Ref.Kind}, gv.Version)
 	if e != nil {
 		return nil, e
@@ -36,6 +42,9 @@ func ambientChangeResource(c ambientConnection, ch ambient.Change) (dynamic.Reso
 	return c.client.Resource(mapping.Resource).Namespace(ch.Ref.Namespace), nil
 }
 func ambientPatch(ctx context.Context, c ambientConnection, ch ambient.Change, undo, dry bool) (*unstructured.Unstructured, error) {
+	if ch.Delete {
+		return ambientDeleteChange(ctx, c, ch, undo, dry)
+	}
 	res, e := ambientChangeResource(c, ch)
 	if e != nil {
 		return nil, e
@@ -96,6 +105,11 @@ func ambientChangesPreflight(ctx context.Context, c ambientConnection, p *ambien
 		if ch.UID == "" || string(live.GetUID()) != ch.UID {
 			return fmt.Errorf("%s %s does not match the captured UID", ch.Ref.Kind, ch.Ref.Name)
 		}
+		if ch.Delete {
+			if err := ambientDeleteMatches(ch, live); err != nil {
+				return err
+			}
+		}
 		for _, f := range ch.Fields {
 			v, ok := ambient.Pointer(live.Object, f.Path)
 			if ok != f.BeforePresent || (ok && !ambient.Equal(v, f.Before)) {
@@ -104,6 +118,71 @@ func ambientChangesPreflight(ctx context.Context, c ambientConnection, p *ambien
 		}
 	}
 	return nil
+}
+
+func ambientDeleteMatches(ch ambient.Change, live *unstructured.Unstructured) error {
+	if (ch.Ref.Kind != "HTTPRoute" && ch.Ref.Kind != "Service") || ch.Ref.Namespace == "" ||
+		ch.UID == "" || string(live.GetUID()) != ch.UID || live.GetResourceVersion() == "" ||
+		live.GetLabels()["app.kubernetes.io/managed-by"] != "flightbay" || live.GetLabels()["flightbay.dev/test-id"] == "" ||
+		!ambient.Equal(ambient.RestorableObject(live.Object), ch.BeforeObject) {
+		return fmt.Errorf("%s %s configuration or ownership differs from the deletion preview; refresh before deleting", ch.Ref.Kind, ch.Ref.Name)
+	}
+	if live.GetDeletionTimestamp() != nil {
+		return fmt.Errorf("%s %s is already deleting; wait and refresh", ch.Ref.Kind, ch.Ref.Name)
+	}
+	return nil
+}
+
+func ambientDeleteChange(ctx context.Context, c ambientConnection, ch ambient.Change, undo, dry bool) (*unstructured.Unstructured, error) {
+	res, err := ambientChangeResource(c, ch)
+	if err != nil {
+		return nil, err
+	}
+	if undo {
+		// Create, never apply: a replacement at this name must not be overwritten.
+		opts := metav1.CreateOptions{FieldManager: "flightbay-tests"}
+		if dry {
+			opts.DryRun = []string{metav1.DryRunAll}
+		}
+		return res.Create(ctx, &unstructured.Unstructured{Object: ambient.M(ambient.Copy(ch.BeforeObject))}, opts)
+	}
+	live, err := res.Get(ctx, ch.Ref.Name, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	if err := ambientDeleteMatches(ch, live); err != nil {
+		return nil, err
+	}
+	uid, rv := live.GetUID(), live.GetResourceVersion()
+	opts := metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid, ResourceVersion: &rv}}
+	if dry {
+		opts.DryRun = []string{metav1.DryRunAll}
+	}
+	if err := res.Delete(ctx, ch.Ref.Name, opts); err != nil {
+		return nil, err
+	}
+	return live, nil
+}
+
+func waitAmbientDeletion(ctx context.Context, c ambientConnection, ch ambient.Change) error {
+	res, err := ambientChangeResource(c, ch)
+	if err != nil {
+		return err
+	}
+	for {
+		live, err := res.Get(ctx, ch.Ref.Name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) || (err == nil && string(live.GetUID()) != ch.UID) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("waiting for %s %s deletion: %w", ch.Ref.Kind, ch.Ref.Name, ctx.Err())
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
 }
 func waitAmbientWaypoint(ctx context.Context, c ambientConnection, p *ambient.Plan) error {
 	if p.Request.Demo != nil && p.Request.Demo.Stage == "workloads" {
@@ -154,7 +233,7 @@ func undoAmbientChanges(ctx context.Context, c ambientConnection, rec *ambientRe
 	for i := len(rec.Modified) - 1; i >= 0; i-- {
 		ch := rec.Modified[i]
 		_, e := ambientPatch(ctx, c, ch, true, false)
-		if apierrors.IsNotFound(e) {
+		if apierrors.IsNotFound(e) && !ch.Delete {
 			continue
 		}
 		if e != nil {

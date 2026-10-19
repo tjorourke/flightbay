@@ -110,6 +110,82 @@ func TestGlobalUnpublishRemovesOnlyTheScopeLabel(t *testing.T) {
 	}
 }
 
+func TestGlobalUnpublishIncludesWeightedSplit(t *testing.T) {
+	for _, scope := range []string{"global", "global-only", ""} {
+		t.Run("scope="+scope, func(t *testing.T) {
+			ws := fixture(t)
+			svc := Target(ws, "c", "Service", "app", "front")
+			M(svc.Obj["metadata"])["labels"] = map[string]any{"app": "front"}
+			if scope != "" {
+				M(Path(svc.Obj, "metadata", "labels"))["solo.io/service-scope"] = scope
+			}
+			route := object("HTTPRoute", "front-cluster-split", map[string]any{"parentRefs": []any{map[string]any{"group": "", "kind": "Service", "name": "front"}}})
+			M(route["metadata"])["labels"] = map[string]any{"app.kubernetes.io/managed-by": "flightbay", "flightbay.dev/test-id": "earlier-plan"}
+			put(ws, GatewayGroup, "httproutes", "HTTPRoute", route)
+			alias := object("Service", "front-c", map[string]any{"selector": map[string]any{"app": "front"}})
+			M(alias["metadata"])["labels"] = map[string]any{"app.kubernetes.io/managed-by": "flightbay", "flightbay.dev/test-id": "earlier-plan", "flightbay.dev/cluster-split-for": "front", "solo.io/service-scope": "global"}
+			put(ws, "", "services", "Service", alias)
+			p, err := Generate(ws, Request{Cluster: "c", Namespace: "app", Service: "front", Tasks: []string{"global-service"}, Unpublish: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Both generated resources must be reviewed, including legacy routes
+			// with no cluster-split-for label and already-local main Services.
+			for _, name := range []string{"front-cluster-split", "front-c"} {
+				found := false
+				for _, ch := range p.Changes {
+					if ch.Ref.Name == name && ch.Delete && ch.UID != "" && ch.BeforeObject != nil {
+						found = true
+					}
+				}
+				if !found {
+					t.Fatalf("stop plan omitted %s: %+v", name, p.Changes)
+				}
+			}
+			if !strings.Contains(p.YAML, "# DELETE HTTPRoute app/front-cluster-split") || !strings.Contains(p.YAML, "# DELETE Service app/front-c") {
+				t.Fatal("deletions missing from review", p.YAML)
+			}
+			if !summariseService(ws, svc).GlobalCleanup {
+				t.Fatal("leftover split is not exposed in inventory")
+			}
+		})
+	}
+}
+
+func TestGlobalUnpublishPreservesUnrelatedResources(t *testing.T) {
+	for _, variant := range []string{"unmanaged", "missing-test-id", "other-parent", "other-namespace", "other-split", "multiple-parents"} {
+		t.Run(variant, func(t *testing.T) {
+			ws := fixture(t)
+			parent := map[string]any{"group": "", "kind": "Service", "name": "front"}
+			route := object("HTTPRoute", "front-cluster-split", map[string]any{"parentRefs": []any{parent}})
+			labels := map[string]any{"app.kubernetes.io/managed-by": "flightbay", "flightbay.dev/test-id": "old"}
+			M(route["metadata"])["labels"] = labels
+			switch variant {
+			case "unmanaged":
+				labels["app.kubernetes.io/managed-by"] = "customer"
+			case "missing-test-id":
+				delete(labels, "flightbay.dev/test-id")
+			case "other-parent":
+				parent["name"] = "another-service"
+			case "other-namespace":
+				parent["namespace"] = "another-namespace"
+			case "other-split":
+				labels["flightbay.dev/cluster-split-for"] = "another-service"
+			case "multiple-parents":
+				M(route["spec"])["parentRefs"] = []any{parent, map[string]any{"kind": "Service", "name": "another-service"}}
+			}
+			put(ws, GatewayGroup, "httproutes", "HTTPRoute", route)
+			alias := object("Service", "front-c", nil)
+			M(alias["metadata"])["labels"] = map[string]any{"app.kubernetes.io/managed-by": "flightbay", "flightbay.dev/test-id": "other", "flightbay.dev/cluster-split-for": "another-service"}
+			put(ws, "", "services", "Service", alias)
+			p, err := Generate(ws, Request{Cluster: "c", Namespace: "app", Service: "front", Tasks: []string{"global-service"}, Unpublish: true})
+			if err != nil || len(p.Changes) != 0 {
+				t.Fatalf("unrelated resources included: %v %+v", err, p)
+			}
+		})
+	}
+}
+
 func TestAccessRuleBuildsServiceTargetedPolicy(t *testing.T) {
 	ws := fixture(t)
 	r := Request{Cluster: "c", Namespace: "app", Service: "front", Tasks: []string{"access-rule"}, Access: &AccessRequest{Action: "DENY", Rules: []AccessRule{{Headers: []HeaderMatch{{Name: "X-Req-Origin-Type", Values: []string{"be"}}}}}}}

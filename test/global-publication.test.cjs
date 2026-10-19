@@ -66,3 +66,51 @@ test('an already-global Service only plans the clusters whose choice changed, an
   await context.amAction(()=>context.amGenerateGlobalBatch());
   assert.equal(requests.length,0);assert.match(A.error,/Nothing to change/);
 });
+
+test('stop all still generates cleanup plans when weighted routing is selected',async()=>{
+  const {context,A}=setup(),requests=[];
+  A.inventory.topology={clusters:['mesh1','mesh2'].map(cluster=>({context:cluster,services:[{namespace:'app',name:'web',scope:'global',globalCleanup:true}]}))};
+  A.settings.globalDistribution='weighted';
+  A.settings.globalEdits={mesh1:'unpublish',mesh2:'unpublish'};
+  context.apiPost=async(route,request)=>{requests.push(request);return {id:request.cluster,request,changes:[{delete:true}],objects:[]};};
+  await context.amGenerateGlobalBatch();
+  assert.deepEqual(requests.map(r=>[r.cluster,r.unpublish]),[['mesh1',true],['mesh2',true]]);
+  assert.ok(requests.every(r=>!r.globalWeights));
+  assert.ok(A.globalBatch.every(r=>!context.amGlobalNoop(r)));
+});
+
+test('an arbitrary already-local customer Service can remove leftover split resources',async()=>{
+  const {context,A}=setup(),requests=[];
+  const svc={cluster:'mesh1',namespace:'customer-payments',name:'foobar'};
+  A.key=JSON.stringify([svc.cluster,svc.namespace,svc.name]);
+  A.inventory.services=[svc];
+  A.inventory.topology={clusters:[{context:'mesh1',services:[{...svc,scope:'',globalCleanup:true}]},{context:'mesh2',services:[{...svc,scope:''}]}]};
+  assert.equal(context.amGlobalPublished(svc),true);
+  A.settings.globalEdits={mesh1:'unpublish'};
+  context.apiPost=async(route,request)=>{requests.push(request);return {id:'cleanup',request,changes:[{delete:true,ref:{kind:'HTTPRoute',name:'foobar-cluster-split'}}],objects:[]};};
+  await context.amGenerateGlobalBatch();
+  assert.equal(requests.length,1);
+  assert.equal(requests[0].namespace,'customer-payments');
+  assert.equal(requests[0].service,'foobar');
+  assert.equal(requests[0].unpublish,true);
+  assert.equal(context.amGlobalNoop(A.globalBatch[0]),false);
+});
+
+test('post-stop refresh waits for split resources to disappear, not just the global label',async()=>{
+  const {context,A}=setup();let calls=0;
+  context.setTimeout=fn=>fn();
+  context.api=async()=>{calls++;return {topology:{clusters:[{context:'mesh1',services:[{namespace:'app',name:'web',scope:'',globalCleanup:calls<3}]}]}};};
+  await context.amGlobalWaitForCapture({namespace:'app',name:'web'},[{cluster:'mesh1',action:'unpublish'}]);
+  assert.equal(calls,3);
+  assert.equal(A.inventory.topology.clusters[0].services[0].globalCleanup,false);
+});
+
+test('global review distinguishes resource deletions from updates',()=>{
+  const {context,A}=setup();
+  context.esc=String;context.amContextControl=()=>'';context.amTaskLinks=()=>'';
+  A.globalBatch=[{cluster:'mesh1',context:'mesh1',action:'unpublish',state:'Preview',plan:{changes:[{}, {delete:true}, {delete:true}],objects:[],yaml:'# DELETE HTTPRoute app/web-cluster-split'}}];
+  const html=context.amGlobalBatchPanel();
+  assert.match(html,/1 existing resources to update · 2 to delete · 0 to create/);
+  assert.match(html,/# DELETE HTTPRoute app\/web-cluster-split/);
+  assert.match(html,/data-amglobalapply/);
+});

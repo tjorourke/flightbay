@@ -56,7 +56,7 @@ type Request struct {
 	Workload           string            `json:"workload,omitempty"`
 	Replicas           int               `json:"replicas,omitempty"`
 	// Unpublish reverses global-service publication for this one Service by
-	// removing its solo.io/service-scope label.
+	// removing global metadata and its owned weighted-split route and Service.
 	Unpublish bool `json:"unpublish,omitempty"`
 	// GlobalDistribution sets networking.istio.io/traffic-distribution on a
 	// global Service: "" leaves it, "default" removes it (PreferNetwork),

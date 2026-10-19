@@ -41,9 +41,12 @@ func generateGlobalService(ws *store.Workspace, req Request) (*Plan, error) {
 	}
 	if req.Unpublish {
 		// Taking a Service out of the global mesh needs none of the publish
-		// prerequisites: it removes one label and leaves everything else.
+		// prerequisites. Include the owned split resources in the same review.
 		p := basePlan(req, svc)
 		p.ServiceUID = S(Path(svc.Obj, "metadata", "uid"))
+		for _, o := range globalSplitResources(ws, svc) {
+			deleteChange(p, o, "Remove the weighted cluster split for "+svc.Name)
+		}
 		scope := svc.Labels()["solo.io/service-scope"]
 		if scope == "" {
 			// Clear the routing settings that only matter for a global Service.
@@ -55,7 +58,7 @@ func generateGlobalService(ws *store.Workspace, req Request) (*Plan, error) {
 		if scope == "global-only" {
 			p.Notes = append(p.Notes, "This Service used legacy global-only publication, which also took over the local name. Removing the label returns the local cluster.local name to this cluster's endpoints only.")
 		}
-		p.Notes = append(p.Notes, "Only this Service in context "+req.Cluster+" is changed. Other clusters keep publishing; callers there stop reaching this cluster's endpoints through the global name once the controller removes them.", "The mesh controller removes the generated ServiceEntry entries. Refresh inventory after applying to confirm the published names and addresses have gone.")
+		p.Notes = append(p.Notes, "This plan stops publication and removes Flightbay-owned weighted-split resources for this Service in context "+req.Cluster+". Other clusters keep their configuration; stop publication there too to remove the split everywhere.", "The mesh controller removes the generated ServiceEntry entries. Refresh inventory after applying to confirm the published names and addresses have gone.")
 		return finishPlan(p)
 	}
 	if ok, why := globalServiceSupport(ws, svc, DetectEnvironment(ws, req.Cluster, svc)); !ok {
@@ -101,6 +104,32 @@ func generateGlobalService(ws *store.Workspace, req Request) (*Plan, error) {
 	}
 	p.Notes = append(p.Notes, "Only this Service in context "+req.Cluster+" is changed. The application is not copied to another cluster. Review the corresponding Service in each cluster that should contribute endpoints.", "Default routing for a global service is PreferNetwork: callers use endpoints in their own cluster and only go to another cluster when none are healthy.", "After applying, refresh inventory to see the actual published global DNS names. Kubernetes dry-run validates the change, not the licence, peer connectivity or end-to-end traffic.")
 	return finishPlan(p)
+}
+
+// globalSplitResources recognises both current and legacy split routes. A name
+// alone is never ownership: require Flightbay's labels and the exact parent.
+// Delete the route before its backend Service; undo recreates them in reverse.
+func globalSplitResources(ws *store.Workspace, svc *store.Object) []*store.Object {
+	owned := func(o *store.Object) bool {
+		return o != nil && o.Labels()["app.kubernetes.io/managed-by"] == "flightbay" && o.Labels()["flightbay.dev/test-id"] != ""
+	}
+	out := []*store.Object{}
+	route := Target(ws, svc.Cluster, "HTTPRoute", svc.Namespace, svc.Name+"-cluster-split")
+	if owned(route) {
+		parents := L(Path(route.Obj, "spec", "parentRefs"))
+		label := route.Labels()["flightbay.dev/cluster-split-for"]
+		if len(parents) == 1 && (label == "" || label == svc.Name) {
+			parent := M(parents[0])
+			if S(parent["group"]) == "" && S(parent["kind"]) == "Service" && S(parent["name"]) == svc.Name && (S(parent["namespace"]) == "" || S(parent["namespace"]) == svc.Namespace) {
+				out = append(out, route)
+			}
+		}
+	}
+	alias := Target(ws, svc.Cluster, "Service", svc.Namespace, GlobalClusterServiceName(svc.Name, svc.Cluster))
+	if owned(alias) && alias.Name != svc.Name && alias.Labels()["flightbay.dev/cluster-split-for"] == svc.Name {
+		out = append(out, alias)
+	}
+	return out
 }
 
 // GlobalClusterServiceName is the per-cluster global Service used to address
@@ -188,7 +217,7 @@ func globalWeightedSplit(ws *store.Workspace, req Request, svc *store.Object, p 
 	for _, c := range clusters {
 		backends = append(backends, map[string]any{"group": "networking.istio.io", "kind": "Hostname", "name": GlobalClusterServiceName(svc.Name, c) + "." + svc.Namespace + "." + domain, "port": port, "weight": req.GlobalWeights[c]})
 	}
-	p.Objects = append(p.Objects, map[string]any{"apiVersion": "gateway.networking.k8s.io/v1", "kind": "HTTPRoute", "metadata": map[string]any{"name": svc.Name + "-cluster-split", "namespace": svc.Namespace, "labels": map[string]any{"app.kubernetes.io/managed-by": "flightbay"}}, "spec": map[string]any{"parentRefs": []any{map[string]any{"group": "", "kind": "Service", "name": svc.Name, "port": port}}, "rules": []any{map[string]any{"backendRefs": backends}}}})
+	p.Objects = append(p.Objects, map[string]any{"apiVersion": "gateway.networking.k8s.io/v1", "kind": "HTTPRoute", "metadata": map[string]any{"name": svc.Name + "-cluster-split", "namespace": svc.Namespace, "labels": map[string]any{"app.kubernetes.io/managed-by": "flightbay", "flightbay.dev/cluster-split-for": svc.Name}}, "spec": map[string]any{"parentRefs": []any{map[string]any{"group": "", "kind": "Service", "name": svc.Name, "port": port}}, "rules": []any{map[string]any{"backendRefs": backends}}}})
 	p.Notes = append(p.Notes, "Weighted split: this plan adds "+own+" (a global Service selecting only "+req.Cluster+"'s Pods) and an HTTPRoute on "+svc.Name+" whose backends are each cluster's own global hostname. Every cluster in the split needs its "+svc.Name+"-<cluster> Service, so apply this in each one. The split covers callers in a cluster whose waypoint enforces the route; it is per request, so it holds even with connection reuse.")
 	return nil
 }

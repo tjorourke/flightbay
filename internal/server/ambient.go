@@ -540,7 +540,7 @@ func (s *Server) ambientTest(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, ch := range p.Changes {
 			if _, err := ambientPatch(ctx, c, ch, false, true); err != nil {
-				jerr(w, 400, "server dry-run of existing-field change: "+err.Error())
+				jerr(w, 400, "server dry-run of existing-resource change: "+err.Error())
 				return
 			}
 		}
@@ -644,6 +644,12 @@ func (s *Server) ambientTest(w http.ResponseWriter, r *http.Request) {
 					applyErr = e
 					break
 				}
+				if ch.Delete {
+					if e := waitAmbientDeletion(ctx, c, ch); e != nil {
+						applyErr = e
+						break
+					}
+				}
 			}
 		}
 		if applyErr != nil {
@@ -686,7 +692,9 @@ func (s *Server) ambientTest(w http.ResponseWriter, r *http.Request) {
 			}
 			o, e := res.Get(ctx, ch.Ref.Name, metav1.GetOptions{})
 			item := map[string]any{"changed": ch.Ref}
-			if e != nil {
+			if ch.Delete && apierrors.IsNotFound(e) {
+				item["deleted"] = true
+			} else if e != nil {
 				item["error"] = e.Error()
 			} else {
 				item["status"] = o.Object["status"]
