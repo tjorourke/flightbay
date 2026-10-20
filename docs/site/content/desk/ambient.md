@@ -8,11 +8,14 @@ description: Trace Service-to-waypoint attachment, explain controller errors, ge
 
 The Istio Ambient page has two levels. The home page has five tabs, and each Service has its own page.
 
+A **Namespaces** button at the top right of Overview, Policies & routes, Map and Request path sets one scope for all four. Tick as many namespaces as you like (and, on Map and Request path, individual Services). The list stays open while you tick, has a search box, and by default shows only namespaces in ambient and hides system namespaces. The selection is kept in the URL (`ns=bookinfo,kagent&svcs=bookinfo/reviews`) and in the browser, so it survives switching tabs and reloading. The first time, Flightbay selects the namespaces in ambient that have a policy or route.
+
 | Where | What it shows |
 |---|---|
-| **Overview** | A health summary, **Needs attention** (failed checks with **Open checks** and **Fix…**), and every Service with its waypoint, access, routing and resilience badges and its state on each cluster. A namespace footer holds **Namespace settings** (enrol in ambient, set up a waypoint). |
-| **Policies & routes** | Every ambient policy, route and waypoint, what it applies to in plain words, its state on each cluster, and who manages it. Filter by scope, type, problems, drift and managed by. **Export YAML** downloads the filtered set. |
-| **Map** and **Request path** | The attachment map and the request-path tracer. Service cards open the Service page. |
+| **Overview** | A health summary, **Needs attention** (one row per Service, the clusters it fails on, its most important failed check and how many more; the five worst first, then **Show all**), and the Services in scope with their waypoint, access, routing and resilience badges and their state on each cluster, 25 to a page. When the scope holds more than 25 Services, those with nothing configured are hidden behind a checkbox. When one namespace is selected, its footer holds **Namespace settings** (enrol in ambient, set up a waypoint). |
+| **Policies & routes** | One flat table of every ambient policy and route in scope: name, what it applies to, its effect, its state on each cluster (Live, Applied, Failed, Not enforced, Differs or Not here) and who manages it, including the controller that owns it (for example `kagent (Agent)`). Filter by name, by type (Access, Routing, Resilience, Transport, Other; an object can have more than one) and by problems. Sort by any column. **Differs** opens a field diff between clusters. Waypoints are drawn on the Map rather than listed here. |
+| **Map** | The Services in scope, each cluster side by side, with the same Service in the same row on both clusters. Services with nothing attached are collapsed into one card per namespace. Waypoints are drawn as nodes with a line to each Service they serve. The search box finds and highlights a card on the map. |
+| **Request path** | The request-path tracer. The From and To lists follow the scope and are grouped by namespace. |
 | **Changes** | Every change Flightbay applied from this machine, with its state, whether its tests pass, and undo. |
 | **Service page** | **Configuration**, **Checks**, **Tests**, **Request path** and **Changes** for one Service. |
 
@@ -20,7 +23,13 @@ The Istio Ambient page has two levels. The home page has five tabs, and each Ser
 
 Every **Add**, **Edit** and **Override** link opens the same one-task drawer: choose settings, check against the cluster (a server dry-run, nothing written), then apply and test. The right-hand column says what the change does to the Service and which other policies it interacts with. After apply, Flightbay runs the saved test suites for that Service. A change is **Draft**, **Checked**, **Applied**, **Live**, **Verified** or **Failed**.
 
-**Tests** are per AuthorizationPolicy and HTTPRoute. Cases are generated from the rule (a request that matches, near misses, interactions with other policies, a waypoint bypass), kept under `~/.flightbay/ambient-suites/`, and run from an existing Pod or a temporary one. A route suite compares expected and observed traffic weights.
+**Tests** are per AuthorizationPolicy and HTTPRoute. Cases are generated from the rule (a request that matches, near misses, interactions with other policies, a waypoint bypass), kept under `~/.flightbay/ambient-suites/`, and run from an existing Pod or a temporary one. A route suite compares expected and observed traffic weights. Results stream in as each request returns: the weight bars and the request counter move during the run, each case row turns from waiting to running to its result, and **Stop** ends the run. A stopped run keeps the cases that finished.
+
+**+ Add case**, **Edit** and **Duplicate** open a side panel with the whole request: method, path, query string, any number of headers, another Service in the namespace, port, a body for POST, PUT, PATCH and DELETE, and sending straight to a Pod to skip the waypoint. You can ask for the request to come from a particular client or Service account (the case is skipped if no such client is running) and expect a status code, a backend, a rule, "not this route" or a traffic split.
+
+**Try a request** sits above the cases. It sends one request and explains it: the route rule that matched and why the others did not, the backend that answered, every AuthorizationPolicy on the Service and its waypoint in the order Istio checks them with the condition that decided each, and whether the waypoint access log confirmed the result. When waypoint access logging is off, Flightbay says so and predicts the result from the policies. **Save as a case** keeps the request with what it returned as the expectation.
+
+**History** on an object page lists every revision the live mirror has seen since Flightbay connected, newest first, with a diff to the previous revision. Status-only updates are left out. Revisions written by Flightbay from this machine are labelled. A snapshot has one revision.
 
 The previous Ambient page, with its picker, four-step wizard and Active tests list, is still in this build for rollback. Add `?amv2=0` to the URL to use it. The sections below describe it; the Service page, drawer and tabs above replace the picker, the stepper and the Configure tab.
 

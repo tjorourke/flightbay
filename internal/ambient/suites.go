@@ -33,9 +33,19 @@ const (
 	StatusFail    = "fail"
 	StatusError   = "error"
 	StatusSkipped = "skipped"
+	// StatusUnknown is a case whose expectation could not be checked: it
+	// names a rule or backend and the reply did not say which backend
+	// answered. It is neither a pass nor a failure.
+	StatusUnknown = "unknown"
 
 	DefaultSamples   = 200
 	DefaultTolerance = 5
+
+	// MaxBodyBytes is the largest request body a case may carry.
+	MaxBodyBytes = 64 << 10
+
+	// GotUnknownBackend is the got text of a case that could not be checked.
+	GotUnknownBackend = "could not tell which backend answered"
 )
 
 // Suite is every case for one object, the source they are sent from and the
@@ -80,7 +90,12 @@ type CaseRequest struct {
 	// Host is the Service name the request is addressed to. Empty means the
 	// suite's service; with Direct it is ignored and a ready Pod is chosen.
 	Host string `json:"host,omitempty"`
+	// Body is sent as the request body, for POST, PUT, PATCH and DELETE.
+	Body string `json:"body,omitempty"`
 }
+
+// bodyMethods are the methods a case may send a body with.
+var bodyMethods = map[string]bool{"POST": true, "PUT": true, "PATCH": true, "DELETE": true}
 
 // CaseExpect is one of: a status, a rule and backend set, or weights.
 type CaseExpect struct {
@@ -143,15 +158,19 @@ type CaseResult struct {
 	ID     string  `json:"id"`
 	Status string  `json:"status"`
 	Got    CaseGot `json:"got"`
-	// DecidedBy names the policy (or layer) that made the call. "unknown"
-	// when nothing could say; it never blocks a result.
-	DecidedBy     string      `json:"decidedBy"`
-	DecidedByKind string      `json:"decidedByKind,omitempty"` // policy, ztunnel, waypoint, none, unknown
-	DecidedByHow  string      `json:"decidedByHow,omitempty"`  // waypoint-log, explain, predicted
-	DecidedByRef  *Ref        `json:"decidedByRef,omitempty"`
-	LogRef        *LogRef     `json:"logRef,omitempty"`
-	Message       string      `json:"message,omitempty"`
-	Weights       []WeightRow `json:"weights,omitempty"`
+	// DecidedBy names the policy (or layer) that made the call. Empty when
+	// nothing could say, with DecisionNote saying why; it never blocks a
+	// result.
+	DecidedBy     string `json:"decidedBy"`
+	DecidedByKind string `json:"decidedByKind,omitempty"` // policy, ztunnel, waypoint, none, unknown
+	DecidedByHow  string `json:"decidedByHow,omitempty"`  // waypoint-log, explain, predicted
+	DecidedByRef  *Ref   `json:"decidedByRef,omitempty"`
+	// DecisionNote says why DecidedBy is empty: no log line matched and no
+	// policy predicts the status that came back.
+	DecisionNote string      `json:"decisionNote,omitempty"`
+	LogRef       *LogRef     `json:"logRef,omitempty"`
+	Message      string      `json:"message,omitempty"`
+	Weights      []WeightRow `json:"weights,omitempty"`
 	// Connection is the connection actually tested, before any hostname
 	// (plan 9.2): "In-mesh curl from bookinfo/productpage via the Service".
 	Connection string    `json:"connection,omitempty"`
@@ -169,12 +188,17 @@ type SuiteRun struct {
 }
 
 type RunSummary struct {
-	Total   int       `json:"total"`
-	Passed  int       `json:"passed"`
-	Failed  int       `json:"failed"`
-	Errored int       `json:"errored"`
-	Skipped int       `json:"skipped"`
+	Total   int `json:"total"`
+	Passed  int `json:"passed"`
+	Failed  int `json:"failed"`
+	Errored int `json:"errored"`
+	Skipped int `json:"skipped"`
+	// Unknown counts cases that could not be checked (StatusUnknown).
+	Unknown int       `json:"unknown,omitempty"`
 	At      time.Time `json:"at"`
+	// Cancelled is true when the run was stopped before every case ran; the
+	// results are the cases that finished.
+	Cancelled bool `json:"cancelled,omitempty"`
 }
 
 // Behaved is "5 of 6 behaved as expected": passes over everything that ran.
@@ -209,6 +233,8 @@ func Summarize(results []CaseResult, at time.Time) RunSummary {
 			s.Errored++
 		case StatusSkipped:
 			s.Skipped++
+		case StatusUnknown:
+			s.Unknown++
 		}
 	}
 	return s
@@ -411,6 +437,19 @@ func (c *Case) Validate() error {
 	if len(c.Request.Headers) > 64 {
 		return errors.New("too many headers")
 	}
+	for k := range c.Request.Headers {
+		if strings.TrimSpace(k) == "" {
+			return errors.New("a header has no name")
+		}
+	}
+	if c.Request.Body != "" {
+		if !bodyMethods[m] {
+			return fmt.Errorf("a %s request cannot carry a body; use POST, PUT, PATCH or DELETE", m)
+		}
+		if len(c.Request.Body) > MaxBodyBytes {
+			return fmt.Errorf("the body is %d bytes; at most %d", len(c.Request.Body), MaxBodyBytes)
+		}
+	}
 	e := c.Expect
 	if e.Status < 0 || e.Status > 599 {
 		return errors.New("expected status is out of range")
@@ -562,19 +601,25 @@ type Observation struct {
 	Connection string
 	// Client is namespace/pod of the sender, for Decided by.
 	Client string
+	// Rule is the 1-based route rule the request matches, worked out from
+	// the route's matches; 0 when it was not worked out.
+	Rule int
+	// DurationMs is how long a single request took.
+	DurationMs int64
 
 	DecidedBy     string
 	DecidedByKind string
 	DecidedByHow  string
 	DecidedByRef  *Ref
+	DecisionNote  string
 	Log           *LogRef
 }
 
 // Evaluate compares an observation with the case's expectation.
 func Evaluate(c Case, o Observation, at time.Time) CaseResult {
-	r := CaseResult{ID: c.ID, At: at, Connection: o.Connection, DecidedBy: o.DecidedBy, DecidedByKind: o.DecidedByKind, DecidedByHow: o.DecidedByHow, DecidedByRef: o.DecidedByRef, LogRef: o.Log}
-	if r.DecidedBy == "" {
-		r.DecidedBy, r.DecidedByKind = "unknown", "unknown"
+	r := CaseResult{ID: c.ID, At: at, Connection: o.Connection, DecidedBy: o.DecidedBy, DecidedByKind: o.DecidedByKind, DecidedByHow: o.DecidedByHow, DecidedByRef: o.DecidedByRef, DecisionNote: o.DecisionNote, LogRef: o.Log}
+	if r.DecidedBy != "" {
+		r.DecisionNote = ""
 	}
 	e := c.Expect
 	if len(e.Weights) > 0 {
@@ -582,7 +627,7 @@ func Evaluate(c Case, o Observation, at time.Time) CaseResult {
 		r.Got.Text = GotText(r.Got)
 		return r
 	}
-	r.Got.Status, r.Got.Backend = o.Status, o.Backend
+	r.Got.Status, r.Got.Backend, r.Got.Rule = o.Status, o.Backend, o.Rule
 	if o.Error != "" && o.Status == 0 {
 		r.Status, r.Message = StatusError, o.Error
 		r.Got.Text = ""
@@ -592,7 +637,9 @@ func Evaluate(c Case, o Observation, at time.Time) CaseResult {
 	case e.NotRoute:
 		switch {
 		case o.Backend == "":
-			r.Status, r.Message = StatusError, "Could not tell which backend answered."
+			r.Status, r.Got.Text = StatusUnknown, GotUnknownBackend
+			r.Message = unknownBackendWhy(o) + " So it cannot say whether " + defaultString(e.Backend, "the Service") + " answered directly."
+			return r
 		case o.Backend == e.Backend:
 			r.Status = StatusPass
 		default:
@@ -602,9 +649,20 @@ func Evaluate(c Case, o Observation, at time.Time) CaseResult {
 	case e.Rule > 0:
 		switch {
 		case o.Backend == "":
-			r.Status, r.Message = StatusError, "Could not tell which backend answered. The reply had no pod name and the waypoint log had no upstream."
+			r.Status, r.Got.Text = StatusUnknown, GotUnknownBackend
+			r.Message = unknownBackendWhy(o)
+			switch {
+			case o.Rule == e.Rule:
+				r.Message += fmt.Sprintf(" By its method, path and headers the request matches rule %d, as expected, but the backend that answered is not known.", e.Rule)
+			case o.Rule > 0:
+				r.Message += fmt.Sprintf(" By its method, path and headers the request matches rule %d, not rule %d.", o.Rule, e.Rule)
+			}
+			return r
 		case contains(e.Backends, o.Backend) || (len(e.Backends) == 0 && o.Backend == e.Backend):
-			r.Status, r.Got.Rule = StatusPass, e.Rule
+			r.Status = StatusPass
+			if r.Got.Rule == 0 {
+				r.Got.Rule = e.Rule
+			}
 		default:
 			r.Status = StatusFail
 			r.Message = fmt.Sprintf("Expected rule %d (%s), but %s answered.", e.Rule, strings.Join(e.Backends, ", "), o.Backend)
@@ -619,6 +677,18 @@ func Evaluate(c Case, o Observation, at time.Time) CaseResult {
 	}
 	r.Got.Text = GotText(r.Got)
 	return r
+}
+
+// unknownBackendWhy says why the backend that answered is not known.
+func unknownBackendWhy(o Observation) string {
+	s := fmt.Sprintf("The reply (%d) did not name the Pod that sent it", o.Status)
+	switch {
+	case o.Log != nil:
+		s += " and the matching waypoint log line had no upstream Service"
+	default:
+		s += " and no waypoint log line was found for the request"
+	}
+	return s + ", so Flightbay could not tell which backend answered."
 }
 
 func evaluateWeights(r *CaseResult, e CaseExpect, o Observation) {

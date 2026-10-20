@@ -14,7 +14,8 @@ async function am2MapPage(route, data) {
   await am2EnsureOld();
   const A = S.ambient;
   A.tab = 'map';
-  return `<div class="am2-oldwrap">${amClusterCanvas(null) || '<div class="am2-note am2-muted">No clusters are connected.</div>'}</div>`;
+  const sc = S.am2.scope;
+  return `<div class="am2-oldwrap am-shell am-mode-map">${amClusterCanvas(null, {inScope: sv => am2InScopeSvc(sv.namespace, sv.name), selected: sc.svcs}) || '<div class="am2-note am2-muted">No clusters are connected.</div>'}</div>`;
 }
 
 // Retarget the Service card buttons to the new Service page (PLAN 8.1).
@@ -29,7 +30,7 @@ function am2MapAfter(route) {
     row.querySelectorAll('[data-amrelated],[data-amconfigure]').forEach(b => b.remove());
     const mk = (label, hash) => { const b = document.createElement('button'); b.textContent = label; b.onclick = () => { location.hash = hash; }; return b; };
     const yaml = row.querySelector('[data-amyaml]');
-    for (const [label, hash] of [['Configure', am2Hash({svc: base(ref), stab: 'configuration'})], ['Checks', am2Hash({svc: base(ref), stab: 'checks'})], ['Test', am2Hash({svc: base(ref), stab: 'tests'})], ['Request path', am2Hash({tab: 'path', to: base(ref)})]]) row.insertBefore(mk(label, hash), yaml || null);
+    for (const [label, hash] of [['Open', am2Hash({svc: base(ref), stab: 'configuration'})], ['Request path', am2Hash({tab: 'path', to: base(ref), ...am2ScopeParams()})]]) row.insertBefore(mk(label, hash), yaml || null);
   });
   document.querySelectorAll('[data-amevidence]').forEach(b => b.onclick = () => openObject(JSON.parse(b.dataset.amevidence), b.textContent.trim() === 'YAML' ? 'yaml' : 'summary'));
   document.querySelectorAll('[data-amyaml]').forEach(b => b.onclick = () => openObject(JSON.parse(b.dataset.amyaml), 'yaml'));
@@ -40,6 +41,8 @@ AM2_AFTER.push(am2MapAfter);
 // ---------- Request path ----------
 async function am2PathPage(route, data) {
   await am2EnsureOld();
+  const sc = S.am2.scope;
+  RP.scopeFilter = o => am2InScopeNs(o.namespace) && (!sc.hideSystem || !am2IsSystemNs(o.namespace));
   S.ambient.tab = 'path';
   if (!RP.options) RP.options = await api('api/ambient/request-path/options');
   if (route.to && RP.am2To !== route.to) {
@@ -47,15 +50,16 @@ async function am2PathPage(route, data) {
     if (dest) { RP.destination = rpKey(dest); RP.host = ''; RP.hostCustom = false; RP.port = ''; RP.result = null; }
     RP.am2To = route.to;
   }
-  return `<div class="am2-oldwrap">${await requestPathPage()}</div>`;
+  return `<div class="am2-oldwrap am-shell am-mode-path">${await requestPathPage()}</div>`;
 }
 async function am2PathTab(route, data, ref, ctx) {
   S.ambient.tab = 'path';
+  RP.scopeFilter = null;
   await am2EnsureOld();
   if (!RP.options) RP.options = await api('api/ambient/request-path/options');
   const dest = (RP.options.destinations || []).find(o => o.cluster === ref.cluster && o.namespace === ref.namespace && o.name === ref.name && o.kind === 'Service');
   if (dest && RP.am2Svc !== route.svc) { RP.destination = rpKey(dest); RP.host = ''; RP.hostCustom = false; RP.port = ''; RP.result = null; RP.am2Svc = route.svc; }
-  return `<div class="am2-oldwrap" style="margin-top:16px">${await requestPathPage()}</div>`;
+  return `<div class="am2-oldwrap am-shell am-mode-path" style="margin-top:16px">${await requestPathPage()}</div>`;
 }
 function am2PathAfter(route) {
   if (route.tab !== 'path' && route.stab !== 'path') return;
@@ -120,7 +124,7 @@ AM2_AFTER.push(am2ChangesAfter);
 async function am2DemoPage(route, data) {
   S.ambient.tab = 'demo';
   await am2EnsureOld();
-  return `<div class="am2-oldwrap">${await bookinfoPage()}</div>`;
+  return `<div class="am2-oldwrap am-shell am-mode-demo">${await bookinfoPage()}</div>`;
 }
 function am2DemoAfter(route) { if (route.tab === 'demo' && typeof bookinfoAfter === 'function') bookinfoAfter(); }
 AM2_AFTER.push(am2DemoAfter);

@@ -239,8 +239,13 @@ func clusterTrustDomain(ws *store.Workspace, cluster string) string {
 			td = v
 		}
 	}
+	// The mesh config is authoritative. Access logs carry identities from peered clusters
+	// (spiffe://<other trust domain>/...), so they are only a fallback when no config was captured.
+	if td != "" {
+		return td
+	}
 	for _, edge := range ws.AccessEdges(cluster) {
-		for _, id := range []string{edge.SrcIdentity, edge.DstIdentity} {
+		for _, id := range []string{edge.DstIdentity} {
 			if !strings.HasPrefix(id, "spiffe://") {
 				continue
 			}

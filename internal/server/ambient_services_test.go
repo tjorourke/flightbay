@@ -53,6 +53,29 @@ func TestAmbientServicesEmptyWorkspace(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatal(rec.Code)
 	}
+	var v struct {
+		Summary struct {
+			NeedsAttention map[string]int `json:"needsAttention"`
+		} `json:"summary"`
+		NeedsAttention []any `json:"needsAttention"`
+		Services       []any `json:"services"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &v); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"services", "fail", "warn", "other"} {
+		if _, ok := v.Summary.NeedsAttention[k]; !ok {
+			t.Fatalf("summary.needsAttention.%s missing: %s", k, rec.Body.String())
+		}
+	}
+	if v.NeedsAttention == nil || v.Services == nil {
+		t.Fatalf("lists must be [] not null: %s", rec.Body.String())
+	}
+	rec = httptest.NewRecorder()
+	s.ambientServices(rec, httptest.NewRequest("GET", "/api/ambient/services?namespace=bookinfo,kagent", nil))
+	if rec.Code != 200 {
+		t.Fatal(rec.Code)
+	}
 	rec = httptest.NewRecorder()
 	s.ambientServices(rec, httptest.NewRequest("POST", "/api/ambient/services", nil))
 	if rec.Code != 405 {

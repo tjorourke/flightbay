@@ -241,8 +241,50 @@ func (r *Redactor) Object(loc string, obj map[string]any) map[string]any {
 	out, _ := r.walk(loc, "", obj).(map[string]any)
 	if md, ok := out["metadata"].(map[string]any); ok {
 		delete(md, "managedFields")
+		if managers := r.managerNames(loc, obj); len(managers) > 0 {
+			md["managedFields"] = managers
+		}
 	}
 	r.dropFields(loc, out)
+	return out
+}
+
+// managerGroups are the API groups of the ambient policy and route kinds.
+// For these, the manager names in managedFields are kept (and nothing else
+// from managedFields), so the Policies & routes page can say what manages
+// an object, such as kagent or Argo CD.
+var managerGroups = map[string]bool{
+	"security.istio.io": true, "networking.istio.io": true, "gateway.networking.k8s.io": true,
+	"agentgateway.dev": true, "enterpriseagentgateway.solo.io": true,
+}
+
+// managerNames returns managedFields reduced to [{manager, operation}], one
+// entry per distinct pair, for objects in managerGroups. Field lists, times
+// and API versions are dropped.
+func (r *Redactor) managerNames(loc string, obj map[string]any) []any {
+	api, _ := obj["apiVersion"].(string)
+	i := strings.LastIndex(api, "/")
+	if i < 0 || !managerGroups[api[:i]] {
+		return nil
+	}
+	md, _ := obj["metadata"].(map[string]any)
+	mf, _ := md["managedFields"].([]any)
+	var out []any
+	seen := map[string]bool{}
+	for _, v := range mf {
+		e, _ := v.(map[string]any)
+		m, _ := e["manager"].(string)
+		op, _ := e["operation"].(string)
+		if m == "" || seen[m+"\x00"+op] {
+			continue
+		}
+		seen[m+"\x00"+op] = true
+		entry := map[string]any{"manager": r.String(loc, m)}
+		if op != "" {
+			entry["operation"] = op
+		}
+		out = append(out, entry)
+	}
 	return out
 }
 

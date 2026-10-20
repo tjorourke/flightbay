@@ -43,7 +43,7 @@ func enterpriseWaypointFilters(ws *store.Workspace, c string, svc *store.Object)
 }
 
 func generateResilience(ws *store.Workspace, req Request) (*Plan, error) {
-	req=normaliseResilienceScope(req)
+	req = normaliseResilienceScope(req)
 	svc := ws.Get(req.Cluster, "", "services", req.Namespace, req.Service)
 	if svc == nil || !hasPort(svc, req.Port) {
 		return nil, fmt.Errorf("select a captured Service and Service port")
@@ -84,7 +84,7 @@ func generateResilience(ws *store.Workspace, req Request) (*Plan, error) {
 		var original Request
 		if json.Unmarshal([]byte(S(Path(existing.Obj, "metadata", "annotations", "flightbay.dev/resilience-request"))), &original) == nil && original.Resilience != nil {
 			boundary := func(q Request) string {
-				q=normaliseResilienceScope(q)
+				q = normaliseResilienceScope(q)
 				data, _ := json.Marshal([]any{q.Port, q.Resilience.Scope, q.Resilience.Match, q.Resilience.Route, q.Resilience.Rule})
 				return string(data)
 			}
@@ -372,10 +372,26 @@ func generateResilience(ws *store.Workspace, req Request) (*Plan, error) {
 	return finishPlan(p)
 }
 
-func normaliseResilienceScope(req Request)Request{
-	if req.Resilience==nil{return req};r:=*req.Resilience
-	switch r.Scope{case "service":r.Match=nil;r.Route="";r.Rule=0;r.Backend="";case "api":r.Route="";r.Rule=0;case "route":r.Match=nil;r.Backend=""}
-	req.Resilience=&r;return req
+func normaliseResilienceScope(req Request) Request {
+	if req.Resilience == nil {
+		return req
+	}
+	r := *req.Resilience
+	switch r.Scope {
+	case "service":
+		r.Match = nil
+		r.Route = ""
+		r.Rule = 0
+		r.Backend = ""
+	case "api":
+		r.Route = ""
+		r.Rule = 0
+	case "route":
+		r.Match = nil
+		r.Backend = ""
+	}
+	req.Resilience = &r
+	return req
 }
 
 func mergeResilienceRequest(previous *store.Object, req Request) Request {

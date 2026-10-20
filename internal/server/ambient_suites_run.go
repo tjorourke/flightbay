@@ -45,6 +45,9 @@ type suiteSendRequest struct {
 	Case    ambient.Case
 	Source  ambient.SuiteSource
 	Samples int
+	// OnSample, when set, is called once for each request of a multi-sample
+	// case as it finishes, never concurrently.
+	OnSample func(ambient.Sample)
 }
 
 type suiteRunner interface {
@@ -81,41 +84,189 @@ var newSuiteRunner = func(s *Server, ctx context.Context, spec suiteRunSpec) (su
 // expectation. A runner failure becomes an error result for that case, and a
 // stopped context skips what is left.
 func runSuite(ctx context.Context, suite *ambient.Suite, ids []string, runner suiteRunner, decider suiteDecider, now func() time.Time) *ambient.SuiteRun {
+	return runSuiteWith(ctx, suite, ids, runner, decider, now, runOptions{})
+}
+
+const (
+	msgNotSent     = "The run stopped before this case was sent."
+	msgInterrupted = "The run stopped before this case finished."
+)
+
+// stoppedResult is a result runSuite records for a case the stop prevented.
+func stoppedResult(r ambient.CaseResult) bool {
+	return r.Status == ambient.StatusSkipped && (r.Message == msgNotSent || r.Message == msgInterrupted)
+}
+
+// runOptions are the extras of a run: progress events and the route rules
+// that say statically which rule a request matches.
+type runOptions struct {
+	// Emit receives the ndjson events of a streamed run, in order.
+	Emit func(event any)
+	// Route holds the rules of the HTTPRoute in front of the suite's Service.
+	Route []ambient.RouteRuleSpec
+	// SampleEvery is how often a sample event is sent at most (by time);
+	// zero means 250 ms. Ten new samples always send one.
+	SampleEvery time.Duration
+}
+
+type runEventStart struct {
+	Type  string   `json:"type"`
+	Total int      `json:"total"`
+	Cases []string `json:"cases"`
+}
+
+type runEventCase struct {
+	Type string `json:"type"`
+	ID   string `json:"id"`
+}
+
+type runEventSample struct {
+	Type      string         `json:"type"`
+	ID        string         `json:"id"`
+	Completed int            `json:"completed"`
+	Requested int            `json:"requested"`
+	Backends  map[string]int `json:"backends"`
+	Statuses  map[string]int `json:"statuses"`
+	P50Ms     int64          `json:"p50Ms"`
+	P95Ms     int64          `json:"p95Ms"`
+}
+
+type runEventCaseDone struct {
+	Type   string             `json:"type"`
+	ID     string             `json:"id"`
+	Result ambient.CaseResult `json:"result"`
+}
+
+func pct(sorted []int64, p int) int64 {
+	if len(sorted) == 0 {
+		return 0
+	}
+	i := (len(sorted)*p + 99) / 100
+	if i < 1 {
+		i = 1
+	}
+	return sorted[i-1]
+}
+
+// sampleTally builds the cumulative sample events of one weights case.
+type sampleTally struct {
+	ev        runEventSample
+	durations []int64
+	lastN     int
+	lastAt    time.Time
+	every     time.Duration
+	emit      func(any)
+}
+
+func newSampleTally(id string, requested int, every time.Duration, emit func(any)) *sampleTally {
+	if every <= 0 {
+		every = 250 * time.Millisecond
+	}
+	return &sampleTally{ev: runEventSample{Type: "sample", ID: id, Requested: requested, Backends: map[string]int{}, Statuses: map[string]int{}}, lastAt: time.Now(), every: every, emit: emit}
+}
+
+func (t *sampleTally) add(s ambient.Sample) {
+	t.ev.Completed++
+	if s.Backend != "" {
+		t.ev.Backends[s.Backend]++
+	}
+	t.ev.Statuses[strconv.Itoa(s.Status)]++
+	i := sort.Search(len(t.durations), func(i int) bool { return t.durations[i] >= s.DurationMs })
+	t.durations = append(t.durations, 0)
+	copy(t.durations[i+1:], t.durations[i:])
+	t.durations[i] = s.DurationMs
+	if t.ev.Completed-t.lastN >= 10 || time.Since(t.lastAt) >= t.every || t.ev.Completed == t.ev.Requested {
+		t.flush()
+	}
+}
+
+func (t *sampleTally) flush() {
+	if t.ev.Completed == t.lastN {
+		return
+	}
+	t.lastN, t.lastAt = t.ev.Completed, time.Now()
+	ev := t.ev
+	ev.Backends, ev.Statuses = map[string]int{}, map[string]int{}
+	for k, v := range t.ev.Backends {
+		ev.Backends[k] = v
+	}
+	for k, v := range t.ev.Statuses {
+		ev.Statuses[k] = v
+	}
+	ev.P50Ms, ev.P95Ms = pct(t.durations, 50), pct(t.durations, 95)
+	t.emit(ev)
+}
+
+// runSuiteWith is runSuite with progress events and static rule matching. A
+// stopped context stops sending: the case in flight is kept if it finished,
+// and every case after it is recorded as not sent.
+func runSuiteWith(ctx context.Context, suite *ambient.Suite, ids []string, runner suiteRunner, decider suiteDecider, now func() time.Time, opt runOptions) *ambient.SuiteRun {
+	emit := opt.Emit
+	if emit == nil {
+		emit = func(any) {}
+	}
 	byID := map[string]ambient.Case{}
 	for _, c := range suite.Cases {
 		byID[c.ID] = c
 	}
 	run := &ambient.SuiteRun{At: now(), Source: suite.Source, Results: []ambient.CaseResult{}}
+	toRun := []string{}
 	for _, id := range ids {
-		c, ok := byID[id]
-		if !ok {
-			continue
+		if _, ok := byID[id]; ok {
+			toRun = append(toRun, id)
 		}
+	}
+	emit(runEventStart{Type: "start", Total: len(toRun), Cases: toRun})
+	for _, id := range toRun {
+		c := byID[id]
 		if ctx.Err() != nil {
-			run.Results = append(run.Results, ambient.CaseResult{ID: id, Status: ambient.StatusSkipped, Message: "The run stopped before this case was sent.", DecidedBy: "unknown", DecidedByKind: "unknown", At: now()})
+			run.Results = append(run.Results, ambient.CaseResult{ID: id, Status: ambient.StatusSkipped, Message: msgNotSent, At: now()})
 			continue
 		}
+		emit(runEventCase{Type: "case-start", ID: id})
 		sentAt := now()
 		samples := 0
+		req := suiteSendRequest{Case: c, Source: suite.Source}
+		var tally *sampleTally
 		if len(c.Expect.Weights) > 0 {
 			samples = c.Expect.Samples
 			if samples == 0 {
 				samples = ambient.DefaultSamples
 			}
+			if opt.Emit != nil {
+				tally = newSampleTally(id, samples, opt.SampleEvery, emit)
+				req.OnSample = tally.add
+			}
 		}
-		obs, err := runner.Send(ctx, suiteSendRequest{Case: c, Source: suite.Source, Samples: samples})
+		req.Samples = samples
+		obs, err := runner.Send(ctx, req)
+		if tally != nil {
+			tally.flush()
+		}
 		var skip skipCase
+		var res ambient.CaseResult
 		switch {
+		case ctx.Err() != nil && (len(obs.Samples) < samples || (samples == 0 && obs.Status == 0)):
+			// Cut short by the stop: nothing to judge.
+			res = ambient.CaseResult{ID: id, Status: ambient.StatusSkipped, Message: msgInterrupted, Connection: obs.Connection, At: now()}
 		case errors.As(err, &skip):
-			run.Results = append(run.Results, ambient.CaseResult{ID: id, Status: ambient.StatusSkipped, Message: string(skip), DecidedBy: "unknown", DecidedByKind: "unknown", Connection: obs.Connection, At: now()})
-			continue
-		case err != nil:
-			obs.Error = err.Error()
+			res = ambient.CaseResult{ID: id, Status: ambient.StatusSkipped, Message: string(skip), Connection: obs.Connection, At: now()}
+		default:
+			if err != nil {
+				obs.Error = err.Error()
+			}
+			if obs.Rule == 0 && len(opt.Route) > 0 && (c.Expect.Rule > 0 || c.Expect.NotRoute) && !c.Request.Direct && (c.Request.Host == "" || c.Request.Host == suite.Service.Name) {
+				obs.Rule = ambient.MatchRouteRule(opt.Route, c.Request)
+			}
+			if decider != nil && obs.Error == "" && len(c.Expect.Weights) == 0 {
+				safeDecide(ctx, decider, suite, c, &obs, sentAt)
+			}
+			res = ambient.Evaluate(c, obs, now())
 		}
-		if decider != nil && obs.Error == "" && len(c.Expect.Weights) == 0 {
-			safeDecide(ctx, decider, suite, c, &obs, sentAt)
+		run.Results = append(run.Results, res)
+		if !stoppedResult(res) {
+			emit(runEventCaseDone{Type: "case-done", ID: id, Result: res})
 		}
-		run.Results = append(run.Results, ambient.Evaluate(c, obs, now()))
 	}
 	run.Summary = ambient.Summarize(run.Results, run.At)
 	return run
@@ -425,7 +576,7 @@ func (r *meshSuiteRunner) Send(ctx context.Context, req suiteSendRequest) (ambie
 	}
 	obs.Connection = fmt.Sprintf("%s from %s via %s", where, from, via)
 
-	profile := httpProfile{Method: c.Request.Method, Path: c.Request.Path, Headers: c.Request.Headers, Timeout: 10}
+	profile := httpProfile{Method: c.Request.Method, Path: c.Request.Path, Headers: c.Request.Headers, Body: c.Request.Body, Timeout: 10}
 	if err := validateHTTPProfile(&profile); err != nil {
 		return obs, skipCase("The request is not valid: " + err.Error())
 	}
@@ -442,26 +593,16 @@ func (r *meshSuiteRunner) Send(ctx context.Context, req suiteSendRequest) (ambie
 			Namespace string `json:"namespace"`
 		}{cl.Pod.Namespace}
 	}
-	results := make([]httpProbeResult, n)
+	var results []httpProbeResult
 	if n == 1 {
-		results[0] = runMeshCurl(ctx, r.cfg, r.client, q, address)
+		results = []httpProbeResult{runMeshCurl(ctx, r.cfg, r.client, q, address)}
 	} else {
-		var wg sync.WaitGroup
-		sem := make(chan struct{}, 8)
-		for i := 0; i < n; i++ {
-			if ctx.Err() != nil {
-				results = results[:i]
-				break
-			}
-			wg.Add(1)
-			sem <- struct{}{}
-			go func(i int) {
-				defer wg.Done()
-				defer func() { <-sem }()
-				results[i] = runMeshCurl(ctx, r.cfg, r.client, q, address)
-			}(i)
-		}
-		wg.Wait()
+		results = sampleConcurrently(ctx, n, 8, func() httpProbeResult {
+			return runMeshCurl(ctx, r.cfg, r.client, q, address)
+		}, func(res httpProbeResult) ambient.Sample {
+			b, _ := r.backendOf(res)
+			return ambient.Sample{Status: res.Status, Backend: b, DurationMs: res.DurationMS}
+		}, req.OnSample)
 	}
 	if n > 1 {
 		for _, res := range results {
@@ -485,12 +626,54 @@ func (r *meshSuiteRunner) Send(ctx context.Context, req suiteSendRequest) (ambie
 		return obs, nil
 	}
 	res := results[0]
-	obs.Status, obs.Error = res.Status, res.Error
+	obs.Status, obs.Error, obs.DurationMs = res.Status, res.Error, res.DurationMS
 	obs.Backend, obs.Pod = r.backendOf(res)
 	if res.Status != 0 {
 		obs.Error = ""
 	}
 	return obs, nil
+}
+
+// sampleConcurrently sends n requests, at most width at a time, and returns
+// the replies in the order they finished. Each reply is reported through
+// onSample as it arrives. Once ctx is done no new request starts, and a
+// request cut short by the stop is dropped rather than counted as a failure.
+func sampleConcurrently(ctx context.Context, n, width int, send func() httpProbeResult, sample func(httpProbeResult) ambient.Sample, onSample func(ambient.Sample)) []httpProbeResult {
+	var (
+		mu      sync.Mutex
+		wg      sync.WaitGroup
+		results = make([]httpProbeResult, 0, n)
+	)
+	sem := make(chan struct{}, width)
+launch:
+	for i := 0; i < n; i++ {
+		select {
+		case <-ctx.Done():
+			break launch
+		case sem <- struct{}{}:
+		}
+		if ctx.Err() != nil {
+			<-sem
+			break
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			res := send()
+			if res.Status == 0 && ctx.Err() != nil {
+				return
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			results = append(results, res)
+			if onSample != nil {
+				onSample(sample(res))
+			}
+		}()
+	}
+	wg.Wait()
+	return results
 }
 
 func firstErr(rs []httpProbeResult) string {
@@ -577,14 +760,115 @@ type meshDecider struct {
 	spec  suiteRunSpec
 	wpNS  string
 	wpApp string
+	// svc is the captured Service; policies are every AuthorizationPolicy
+	// that applies to it, and wpPrincipal the identity of its waypoint.
+	svc         *store.Object
+	policies    []ambient.AppliedPolicy
+	wpPrincipal string
+	port        int
 }
+
+// decideLogWait is how long Decide waits for the waypoint's access log line
+// to arrive. Envoy flushes its access log about once a second and the live
+// collector stores lines about once a second, so the line for a request is
+// usually not there yet when the reply comes back.
+var decideLogWait = 4 * time.Second
 
 func newMeshDecider(s *Server, spec suiteRunSpec) *meshDecider {
 	d := &meshDecider{s: s, spec: spec}
+	if s.WS == nil {
+		return d
+	}
 	if svc := s.WS.Get(spec.Cluster, "", "services", spec.Service.Namespace, spec.Service.Name); svc != nil {
+		d.svc = svc
 		d.wpNS, d.wpApp, _ = ambient.Waypoint(s.WS, svc)
+		d.policies = ambient.ServiceAuthzPolicies(s.WS, svc)
+		d.wpPrincipal = ambient.WaypointPrincipal(s.WS, svc)
+		if ps := ambient.L(ambient.Path(svc.Obj, "spec", "ports")); len(ps) > 0 {
+			d.port = ambient.N(ambient.M(ps[0])["port"])
+		}
 	}
 	return d
+}
+
+// waypointLines reads the waypoint's log records in [from, to].
+func (s *Server) waypointLines(cluster, wpNS string, from, to time.Time, limit int) []suiteLogLine {
+	if s.WS == nil {
+		return nil
+	}
+	res, err := s.WS.SearchLogs(store.LogFilter{Cluster: cluster, Namespace: wpNS, From: from, To: to, Limit: limit})
+	if err != nil || res == nil {
+		return nil
+	}
+	lines := make([]suiteLogLine, 0, len(res.Records))
+	for _, rec := range res.Records {
+		if rec.Source == nil {
+			continue
+		}
+		lines = append(lines, suiteLogLine{ID: rec.ID, At: rec.TS, Namespace: rec.Namespace, Pod: rec.Pod, Raw: rec.Raw})
+	}
+	return lines
+}
+
+// waypointLogAvailable reports whether the workspace holds access log lines
+// from the waypoint in the ten minutes before at: when it does not, access
+// logging is off or the waypoint's logs are not collected.
+func (s *Server) waypointLogAvailable(cluster, wpNS, wpApp string, at time.Time) bool {
+	if wpApp == "" {
+		return false
+	}
+	for _, l := range s.waypointLines(cluster, wpNS, at.Add(-10*time.Minute), at.Add(time.Minute), 500) {
+		if !strings.HasPrefix(l.Pod, wpApp+"-") {
+			continue
+		}
+		if _, ok := flows.EnvoyFields(l.Raw); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// findWaypointLine looks for the request's access log line, waiting up to
+// decideLogWait for it when the waypoint's log is being collected at all.
+func (d *meshDecider) findWaypointLine(ctx context.Context, c ambient.Case, status int, sentAt time.Time) (ambient.RBACDetail, *suiteLogLine, bool, bool) {
+	deadline := time.Now().Add(decideLogWait)
+	available := false
+	for first := true; ; first = false {
+		lines := d.s.waypointLines(d.spec.Cluster, d.wpNS, sentAt.Add(-5*time.Second), sentAt.Add(5*time.Second), 500)
+		if det, line, ok := matchWaypointLine(lines, c, status, sentAt, d.wpApp, 5*time.Second); ok {
+			return det, line, true, true
+		}
+		if first {
+			available = d.s.waypointLogAvailable(d.spec.Cluster, d.wpNS, d.wpApp, sentAt)
+		}
+		if !available || time.Now().After(deadline) {
+			return ambient.RBACDetail{}, nil, false, available
+		}
+		select {
+		case <-ctx.Done():
+			return ambient.RBACDetail{}, nil, false, available
+		case <-time.After(400 * time.Millisecond):
+		}
+	}
+}
+
+// predictionAgrees reports whether a prediction explains the status: the
+// same status, or "allowed" for a reply that got past authorization (an
+// application 404 is still a request the policies let through).
+func predictionAgrees(p ambient.PolicyPrediction, status int) bool {
+	if !p.Known {
+		return false
+	}
+	if p.Status == status {
+		return true
+	}
+	return p.Status == 200 && status >= 100 && status != 403 && status < 500
+}
+
+// predict evaluates every policy on the Service for the case as sent.
+func (d *meshDecider) predict(c ambient.Case, client string) ambient.PolicyPrediction {
+	caller := ambient.CallerFor(d.s.WS, d.spec.Cluster, client, c.From)
+	return ambient.PredictRequest(d.policies, c.Request, d.port, caller, d.wpApp != "", d.wpPrincipal)
 }
 
 func (d *meshDecider) Decide(ctx context.Context, suite *ambient.Suite, c ambient.Case, obs *ambient.Observation, sentAt time.Time) {
@@ -599,33 +883,41 @@ func (d *meshDecider) Decide(ctx context.Context, suite *ambient.Suite, c ambien
 		return
 	}
 	// 1. The waypoint's own access log, within five seconds of the request.
+	logAvailable := false
 	if d.wpApp != "" && d.s.WS != nil {
-		if res, err := d.s.WS.SearchLogs(store.LogFilter{Cluster: d.spec.Cluster, Namespace: d.wpNS, From: sentAt.Add(-5 * time.Second), To: sentAt.Add(5 * time.Second), Limit: 500}); err == nil && res != nil {
-			lines := make([]suiteLogLine, 0, len(res.Records))
-			for _, rec := range res.Records {
-				if rec.Source == nil {
-					continue
-				}
-				lines = append(lines, suiteLogLine{ID: rec.ID, At: rec.TS, Namespace: rec.Namespace, Pod: rec.Pod, Raw: rec.Raw})
+		det, line, ok, avail := d.findWaypointLine(ctx, c, obs.Status, sentAt)
+		logAvailable = avail
+		if ok {
+			obs.Log = &ambient.LogRef{Cluster: d.spec.Cluster, Namespace: line.Namespace, Pod: line.Pod, At: line.At, ID: line.ID, Line: line.Raw}
+			if obs.Backend == "" {
+				obs.Backend = det.Backend
 			}
-			if det, line, ok := matchWaypointLine(lines, c, obs.Status, sentAt, d.wpApp, 5*time.Second); ok {
-				obs.Log = &ambient.LogRef{Cluster: d.spec.Cluster, Namespace: line.Namespace, Pod: line.Pod, At: line.At, ID: line.ID, Line: line.Raw}
-				if obs.Backend == "" {
-					obs.Backend = det.Backend
-				}
-				switch {
-				case det.Policy != "":
-					ref := ambient.Ref{Cluster: d.spec.Cluster, Group: ambient.SecurityGroup, Resource: "authorizationpolicies", Kind: ambient.KindAuthorizationPolicy, Namespace: det.Namespace, Name: det.Policy}
-					obs.DecidedBy, obs.DecidedByKind, obs.DecidedByHow, obs.DecidedByRef = det.Policy, "policy", "waypoint-log", &ref
-					return
-				case det.NoMatch:
-					obs.DecidedBy, obs.DecidedByKind, obs.DecidedByHow = "no ALLOW matched", "none", "waypoint-log"
-					return
-				}
+			switch {
+			case det.Policy != "":
+				ref := ambient.Ref{Cluster: d.spec.Cluster, Group: ambient.SecurityGroup, Resource: "authorizationpolicies", Kind: ambient.KindAuthorizationPolicy, Namespace: det.Namespace, Name: det.Policy}
+				obs.DecidedBy, obs.DecidedByKind, obs.DecidedByHow, obs.DecidedByRef = det.Policy, "policy", "waypoint-log", &ref
+				return
+			case det.NoMatch:
+				obs.DecidedBy, obs.DecidedByKind, obs.DecidedByHow = "no ALLOW matched", "none", "waypoint-log"
+				return
 			}
 		}
 	}
-	// 2. reach.Explain, when the sender is a captured workload.
+	// 2. Every AuthorizationPolicy on the Service, its waypoint, its
+	// namespace and the root namespace, evaluated the way Istio does.
+	var pred ambient.PolicyPrediction
+	if d.svc != nil {
+		pred = d.predict(c, obs.Client)
+		if predictionAgrees(pred, obs.Status) {
+			obs.DecidedBy, obs.DecidedByHow = pred.DecidedBy, "predicted"
+			obs.DecidedByKind = "none"
+			if pred.By != nil {
+				obs.DecidedByKind, obs.DecidedByRef = "policy", pred.By
+			}
+			return
+		}
+	}
+	// 3. reach.Explain, when the sender is a captured workload.
 	if obs.Client != "" && d.s.WS != nil {
 		if x, err := reach.Explain(d.s.WS, d.spec.Cluster, obs.Client, d.spec.Service.Namespace+"/"+d.spec.Service.Name); err == nil {
 			if name, ref, kind, ok := decisionFromExplain(x, obs.Status); ok {
@@ -634,7 +926,7 @@ func (d *meshDecider) Decide(ctx context.Context, suite *ambient.Suite, c ambien
 			}
 		}
 	}
-	// 3. Flightbay's own evaluator, only when it agrees with what happened.
+	// 4. The suite's own policy input (a draft that is not captured yet).
 	if d.spec.Authz != nil {
 		if by, status, ok := ambient.PredictDecision(*d.spec.Authz, c); ok && status == obs.Status {
 			if by != nil {
@@ -644,7 +936,29 @@ func (d *meshDecider) Decide(ctx context.Context, suite *ambient.Suite, c ambien
 			} else {
 				obs.DecidedBy, obs.DecidedByKind, obs.DecidedByHow = "no policy refused it", "none", "predicted"
 			}
+			return
 		}
 	}
-	// Otherwise left empty: Evaluate records "unknown".
+	// Nothing could say: leave DecidedBy empty and say why.
+	obs.DecisionNote = decisionNote(d.wpApp != "", logAvailable, pred, obs.Status)
+}
+
+func decisionNote(hasWaypoint, logAvailable bool, pred ambient.PolicyPrediction, status int) string {
+	var s string
+	switch {
+	case !hasWaypoint:
+		s = "The Service has no waypoint, so there is no waypoint log line"
+	case !logAvailable:
+		s = "Waypoint access logging is off or its logs are not collected, so there is no log line"
+	default:
+		s = "No waypoint log line matched"
+	}
+	s += fmt.Sprintf(" and no policy predicts %d", status)
+	switch {
+	case !pred.Known && pred.Verdict != "":
+		s += ". " + pred.Verdict
+	case pred.Known:
+		s += fmt.Sprintf(" (the policies predict %d)", pred.Status)
+	}
+	return s
 }

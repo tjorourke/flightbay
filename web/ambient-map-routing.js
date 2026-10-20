@@ -74,11 +74,11 @@ function amDrawMapLinks(world,zoom,links,selected){
   for(const link of links){
     const source=nodes.get(amMapKey(link.source)),target=nodes.get(amMapKey(link.target));if(!source||!target){hidden++;continue;}
     const route=amRoute(rect(source),rect(target),obstacles)||amFallbackRoute(rect(source),rect(target));if(!route){blocked++;continue;}
-    const path=document.createElementNS(ns,'path');path.setAttribute('d',amRoundedRoute(route));path.setAttribute('fill','none');path.setAttribute('stroke',link.kind==='peering'?'#138b9d':'#9463db');path.setAttribute('stroke-width',selected===link.id?'3':'2');path.setAttribute('stroke-linecap','round');path.setAttribute('stroke-linejoin','round');path.setAttribute('class','am-map-line');path.dataset.linkId=link.id;
-    if(link.kind==='peering')path.setAttribute('marker-end','url(#am-peer-arrow)');else path.setAttribute('stroke-dasharray','7 5');
+    const path=document.createElementNS(ns,'path');path.setAttribute('d',amRoundedRoute(route));path.setAttribute('fill','none');path.setAttribute('stroke',link.kind==='peering'?'#138b9d':link.kind==='waypoint'?'#7d8ea3':'#9463db');path.setAttribute('stroke-width',selected===link.id?'3':'2');path.setAttribute('stroke-linecap','round');path.setAttribute('stroke-linejoin','round');path.setAttribute('class','am-map-line');path.dataset.linkId=link.id;
+    if(link.kind==='peering')path.setAttribute('marker-end','url(#am-peer-arrow)');else if(link.kind!=='waypoint')path.setAttribute('stroke-dasharray','7 5');
     if(selected&&selected!==link.id)path.setAttribute('opacity','.2');
     const title=document.createElementNS(ns,'title');title.textContent=link.label+' · captured configuration';path.appendChild(title);svg.appendChild(path);drawn++;
-    const origin=document.createElementNS(ns,'circle');origin.setAttribute('cx',route[0].x);origin.setAttribute('cy',route[0].y);origin.setAttribute('r','2.5');origin.setAttribute('fill',link.kind==='peering'?'#138b9d':'#9463db');if(selected&&selected!==link.id)origin.setAttribute('opacity','.2');svg.appendChild(origin);
+    const origin=document.createElementNS(ns,'circle');origin.setAttribute('cx',route[0].x);origin.setAttribute('cy',route[0].y);origin.setAttribute('r','2.5');origin.setAttribute('fill',link.kind==='peering'?'#138b9d':link.kind==='waypoint'?'#7d8ea3':'#9463db');if(selected&&selected!==link.id)origin.setAttribute('opacity','.2');svg.appendChild(origin);
     if(selected===link.id){source.classList.add('am-link-endpoint');target.classList.add('am-link-endpoint');}
   }
   const status=document.querySelector('#am-map-line-status');if(status)status.textContent=`${drawn} connections drawn.${hidden?' '+hidden+' outside this namespace scope.':''}${blocked?' '+blocked+' blocked by this layout; move boxes/cards apart.':''}`;

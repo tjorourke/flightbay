@@ -139,6 +139,10 @@ func (w *Workspace) UpsertObject(cluster string, r bundle.APIResource, obj map[s
 	}
 	w.deleteObjectRows(cluster, r.Group, r.Resource, ns, name)
 	w.mirrorObjects(cluster, r, []map[string]any{obj})
+	// The revision snapshot and its hash are built before the lock, and the
+	// cluster's resourceVersion is read before it is rewritten below.
+	snap := revisionSnapshot(obj)
+	hash, gen, clusterRV := snapshotHash(snap), objGeneration(obj), objClusterRV(obj)
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.registerLocked(cluster, r)
@@ -146,6 +150,7 @@ func (w *Workspace) UpsertObject(cluster string, r bundle.APIResource, obj map[s
 	if kind == "" {
 		kind = r.Kind
 	}
+	w.recordLocked(RevisionRef{cluster, r.Group, r.Resource, kind, ns, name}, snap, hash, gen, clusterRV, time.Now().UTC())
 	w.rev++
 	o := &Object{Cluster: cluster, Group: r.Group, Version: r.Version, Resource: r.Resource, Kind: kind, Namespaced: r.Namespaced,
 		Namespace: ns, Name: name, RV: w.rev, Obj: obj}
@@ -175,10 +180,12 @@ func (w *Workspace) UpsertObject(cluster string, r bundle.APIResource, obj map[s
 func (w *Workspace) DeleteObject(cluster, group, resource, ns, name string) bool {
 	w.mu.Lock()
 	k := objKey(cluster, group, resource, ns, name)
-	if _, ok := w.objects[k]; !ok {
+	old, ok := w.objects[k]
+	if !ok {
 		w.mu.Unlock()
 		return false
 	}
+	w.recordDeleteLocked(RevisionRef{cluster, group, resource, old.Kind, ns, name}, time.Now().UTC())
 	delete(w.objects, k)
 	tk := typeKey{cluster, group, resource}
 	list := w.byType[tk]

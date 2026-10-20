@@ -84,7 +84,7 @@ func TestBuildAttention(t *testing.T) {
 		return AmbientIssue{Subject: Ref{Cluster: "c1", Kind: "Service", Namespace: ns, Name: name}, Step: Step{ID: id, State: state, Detail: "first\nsecond", SuggestedFix: &FixGuide{ID: id}}}
 	}
 	rows := BuildAttention([]AmbientIssue{mk("warning", "a", "z", "w"), mk("fail", "b", "y", "endpoints"), mk("fail", "a", "x", "waypoint")}, "")
-	if len(rows) != 3 || rows[0].State != "fail" || rows[0].Ref.Name != "x" || rows[2].State != "warn" || rows[0].Detail != "first" || !rows[0].HasFix || rows[1].CheckID != "endpoints" {
+	if len(rows) != 3 || rows[0].State != "fail" || rows[0].Ref.Name != "x" || rows[2].State != "warn" || rows[0].Detail != "first" || !rows[0].HasFix || rows[1].CheckID != "endpoints" || rows[0].More != 0 || len(rows[0].Clusters) != 1 {
 		t.Fatalf("%+v", rows)
 	}
 	if got := BuildAttention([]AmbientIssue{mk("fail", "a", "x", "i"), mk("fail", "b", "y", "i")}, "b"); len(got) != 1 {

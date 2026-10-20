@@ -87,8 +87,8 @@ func validateHTTPProfile(p *httpProfile) error {
 	if err != nil || u.IsAbs() || !strings.HasPrefix(p.Path, "/") || strings.HasPrefix(p.Path, "//") || len(p.Path) > 4096 {
 		return fmt.Errorf("use a relative request path beginning with /")
 	}
-	if len(p.Body) > 32768 || len(p.Headers) > 64 || len(p.Name) > 80 {
-		return fmt.Errorf("profile is too large (80-character name, 64 headers and 32 KiB body maximum)")
+	if len(p.Body) > ambient.MaxBodyBytes || len(p.Headers) > 64 || len(p.Name) > 80 {
+		return fmt.Errorf("profile is too large (80-character name, 64 headers and 64 KiB body maximum)")
 	}
 	if p.Timeout == 0 {
 		p.Timeout = 10

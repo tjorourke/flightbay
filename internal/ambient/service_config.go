@@ -72,13 +72,68 @@ func EditKeyFor(r Ref, rule int) string {
 	return fmt.Sprintf("%s:%s/%s#%d", r.Kind, r.Namespace, r.Name, rule)
 }
 
-// ManagedBy says what manages an object. It prefers metadata.managedFields
-// manager names when the store kept them (the importer redacts them, so this
-// normally falls through) and otherwise reads labels and annotations.
+// ManagedBy says what manages an object. A controller owner reference comes
+// first ("controller"), then metadata.managedFields manager names (the
+// redactor keeps only the names, and only for the ambient policy kinds), then
+// labels and annotations.
 func ManagedBy(o *store.Object) string {
+	code, _ := ManagedByInfo(o)
+	return code
+}
+
+// ManagedByInfo returns ManagedBy's code and the words to show for it:
+// "Flightbay", "Helm", "Argo CD", "Flux", "kubectl", "Unknown", or for a
+// controller owner the product and owner kind, such as "kagent (Agent)".
+func ManagedByInfo(o *store.Object) (code, label string) {
 	if o == nil {
-		return "unknown"
+		return "unknown", "Unknown"
 	}
+	if g, kind := controllerOwner(o); kind != "" {
+		return "controller", ownerProduct(g) + " (" + kind + ")"
+	}
+	code = managedByCode(o)
+	return code, managedByLabels[code]
+}
+
+var managedByLabels = map[string]string{
+	"flightbay": "Flightbay", "helm": "Helm", "argocd": "Argo CD", "flux": "Flux", "kubectl": "kubectl", "unknown": "Unknown",
+}
+
+// controllerOwner is the API group and kind of the owner reference marked
+// controller: true, if any.
+func controllerOwner(o *store.Object) (group, kind string) {
+	for _, v := range L(Path(o.Obj, "metadata", "ownerReferences")) {
+		m := M(v)
+		if c, _ := m["controller"].(bool); !c || S(m["kind"]) == "" {
+			continue
+		}
+		api := S(m["apiVersion"])
+		if i := strings.LastIndex(api, "/"); i >= 0 {
+			group = api[:i]
+		}
+		return group, S(m["kind"])
+	}
+	return "", ""
+}
+
+// ownerProduct names the product behind an owner's API group.
+func ownerProduct(group string) string {
+	switch {
+	case group == "kagent.dev" || strings.HasSuffix(group, ".kagent.dev"):
+		return "kagent"
+	case group == GatewayGroup:
+		return "Gateway API"
+	case strings.Contains(group, "istio"):
+		return "Istio"
+	case strings.Contains(group, "agentgateway"):
+		return "agentgateway"
+	case group == "" || group == "apps" || group == "batch":
+		return "Kubernetes"
+	}
+	return group
+}
+
+func managedByCode(o *store.Object) string {
 	for _, v := range L(Path(o.Obj, "metadata", "managedFields")) {
 		m := strings.ToLower(S(M(v)["manager"]))
 		switch {

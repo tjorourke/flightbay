@@ -351,3 +351,24 @@ func BenchmarkLogLine(b *testing.B) {
 		l.Line(line)
 	}
 }
+
+// Ambient policy kinds keep only the manager names from managedFields, so the
+// Policies & routes page can say what manages them. Other kinds keep nothing.
+func TestObjectKeepsManagerNamesForPolicyKinds(t *testing.T) {
+	r := mustNew(t)
+	mf := []any{
+		map[string]any{"manager": "kagent", "operation": "Apply", "apiVersion": "v1", "time": "2026-10-20T10:00:00Z", "fieldsType": "FieldsV1", "fieldsV1": map[string]any{"f:spec": map[string]any{}}},
+		map[string]any{"manager": "kagent", "operation": "Apply"},
+		map[string]any{"manager": "kubectl-edit", "operation": "Update"},
+	}
+	route := map[string]any{"apiVersion": "gateway.networking.k8s.io/v1", "kind": "HTTPRoute", "metadata": map[string]any{"name": "r", "managedFields": mf}}
+	out := r.Object("httproutes", route)
+	got, _ := json.Marshal(out["metadata"].(map[string]any)["managedFields"])
+	if string(got) != `[{"manager":"kagent","operation":"Apply"},{"manager":"kubectl-edit","operation":"Update"}]` {
+		t.Fatalf("managedFields %s", got)
+	}
+	cm := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "c", "managedFields": mf}}
+	if _, ok := r.Object("configmaps", cm)["metadata"].(map[string]any)["managedFields"]; ok {
+		t.Fatal("managedFields kept on a ConfigMap")
+	}
+}

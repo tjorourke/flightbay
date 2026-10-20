@@ -52,10 +52,17 @@ func k8sObj(kind, ns, name string, spec map[string]any, labels map[string]any) m
 
 func suiteWorkspace(t *testing.T) *store.Workspace {
 	t.Helper()
+	return suiteWorkspaceNS(t, map[string]any{"istio.io/dataplane-mode": "ambient"})
+}
+
+// suiteWorkspaceNS is suiteWorkspace with the bookinfo namespace's labels
+// given, e.g. to bind it to a waypoint.
+func suiteWorkspaceNS(t *testing.T, nsLabels map[string]any) *store.Workspace {
+	t.Helper()
 	ws := store.New()
 	t.Cleanup(func() { ws.Close() })
 	ws.SetHeader(&bundle.Header{Contexts: []string{"c1"}})
-	addObjs(ws, "", "namespaces", "Namespace", false, k8sObj("Namespace", "", "bookinfo", nil, map[string]any{"istio.io/dataplane-mode": "ambient"}))
+	addObjs(ws, "", "namespaces", "Namespace", false, k8sObj("Namespace", "", "bookinfo", nil, nsLabels))
 	svc := func(name string, sel map[string]any) map[string]any {
 		return k8sObj("Service", "bookinfo", name, map[string]any{"selector": sel, "ports": []any{map[string]any{"port": int64(9080), "targetPort": int64(9080), "protocol": "TCP"}}}, nil)
 	}
@@ -512,8 +519,8 @@ func TestSuitesRunPersistsAndMerges(t *testing.T) {
 	if byID["r1-absent-color"]["status"] != "error" || byID["r1-absent-color"]["message"] != "connection refused" {
 		t.Errorf("absent %v", byID["r1-absent-color"])
 	}
-	if byID["r1-value-color"]["decidedBy"] != "unknown" {
-		t.Errorf("a case nothing could attribute is unknown, not blank: %v", byID["r1-value-color"])
+	if byID["r1-value-color"]["decidedBy"] != "" {
+		t.Errorf("a case nothing could attribute has no decidedBy, never \"unknown\": %v", byID["r1-value-color"])
 	}
 	sum := out["summary"].(map[string]any)
 	if sum["failed"] != float64(1) || sum["errored"] != float64(1) || sum["passed"] != float64(4) || sum["total"] != float64(6) {
@@ -710,7 +717,7 @@ func TestRunSuiteLoop(t *testing.T) {
 	t.Run("a decider that panics does not lose the result", func(t *testing.T) {
 		runner := &fakeRunner{script: echo(nil)}
 		run := runSuite(context.Background(), miniSuite(), []string{"a"}, runner, &fakeDecider{panic: true}, now)
-		if len(run.Results) != 1 || run.Results[0].Status != ambient.StatusPass || run.Results[0].DecidedBy != "unknown" {
+		if len(run.Results) != 1 || run.Results[0].Status != ambient.StatusPass || run.Results[0].DecidedBy != "" {
 			t.Errorf("%+v", run.Results)
 		}
 	})

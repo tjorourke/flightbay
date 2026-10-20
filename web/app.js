@@ -108,7 +108,7 @@ async function render() {
   document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('active', a.dataset.view === navView));
   const views = {navigator: resourceNavigator, overview, scorecard: posture, reach, resources, logs, timeline, findings, compare, proxies, coverage, rbac: (typeof rbacPage === 'function' ? rbacPage : overview), ...(typeof reviewPage === 'function' ? {review: reviewPage} : {}), ...(typeof trafficPage === 'function' ? {traffic: trafficPage} : {}), ...(typeof ambientPage === 'function' ? {ambient: ambientPage} : {})};
   const fn = views[S.view] || overview;
-  $('#crumb').textContent = S.ws ? `Workspace / ${S.ws.case ? 'Case ' + S.ws.case : 'Snapshot'} / ${S.view}` : 'Workspace';
+  $('#crumb').textContent = S.ws ? `Workspace / ${S.ws.case ? 'Case ' + S.ws.case : (S.ws?.live?.live || S.state?.live?.live) ? 'Live ' + (S.ws.live?.context || S.state?.live?.context || '') : 'Snapshot'} / ${S.view}` : 'Workspace';
   try {
     const html = await fn(seq);
     if (seq !== S.renderSeq || html === undefined) return;

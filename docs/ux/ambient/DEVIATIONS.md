@@ -24,3 +24,17 @@ Every difference that is not data and is accepted must be listed here (PLAN.md �
 | 01 | Overview "⋯" menu (DNS names, Implementation details, View object, Bookinfo, Refresh) from PLAN 1.3 and 1.4 is not built; DNS is on Checks, YAML on the header and the Bookinfo demo is reached from the Overview empty state or `#ambient?tab=demo` | The mockups have no such menu |
 | 01 | The Configuration item rows show the action pill only; Live and Verified are on the Changes tab | The mockup item row has no state pill |
 | 03 | The "Edit other fields" link (PLAN 4.9) is not built | Not in the mockup |
+| 00, 02 | Namespace chips and Scope chips are replaced by one **Namespaces** picker at the right of the home tabs, shared by Overview, Policies & routes, Map and Request path | Real data volume (27 namespaces): Tom could not multi-select or leave a namespace with the chips (REVIEW-2026-10-20 R1) |
+| 00 | Needs attention has one row per Service with "+N more", shows five rows then "Show all", and uses an 8 px status dot instead of the ✕ pill | Real data volume: 18 rows of red ✕ pills, with one fault reported twice (R2) |
+| 00 | The Services table is paged at 25 rows and, when the scope holds more than 25 Services, hides those with nothing configured behind a checkbox | Real data volume (139 Services) (R2.6, R2.7) |
+| 02 | The filter bar is search, one Type dropdown, "Problems only" and "A column per cluster". The Type and Show pills, "Only drift", "Managed by Flightbay" and the By object / By Service toggle are gone | Too many controls on one row (R3.2) |
+| 02 | No group header rows; one dense row per object sorted by what it applies to. One Clusters cell with a dot per cluster replaces a column per cluster (shown again by "A column per cluster"). Enforced by moves to the object header | Real data volume: 20 one-object group headers (R3.3) |
+| 02 | Waypoint Gateways are not listed; the subtitle links to the Map | Tom: waypoints belong on the Map (R3.1) |
+| 02 | Per-cluster words are Live, Applied, Failed, Not enforced, Differs and Not here (mockup shows Applied, Accepted, Programmed, Missing) | PLAN §0.6 vocabulary, applied consistently (R3.7) |
+| header | The Policies & routes tab has no count | A number that changed meaning between pages (R9.4) |
+| Map | Scoped, compact cards, collapsed namespaces, waypoint nodes and an in-map search box replace "Search objects ⌘K" | Real data volume (R4) |
+| 04, 05 | The object page tabs are Summary · Tests · History; "Explain a request" is folded into Tests as a collapsible **Try a request** panel | It was a weaker copy of Add case and did not explain anything (R7) |
+| 04, 05 | Case rows carry Edit, Duplicate and Delete (on hover); "+ Add case" opens a side panel rather than a modal | Full case editor (R6.1) |
+| 04, 05 | Run becomes Stop while a run streams; the observed bars grow during the run and a progress bar shows requests sent | Live results (R6.3) |
+| 04 | "Other policies that also decide" always shows, with a "None" sentence when there are none | Restored block (R6.5) |
+| 05 | "Run on" chips also appear on the HTTPRoute page, under Other checks | Lets a reader switch to the cluster where the route exists |

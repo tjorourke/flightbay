@@ -214,7 +214,10 @@ func TestEvaluate(t *testing.T) {
 		{"transport error with a status is still compared", status(503), Observation{Status: 503, Error: "x"}, StatusPass, "503", ""},
 		{"rule pass", rule, Observation{Status: 200, Backend: "reviews-v1"}, StatusPass, "rule 1 → reviews-v1", ""},
 		{"rule fail", rule, Observation{Status: 200, Backend: "reviews-v3"}, StatusFail, "200 · reviews-v3", "Expected rule 1 (reviews-v1, reviews-v2), but reviews-v3 answered."},
-		{"rule unidentified backend", rule, Observation{Status: 404}, StatusError, "404", "Could not tell which backend answered."},
+		{"rule unidentified backend", rule, Observation{Status: 404}, StatusUnknown, GotUnknownBackend, "could not tell which backend answered"},
+		{"rule unidentified backend, matching rule known", rule, Observation{Status: 200, Rule: 1}, StatusUnknown, GotUnknownBackend, "matches rule 1, as expected"},
+		{"rule unidentified backend, other rule", rule, Observation{Status: 200, Rule: 2}, StatusUnknown, GotUnknownBackend, "matches rule 2, not rule 1"},
+		{"negative unidentified backend", neg, Observation{Status: 200}, StatusUnknown, GotUnknownBackend, "could not tell which backend answered"},
 		{"single backend rule", one, Observation{Status: 200, Backend: "reviews-v3"}, StatusPass, "rule 2 → reviews-v3", ""},
 		{"negative pass", neg, Observation{Status: 200, Backend: "reviews-v1"}, StatusPass, "200 · reviews-v1", ""},
 		{"negative fail", neg, Observation{Status: 200, Backend: "reviews-v2"}, StatusFail, "200 · reviews-v2", "Expected reviews-v1 to answer directly"},
@@ -234,8 +237,8 @@ func TestEvaluate(t *testing.T) {
 			if r.ID != tc.c.ID || !r.At.Equal(at) {
 				t.Errorf("id/at: %+v", r)
 			}
-			if tc.o.DecidedBy == "" && (r.DecidedBy != "unknown" || r.DecidedByKind != "unknown") {
-				t.Errorf("decided by must default to unknown: %+v", r)
+			if tc.o.DecidedBy == "" && (r.DecidedBy != "" || r.DecidedByKind != "") {
+				t.Errorf("nothing decided: decided by stays empty, never \"unknown\": %+v", r)
 			}
 			if tc.o.DecidedBy != "" && r.DecidedBy != tc.o.DecidedBy {
 				t.Errorf("decided by %q", r.DecidedBy)

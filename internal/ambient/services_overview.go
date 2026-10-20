@@ -23,6 +23,7 @@ type PolicyFact struct {
 	Enforced string // waypoint or ztunnel
 	MTLS     string // PeerAuthentication mode
 	Warning  bool   // accepted but not enforced
+	Scope    string // service, waypoint, workload, namespace, mesh
 }
 
 // RouteFact describes one HTTPRoute as it relates to a Service.
@@ -46,6 +47,20 @@ type ServiceFacts struct {
 	CircuitBreaker bool
 	Retries        bool
 	RateLimit      bool
+	// Attached counts objects attached to this Service specifically: routes,
+	// DestinationRules, resilience EnvoyFilters, agentgateway policies and
+	// security policies other than mesh-wide ones.
+	Attached int
+}
+
+// Configured reports whether a Service has anything set up for it: a badge
+// or an attached object. Mesh-wide policies alone do not count.
+func (f ServiceFacts) Configured() bool {
+	if f.Attached > 0 {
+		return true
+	}
+	_, routing, resilience := DeriveBadges(f)
+	return len(routing) > 0 || len(resilience) > 0
 }
 
 // DeriveBadges is pure: facts in, badges out. Empty slices mean "nothing
@@ -194,22 +209,64 @@ type ServiceRow struct {
 	PerCluster map[string]ClusterCell `json:"perCluster"`
 	Drift      bool                   `json:"drift"`
 	Checks     CheckCounts            `json:"checks"`
+	// Configured is true when the Service has any access, routing or
+	// resilience badge, or a policy or route attached to it. Mesh-wide
+	// policies from the root namespace do not count: they reach every
+	// Service and would make the flag meaningless.
+	Configured bool `json:"configured"`
+	// InAmbient is true when the namespace or the Service is enrolled in
+	// ambient on any cluster where the Service exists.
+	InAmbient bool `json:"inAmbient"`
 }
-type AttentionRow struct {
-	State   string `json:"state"` // fail | warn
-	Ref     Ref    `json:"ref"`
-	Cluster string `json:"cluster"`
+
+// AttentionCheck is one failed or warning check behind an attention entry.
+type AttentionCheck struct {
+	ID      string `json:"id"`
+	Title   string `json:"title"`
 	Detail  string `json:"detail"`
-	CheckID string `json:"checkId"`
+	State   string `json:"state"` // fail | warn
+	Cluster string `json:"cluster"`
 	HasFix  bool   `json:"hasFix"`
+}
+
+// AttentionRow is one Needs attention entry: one object (cluster-independent
+// kind/namespace/name), every cluster it has a problem on, and its checks.
+type AttentionRow struct {
+	Ref      Ref      `json:"ref"` // Cluster is empty: the entry spans clusters
+	Clusters []string `json:"clusters"`
+	Cluster  string   `json:"cluster"` // first of Clusters, kept for older clients
+	State    string   `json:"state"`   // fail | warn: fail when any check fails
+	Detail   string   `json:"detail"`  // sentence of the most important check
+	CheckID  string   `json:"checkId"` // that check's step ID
+	HasFix   bool     `json:"hasFix"`
+	// More is the number of other distinct checks (by step ID) across
+	// clusters. The same check failing on two clusters is one check.
+	More   int              `json:"more"`
+	Checks []AttentionCheck `json:"checks"`
 }
 type NamespaceRow struct {
 	Name          string `json:"name"`
 	InAmbient     bool   `json:"inAmbient"`
 	Waypoint      string `json:"waypoint"`
 	WaypointScope string `json:"waypointScope"` // "namespace" (all Services), "services" (some), or ""
-	Services      int    `json:"services"`
+	Services      int    `json:"services"`      // rows in the Services table
+	Configured    int    `json:"configured"`    // of those, rows with Configured
+	System        bool   `json:"system"`        // platform namespace, hidden by default
 }
+
+// systemNamespaces are hidden by default in the scope picker. Any istio-*
+// namespace is treated the same way.
+var systemNamespaces = map[string]bool{
+	"kube-system": true, "kube-public": true, "kube-node-lease": true,
+	"local-path-storage": true, "istio-system": true, "istio-eastwest": true,
+}
+
+// IsSystemNamespace reports a platform namespace: the explicit list above or
+// the istio-* prefix.
+func IsSystemNamespace(ns string) bool {
+	return systemNamespaces[ns] || strings.HasPrefix(ns, "istio-")
+}
+
 type OverviewSummary struct {
 	Clusters struct {
 		Count           int      `json:"count"`
@@ -226,8 +283,13 @@ type OverviewSummary struct {
 		Objects int `json:"objects"`
 		Differ  int `json:"differ"`
 	} `json:"policiesRoutes"`
+	// NeedsAttention counts the entries in ServicesOverview.NeedsAttention,
+	// so the card and the panel use the same unit. Services = Fail + Warn.
 	NeedsAttention struct {
-		Services int `json:"services"`
+		Services int `json:"services"` // Service entries
+		Fail     int `json:"fail"`     // Service entries with a failed check
+		Warn     int `json:"warn"`     // Service entries with warnings only
+		Other    int `json:"other"`    // HTTPRoute / Gateway entries
 	} `json:"needsAttention"`
 }
 type ServicesOverview struct {
@@ -257,7 +319,10 @@ func collectFacts(ws *store.Workspace, svc *store.Object) (ServiceFacts, string)
 	var f ServiceFacts
 	var sigs []string
 	for _, p := range servicePolicies(ws, svc) {
-		pf := PolicyFact{Kind: p.Ref.Kind, Action: p.Action, Enforced: p.Enforced, Warning: p.Warning != ""}
+		pf := PolicyFact{Kind: p.Ref.Kind, Action: p.Action, Enforced: p.Enforced, Warning: p.Warning != "", Scope: p.Scope}
+		if p.Scope != "mesh" {
+			f.Attached++
+		}
 		if o := ws.Get(p.Ref.Cluster, p.Ref.Group, p.Ref.Resource, p.Ref.Namespace, p.Ref.Name); o != nil {
 			pf.MTLS = S(Path(o.Obj, "spec", "mtls", "mode"))
 			sigs = append(sigs, specSignature(o))
@@ -275,12 +340,14 @@ func collectFacts(ws *store.Workspace, svc *store.Object) (ServiceFacts, string)
 		}
 		sigs = append(sigs, specSignature(o))
 		f.Routes = append(f.Routes, rf)
+		f.Attached++
 	}
 	for _, o := range ws.List(svc.Cluster, "networking.istio.io", "destinationrules", svc.Namespace, nil) {
 		if !serviceHost(S(Path(o.Obj, "spec", "host")), svc) {
 			continue
 		}
 		sigs = append(sigs, specSignature(o))
+		f.Attached++
 		tps := []any{Path(o.Obj, "spec", "trafficPolicy")}
 		for _, v := range L(Path(o.Obj, "spec", "trafficPolicy", "portLevelSettings")) {
 			tps = append(tps, v)
@@ -296,6 +363,7 @@ func collectFacts(ws *store.Workspace, svc *store.Object) (ServiceFacts, string)
 			continue
 		}
 		sigs = append(sigs, specSignature(o))
+		f.Attached++
 		b, _ := json.Marshal(o.Obj["spec"])
 		text := string(b)
 		f.RateLimit = f.RateLimit || strings.Contains(text, "ratelimit")
@@ -306,6 +374,7 @@ func collectFacts(ws *store.Workspace, svc *store.Object) (ServiceFacts, string)
 			for _, t := range L(Path(o.Obj, "spec", "targetRefs")) {
 				if S(M(t)["kind"]) == "Service" && S(M(t)["name"]) == svc.Name {
 					sigs = append(sigs, specSignature(o))
+					f.Attached++
 					f.RateLimit = f.RateLimit || len(M(Path(o.Obj, "spec", "traffic", "rateLimit"))) > 0
 				}
 			}
@@ -384,30 +453,127 @@ func firstLine(s string) string {
 	return s
 }
 
-// BuildAttention reshapes the issues list: fail before warn, then by subject.
-func BuildAttention(issues []AmbientIssue, namespace string) []AttentionRow {
-	out := []AttentionRow{}
-	for _, is := range issues {
-		if namespace != "" && is.Subject.Namespace != namespace {
-			continue
+// namespaceFilter parses the optional namespace query: empty means every
+// namespace, otherwise a comma-separated list.
+func namespaceFilter(q string) map[string]bool {
+	set := map[string]bool{}
+	for _, n := range strings.Split(q, ",") {
+		if n = strings.TrimSpace(n); n != "" {
+			set[n] = true
 		}
-		state := "fail"
-		if is.Step.State == "warning" || is.Step.State == "warn" {
-			state = "warn"
+	}
+	if len(set) == 0 {
+		return nil
+	}
+	return set
+}
+
+// checkRank orders the checks of one entry so the headline is the root
+// cause: data plane first (no Pods, no endpoints), then the waypoint, routes,
+// backends and policy. Lower is more important.
+func checkRank(id string) int {
+	switch {
+	case id == "workloads":
+		return 0
+	case id == "endpoints":
+		return 1
+	case id == "takeover-control-plane":
+		return 2
+	case strings.HasPrefix(id, "waypoint-status-"), strings.HasPrefix(id, "gateway-status-"), id == "waypoint", id == "waypoint-listener":
+		return 3
+	case id == "traffic-type", id == "waypoint-namespace", strings.HasPrefix(id, "waypoint-bound-"):
+		return 4
+	case strings.HasPrefix(id, "route-"):
+		return 5
+	case strings.HasPrefix(id, "backend-"):
+		return 6
+	case strings.HasPrefix(id, "policy-"), strings.HasPrefix(id, "agent-policy-"), strings.HasPrefix(id, "mtls-"):
+		return 7
+	case id == "require-waypoint", strings.HasPrefix(id, "jwt-"):
+		return 8
+	}
+	return 9
+}
+
+func attentionState(stepState string) string {
+	if stepState == "warning" || stepState == "warn" {
+		return "warn"
+	}
+	return "fail"
+}
+
+// BuildAttention groups the issues list into one entry per object
+// (kind/namespace/name, across clusters). Order: fail before warn, then more
+// checks first, then namespace/name. namespace is an optional comma list.
+func BuildAttention(issues []AmbientIssue, namespace string) []AttentionRow {
+	filter := namespaceFilter(namespace)
+	out := []AttentionRow{}
+	index := map[string]int{}
+	for _, is := range issues {
+		if filter != nil && !filter[is.Subject.Namespace] {
+			continue
 		}
 		detail := firstLine(is.Step.Detail)
 		if detail == "" {
 			detail = is.Step.Title
 		}
 		hasFix := is.Step.SuggestedFix != nil || is.Step.FixYAML != "" || len(is.Step.Actions) > 0
-		out = append(out, AttentionRow{state, is.Subject, is.Subject.Cluster, detail, is.Step.ID, hasFix})
+		check := AttentionCheck{ID: is.Step.ID, Title: is.Step.Title, Detail: detail, State: attentionState(is.Step.State), Cluster: is.Subject.Cluster, HasFix: hasFix}
+		ref := is.Subject
+		ref.Cluster = ""
+		key := ref.Kind + "/" + ref.Namespace + "/" + ref.Name
+		i, ok := index[key]
+		if !ok {
+			i = len(out)
+			index[key] = i
+			out = append(out, AttentionRow{Ref: ref, Clusters: []string{}, Checks: []AttentionCheck{}})
+		}
+		out[i].Checks = append(out[i].Checks, check)
+	}
+	for i := range out {
+		row := &out[i]
+		sort.SliceStable(row.Checks, func(a, b int) bool {
+			x, y := row.Checks[a], row.Checks[b]
+			if x.State != y.State {
+				return x.State == "fail"
+			}
+			if rx, ry := checkRank(x.ID), checkRank(y.ID); rx != ry {
+				return rx < ry
+			}
+			if x.ID != y.ID {
+				return x.ID < y.ID
+			}
+			return x.Cluster < y.Cluster
+		})
+		clusters, ids := map[string]bool{}, map[string]bool{}
+		for _, c := range row.Checks {
+			if !clusters[c.Cluster] {
+				clusters[c.Cluster] = true
+				row.Clusters = append(row.Clusters, c.Cluster)
+			}
+			ids[c.ID] = true
+		}
+		sort.Strings(row.Clusters)
+		top := row.Checks[0]
+		row.State, row.Detail, row.CheckID, row.HasFix = top.State, top.Detail, top.ID, top.HasFix
+		row.Cluster = row.Clusters[0]
+		row.More = len(ids) - 1
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].State != out[j].State {
 			return out[i].State == "fail"
 		}
+		if len(out[i].Checks) != len(out[j].Checks) {
+			return len(out[i].Checks) > len(out[j].Checks)
+		}
 		a, b := out[i].Ref, out[j].Ref
-		return a.Namespace+"/"+a.Name+"/"+a.Cluster < b.Namespace+"/"+b.Name+"/"+b.Cluster
+		if a.Namespace != b.Namespace {
+			return a.Namespace < b.Namespace
+		}
+		if a.Name != b.Name {
+			return a.Name < b.Name
+		}
+		return a.Kind < b.Kind
 	})
 	return out
 }
@@ -429,10 +595,13 @@ func markDifferences(cells map[string]ClusterCell, sigs map[string]string) (map[
 	return cells, drift
 }
 
-// Overview builds the Ambient Overview payload. namespace filters the services
-// table and the attention list; the summary cards stay workspace-wide.
+// Overview builds the Ambient Overview payload. namespace (optional, a comma
+// list) filters the services table and the attention list. The summary cards
+// stay workspace-wide, except summary.needsAttention, which counts the
+// returned attention entries so the card and the panel always agree.
 func Overview(ws *store.Workspace, namespace string) ServicesOverview {
 	out := ServicesOverview{Services: []ServiceRow{}, NeedsAttention: []AttentionRow{}, Namespaces: []NamespaceRow{}}
+	filter := namespaceFilter(namespace)
 	clusters := ws.Clusters()
 	sort.Strings(clusters)
 	issues := Issues(ws)
@@ -448,6 +617,7 @@ func Overview(ws *store.Workspace, namespace string) ServicesOverview {
 	rows := map[string]*acc{}
 	order := []string{}
 	svcPerNS := map[string]map[string]bool{}
+	configuredPerNS := map[string]map[string]bool{}
 	for _, tc := range topo.Clusters {
 		for _, ts := range tc.Services {
 			if ts.Infrastructure {
@@ -458,7 +628,20 @@ func Overview(ws *store.Workspace, namespace string) ServicesOverview {
 				svcPerNS[ts.Namespace] = map[string]bool{}
 			}
 			svcPerNS[ts.Namespace][ts.Name] = true
-			if namespace != "" && ts.Namespace != namespace {
+			svcObj := ws.Get(tc.Context, "", "services", ts.Namespace, ts.Name)
+			var facts *ServiceFacts
+			sig := ""
+			if svcObj != nil {
+				f, sg := collectFacts(ws, svcObj)
+				facts, sig = &f, sg
+				if f.Configured() {
+					if configuredPerNS[ts.Namespace] == nil {
+						configuredPerNS[ts.Namespace] = map[string]bool{}
+					}
+					configuredPerNS[ts.Namespace][ts.Name] = true
+				}
+			}
+			if filter != nil && !filter[ts.Namespace] {
 				continue
 			}
 			a := rows[key]
@@ -493,10 +676,13 @@ func Overview(ws *store.Workspace, namespace string) ServicesOverview {
 			if a.row.Waypoint == "" {
 				a.row.Waypoint = wp
 			}
-			if svc := ws.Get(tc.Context, "", "services", ts.Namespace, ts.Name); svc != nil {
-				f, sig := collectFacts(ws, svc)
-				a.facts = append(a.facts, f)
+			if facts != nil {
+				a.facts = append(a.facts, *facts)
 				a.sigs[tc.Context] = sig
+				a.row.Configured = a.row.Configured || facts.Configured()
+			}
+			if serviceInAmbient(ws, tc.Context, svcObj, ts.Namespace) {
+				a.row.InAmbient = true
 			}
 		}
 	}
@@ -547,7 +733,7 @@ func Overview(ws *store.Workspace, namespace string) ServicesOverview {
 	sort.Strings(names)
 	for _, n := range names {
 		a := nss[n]
-		out.Namespaces = append(out.Namespaces, NamespaceRow{Name: n, InAmbient: a.inAmbient, Waypoint: a.waypoint, WaypointScope: a.scope, Services: len(svcPerNS[n])})
+		out.Namespaces = append(out.Namespaces, NamespaceRow{Name: n, InAmbient: a.inAmbient, Waypoint: a.waypoint, WaypointScope: a.scope, Services: len(svcPerNS[n]), Configured: len(configuredPerNS[n]), System: IsSystemNamespace(n)})
 		out.Summary.Namespaces.Total++
 		if a.inAmbient {
 			out.Summary.Namespaces.InAmbient++
@@ -569,14 +755,28 @@ func Overview(ws *store.Workspace, namespace string) ServicesOverview {
 	}
 	s.Clusters.AmbientOnAll = len(clusters) > 0 && len(s.Clusters.AmbientClusters) == len(clusters)
 	s.PoliciesRoutes.Objects, s.PoliciesRoutes.Differ = countConfigObjects(ws, clusters)
-	attention := map[string]bool{}
-	for _, is := range issues {
-		if is.Subject.Kind == "Service" {
-			attention[is.Subject.Namespace+"/"+is.Subject.Name] = true
+	for _, row := range out.NeedsAttention {
+		switch {
+		case row.Ref.Kind != "Service":
+			s.NeedsAttention.Other++
+		case row.State == "fail":
+			s.NeedsAttention.Fail++
+		default:
+			s.NeedsAttention.Warn++
 		}
 	}
-	s.NeedsAttention.Services = len(attention)
+	s.NeedsAttention.Services = s.NeedsAttention.Fail + s.NeedsAttention.Warn
 	return out
+}
+
+// serviceInAmbient reports ambient enrolment of a Service on one cluster:
+// its namespace or the Service itself carries istio.io/dataplane-mode=ambient.
+func serviceInAmbient(ws *store.Workspace, cluster string, svc *store.Object, namespace string) bool {
+	if svc != nil && svc.Labels()["istio.io/dataplane-mode"] == "ambient" {
+		return true
+	}
+	n := ws.Get(cluster, "", "namespaces", "", namespace)
+	return n != nil && n.Labels()["istio.io/dataplane-mode"] == "ambient"
 }
 
 // mergeBadges unions the badges of the same Service across clusters, keeping
@@ -601,28 +801,10 @@ func mergeBadges(facts []ServiceFacts) (access, routing, resilience []Badge) {
 	return
 }
 
-// countConfigObjects counts distinct policy/route objects (by kind, namespace
-// and name across clusters) and how many exist on 2+ clusters with different
-// specs.
-func countConfigObjects(ws *store.Workspace, clusters []string) (objects, differ int) {
-	sigs := map[string]map[string]bool{}
-	seen := map[string]int{}
-	for _, c := range clusters {
-		for _, k := range configObjects {
-			for _, o := range ws.List(c, k.group, k.resource, "", nil) {
-				key := o.Kind + "/" + o.Namespace + "/" + o.Name
-				if sigs[key] == nil {
-					sigs[key] = map[string]bool{}
-				}
-				sigs[key][specSignature(o)] = true
-				seen[key]++
-			}
-		}
-	}
-	for key, n := range seen {
-		if n > 1 && len(sigs[key]) > 1 {
-			differ++
-		}
-	}
-	return len(seen), differ
+// countConfigObjects is the Policies & routes summary: the same rows, and the
+// same drift rule, as /api/ambient/policies with no filter (counts.all and
+// counts.drift), so the two pages never disagree. clusters is always
+// ws.Clusters() here, which is what the inventory uses.
+func countConfigObjects(ws *store.Workspace, _ []string) (objects, differ int) {
+	return PolicyInventorySummary(ws)
 }

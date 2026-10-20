@@ -2,6 +2,7 @@ package ambient
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/tjorourke/flightbay/internal/store"
@@ -49,7 +50,11 @@ func knownIssues(ws *store.Workspace, services []Service, objects []Ref) []Ambie
 	issues := []AmbientIssue{}
 	seen := map[string]bool{}
 	collect := func(subject Ref, r *Investigation) {
-		if o := Target(ws, subject.Cluster, subject.Kind, subject.Namespace, subject.Name); o != nil {
+		// One fault is reported once: drop the steps that only fail because
+		// an earlier step in the same investigation already failed.
+		r.Steps = suppressConsequences(r.Steps)
+		o := Target(ws, subject.Cluster, subject.Kind, subject.Namespace, subject.Name)
+		if o != nil {
 			for i := range r.Steps {
 				if r.Steps[i].State == "fail" {
 					r.Steps[i].Runbook = Runbook(ws, o)
@@ -59,7 +64,15 @@ func knownIssues(ws *store.Workspace, services []Service, objects []Ref) []Ambie
 		v := &View{Investigation: r, Subject: subject}
 		addSuggestedFixes(v)
 		for _, s := range r.Steps {
-			if s.State != "fail" {
+			switch s.State {
+			case "fail":
+			case "warning", "warn":
+				w, ok := actionableWarning(ws, o, r, s)
+				if !ok {
+					continue
+				}
+				s = w
+			default:
 				continue
 			}
 			key := subject.Cluster + "/" + subject.Kind + "/" + subject.Namespace + "/" + subject.Name + "/" + s.ID
@@ -89,6 +102,235 @@ func knownIssues(ws *store.Workspace, services []Service, objects []Ref) []Ambie
 		}
 	}
 	return issues
+}
+
+// routeParentStep matches the per-parent step "route-<ns>-<name>-<i>" written
+// by inspectRoute, and its "-listener" / "-eligibility" children.
+var (
+	routeParentStep  = regexp.MustCompile(`^(route-.+-\d+)$`)
+	routeListenerSub = regexp.MustCompile(`^(route-.+-\d+)-(listener|eligibility)$`)
+)
+
+// consequenceRule is one known cause → consequence chain inside a single
+// investigation (one subject on one cluster). When a step matching cause has
+// State "fail", every other step for which drop(key, id) is true is removed:
+// it fails only because the cause failed and would show one fault twice.
+type consequenceRule struct {
+	name  string
+	cause func(id string) (key string, ok bool)
+	drop  func(key, id string) bool
+}
+
+func exactCause(ids ...string) func(string) (string, bool) {
+	return func(id string) (string, bool) {
+		for _, x := range ids {
+			if id == x {
+				return id, true
+			}
+		}
+		return "", false
+	}
+}
+
+// consequenceRules is the table suppressConsequences applies. Step IDs are
+// the ones written by Investigate / inspectRoute / investigateObject.
+var consequenceRules = []consequenceRule{
+	// The selector matches no Pods, so there cannot be ready endpoints.
+	{"no-pods", exactCause("workloads"), func(_, id string) bool { return id == "endpoints" }},
+	// A route parent that does not resolve (missing, wrong kind, wrong port)
+	// cannot be accepted: its per-parent status, listener and eligibility
+	// checks are consequences of the same parentRef.
+	{"route-parent-unresolved", func(id string) (string, bool) {
+		m := routeParentStep.FindStringSubmatch(id)
+		if m == nil {
+			return "", false
+		}
+		return m[1], true
+	}, func(key, id string) bool {
+		return strings.HasPrefix(id, key+"-status") || id == key+"-listener" || id == key+"-eligibility"
+	}},
+	// The listener section is missing or rejects the route, so the parent's
+	// Accepted condition is False for that reason.
+	{"route-listener-rejects", func(id string) (string, bool) {
+		m := routeListenerSub.FindStringSubmatch(id)
+		if m == nil {
+			return "", false
+		}
+		return m[1], true
+	}, func(key, id string) bool {
+		return id == key+"-status" || (strings.HasPrefix(id, key+"-status-") && strings.HasSuffix(id, "-Accepted"))
+	}},
+	// The waypoint Gateway is missing, the wrong class, has no HBONE
+	// listener, or is not Accepted/Programmed: the Service's waypoint binding
+	// ("Service does not use waypoint", istio.io/WaypointBound=False) follows.
+	{"waypoint-not-ready", exactCause("waypoint", "waypoint-listener", "waypoint-status-Accepted", "waypoint-status-Programmed"), func(_, id string) bool {
+		return strings.HasPrefix(id, "waypoint-bound-")
+	}},
+	// A Gateway that is not Accepted cannot be Programmed.
+	{"gateway-not-accepted", exactCause("waypoint-status-Accepted", "gateway-status-Accepted"), func(key, id string) bool {
+		return id == strings.TrimSuffix(key, "Accepted")+"Programmed"
+	}},
+}
+
+// suppressConsequences removes steps that are consequences of another failed
+// step in the same investigation, using consequenceRules. Order is kept.
+func suppressConsequences(steps []Step) []Step {
+	type hit struct {
+		rule int
+		key  string
+		at   int
+	}
+	causes := []hit{}
+	for i, s := range steps {
+		if s.State != "fail" {
+			continue
+		}
+		for ri, rule := range consequenceRules {
+			if key, ok := rule.cause(s.ID); ok {
+				causes = append(causes, hit{ri, key, i})
+			}
+		}
+	}
+	if len(causes) == 0 {
+		return steps
+	}
+	out := make([]Step, 0, len(steps))
+	for i, s := range steps {
+		dropped := false
+		for _, c := range causes {
+			if c.at != i && consequenceRules[c.rule].drop(c.key, s.ID) {
+				dropped = true
+				break
+			}
+		}
+		if !dropped {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// actionableWarning decides whether a "warning" step goes into Needs
+// attention. Warnings are opt-in by step ID: most of them are notes that
+// fire for every Service and would bury real faults.
+//
+// Collected (allow list):
+//   - require-waypoint: only when the Service has an enforced waypoint L7
+//     AuthorizationPolicy and no ztunnel ALLOW limits callers to the waypoint
+//     identity, so the L7 rules can be bypassed. Security relevant.
+//   - policy-<name>: only when the policy is accepted but not enforced
+//     (PolicyEntry.Warning, e.g. an Istio policy behind an agentgateway waypoint).
+//   - waypoint: only when a waypoint is selected and its class is not a
+//     recognised waypoint class (not the "no waypoint selected" note).
+//   - jwt-selector-<name>: workload-selector RequestAuthentication is not
+//     enforced by ztunnel.
+//   - jwt-<name>: only when no requestPrincipals rule requires a token, so
+//     requests without a token are accepted.
+//   - mtls-<name>: PeerAuthentication DISABLE on sidecar Pods.
+//   - takeover-control-plane: the waypoint takeover prerequisite.
+//
+// Not collected (deny list, informational or one per object): enrolment
+// (namespace not labelled ambient), pod-* (sidecar / opt-out / not Ready
+// Pods; no ready Pods already fails endpoints), waypoint with no waypoint
+// selected, route-* parent notes (waypoint-wide or non-waypoint Gateway
+// parent), the generic policy-* / agent-policy-* "check its rules" notes,
+// jwt-principals-*, external-hosts, dataplane and dns-* (untested DNS), and
+// any step ID not listed above.
+func actionableWarning(ws *store.Workspace, o *store.Object, r *Investigation, s Step) (Step, bool) {
+	svc := o
+	if svc != nil && svc.Kind != "Service" {
+		svc = nil
+	}
+	switch {
+	case s.ID == "require-waypoint":
+		if svc == nil {
+			return s, false
+		}
+		open, deny := waypointBypassOpen(ws, svc)
+		if !open {
+			return s, false
+		}
+		s.Detail = "Waypoint policies can be bypassed: callers that reach the Pods directly skip the waypoint and its L7 rules. Add an L4 ALLOW limited to the waypoint identity."
+		if deny {
+			s.Detail = "L7 DENY can be bypassed: callers that reach the Pods directly skip the waypoint and its DENY rules. Add an L4 ALLOW limited to the waypoint identity."
+		}
+		return s, true
+	case s.ID == "waypoint":
+		return s, r != nil && r.Waypoint != ""
+	case strings.HasPrefix(s.ID, "jwt-selector-"):
+		return s, true
+	case strings.HasPrefix(s.ID, "jwt-principals-"):
+		return s, false
+	case strings.HasPrefix(s.ID, "jwt-"):
+		if r == nil {
+			return s, false
+		}
+		for _, x := range r.Steps {
+			if strings.HasPrefix(x.ID, "jwt-principals-") {
+				return s, false
+			}
+		}
+		s.Detail = "RequestAuthentication validates tokens but no authorization rule requires one, so requests without a token are accepted."
+		return s, true
+	case strings.HasPrefix(s.ID, "mtls-"), s.ID == "takeover-control-plane":
+		return s, true
+	case strings.HasPrefix(s.ID, "policy-") && !strings.HasPrefix(s.ID, "policy-status-"):
+		if svc == nil {
+			return s, false
+		}
+		name := strings.TrimPrefix(s.ID, "policy-")
+		for _, p := range servicePolicies(ws, svc) {
+			if p.Ref.Name == name && p.Warning != "" {
+				s.Detail = p.Warning
+				return s, true
+			}
+		}
+	}
+	return s, false
+}
+
+// waypointBypassOpen reports whether the Service has an enforced waypoint L7
+// authorization policy (open) that callers can skip by going straight to the
+// Pods, and whether one of those policies is a DENY.
+func waypointBypassOpen(ws *store.Workspace, svc *store.Object) (open, deny bool) {
+	_, wpName, _ := Waypoint(ws, svc)
+	if wpName == "" {
+		return false, false
+	}
+	pols := servicePolicies(ws, svc)
+	l7 := false
+	for _, p := range pols {
+		if p.Enforced != "waypoint" || p.Warning != "" || p.Ref.Kind == "RequestAuthentication" || p.Action == "" {
+			continue
+		}
+		l7 = true
+		if strings.EqualFold(p.Action, "DENY") {
+			deny = true
+		}
+	}
+	if !l7 {
+		return false, false
+	}
+	want := waypointPrincipal(ws, svc)
+	for _, p := range pols {
+		if want == "" || p.Enforced != "ztunnel" || p.Warning != "" || !strings.EqualFold(p.Action, "ALLOW") || p.Ref.Kind != "AuthorizationPolicy" {
+			continue
+		}
+		o := ws.Get(p.Ref.Cluster, p.Ref.Group, p.Ref.Resource, p.Ref.Namespace, p.Ref.Name)
+		if o == nil {
+			continue
+		}
+		for _, rv := range L(Path(o.Obj, "spec", "rules")) {
+			for _, fv := range L(M(rv)["from"]) {
+				for _, pr := range L(Path(M(fv), "source", "principals")) {
+					if S(pr) == want {
+						return false, false
+					}
+				}
+			}
+		}
+	}
+	return true, deny
 }
 
 func CommonFixes() []FixGuide {

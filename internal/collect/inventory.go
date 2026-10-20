@@ -33,7 +33,7 @@ func InventoryMarkdown() string {
 	w("## Never collected\n\n")
 	w("- **Secret values.** Secrets are reduced to name, namespace, type, labels, annotations (without `last-applied-configuration`), owner references and, with `--secrets keys`, key names and byte lengths. With `--secrets metadata` the Secret body is never requested (metadata API). `--secrets omit` skips Secrets entirely.\n")
 	w("- **Helm values.** Helm release Secrets are reduced to chart name, version, app version, status and revision.\n")
-	w("- **`managedFields`** on any object.\n")
+	w("- **`managedFields`** on any object. The one exception: on Istio, Gateway API and agentgateway policy and route objects, the manager names (and operation) are kept so Flightbay can show what manages them. Field lists, times and API versions are still dropped.\n")
 	w("- **Envoy SDS secret sections** of proxy config dumps. Certificate details for expiry checks come from `/certs`, which contains no keys.\n")
 	w("- **Controller krt snapshots.** The agentgateway and kgateway admin snapshot spans every namespace and can hold Secret contents, so it is never read.\n")
 	w("- **Anything from namespaces outside the selection**, including inside proxy and control-plane dumps: entries that name other namespaces are removed before the bundle is written.\n")

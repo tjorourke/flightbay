@@ -125,6 +125,7 @@ type Workspace struct {
 	diags             map[string]*Diagnostic               // cluster/kind/ns/pod -> captured diagnostics
 	diagnosticSummary map[string]json.RawMessage           // cluster -> diagnostic summary
 	trust             Trust                                // signature and review ledger
+	revisions         map[string]*revisionHistory          // cluster/group/kind/ns/name -> observed revisions (revisions.go)
 }
 
 // Diagnostic is one component's captured admin output.
@@ -425,6 +426,7 @@ func (w *Workspace) AddObjects(cluster string, r bundle.APIResource, items []map
 	defer w.mu.Unlock()
 	w.registerLocked(cluster, r)
 	tk := typeKey{cluster, r.Group, r.Resource}
+	now := time.Now().UTC()
 	for _, it := range items {
 		md, _ := it["metadata"].(map[string]any)
 		ns, _ := md["namespace"].(string)
@@ -436,6 +438,9 @@ func (w *Workspace) AddObjects(cluster string, r bundle.APIResource, items []map
 		w.rev++
 		o := &Object{Cluster: cluster, Group: r.Group, Version: r.Version, Resource: r.Resource, Kind: kind, Namespaced: r.Namespaced,
 			Namespace: ns, Name: name, RV: w.rev, Obj: it}
+		if name != "" {
+			w.recordInitialLocked(RevisionRef{cluster, r.Group, r.Resource, kind, ns, name}, it, objClusterRV(it), now)
+		}
 		if md != nil {
 			md["resourceVersion"] = fmt.Sprint(o.RV)
 		}

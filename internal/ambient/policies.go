@@ -9,19 +9,32 @@ import (
 	"github.com/tjorourke/flightbay/internal/store"
 )
 
-// Policies & routes: one inventory of every ambient policy, route and waypoint
-// in the connected clusters. Each object is one row, with a state per cluster.
+// Policies & routes: one inventory of every ambient policy and route in the
+// connected clusters. Each object is one row, with a state per cluster.
+// Waypoint Gateways are infrastructure and live on the Map; they are only
+// counted here (counts.waypoints).
 
-// Types are the Type chips on the page.
+// Types are the Type filter on the page. A row can carry several.
 const (
 	PolicyTypeAccess     = "Access"
 	PolicyTypeRouting    = "Routing"
 	PolicyTypeResilience = "Resilience"
 	PolicyTypeTransport  = "Transport"
-	PolicyTypeWaypoints  = "Waypoints"
+	PolicyTypeOther      = "Other"
 )
 
-var policyTypes = []string{PolicyTypeAccess, PolicyTypeRouting, PolicyTypeResilience, PolicyTypeTransport, PolicyTypeWaypoints}
+var policyTypes = []string{PolicyTypeAccess, PolicyTypeRouting, PolicyTypeResilience, PolicyTypeTransport, PolicyTypeOther}
+
+// Per-cluster states. Live means the enforcing component accepted the object;
+// applied means it is present but no condition confirms it yet.
+const (
+	PolicyStateLive        = "live"
+	PolicyStateApplied     = "applied"
+	PolicyStateFailed      = "failed"
+	PolicyStateNotEnforced = "not-enforced"
+	PolicyStateDiffers     = "differs"
+	PolicyStateNotHere     = "not-here"
+)
 
 // PolicyService names a Service a row reaches, for Open and Edit links.
 type PolicyService struct {
@@ -47,21 +60,27 @@ type PolicyEffect struct {
 }
 
 type PolicyRow struct {
-	Ref        Ref               `json:"ref"`
-	Kind       string            `json:"kind"`
-	AppliesTo  PolicyAppliesTo   `json:"appliesTo"`
-	Effect     PolicyEffect      `json:"effect"`
-	Type       string            `json:"type"`
-	EnforcedBy string            `json:"enforcedBy"`
+	Ref        Ref             `json:"ref"`
+	Kind       string          `json:"kind"`
+	AppliesTo  PolicyAppliesTo `json:"appliesTo"`
+	Effect     PolicyEffect    `json:"effect"`
+	Type       string          `json:"type"` // Types[0], kept for older clients
+	Types      []string        `json:"types"`
+	EnforcedBy string          `json:"enforcedBy"`
+	// PerCluster is one of the PolicyState* values per connected cluster.
 	PerCluster map[string]string `json:"perCluster"`
-	ManagedBy  string            `json:"managedBy"`
-	Services   []string          `json:"services"`
-	Problems   []string          `json:"problems"`
-	Drift      bool              `json:"drift"`
-	CanTest    bool              `json:"canTest"`
-	Editable   bool              `json:"editable"`
-	EditKey    string            `json:"editKey"`
-	Svc        *PolicyService    `json:"svc,omitempty"`
+	// PerClusterDetail is the raw condition summary behind each state, for
+	// the tooltip ("Accepted=True, ResolvedRefs=True").
+	PerClusterDetail map[string]string `json:"perClusterDetail"`
+	ManagedBy        string            `json:"managedBy"`
+	ManagedByLabel   string            `json:"managedByLabel"`
+	Services         []string          `json:"services"`
+	Problems         []string          `json:"problems"`
+	Drift            bool              `json:"drift"`
+	CanTest          bool              `json:"canTest"`
+	Editable         bool              `json:"editable"`
+	EditKey          string            `json:"editKey"`
+	Svc              *PolicyService    `json:"svc,omitempty"`
 
 	groupKey string
 	nsNames  []string // namespaces of the Services reached, for the namespace filter
@@ -83,10 +102,13 @@ type PolicyNamespaceCount struct {
 // PolicyCounts are taken before any filter, so the chips show what each
 // filter would leave. Shown is the size of the filtered set.
 type PolicyCounts struct {
-	All        int                    `json:"all"`
-	Shown      int                    `json:"shown"`
-	Problems   int                    `json:"problems"`
-	Drift      int                    `json:"drift"`
+	All      int `json:"all"`
+	Shown    int `json:"shown"`
+	Problems int `json:"problems"`
+	Drift    int `json:"drift"`
+	// Waypoints counts the waypoint Gateways in the namespace scope. They are
+	// not rows: the page links to the Map for them.
+	Waypoints  int                    `json:"waypoints"`
 	ByType     map[string]int         `json:"byType"`
 	Namespaces []PolicyNamespaceCount `json:"namespaces"`
 }
@@ -113,11 +135,12 @@ type PolicyFilter struct {
 
 type polObs struct {
 	obj        *store.Object
-	typ        string
+	types      []string
 	applies    PolicyAppliesTo
 	effect     PolicyEffect
 	enforcedBy string
 	state      string
+	detail     string // raw condition summary for the tooltip
 	problems   []string
 	services   []*store.Object
 	primary    *store.Object // the Service the row groups under
@@ -141,10 +164,82 @@ func svcRef(o *store.Object) *PolicyService {
 
 // NewPolicies builds the inventory.
 func NewPolicies(ws *store.Workspace, f PolicyFilter) *PoliciesResponse {
+	inv := buildPolicyInventory(ws, true)
+	all := inv.rows
+
+	out := &PoliciesResponse{Clusters: inv.clusters, Groups: []PolicyGroup{}}
+	if out.Clusters == nil {
+		out.Clusters = []string{}
+	}
+	out.Counts = PolicyCounts{ByType: map[string]int{}, Namespaces: []PolicyNamespaceCount{}}
+	for _, t := range policyTypes {
+		out.Counts.ByType[t] = 0
+	}
+	nsCount := map[string]int{}
+	for _, r := range all {
+		out.Counts.All++
+		for _, t := range r.Types {
+			out.Counts.ByType[t]++
+		}
+		nsCount[r.Ref.Namespace]++
+		if r.hasProblem() {
+			out.Counts.Problems++
+		}
+		if r.Drift {
+			out.Counts.Drift++
+		}
+	}
+	for _, ns := range inv.waypoints {
+		if len(f.Namespaces) == 0 || contains(f.Namespaces, ns) {
+			out.Counts.Waypoints++
+		}
+	}
+	for n, k := range nsCount {
+		out.Counts.Namespaces = append(out.Counts.Namespaces, PolicyNamespaceCount{n, k})
+	}
+	sort.Slice(out.Counts.Namespaces, func(i, j int) bool { return out.Counts.Namespaces[i].Name < out.Counts.Namespaces[j].Name })
+
+	out.Rows = []PolicyRow{}
+	for _, r := range all {
+		if f.keep(r) {
+			out.Rows = append(out.Rows, r)
+		}
+	}
+	out.Counts.Shown = len(out.Rows)
+	if f.Group == "service" {
+		out.Groups = groupRows(out.Rows)
+	}
+	return out
+}
+
+// PolicyInventorySummary is what the Ambient Overview shows for Policies & routes:
+// the number of objects (equal to counts.all of the inventory with no
+// filter) and how many of them drift between clusters (counts.drift). Both
+// come from the same rows as the Policies & routes page.
+func PolicyInventorySummary(ws *store.Workspace) (objects, drift int) {
+	for _, r := range buildPolicyInventory(ws, false).rows {
+		objects++
+		if r.Drift {
+			drift++
+		}
+	}
+	return objects, drift
+}
+
+type policyInventory struct {
+	clusters  []string
+	rows      []PolicyRow
+	waypoints map[string]string // Gateway/ns/name -> namespace, across clusters
+}
+
+// buildPolicyInventory merges every covered object across clusters into one
+// row each. edit also works out editability, which only the page needs.
+func buildPolicyInventory(ws *store.Workspace, edit bool) *policyInventory {
 	c := &polCtx{ws: ws, clusters: ws.Clusters(), reach: map[string]map[string][]*store.Object{}, warn: map[string]map[string][]string{}, bound: map[string]map[string][]*store.Object{}, editable: map[string][]Editable{}}
 	for _, cl := range c.clusters {
 		c.index(cl)
 	}
+	inv := &policyInventory{clusters: c.clusters, waypoints: map[string]string{}}
 	type held struct {
 		cluster string
 		obs     polObs
@@ -152,6 +247,11 @@ func NewPolicies(ws *store.Workspace, f PolicyFilter) *PoliciesResponse {
 	order := []string{}
 	byKey := map[string][]held{}
 	for _, cl := range c.clusters {
+		for _, gw := range c.ws.List(cl, GatewayGroup, "gateways", "", nil) {
+			if c.isWaypoint(cl, gw) {
+				inv.waypoints[objKey("Gateway", gw.Namespace, gw.Name)] = gw.Namespace
+			}
+		}
 		for _, o := range c.inventory(cl) {
 			ob := c.describe(cl, o)
 			key := objKey(o.Kind, o.Namespace, o.Name)
@@ -161,24 +261,31 @@ func NewPolicies(ws *store.Workspace, f PolicyFilter) *PoliciesResponse {
 			byKey[key] = append(byKey[key], held{cl, ob})
 		}
 	}
-	all := []PolicyRow{}
 	for _, key := range order {
 		hs := byKey[key]
 		p := hs[0].obs
-		row := PolicyRow{Ref: reference(p.obj), Kind: p.obj.Kind, AppliesTo: p.applies, Effect: p.effect, Type: p.typ, EnforcedBy: p.enforcedBy, ManagedBy: ManagedBy(p.obj), PerCluster: map[string]string{}, Problems: []string{}, Services: []string{}}
+		code, label := ManagedByInfo(p.obj)
+		row := PolicyRow{Ref: reference(p.obj), Kind: p.obj.Kind, AppliesTo: p.applies, Effect: p.effect, Types: p.types, EnforcedBy: p.enforcedBy, ManagedBy: code, ManagedByLabel: label, PerCluster: map[string]string{}, PerClusterDetail: map[string]string{}, Problems: []string{}, Services: []string{}}
+		if len(row.Types) == 0 {
+			row.Types = []string{PolicyTypeOther}
+		}
+		row.Type = row.Types[0]
 		row.groupKey = c.groupKey(p)
 		seen := map[string]bool{}
 		holders := map[string]bool{}
+		refSpec := policySpecKey(p.obj)
 		for i, h := range hs {
 			holders[h.cluster] = true
-			st := h.obs.state
-			if i > 0 && st != "not-enforced" && configurationFingerprint(h.obs.obj) != configurationFingerprint(p.obj) {
-				st = "differs"
+			st, detail := h.obs.state, h.obs.detail
+			if i > 0 && policySpecKey(h.obs.obj) != refSpec {
+				row.Drift = true
+				if st == PolicyStateLive || st == PolicyStateApplied {
+					st = PolicyStateDiffers
+				}
+				detail = strings.TrimPrefix(detail+"; spec differs from "+hs[0].cluster, "; ")
 			}
 			row.PerCluster[h.cluster] = st
-			if st == "differs" {
-				row.Drift = true
-			}
+			row.PerClusterDetail[h.cluster] = detail
 			for _, pr := range h.obs.problems {
 				if i > 0 {
 					pr = "On " + h.cluster + ": " + pr
@@ -205,11 +312,15 @@ func NewPolicies(ws *store.Workspace, f PolicyFilter) *PoliciesResponse {
 			if holders[cl] {
 				continue
 			}
-			row.PerCluster[cl] = "missing"
-			// A cluster that has none of this object's namespace is a
-			// different estate, not drift.
-			if p.applies.Kind == "mesh" || c.ws.Get(cl, "", "namespaces", "", p.obj.Namespace) != nil || len(c.ws.List(cl, "", "services", p.obj.Namespace, nil)) > 0 {
-				row.Drift = true
+			row.PerCluster[cl] = PolicyStateNotHere
+			row.PerClusterDetail[cl] = "Not on this cluster"
+			// Absence is drift only when a Service the object applies to
+			// runs on both clusters. Otherwise it is a different estate.
+			for _, h := range hs {
+				if c.servesOnBoth(h.obs, cl) {
+					row.Drift = true
+					break
+				}
 			}
 		}
 		sort.Strings(row.Services)
@@ -220,47 +331,31 @@ func NewPolicies(ws *store.Workspace, f PolicyFilter) *PoliciesResponse {
 		}
 		row.CanTest = (row.Kind == "AuthorizationPolicy" || row.Kind == "HTTPRoute") && row.Svc != nil && p.applies.Kind == "service"
 		row.EditKey = EditKeyFor(row.Ref, 0)
-		row.Editable = c.editability(&row, p)
-		all = append(all, row)
+		if edit {
+			row.Editable = c.editability(&row, p)
+		}
+		inv.rows = append(inv.rows, row)
 	}
-	sortRows(all)
+	sortRows(inv.rows)
+	return inv
+}
 
-	out := &PoliciesResponse{Clusters: c.clusters, Groups: []PolicyGroup{}}
-	if out.Clusters == nil {
-		out.Clusters = []string{}
+// servesOnBoth is true when one of the Services the object applies to has
+// ready endpoints on the holder's cluster and on cluster other.
+func (c *polCtx) servesOnBoth(ob polObs, other string) bool {
+	cands := ob.services
+	if ob.primary != nil {
+		cands = []*store.Object{ob.primary}
 	}
-	out.Counts = PolicyCounts{ByType: map[string]int{}, Namespaces: []PolicyNamespaceCount{}}
-	for _, t := range policyTypes {
-		out.Counts.ByType[t] = 0
-	}
-	nsCount := map[string]int{}
-	for _, r := range all {
-		out.Counts.All++
-		out.Counts.ByType[r.Type]++
-		nsCount[r.Ref.Namespace]++
-		if r.hasProblem() {
-			out.Counts.Problems++
+	for _, s := range cands {
+		if readyEndpoints(c.ws, s) == 0 {
+			continue
 		}
-		if r.Drift {
-			out.Counts.Drift++
+		if o := c.ws.Get(other, "", "services", s.Namespace, s.Name); o != nil && readyEndpoints(c.ws, o) > 0 {
+			return true
 		}
 	}
-	for n, k := range nsCount {
-		out.Counts.Namespaces = append(out.Counts.Namespaces, PolicyNamespaceCount{n, k})
-	}
-	sort.Slice(out.Counts.Namespaces, func(i, j int) bool { return out.Counts.Namespaces[i].Name < out.Counts.Namespaces[j].Name })
-
-	out.Rows = []PolicyRow{}
-	for _, r := range all {
-		if f.keep(r) {
-			out.Rows = append(out.Rows, r)
-		}
-	}
-	out.Counts.Shown = len(out.Rows)
-	if f.Group == "service" {
-		out.Groups = groupRows(out.Rows)
-	}
-	return out
+	return false
 }
 
 func (r PolicyRow) hasProblem() bool {
@@ -268,7 +363,7 @@ func (r PolicyRow) hasProblem() bool {
 		return true
 	}
 	for _, s := range r.PerCluster {
-		if s == "not-enforced" {
+		if s == PolicyStateNotEnforced || s == PolicyStateFailed {
 			return true
 		}
 	}
@@ -288,7 +383,9 @@ func (f PolicyFilter) keep(r PolicyRow) bool {
 	if len(f.Types) > 0 {
 		ok := false
 		for _, t := range f.Types {
-			ok = ok || strings.EqualFold(t, r.Type)
+			for _, rt := range r.Types {
+				ok = ok || strings.EqualFold(t, rt)
+			}
 		}
 		if !ok {
 			return false
@@ -297,7 +394,7 @@ func (f PolicyFilter) keep(r PolicyRow) bool {
 	if len(f.ManagedBy) > 0 {
 		ok := false
 		for _, m := range f.ManagedBy {
-			ok = ok || strings.EqualFold(m, r.ManagedBy)
+			ok = ok || strings.EqualFold(m, r.ManagedBy) || strings.EqualFold(m, r.ManagedByLabel)
 		}
 		if !ok {
 			return false
@@ -310,7 +407,8 @@ func (f PolicyFilter) keep(r PolicyRow) bool {
 		return false
 	}
 	if q := strings.ToLower(strings.TrimSpace(f.Q)); q != "" {
-		hay := []string{r.Ref.Name, r.Ref.Namespace, r.Kind, r.AppliesTo.Phrase, r.AppliesTo.Reason, r.Effect.Phrase, r.Effect.Action, r.Type, r.EnforcedBy}
+		hay := []string{r.Ref.Name, r.Ref.Namespace, r.Kind, r.AppliesTo.Phrase, r.AppliesTo.Reason, r.Effect.Phrase, r.Effect.Action, r.EnforcedBy, r.ManagedByLabel}
+		hay = append(hay, r.Types...)
 		if r.AppliesTo.Kind != "mesh" && r.AppliesTo.Kind != "namespace" {
 			hay = append(hay, r.Services...) // a wide policy would match every Service name
 		}
@@ -440,30 +538,40 @@ func (c *polCtx) isWaypoint(cl string, gw *store.Object) bool {
 	return gw.Labels()["istio.io/waypoint-for"] != "" || strings.Contains(S(Path(gw.Obj, "spec", "gatewayClassName")), "waypoint") || len(c.bound[cl][gw.Namespace+"/"+gw.Name]) > 0
 }
 
+// policyKinds are the kinds the inventory covers, with where they are stored.
+// Waypoint Gateways are deliberately absent: they are on the Map.
+var policyKinds = []struct{ kind, group, resource string }{
+	{"AuthorizationPolicy", "security.istio.io", "authorizationpolicies"},
+	{"PeerAuthentication", "security.istio.io", "peerauthentications"},
+	{"RequestAuthentication", "security.istio.io", "requestauthentications"},
+	{"HTTPRoute", GatewayGroup, "httproutes"},
+	{"DestinationRule", "networking.istio.io", "destinationrules"},
+	{"AgentgatewayPolicy", "agentgateway.dev", "agentgatewaypolicies"},
+	{"EnterpriseAgentgatewayPolicy", "enterpriseagentgateway.solo.io", "enterpriseagentgatewaypolicies"},
+	{"EnvoyFilter", "networking.istio.io", "envoyfilters"},
+}
+
+// inPolicyInventory says whether an object of a covered kind is listed.
+// Agentgateway policies are kept only when aimed at a waypoint; EnvoyFilters
+// only when Flightbay wrote them for a Service's resilience settings.
+func (c *polCtx) inPolicyInventory(cl string, o *store.Object) bool {
+	switch o.Kind {
+	case "AgentgatewayPolicy", "EnterpriseAgentgatewayPolicy":
+		return c.targetsWaypoint(cl, o)
+	case "EnvoyFilter":
+		return flightbayOwned(o) && o.Labels()["flightbay.dev/resilience-service"] != ""
+	}
+	return true
+}
+
 // inventory lists the objects of every covered kind in one cluster.
 func (c *polCtx) inventory(cl string) []*store.Object {
 	var out []*store.Object
-	for _, k := range []struct{ g, res string }{
-		{"security.istio.io", "authorizationpolicies"}, {"security.istio.io", "peerauthentications"}, {"security.istio.io", "requestauthentications"},
-		{GatewayGroup, "httproutes"}, {"networking.istio.io", "destinationrules"},
-	} {
-		out = append(out, c.ws.List(cl, k.g, k.res, "", nil)...)
-	}
-	for _, gw := range c.ws.List(cl, GatewayGroup, "gateways", "", nil) {
-		if c.isWaypoint(cl, gw) {
-			out = append(out, gw)
-		}
-	}
-	for _, k := range []struct{ g, res string }{{"agentgateway.dev", "agentgatewaypolicies"}, {"enterpriseagentgateway.solo.io", "enterpriseagentgatewaypolicies"}} {
-		for _, o := range c.ws.List(cl, k.g, k.res, "", nil) {
-			if c.targetsWaypoint(cl, o) {
+	for _, k := range policyKinds {
+		for _, o := range c.ws.List(cl, k.group, k.resource, "", nil) {
+			if c.inPolicyInventory(cl, o) {
 				out = append(out, o)
 			}
-		}
-	}
-	for _, o := range c.ws.List(cl, "networking.istio.io", "envoyfilters", "", nil) {
-		if flightbayOwned(o) && o.Labels()["flightbay.dev/resilience-service"] != "" {
-			out = append(out, o)
 		}
 	}
 	return out
@@ -511,7 +619,7 @@ func (c *polCtx) absent(cl, g, res, kind, ns string) bool {
 // ---- describing --------------------------------------------------------------
 
 func (c *polCtx) describe(cl string, o *store.Object) polObs {
-	ob := polObs{obj: o, state: "applied", applies: PolicyAppliesTo{Targets: []Ref{}}}
+	ob := polObs{obj: o, state: PolicyStateApplied, applies: PolicyAppliesTo{Targets: []Ref{}}}
 	switch o.Kind {
 	case "AuthorizationPolicy", "RequestAuthentication", "PeerAuthentication":
 		c.describeSecurity(cl, &ob)
@@ -519,25 +627,27 @@ func (c *polCtx) describe(cl string, o *store.Object) polObs {
 		c.describeRoute(cl, &ob)
 	case "DestinationRule":
 		c.describeDestinationRule(cl, &ob)
-	case "Gateway":
-		c.describeWaypoint(cl, &ob)
 	case "EnvoyFilter":
 		c.describeEnvoyFilter(cl, &ob)
 	default:
 		c.describeAgentgateway(cl, &ob)
 	}
+	if ob.detail == "" {
+		ob.detail = "No status conditions"
+	}
 	k := objKey(o.Kind, o.Namespace, o.Name)
 	switch o.Kind {
 	case "AuthorizationPolicy", "RequestAuthentication", "PeerAuthentication", "AgentgatewayPolicy", "EnterpriseAgentgatewayPolicy":
 		ob.services = c.reach[cl][k]
-		if ws := c.warn[cl][k]; len(ws) > 0 && len(ws) == len(ob.services) {
-			ob.state = "not-enforced"
+		if ws := c.warn[cl][k]; len(ws) > 0 && len(ws) == len(ob.services) && ob.state != PolicyStateFailed {
+			ob.state = PolicyStateNotEnforced
 			ob.problems = append(ob.problems, ws[0])
 		}
 	}
+	// An object that targets nothing is not enforced. appliesTo carries the
+	// reason, so no separate problem repeats it (one marker in the UI).
 	if ob.applies.Kind == "nothing" {
-		ob.state = "not-enforced"
-		ob.problems = append(ob.problems, "Targets nothing: "+ob.applies.Reason)
+		ob.state = PolicyStateNotEnforced
 	}
 	if ob.applies.Kind == "service" || ob.applies.Kind == "pods" {
 		if len(ob.services) > 0 && ob.primary == nil {
@@ -652,10 +762,10 @@ func (c *polCtx) describeSecurity(cl string, ob *polObs) {
 	}
 	switch o.Kind {
 	case "AuthorizationPolicy":
-		ob.typ = PolicyTypeAccess
+		ob.types = []string{PolicyTypeAccess}
 		ob.effect = authzEffect(o)
 	case "RequestAuthentication":
-		ob.typ = PolicyTypeAccess
+		ob.types = []string{PolicyTypeAccess}
 		var issuers []string
 		for _, r := range L(Path(o.Obj, "spec", "jwtRules")) {
 			issuers = append(issuers, S(M(r)["issuer"]))
@@ -669,7 +779,7 @@ func (c *polCtx) describeSecurity(cl string, ob *polObs) {
 		}
 		ob.effect = PolicyEffect{Phrase: ph, Action: "JWT"}
 	case "PeerAuthentication":
-		ob.typ = PolicyTypeTransport
+		ob.types = []string{PolicyTypeTransport}
 		mode := defaultString(S(Path(o.Obj, "spec", "mtls", "mode")), "UNSET")
 		ph := "mTLS " + mode
 		if n := len(M(Path(o.Obj, "spec", "portLevelMtls"))); n > 0 {
@@ -677,6 +787,24 @@ func (c *polCtx) describeSecurity(cl string, ob *polObs) {
 		}
 		ob.effect = PolicyEffect{Phrase: ph, Action: mode}
 		ob.enforcedBy = "ztunnel"
+	}
+	// Istio reports WaypointAccepted on policies a waypoint enforces and
+	// ZtunnelAccepted on those ztunnel enforces.
+	conds := L(Path(o.Obj, "status", "conditions"))
+	ob.detail = condSummary([][]any{conds}, "WaypointAccepted", "ZtunnelAccepted")
+	wa, war, wam := condStatus(conds, "WaypointAccepted")
+	za, zar, zam := condStatus(conds, "ZtunnelAccepted")
+	switch {
+	case wa == "False":
+		ob.state = PolicyStateFailed
+		ob.problems = append(ob.problems, strings.TrimSpace("Not accepted by the waypoint: "+war+" "+wam))
+	case za == "False":
+		ob.state = PolicyStateFailed
+		ob.problems = append(ob.problems, strings.TrimSpace("Not accepted by ztunnel: "+zar+" "+zam))
+	case ob.enforcedBy == "waypoint" && wa != "True":
+		ob.state = PolicyStateApplied
+	default:
+		ob.state = PolicyStateLive
 	}
 }
 
@@ -707,7 +835,13 @@ func authzEffect(o *store.Object) PolicyEffect {
 
 func (c *polCtx) describeRoute(cl string, ob *polObs) {
 	o := ob.obj
-	ob.typ, ob.enforcedBy = PolicyTypeRouting, "waypoint"
+	ob.types, ob.enforcedBy = []string{PolicyTypeRouting}, "waypoint"
+	for _, rule := range L(Path(o.Obj, "spec", "rules")) {
+		if len(M(M(rule)["timeouts"])) > 0 || len(M(M(rule)["retry"])) > 0 {
+			ob.types = append(ob.types, PolicyTypeResilience)
+			break
+		}
+	}
 	var refs []map[string]any
 	var ports []int
 	for _, v := range L(Path(o.Obj, "spec", "parentRefs")) {
@@ -770,33 +904,44 @@ func (c *polCtx) describeRoute(cl string, ob *polObs) {
 			ob.problems = append(ob.problems, m)
 		}
 	}
-	// Status the controller wrote.
-	state := "applied"
-	for _, p := range L(Path(o.Obj, "status", "parents")) {
-		for _, cond := range L(M(p)["conditions"]) {
-			cm := M(cond)
-			switch S(cm["type"]) {
-			case "Accepted":
-				if S(cm["status"]) == "True" && state == "applied" {
-					state = "accepted"
-				} else if S(cm["status"]) == "False" {
-					state = "not-enforced"
-					ob.problems = append(ob.problems, strings.TrimSpace("Not accepted: "+S(cm["reason"])+" "+S(cm["message"])))
-				}
-			case "ResolvedRefs":
-				if S(cm["status"]) == "False" {
-					ob.problems = append(ob.problems, strings.TrimSpace("Backends not resolved: "+S(cm["reason"])+" "+S(cm["message"])))
-				}
-			}
+	// Status the controller wrote: live once every parent reports Accepted
+	// and ResolvedRefs True, failed when either is False.
+	parents := L(Path(o.Obj, "status", "parents"))
+	var groups [][]any
+	confirmed := len(parents) > 0
+	failed := false
+	for _, p := range parents {
+		conds := L(M(p)["conditions"])
+		groups = append(groups, conds)
+		acc, ar, am := condStatus(conds, "Accepted")
+		res, rr, rm := condStatus(conds, "ResolvedRefs")
+		if acc == "False" {
+			failed = true
+			ob.problems = append(ob.problems, strings.TrimSpace("Not accepted: "+ar+" "+am))
+		}
+		if res == "False" {
+			failed = true
+			ob.problems = append(ob.problems, strings.TrimSpace("Backends not resolved: "+rr+" "+rm))
+		}
+		if acc != "True" || res != "True" {
+			confirmed = false
 		}
 	}
-	ob.state = state
+	ob.detail = condSummary(groups, "Accepted", "ResolvedRefs")
+	switch {
+	case failed:
+		ob.state = PolicyStateFailed
+	case confirmed:
+		ob.state = PolicyStateLive
+	default:
+		ob.state = PolicyStateApplied
+	}
 	// A Service-parent route is only enforced by a waypoint.
-	if ob.applies.Kind == "service" && ob.state != "not-enforced" {
+	if ob.applies.Kind == "service" && ob.state != PolicyStateFailed {
 		for _, s := range r.svcs {
 			if policyAmbient(c.ws, s) {
 				if _, wp, _ := Waypoint(c.ws, s); wp == "" {
-					ob.state = "not-enforced"
+					ob.state = PolicyStateNotEnforced
 					ob.problems = append(ob.problems, "Service "+s.Name+" has no waypoint, so nothing enforces this route")
 					break
 				}
@@ -895,6 +1040,12 @@ func (c *polCtx) describeDestinationRule(cl string, ob *polObs) {
 	host := S(Path(o.Obj, "spec", "host"))
 	tp := M(Path(o.Obj, "spec", "trafficPolicy"))
 	feats := []PolicyEffect{}
+	// Every feature present adds its type.
+	add := func(t string) {
+		if !contains(ob.types, t) {
+			ob.types = append(ob.types, t)
+		}
+	}
 	if len(M(tp["outlierDetection"])) > 0 {
 		od := M(tp["outlierDetection"])
 		n := N(od["consecutive5xxErrors"])
@@ -917,15 +1068,17 @@ func (c *polCtx) describeDestinationRule(cl string, ob *polObs) {
 		}
 		if algo != "" {
 			feats = append(feats, PolicyEffect{Action: "Balance", Phrase: "Load balancing: " + humanAlgorithm(algo)})
-		} else if len(M(lb["localityLbSetting"])) > 0 {
+		}
+		if len(M(lb["localityLbSetting"])) > 0 {
 			feats = append(feats, PolicyEffect{Action: "Failover", Phrase: "Regional failover"})
 		}
 	}
 	if mode := S(Path(tp, "tls", "mode")); mode != "" {
-		feats = append(feats, PolicyEffect{Action: "TLS", Phrase: "TLS " + mode})
+		feats = append(feats, PolicyEffect{Action: "TLS", Phrase: "Sets backend TLS (" + mode + ")"})
 	}
-	if n := len(L(Path(o.Obj, "spec", "subsets"))); n > 0 && len(feats) == 0 {
-		feats = append(feats, PolicyEffect{Action: "Subsets", Phrase: fmt.Sprintf("%d subsets", n)})
+	subsets := len(L(Path(o.Obj, "spec", "subsets")))
+	if subsets > 0 && len(feats) == 0 {
+		feats = append(feats, PolicyEffect{Action: "Subsets", Phrase: fmt.Sprintf("%d subsets", subsets)})
 	}
 	ob.effect = PolicyEffect{Action: "Rule", Phrase: "No settings"}
 	if len(feats) > 0 {
@@ -936,13 +1089,18 @@ func (c *polCtx) describeDestinationRule(cl string, ob *polObs) {
 		}
 		ob.effect.Phrase = strings.Join(ph, "; ")
 	}
-	switch ob.effect.Action {
-	case "outlier", "Limit", "Failover":
-		ob.typ = PolicyTypeResilience
-	case "TLS":
-		ob.typ = PolicyTypeTransport
-	default:
-		ob.typ = PolicyTypeRouting
+	for _, f := range feats {
+		switch f.Action {
+		case "outlier", "Limit", "Failover":
+			add(PolicyTypeResilience)
+		case "TLS":
+			add(PolicyTypeTransport)
+		default:
+			add(PolicyTypeRouting)
+		}
+	}
+	if subsets > 0 || len(ob.types) == 0 {
+		add(PolicyTypeRouting) // subsets route even next to other settings
 	}
 	switch {
 	case strings.Contains(host, "*"):
@@ -960,7 +1118,7 @@ func (c *polCtx) describeDestinationRule(cl string, ob *polObs) {
 		if _, wp, _ := Waypoint(c.ws, svc); wp != "" {
 			ob.enforcedBy = "waypoint"
 		} else if policyAmbient(c.ws, svc) {
-			ob.state = "not-enforced"
+			ob.state = PolicyStateNotEnforced
 			ob.problems = append(ob.problems, "Service "+svc.Name+" has no waypoint, so ztunnel ignores this DestinationRule")
 		}
 	case external:
@@ -976,70 +1134,6 @@ func (c *polCtx) describeDestinationRule(cl string, ob *polObs) {
 		if c.absent(cl, "", "services", "Service", sns) {
 			ob.applies.Kind, ob.applies.Phrase = "nothing", "Targets nothing"
 			ob.applies.Reason = "Service " + name + " does not exist"
-		}
-	}
-}
-
-func (c *polCtx) describeWaypoint(cl string, ob *polObs) {
-	o := ob.obj
-	ob.typ = PolicyTypeWaypoints
-	svcs := c.bound[cl][o.Namespace+"/"+o.Name]
-	ob.services = svcs
-	product, _ := policyGatewayProduct(c.ws, cl, o)
-	label := "Istio"
-	if product == "agentgateway" {
-		label = "agentgateway"
-	} else if product != "" && product != "istio" {
-		label = product
-	}
-	n := len(svcs)
-	ob.effect = PolicyEffect{Action: "Waypoint", Phrase: fmt.Sprintf("%s waypoint, %d Service", label, n)}
-	if n != 1 {
-		ob.effect.Phrase += "s"
-	}
-	ob.applies.Targets = []Ref{reference(o)}
-	nsWide, own := false, 0
-	for _, s := range svcs {
-		if s.Labels()["istio.io/use-waypoint"] != "" {
-			own++
-		} else {
-			nsWide = true
-		}
-	}
-	switch {
-	case n == 0:
-		ob.applies.Kind, ob.applies.Phrase = "nothing", "Targets nothing"
-		ob.applies.Reason = "No Service or namespace uses this waypoint"
-		ob.problems = append(ob.problems, "No Service or namespace uses this waypoint")
-		ob.state = "applied"
-	case nsWide:
-		ob.applies.Kind, ob.applies.Phrase = "namespace", "Namespace "+o.Namespace+" (use-waypoint label)"
-		if svcs[0].Namespace != o.Namespace {
-			ob.applies.Phrase = "Namespace " + svcs[0].Namespace + " (use-waypoint label)"
-		}
-	default:
-		ob.applies.Kind = "service"
-		ob.applies.Phrase = "Service " + svcs[0].Name
-		if n > 1 {
-			ob.applies.Phrase = fmt.Sprintf("%d Services in %s", n, svcs[0].Namespace)
-		}
-		ob.applies.Targets = nil
-		for _, s := range svcs {
-			ob.applies.Targets = append(ob.applies.Targets, reference(s))
-		}
-		if n == 1 {
-			ob.primary = svcs[0]
-		}
-	}
-	for _, cond := range L(Path(o.Obj, "status", "conditions")) {
-		cm := M(cond)
-		if S(cm["type"]) == "Programmed" {
-			if S(cm["status"]) == "True" {
-				ob.state = "programmed"
-			} else {
-				ob.state = "not-enforced"
-				ob.problems = append(ob.problems, strings.TrimSpace("Waypoint is not programmed: "+S(cm["reason"])+" "+S(cm["message"])))
-			}
 		}
 	}
 }
@@ -1064,32 +1158,27 @@ func (c *polCtx) describeAgentgateway(cl string, ob *polObs) {
 	o := ob.obj
 	ob.enforcedBy = "waypoint"
 	c.setTargets(cl, ob, policyTargetRefs(o))
-	spec := M(Path(o.Obj, "spec"))
-	traffic, backend := M(spec["traffic"]), M(spec["backend"])
+	ob.types, ob.effect = agentgatewayClassify(M(Path(o.Obj, "spec")))
+	// The agentgateway controller reports Accepted per ancestor.
+	var groups [][]any
+	confirmed, failed := false, false
+	for _, an := range L(Path(o.Obj, "status", "ancestors")) {
+		conds := L(M(an)["conditions"])
+		groups = append(groups, conds)
+		switch st, _, msg := condStatus(conds, "Accepted"); st {
+		case "False":
+			failed = true
+			ob.problems = append(ob.problems, strings.TrimSpace("Not accepted: "+msg))
+		case "True":
+			confirmed = true
+		}
+	}
+	ob.detail = condSummary(groups, "Accepted")
 	switch {
-	case M(traffic["authorization"]) != nil:
-		a := strings.ToUpper(defaultString(S(Path(traffic, "authorization", "action")), "ALLOW"))
-		ob.typ, ob.effect = PolicyTypeAccess, PolicyEffect{Action: a, Phrase: fmt.Sprintf("%d match expressions", len(L(Path(traffic, "authorization", "policy", "matchExpressions"))))}
-	case M(traffic["rateLimit"]) != nil:
-		ph := "Rate limit"
-		if l := L(Path(traffic, "rateLimit", "local")); len(l) > 0 {
-			ph = fmt.Sprintf("%d requests a %s", N(M(l[0])["requests"]), rateUnitWord(S(M(l[0])["unit"])))
-		}
-		ob.typ, ob.effect = PolicyTypeResilience, PolicyEffect{Action: "Rate limit", Phrase: ph}
-	case traffic["timeouts"] != nil || traffic["retry"] != nil:
-		ob.typ, ob.effect = PolicyTypeResilience, PolicyEffect{Action: "Timeout", Phrase: "Timeouts or retries"}
-	default:
-		keys := []string{}
-		for _, m := range []map[string]any{traffic, backend} {
-			for k := range m {
-				keys = append(keys, k)
-			}
-		}
-		sort.Strings(keys)
-		ob.typ, ob.effect = PolicyTypeRouting, PolicyEffect{Action: "Policy", Phrase: "Sets " + strings.Join(keys, ", ")}
-		if len(keys) == 0 {
-			ob.effect.Phrase = "No settings"
-		}
+	case failed:
+		ob.state = PolicyStateFailed
+	case confirmed:
+		ob.state = PolicyStateLive
 	}
 	// An Istio waypoint ignores agentgateway policy.
 	for _, t := range ob.applies.Targets {
@@ -1098,26 +1187,10 @@ func (c *polCtx) describeAgentgateway(cl string, ob *polObs) {
 		}
 		if gw := c.ws.Get(cl, GatewayGroup, "gateways", t.Namespace, t.Name); gw != nil {
 			if p, class := policyGatewayProduct(c.ws, cl, gw); p == "istio" {
-				ob.state = "not-enforced"
-				ob.problems = append(ob.problems, "Not enforced: "+t.Namespace+"/"+t.Name+" is an Istio waypoint ("+class+"), which does not apply "+o.Kind+".")
-			}
-		}
-	}
-	for _, an := range L(Path(o.Obj, "status", "ancestors")) {
-		for _, cond := range L(M(an)["conditions"]) {
-			cm := M(cond)
-			if S(cm["type"]) == "Accepted" && S(cm["status"]) == "False" {
-				ob.state = "not-enforced"
-				ob.problems = append(ob.problems, strings.TrimSpace("Not accepted: "+S(cm["message"])))
-			}
-		}
-	}
-	if ob.state == "applied" {
-		for _, an := range L(Path(o.Obj, "status", "ancestors")) {
-			for _, cond := range L(M(an)["conditions"]) {
-				if cm := M(cond); S(cm["type"]) == "Accepted" && S(cm["status"]) == "True" {
-					ob.state = "accepted"
+				if ob.state != PolicyStateFailed {
+					ob.state = PolicyStateNotEnforced
 				}
+				ob.problems = append(ob.problems, "Not enforced: "+t.Namespace+"/"+t.Name+" is an Istio waypoint ("+class+"), which does not apply "+o.Kind+".")
 			}
 		}
 	}
@@ -1133,7 +1206,7 @@ func (c *polCtx) describeAgentgateway(cl string, ob *polObs) {
 
 func (c *polCtx) describeEnvoyFilter(cl string, ob *polObs) {
 	o := ob.obj
-	ob.typ, ob.enforcedBy = PolicyTypeResilience, "waypoint"
+	ob.types, ob.enforcedBy = []string{PolicyTypeResilience}, "waypoint"
 	name := o.Labels()["flightbay.dev/resilience-service"]
 	ob.effect = PolicyEffect{Action: "Resilience", Phrase: "Flightbay resilience settings"}
 	var req Request

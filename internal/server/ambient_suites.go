@@ -454,22 +454,37 @@ func (s *Server) ambientSuitesRun(w http.ResponseWriter, r *http.Request) {
 		jerr(w, 400, err.Error())
 		return
 	}
+	stream := wantsNDJSON(r)
 	var run *ambient.SuiteRun
+	var out *ndjson
+	emit := func(any) {}
+	startStream := func() {
+		if stream && out == nil {
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			w.Header().Set("Cache-Control", "no-store")
+			w.Header().Set("X-Accel-Buffering", "no")
+			out = &ndjson{w: w}
+			emit = out.send
+		}
+	}
 	demo := previewDemo()
 	if demo {
 		run = demoRun(suite, gen, ids)
+		startStream()
+		if stream {
+			emit(runEventStart{Type: "start", Total: len(run.Results), Cases: resultIDs(run.Results)})
+			for _, res := range run.Results {
+				emit(runEventCase{Type: "case-start", ID: res.ID})
+				emit(runEventCaseDone{Type: "case-done", ID: res.ID, Result: res})
+			}
+		}
 	} else {
 		if in.Context == "" {
 			jerr(w, 400, "choose a cluster connection to run the tests in")
 			return
 		}
-		switch suite.Source.Kind {
-		case ambient.SourceWorkload, ambient.SourceEphemeral:
-		case ambient.SourceExternal:
-			jerr(w, 400, "tests run from a Pod in the mesh or a temporary Pod; choose one of those as the source")
-			return
-		default:
-			jerr(w, 400, "choose a source to send the requests from")
+		if msg := sourcePreflight(suite.Source); msg != "" {
+			jerr(w, 400, msg)
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
@@ -489,19 +504,95 @@ func (s *Server) ambientSuitesRun(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer runner.Close()
-		run = runSuite(ctx, suite, ids, runner, decider, time.Now)
+		startStream()
+		opt := runOptions{Route: s.routeRulesFor(ref, gen, suite.Service), Emit: nil}
+		if stream {
+			opt.Emit = emit
+		}
+		run = runSuiteWith(ctx, suite, ids, runner, decider, time.Now, opt)
 		run.Cluster = ref.Cluster
 	}
 	run.Source = suite.Source
+	if r.Context().Err() != nil {
+		// The client went away (Stop): keep what finished, never a full run.
+		finished := []ambient.CaseResult{}
+		for _, res := range run.Results {
+			if !stoppedResult(res) {
+				finished = append(finished, res)
+			}
+		}
+		if len(finished) == 0 {
+			emit(map[string]any{"type": "error", "error": "The run was stopped before any case finished, so nothing was saved."})
+			return
+		}
+		run.Results = finished
+		run.Summary = ambient.Summarize(finished, run.At)
+		run.Summary.Cancelled = true
+	}
 	suite.Last = mergeRun(suite.Last, run, suite.Cases)
+	suite.Last.Summary.Cancelled = run.Summary.Cancelled
 	suite.Normalize()
 	if in.Save == nil || *in.Save {
 		if err := ambient.SaveSuite(dir, suite); err != nil {
-			jerr(w, 500, "the run finished but its results could not be saved: "+err.Error())
+			msg := "the run finished but its results could not be saved: " + err.Error()
+			if stream {
+				emit(map[string]any{"type": "error", "error": msg})
+				return
+			}
+			jerr(w, 500, msg)
 			return
 		}
 	}
-	writeJSON(w, 200, suiteRunResponse{Suite: *suite, LastRun: suite.Last, Results: run.Results, Summary: run.Summary, Demo: demo})
+	body := suiteRunResponse{Suite: *suite, LastRun: suite.Last, Results: run.Results, Summary: run.Summary, Demo: demo}
+	if stream {
+		emit(struct {
+			Type string `json:"type"`
+			suiteRunResponse
+		}{"done", body})
+		return
+	}
+	writeJSON(w, 200, body)
+}
+
+// wantsNDJSON is true when the client asks for a streamed run.
+func wantsNDJSON(r *http.Request) bool {
+	return strings.Contains(r.Header.Get("Accept"), "application/x-ndjson")
+}
+
+func resultIDs(rs []ambient.CaseResult) []string {
+	out := make([]string, 0, len(rs))
+	for _, r := range rs {
+		out = append(out, r.ID)
+	}
+	return out
+}
+
+// sourcePreflight rejects sources a run cannot send from.
+func sourcePreflight(src ambient.SuiteSource) string {
+	switch src.Kind {
+	case ambient.SourceWorkload, ambient.SourceEphemeral:
+		return ""
+	case ambient.SourceExternal:
+		return "tests run from a Pod in the mesh or a temporary Pod; choose one of those as the source"
+	}
+	return "choose a source to send the requests from"
+}
+
+// routeRulesFor is the HTTPRoute in front of the suite's Service: the
+// suite's own route, else any route whose parent is the Service.
+func (s *Server) routeRulesFor(ref ambient.Ref, gen *ambient.Generated, svc ambient.Ref) []ambient.RouteRuleSpec {
+	if gen != nil && gen.Route != nil {
+		return gen.Route.Rules
+	}
+	if s.WS == nil {
+		return nil
+	}
+	o := s.WS.Get(ref.Cluster, "", "services", svc.Namespace, svc.Name)
+	if o == nil {
+		return nil
+	}
+	_, rules, _ := ambient.RouteForService(s.WS, o, 0)
+	return rules
 }
 
 // selectCases resolves the case ids to run, in suite order.

@@ -1,98 +1,117 @@
 'use strict';
-/* Ambient v2: Policies & routes (mockup 02). One inventory of every ambient policy, route and waypoint,
-   with what it applies to, per-cluster state and who manages it. */
+/* Ambient v2: Policies & routes (mockup 02, made dense for real data volume: REVIEW-2026-10-20 R3).
+   One flat table of every ambient policy and route in the chosen namespaces: what it applies to, its effect,
+   its state on each cluster and who manages it. Waypoints are drawn on the Map, not listed here. */
 
-S.am2.pol = S.am2.pol || {data: null, key: '', q: '', types: [], show: {problems: false, drift: false, flightbay: false}, ns: [], group: 'object', scopeOpen: false};
-const AM2_TYPES = ['Access', 'Routing', 'Resilience', 'Transport', 'Waypoints'];
-const AM2_MANAGED = {flightbay: ['tl', 'Flightbay'], helm: ['mut', 'Helm'], argocd: ['mut', 'Argo CD'], flux: ['mut', 'Flux'], kubectl: ['mut', 'kubectl'], unknown: ['mut', 'Unknown']};
-const AM2_STATE = {applied: ['ok', 'Applied'], accepted: ['ok', 'Accepted'], programmed: ['ok', 'Programmed'], missing: ['mut', 'Missing'], differs: ['warn', 'Differs'], 'not-enforced': ['warn', 'Not enforced']};
+S.am2.pol = S.am2.pol || {data: null, q: '', types: [], problems: false, compare: false, sort: 'applies', dir: 1, page: 0, typeOpen: false, sig: ''};
+const AM2_TYPES = ['Access', 'Routing', 'Resilience', 'Transport', 'Other'];
+const AM2_POL_PAGE = 50;
+// Per-cluster states (REVIEW R3.7): the status vocabulary plus the neutral "Not here".
+const AM2_STATE = {live: ['ok', 'Live'], applied: ['tl', 'Applied'], failed: ['bad', 'Failed'], 'not-enforced': ['warn', 'Not enforced'], differs: ['warn', 'Differs'], 'not-here': ['mut', 'Not here'],
+  // older words, still returned by cached responses
+  accepted: ['ok', 'Live'], programmed: ['ok', 'Live'], missing: ['mut', 'Not here']};
 
 function am2MidEllipsis(name, max = 32) {
-  return name.length <= max ? name : name.slice(0, 19) + '…' + name.slice(-10);
+  name = String(name || '');
+  if (name.length <= max) return name;
+  const tail = Math.min(12, Math.floor((max - 1) / 3));
+  return name.slice(0, max - 1 - tail) + '…' + name.slice(-tail);
 }
+const am2ShortCluster = c => String(c || '').replace(/^kind-/, '');
 
 function am2PolQuery() {
-  const P = S.am2.pol, q = {group: P.group};
-  if (P.ns.length) q.namespace = P.ns.join(',');
+  const P = S.am2.pol, sc = S.am2.scope, q = {group: 'object'};
+  if (sc.ns.length) q.namespace = sc.ns.join(',');
   if (P.types.length) q.type = P.types.join(',');
-  if (P.show.problems) q.problems = '1';
-  if (P.show.drift) q.drift = '1';
-  if (P.show.flightbay) q.managedBy = 'flightbay';
+  if (P.problems) q.problems = '1';
   if (P.q.trim()) q.q = P.q.trim();
   return q;
 }
 
 function am2AppliesTo(a) {
   if (!a) return '<span class="am2-muted">—</span>';
-  if (a.kind === 'nothing') return `${am2Pill('bad', 'Targets nothing')} <span class="am2-sub">${esc(a.reason || '')}</span>`;
+  if (a.kind === 'nothing') return `<span class="am2-bad-t">Targets nothing</span> <span class="am2-sub">${esc(a.reason || '')}</span>`;
   const m = String(a.phrase || '').match(/^(Service|Namespace|Pods|Whole mesh|Waypoint|Gateway)\s*(.*)$/);
   if (!m) return esc(a.phrase);
-  if (m[1] === 'Whole mesh') return `Whole mesh ${m[2] ? `<span class="am2-sub">${esc(m[2])}</span>` : '<span class="am2-sub">(inherited)</span>'}`;
+  if (m[1] === 'Whole mesh') return `Whole mesh <span class="am2-sub">${esc(m[2] || '(inherited)')}</span>`;
   if (m[1] === 'Pods') return `Pods <span class="am2-mono">${esc(m[2])}</span>`;
   const [name, ...rest] = m[2].split(' ');
-  return `${m[1]} <b>${esc(name)}</b>${rest.length ? ' ' + esc(rest.join(' ')) : ''}`;
+  return `${m[1]} <b title="${esc(name)}">${esc(am2MidEllipsis(name, 28))}</b>${rest.length ? ' <span class="am2-sub">' + esc(rest.join(' ')) + '</span>' : ''}`;
 }
 
-function am2PolRow(r, clusters, route) {
-  const eff = ['DENY', 'ALLOW'].includes(r.effect?.action) ? `${am2Pill(r.effect.action === 'DENY' ? 'bad' : 'ok', r.effect.action)} ${esc(r.effect.phrase)}` : esc(r.effect?.phrase || '');
-  const cells = clusters.map(c => { const [t, l] = AM2_STATE[r.perCluster?.[c]] || ['mut', r.perCluster?.[c] || '—']; return `<td>${am2Pill(t, l)}</td>`; }).join('');
-  const [mt, ml] = AM2_MANAGED[r.managedBy] || AM2_MANAGED.unknown;
-  const refStr = [r.ref.cluster, r.ref.kind, r.ref.namespace, r.ref.name].join('/');
+// One cell for every cluster: a dot per cluster, the word in the title (REVIEW R3.3).
+function am2ClustersCell(r, clusters) {
+  return `<span class="am2-clcell">${clusters.map(c => {
+    const s = r.perCluster?.[c] || 'not-here', [tone, label] = AM2_STATE[s] || ['mut', s];
+    return `<span class="am2-cl" title="${esc(c)}: ${esc(label)}${r.perClusterDetail?.[c] ? ' · ' + esc(r.perClusterDetail[c]) : ''}"><i class="am2-dot ${s === 'not-here' ? 'hollow' : tone}"></i>${esc(am2ShortCluster(c))}${s === 'live' || s === 'not-here' || (s === 'not-enforced' && r.appliesTo?.kind === 'nothing') ? '' : ` <span class="am2-st ${tone}">${esc(label)}</span>`}</span>`;
+  }).join('')}</span>`;
+}
+
+const am2PolRefStr = r => [r.ref.cluster, r.ref.kind, r.ref.namespace, r.ref.name].join('/');
+
+function am2PolRow(r, clusters, compare) {
+  const tgt = r.appliesTo?.targets?.[0]?.name, phrase = tgt && r.effect?.phrase === 'Route → ' + tgt ? 'Routes to the same Service' : (r.effect?.phrase || '');
+  const eff = ['DENY', 'ALLOW', 'CUSTOM', 'AUDIT'].includes(r.effect?.action) ? `${am2Pill(r.effect.action === 'DENY' ? 'bad' : r.effect.action === 'ALLOW' ? 'ok' : 'info', r.effect.action)} ${esc(phrase)}` : `<span class="${phrase === 'Routes to the same Service' ? 'am2-sub' : ''}">${esc(phrase)}</span>`;
+  const states = Object.values(r.perCluster || {}), refStr = am2PolRefStr(r);
   const objHash = ['AuthorizationPolicy', 'HTTPRoute'].includes(r.kind) ? am2Hash({obj: refStr, otab: 'summary'}) : '';
-  const differs = Object.values(r.perCluster || {}).includes('differs'), notEnf = Object.values(r.perCluster || {}).includes('not-enforced');
   const btn = (label, attrs) => `<button type="button" class="am2-btn sm" ${attrs}>${label}</button>`;
   const acts = [
     r.canTest ? btn('Test', `data-am2-go="${esc(am2Hash({obj: refStr, otab: 'tests'}))}"`) : '',
-    differs ? btn('Diff', `data-am2-diff='${esc(JSON.stringify({ref: r.ref, perCluster: r.perCluster}))}'`) : '',
-    notEnf ? btn('Explain', objHash ? `data-am2-go="${esc(am2Hash({obj: refStr, otab: 'explain'}))}"` : `data-am2-open='${esc(JSON.stringify(r.ref))}'`) : '',
-    notEnf && !differs ? '' : btn('Open', objHash ? `data-am2-go="${esc(objHash)}"` : `data-am2-open='${esc(JSON.stringify(r.ref))}'`)
+    states.includes('differs') ? btn('Diff', `data-am2-diff='${esc(JSON.stringify(r.ref))}'`) : '',
+    btn('Open', objHash ? `data-am2-go="${esc(objHash)}"` : `data-am2-open='${esc(JSON.stringify(r.ref))}'`)
   ].filter(Boolean).join(' ');
-  return `<tr><td><span class="am2-kind">${esc(r.kind)}</span><div class="am2-t am2-mono" style="margin-top:3px" title="${esc(r.ref.namespace)}/${esc(r.ref.name)}">${esc(am2MidEllipsis(r.ref.name))}</div></td><td>${am2AppliesTo(r.appliesTo)}</td><td>${eff}</td><td>${esc(r.enforcedBy || '—') || '—'}</td>${cells}<td>${am2Pill(mt, ml)}</td><td class="am2-right am2-nowrap">${acts}</td></tr>`;
+  const svc = r.svc || (r.appliesTo?.kind === 'service' && r.appliesTo.targets?.[0]);
+  const applies = svc ? `<a href="${esc(am2Hash({svc: am2SvcPath(svc.cluster || r.ref.cluster, svc.namespace, svc.name), stab: 'configuration'}))}" class="am2-plain">${am2AppliesTo(r.appliesTo)}</a>` : am2AppliesTo(r.appliesTo);
+  const cl = compare ? clusters.map(c => { const s = r.perCluster?.[c] || 'not-here', [t, l] = AM2_STATE[s] || ['mut', s]; return `<td title="${esc(r.perClusterDetail?.[c] || '')}">${am2Pill(t, l)}</td>`; }).join('') : `<td>${am2ClustersCell(r, clusters)}</td>`;
+  return `<tr><td class="am2-nowrap"><span class="am2-kindt">${esc(r.kind)}</span> <span class="am2-mono" title="${esc(r.ref.namespace)}/${esc(r.ref.name)}">${esc(am2MidEllipsis(r.ref.name, 40))}</span></td><td>${applies}</td><td>${eff}</td>${cl}<td class="am2-sub am2-nowrap">${esc(r.managedByLabel || r.managedBy || 'Unknown')}</td><td class="am2-right am2-nowrap">${acts}</td></tr>`;
 }
 
-function am2PolTable(d, route) {
-  const clusters = d.clusters || [], cols = 7 + clusters.length;
-  const head = `<thead><tr><th>Kind / name</th><th>Applies to</th><th>Effect</th><th>Enforced by</th>${clusters.map(c => `<th>${esc(c)}</th>`).join('')}<th>Managed by</th><th></th></tr></thead>`;
-  let body;
-  if (S.am2.pol.group === 'service' && d.groups) {
-    body = d.groups.map(g => `<tr class="am2-grp ${g.svc ? 'am2-click' : ''}" ${g.svc ? `data-am2-go="${esc(am2Hash({svc: am2SvcPath(g.svc.cluster, g.svc.namespace, g.svc.name), stab: 'configuration'}))}"` : ''}><td colspan="${cols}">${esc(g.title)} · ${g.rows.length} ${g.rows.length === 1 ? 'object' : 'objects'}</td></tr>${g.rows.map(r => am2PolRow(r, clusters, route)).join('')}`).join('');
-  } else {
-    // By object: still grouped by Service so a group header can open the Service.
-    const groups = {};
-    for (const r of d.rows) { const k = r.appliesTo?.kind === 'mesh' ? 'mesh' : (r.svc && r.kind !== 'Gateway' && r.appliesTo?.kind !== 'namespace') ? 'svc:' + r.svc.namespace + '/' + r.svc.name : 'ns:' + r.ref.namespace; (groups[k] = groups[k] || {rows: [], svc: r.svc, k}).rows.push(r); }
-    body = Object.values(groups).sort((a, b) => ({svc: 0, ns: 1, mesh: 2}[a.k.split(':')[0]] - {svc: 0, ns: 1, mesh: 2}[b.k.split(':')[0]])).map(g => {
-      const title = g.k === 'mesh' ? 'Whole mesh' : g.k.startsWith('ns:') ? `${g.k.slice(3)} (namespace-wide)` : g.k.slice(4);
-      const svc = g.k.startsWith('svc:') ? g.svc : null;
-      return `<tr class="am2-grp ${svc ? 'am2-click' : ''}" ${svc ? `data-am2-go="${esc(am2Hash({svc: am2SvcPath(svc.cluster, svc.namespace, svc.name), stab: 'configuration'}))}"` : ''}><td colspan="${cols}">${esc(title)} · ${g.rows.length} ${g.rows.length === 1 ? 'object' : 'objects'}</td></tr>${g.rows.map(r => am2PolRow(r, clusters, route)).join('')}`;
-    }).join('');
-  }
-  return `<table>${head}<tbody>${body || `<tr><td colspan="${cols}" class="am2-empty">Nothing matches these filters.</td></tr>`}</tbody></table>`;
+// Pure: sort rows. Applies to keeps a Service's objects together.
+function am2PolSort(rows, key, dir) {
+  const k = {
+    name: r => r.ref.name,
+    applies: r => r.ref.namespace + '/' + (r.appliesTo?.kind === 'nothing' ? '\uffff' : '') + (r.appliesTo?.phrase || '') + '/' + r.ref.name,
+    clusters: r => (r.drift ? '0' : '1') + Object.values(r.perCluster || {}).sort().join(','),
+    managed: r => (r.managedByLabel || r.managedBy || '') + r.ref.name
+  }[key] || (r => r.ref.name);
+  return rows.slice().sort((a, b) => k(a).localeCompare(k(b)) * dir);
+}
+
+function am2PolTable(d) {
+  const P = S.am2.pol, clusters = d.clusters || [];
+  const rows = am2PolSort(d.rows || [], P.sort, P.dir);
+  const pages = Math.max(1, Math.ceil(rows.length / AM2_POL_PAGE)); P.page = Math.min(P.page, pages - 1);
+  const slice = rows.slice(P.page * AM2_POL_PAGE, (P.page + 1) * AM2_POL_PAGE);
+  const th = (key, label) => `<th><a href="#" class="am2-sort ${P.sort === key ? 'on' : ''}" data-am2-psort="${key}">${esc(label)}${P.sort === key ? (P.dir > 0 ? ' ↑' : ' ↓') : ''}</a></th>`;
+  const cols = 5 + (P.compare ? clusters.length : 1);
+  const head = `<thead><tr>${th('name', 'Name')}${th('applies', 'Applies to')}<th>Effect</th>${P.compare ? clusters.map(c => `<th>${esc(c)}</th>`).join('') : th('clusters', 'Clusters')}${th('managed', 'Managed by')}<th></th></tr></thead>`;
+  const body = slice.map(r => am2PolRow(r, clusters, P.compare)).join('') || `<tr><td colspan="${cols}" class="am2-empty">Nothing matches these filters.${am2ScopeAll() ? '' : ' Change the namespaces at the top right to see more.'}</td></tr>`;
+  const pager = rows.length > AM2_POL_PAGE ? `<div class="am2-pager"><span class="am2-spacer"></span><span class="am2-sub">${P.page * AM2_POL_PAGE + 1}–${Math.min(rows.length, (P.page + 1) * AM2_POL_PAGE)} of ${rows.length}</span><button type="button" class="am2-btn sm" data-am2-ppage="-1" ${P.page ? '' : 'disabled'}>Prev</button><button type="button" class="am2-btn sm" data-am2-ppage="1" ${P.page < pages - 1 ? '' : 'disabled'}>Next</button></div>` : '';
+  return `<table class="am2-dense">${head}<tbody>${body}</tbody></table>${pager}`;
 }
 
 function am2PolFilters(d) {
-  const P = S.am2.pol, chip = (on, attrs, label) => `<button type="button" class="am2-chip ${on ? 'on' : ''}" ${attrs}>${label}</button>`;
-  const scope = P.ns.map(n => chip(true, `data-am2-pscope="${esc(n)}"`, `${esc(n)} ✕`)).join('') + (P.scopeOpen ? (d.counts?.namespaces || []).filter(n => !P.ns.includes(n.name)).map(n => chip(false, `data-am2-pscope="${esc(n.name)}"`, `${esc(n.name)} <span class="am2-muted">${n.count}</span>`)).join('') : (P.ns.length ? '' : chip(false, 'data-am2-pscopeopen', 'All namespaces ▾')));
-  return `<div class="am2-card am2-filterbar"><input class="am2-input" id="am2-pq" style="width:260px" placeholder="Filter by name, kind or target" value="${esc(P.q)}" aria-label="Filter"><span class="am2-muted" style="margin-left:6px">Scope</span>${scope}<span class="am2-muted" style="margin-left:6px">Type</span>${AM2_TYPES.map(t => chip(P.types.includes(t), `data-am2-ptype="${t}"`, t)).join('')}<span class="am2-muted" style="margin-left:6px">Show</span>${chip(P.show.problems, 'data-am2-pshow="problems"', 'Only problems')}${chip(P.show.drift, 'data-am2-pshow="drift"', 'Only drift')}${chip(P.show.flightbay, 'data-am2-pshow="flightbay"', 'Managed by Flightbay')}<span class="am2-seg" style="margin-left:auto"><a href="#" data-am2-pgroup="object" class="${P.group === 'object' ? 'on' : ''}">By object</a><a href="#" data-am2-pgroup="service" class="${P.group === 'service' ? 'on' : ''}">By Service</a></span></div>`;
+  const P = S.am2.pol, by = d.counts?.byType || {};
+  const typeLabel = P.types.length ? P.types.join(', ') : 'All types';
+  const typePop = P.typeOpen ? `<div class="am2-menu" id="am2-ptypemenu">${AM2_TYPES.map(t => `<label class="am2-scope-opt"><input type="checkbox" data-am2-ptype="${t}" ${P.types.includes(t) ? 'checked' : ''}><span class="am2-scope-name">${t}</span><span class="am2-sub">${esc(by[t] ?? 0)}</span></label>`).join('')}</div>` : '';
+  return `<div class="am2-card am2-filterbar"><input class="am2-input" id="am2-pq" style="width:260px" placeholder="Filter by name or target" value="${esc(P.q)}" aria-label="Filter"><span class="am2-rel"><button type="button" class="am2-scopebtn" data-am2-ptypebtn aria-expanded="${P.typeOpen}">Type: ${esc(typeLabel)} <span aria-hidden="true">▾</span></button>${typePop}</span><label class="am2-check"><input type="checkbox" data-am2-pproblems ${P.problems ? 'checked' : ''}> Problems only${d.counts?.problems ? ` <span class="am2-sub">(${esc(d.counts.problems)})</span>` : ''}</label>${(d.clusters || []).length > 1 ? `<label class="am2-check"><input type="checkbox" data-am2-pcompare ${P.compare ? 'checked' : ''}> A column per cluster</label>` : ''}<span class="am2-spacer"></span><button type="button" class="am2-btn sm0" data-am2-export>Export YAML</button></div>`;
 }
 
 async function am2PoliciesPage(route, data) {
   const P = S.am2.pol;
-  // Route parameters seed the filters the first time and when they change.
-  const sig = [route.ns, route.kind, route.problems, route.drift, route.group].join('|');
+  const sig = [route.kind, route.problems].join('|');
   if (P.sig !== sig) {
     P.sig = sig;
-    if (route.ns !== undefined) P.ns = route.ns ? route.ns.split(',') : [];
-    if (route.problems) P.show.problems = route.problems === '1';
-    if (route.drift) P.show.drift = route.drift === '1';
-    if (route.group) P.group = route.group === 'service' ? 'service' : 'object';
+    if (route.problems) P.problems = route.problems === '1';
     if (route.kind) P.types = route.kind.split(',').filter(t => AM2_TYPES.includes(t));
   }
   const d = await api('api/ambient/policies', am2PolQuery());
   P.data = d;
-  const clusters = d.clusters || [];
-  const total = d.counts?.all ?? d.rows.length;
-  const header = `<div style="display:flex;align-items:flex-end;gap:12px;margin-bottom:12px"><div style="flex:1"><h2 style="font-size:16px">All policies and routes</h2><div class="am2-muted">Every ambient policy, route and waypoint in the connected clusters, with what it applies to. ${esc(total)} objects across ${clusters.length} ${clusters.length === 1 ? 'cluster' : 'clusters'}.</div></div><button type="button" class="am2-btn" data-am2-export>Export YAML</button></div>`;
-  return `${header}${am2PolFilters(d)}<div class="am2-card" style="overflow:hidden" id="am2-poltable">${am2PolTable(d, route)}</div>`;
+  const clusters = d.clusters || [], shown = (d.rows || []).length, all = d.counts?.all ?? shown;
+  const where = am2ScopeAll() ? `across ${clusters.length} ${clusters.length === 1 ? 'cluster' : 'clusters'}` : `in ${S.am2.scope.ns.length === 1 ? S.am2.scope.ns[0] : S.am2.scope.ns.length + ' namespaces'} (${all} in every namespace)`;
+  const wp = d.counts?.waypoints ? ` <a href="${am2Hash({tab: 'map', ...am2ScopeParams()})}">${d.counts.waypoints} ${d.counts.waypoints === 1 ? 'waypoint is' : 'waypoints are'} on the Map →</a>` : '';
+  const header = `<div style="margin-bottom:12px"><h2 style="font-size:16px">All policies and routes</h2><div class="am2-muted">Every ambient policy and route, with what it applies to. ${esc(shown)} ${shown === 1 ? 'object' : 'objects'} ${esc(where)}.${wp}</div></div>`;
+  return `${header}${am2PolFilters(d)}<div class="am2-card" style="overflow:hidden" id="am2-poltable">${am2PolTable(d)}</div>`;
 }
 
 function am2PoliciesAfter(route) {
@@ -101,25 +120,40 @@ function am2PoliciesAfter(route) {
   if (!root) return;
   let timer;
   const q = $('#am2-pq');
-  if (q) q.oninput = () => { P.q = q.value; clearTimeout(timer); timer = setTimeout(async () => { const d = await api('api/ambient/policies', am2PolQuery()); P.data = d; $('#am2-poltable').innerHTML = am2PolTable(d, route); }, 250); };
+  if (q) q.oninput = () => { P.q = q.value; P.page = 0; clearTimeout(timer); timer = setTimeout(async () => { const d = await api('api/ambient/policies', am2PolQuery()); P.data = d; $('#am2-poltable').innerHTML = am2PolTable(d); }, 250); };
   if (root.dataset.pol) return;
   root.dataset.pol = '1';
+  const redraw = () => { const el = $('#am2-poltable'); if (el && P.data) el.innerHTML = am2PolTable(P.data); };
+  root.addEventListener('change', e => {
+    const t = e.target;
+    if (t.matches('[data-am2-ptype]')) { const n = t.dataset.am2Ptype; P.types = t.checked ? [...P.types, n] : P.types.filter(x => x !== n); P.page = 0; render(); }
+    else if (t.matches('[data-am2-pproblems]')) { P.problems = t.checked; P.page = 0; render(); }
+    else if (t.matches('[data-am2-pcompare]')) { P.compare = t.checked; redraw(); }
+  });
+  if (!S.am2.polDocWired) S.am2.polDocWired = document.addEventListener('click', e => { if (P.typeOpen && !e.target.closest('#am2-ptypemenu') && !e.target.closest('[data-am2-ptypebtn]')) { P.typeOpen = false; render(); } }) || true;
   root.addEventListener('click', async e => {
-    const t = e.target, rerender = () => render();
-    const sc = t.closest('[data-am2-pscope]'), so = t.closest('[data-am2-pscopeopen]'), ty = t.closest('[data-am2-ptype]'), sh = t.closest('[data-am2-pshow]'), gp = t.closest('[data-am2-pgroup]');
-    if (sc) { const n = sc.dataset.am2Pscope; P.ns = P.ns.includes(n) ? P.ns.filter(x => x !== n) : [...P.ns, n]; P.scopeOpen = false; rerender(); }
-    else if (so) { P.scopeOpen = !P.scopeOpen; rerender(); }
-    else if (ty) { const n = ty.dataset.am2Ptype; P.types = P.types.includes(n) ? P.types.filter(x => x !== n) : [...P.types, n]; rerender(); }
-    else if (sh) { const k = sh.dataset.am2Pshow; P.show[k] = !P.show[k]; rerender(); }
-    else if (gp) { e.preventDefault(); P.group = gp.dataset.am2Pgroup; rerender(); }
-    else if (t.closest('[data-am2-export]')) {
+    const t = e.target;
+    if (t.closest('[data-am2-ptypebtn]')) { P.typeOpen = !P.typeOpen; render(); return; }
+    const so = t.closest('[data-am2-psort]');
+    if (so) { e.preventDefault(); const k = so.dataset.am2Psort; P.dir = P.sort === k ? -P.dir : 1; P.sort = k; redraw(); return; }
+    const pg = t.closest('[data-am2-ppage]');
+    if (pg) { P.page += Number(pg.dataset.am2Ppage); redraw(); return; }
+    if (t.closest('[data-am2-export]')) {
       const rows = P.data?.rows || [], docs = [];
       for (const r of rows) { try { const o = await api('api/object', r.ref); if (o.yaml) docs.push(o.yaml.trim()); } catch (_) { /* skip objects that cannot be read */ } }
       amDownload(docs.join('\n---\n') + '\n', 'ambient-policies-and-routes.yaml');
-    } else if (t.closest('[data-am2-diff]')) {
+      return;
+    }
+    const df = t.closest('[data-am2-diff]');
+    if (df) {
       e.stopPropagation();
-      const x = JSON.parse(t.closest('[data-am2-diff]').dataset.am2Diff);
-      modal('Differs between clusters', `<div class="am2"><p class="am2-sub" style="margin-bottom:10px">${esc(x.ref.kind)} ${esc(x.ref.name)}: the spec is not the same on every cluster.</p><table><thead><tr><th>Cluster</th><th>State</th></tr></thead><tbody>${Object.entries(x.perCluster).map(([c, s]) => `<tr><td>${esc(c)}</td><td>${am2Pill(...(AM2_STATE[s] || ['mut', s]))}</td></tr>`).join('')}</tbody></table></div>`);
+      const ref = JSON.parse(df.dataset.am2Diff);
+      try {
+        const d = await api('api/ambient/policies/diff', {kind: ref.kind, namespace: ref.namespace, name: ref.name});
+        const rows = (d.fields || []).map(f => `<tr><td class="am2-mono">${esc(f.path)}</td>${d.clusters.map(c => `<td class="am2-mono">${f.values?.[c] === undefined ? '<span class="am2-muted">absent</span>' : esc(f.values[c])}</td>`).join('')}</tr>`).join('');
+        modal(`${ref.kind} ${ref.name}: differences between clusters`, `<div class="am2"><table class="am2-dense"><thead><tr><th>Field</th>${d.clusters.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>${rows || `<tr><td colspan="${d.clusters.length + 1}" class="am2-empty">The specs are the same once defaults are ignored.</td></tr>`}</tbody></table>${(d.onlyOn || []).length ? `<p class="am2-sub" style="margin-top:10px">Only on ${esc(d.onlyOn.join(', '))}.</p>` : ''}</div>`);
+      } catch (err) { toast(err.message); }
+      return;
     }
     const open = t.closest('[data-am2-open]');
     if (open) openObject(JSON.parse(open.dataset.am2Open));
