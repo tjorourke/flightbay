@@ -291,3 +291,5 @@ details#am2-try>summary h2::before{content:'▸ ';color:var(--am2-muted)}details
 .am2-pages{display:inline-flex;gap:3px;align-items:center}
 .am2 tr.am2-setuprow td:first-child .am2-kindt{color:var(--teal)}
 .am2 table.am2-ttable td{vertical-align:middle}
+.am2-oldfields .am-access-row{grid-template-columns:minmax(0,2.2fr) minmax(0,1fr) minmax(0,1.6fr) auto!important}
+.am2-oldfields .am-access-row input{font-family:var(--mono);font-size:12px}

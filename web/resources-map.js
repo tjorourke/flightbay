@@ -1,5 +1,5 @@
 // Resources map. One namespace drawn as lanes of cards: policies, gateways,
-// routes, Services, Pods, workloads and the config they reference, with the
+// routes, Services, workloads, Pods and the config they reference, with the
 // captured relationships drawn between them. The panel, controls, chips and
 // card anatomy are the ones the Ambient attachment map uses, so the two maps
 // read the same way; the lane layout replaces the Ambient free-form canvas
@@ -11,8 +11,8 @@
     ['Gateways & ingress', ['Gateway', 'Ingress']],
     ['Routes', ['HTTPRoute', 'GRPCRoute', 'TCPRoute', 'TLSRoute']],
     ['Services & backends', ['Service', 'ServiceEntry', 'AgentgatewayBackend', 'EnterpriseAgentgatewayBackend']],
-    ['Pods & endpoints', ['Pod', 'WorkloadEntry']],
     ['Workloads', ['Deployment', 'StatefulSet', 'DaemonSet', 'Job', 'CronJob']],
+    ['Pods & endpoints', ['Pod', 'WorkloadEntry']],
     ['Agents & tools', ['Agent', 'RemoteMCPServer', 'MCPServer', 'ToolServer', 'ModelConfig']],
     ['Config & identity', ['ServiceAccount', 'RoleBinding', 'Role', 'ClusterRole', 'ConfigMap', 'Secret', 'PersistentVolumeClaim']],
     ['Policies', ['AuthorizationPolicy', 'PeerAuthentication', 'RequestAuthentication', 'NetworkPolicy', 'AgentgatewayPolicy', 'EnterpriseAgentgatewayPolicy', 'DestinationRule', 'Telemetry', 'WasmPlugin', 'Sidecar', 'BackendTLSPolicy', 'HorizontalPodAutoscaler', 'PodDisruptionBudget']],
