@@ -49,6 +49,7 @@ function amConfigurationHome(svc){
     ${applied&&A.currentRefreshPending?'<div class="notice info" role="status">The cluster was updated. This capture has not caught up yet; refresh before editing again.</div>':''}
     ${amWaypointPanel(A.result.waypointBinding,svc)}
     ${typeof amPublicationConfigurationCard==='function'?amPublicationConfigurationCard(svc):''}
+    ${typeof amTakeoverPrerequisiteMarkup==='function'&&A.result?.environment?.takeoverPrerequisite?.state==='fail'?amTakeoverPrerequisiteMarkup(svc):''}
     ${amPoliciesPanel(svc)}
     ${amRoutingPanel(svc,entries,routes)}
     </div></section>

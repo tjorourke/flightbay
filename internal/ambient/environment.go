@@ -11,17 +11,18 @@ import (
 // Environment describes observed installations, not licences or a claim that
 // every feature in an installed CRD is supported by the active controller.
 type Environment struct {
-	ClassDocs  map[string][]DocLink `json:"classDocs"`
-	TaskDocs   map[string][]DocLink `json:"taskDocs"`
-	Cluster    string               `json:"cluster"`
-	Edition    string               `json:"edition"`
-	Summary    string               `json:"summary"`
-	Components []Component          `json:"components"`
-	Classes    []ClassChoice        `json:"classes"`
-	Selected   *ClassChoice         `json:"selected,omitempty"`
-	PolicyAPI  string               `json:"policyApi,omitempty"`
-	PolicyKind string               `json:"policyKind,omitempty"`
-	Evidence   []string             `json:"evidence"`
+	TakeoverPrerequisite *TakeoverPrerequisite `json:"takeoverPrerequisite,omitempty"`
+	ClassDocs            map[string][]DocLink  `json:"classDocs"`
+	TaskDocs             map[string][]DocLink  `json:"taskDocs"`
+	Cluster              string                `json:"cluster"`
+	Edition              string                `json:"edition"`
+	Summary              string                `json:"summary"`
+	Components           []Component           `json:"components"`
+	Classes              []ClassChoice         `json:"classes"`
+	Selected             *ClassChoice          `json:"selected,omitempty"`
+	PolicyAPI            string                `json:"policyApi,omitempty"`
+	PolicyKind           string                `json:"policyKind,omitempty"`
+	Evidence             []string              `json:"evidence"`
 }
 type Component struct {
 	Product  string   `json:"product"`
@@ -205,6 +206,7 @@ func DetectEnvironment(ws *store.Workspace, c string, target *store.Object) Envi
 			e.Evidence = append(e.Evidence, "Selected controller's policy API was not captured; generation is unavailable")
 		}
 	}
+	e.TakeoverPrerequisite = waypointTakeoverPrerequisite(ws, c, e.Selected)
 	e.Evidence = append(e.Evidence, "CRDs can coexist without active controllers. The selected waypoint/controller determines policy YAML; API-server dry-run still validates the installed schema.")
 	e.TaskDocs = map[string][]DocLink{}
 	e.TaskDocs["global-service"] = TaskDocs(e, "global-service")

@@ -211,6 +211,13 @@ func Investigate(ws *store.Workspace, c, ns, name, routeName string) (*Investiga
 		return nil, fmt.Errorf("Service %s/%s is not in this workspace", ns, name)
 	}
 	r := &Investigation{Cluster: c, Namespace: ns, Service: name, Steps: []Step{}, Counts: map[string]int{}, Notes: []string{"Results describe the captured configuration, not proof of a successful request. Missing or reviewed-out evidence remains unknown.", "A Gateway parent can be valid for waypoint-wide routes. A Service parent scopes a route to that Service. Policy targetRefs have their own attachment rules."}}
+	if serviceTakeoverEnabled(ws, svc, nil) {
+		env := DetectEnvironment(ws, c, svc)
+		prereq := env.TakeoverPrerequisite
+		if prereq.State != "na" {
+			add(r, "takeover-control-plane", "Istio waypoint takeover prerequisite", prereq.State, prereq.Detail, prereq.Evidence...)
+		}
+	}
 	nso := ws.Get(c, "", "namespaces", "", ns)
 	if nso == nil {
 		add(r, "enrolment", "Namespace enrolment", "unknown", "Namespace labels were not captured.")

@@ -22,6 +22,12 @@ test('global publication is visible in Current configuration and its switcher',(
   const nav=context.amConfigurationNav(svc);assert.match(nav,/Global Service publication/);assert.match(nav,/Switch configuration · 2/);
 });
 
+test('takeover explains the control-plane prerequisite and offers an operator command',()=>{
+ const {context,A}=setup();context.esc=String;A.context='real-mesh1';A.result={environment:{takeoverPrerequisite:{state:'fail',setting:'false',detail:'Imported WorkloadEntries are disabled.',sources:[{kind:'Deployment',namespace:'istio-system',name:'istiod'}]}}};
+ const html=context.amTakeoverPrerequisiteMarkup({cluster:'mesh1'});assert.match(html,/PILOT_ENABLE_K8S_SELECT_WORKLOAD_ENTRIES=false/);assert.match(html,/checkbox changes the Service label only/);assert.match(html,/set env deployment/);assert.match(html,/Helm\/GitOps/);
+ A.result.environment.takeoverPrerequisite={state:'pass',setting:'true',detail:'Enabled in capture.'};assert.doesNotMatch(context.amTakeoverPrerequisiteMarkup({cluster:'mesh1'}),/set env deployment/);
+});
+
 test('busy-state disabling retains selected participating clusters and excludes a missing Service',async()=>{
   const {context,A,boxes}=setup(),requests=[];
   context.apiPost=async(route,request)=>{requests.push(request);return {id:request.cluster,request,changes:[{}],objects:[]};};

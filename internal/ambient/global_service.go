@@ -61,11 +61,19 @@ func generateGlobalService(ws *store.Workspace, req Request) (*Plan, error) {
 		p.Notes = append(p.Notes, "This plan stops publication and removes Flightbay-owned weighted-split resources for this Service in context "+req.Cluster+". Other clusters keep their configuration; stop publication there too to remove the split everywhere.", "The mesh controller removes the generated ServiceEntry entries. Refresh inventory after applying to confirm the published names and addresses have gone.")
 		return finishPlan(p)
 	}
-	if ok, why := globalServiceSupport(ws, svc, DetectEnvironment(ws, req.Cluster, svc)); !ok {
+	env := DetectEnvironment(ws, req.Cluster, svc)
+	if ok, why := globalServiceSupport(ws, svc, env); !ok {
 		return nil, fmt.Errorf("%s", why)
+	}
+	if serviceTakeoverEnabled(ws, svc, req.GlobalTakeover) && env.TakeoverPrerequisite.State == "fail" {
+		return nil, fmt.Errorf("cannot enable Istio-waypoint local-name takeover: %s", env.TakeoverPrerequisite.Detail)
 	}
 	p := basePlan(req, svc)
 	p.ServiceUID = S(Path(svc.Obj, "metadata", "uid"))
+	if serviceTakeoverEnabled(ws, svc, req.GlobalTakeover) && env.TakeoverPrerequisite.State != "na" {
+		p.Notes = append(p.Notes, env.TakeoverPrerequisite.Detail)
+		p.Evidence = append(p.Evidence, env.TakeoverPrerequisite.Evidence...)
+	}
 	values := map[string]any{}
 	remove := []string{}
 	if svc.Labels()["solo.io/service-scope"] == "global-only" {
