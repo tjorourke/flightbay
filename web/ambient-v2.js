@@ -125,14 +125,22 @@ function am2AttentionRows(data, attn) {
   if (!attn.length) return '';
   const names = (data.summary.clusters.names || []);
   const where = names.length === 2 ? 'both clusters' : names.length === 1 ? 'the cluster' : 'all clusters';
-  const shown = S.am2.attnAll ? attn : attn.slice(0, AM2_ATTN_CAP);
-  return `<div class="am2-card am2-mb" id="am2-attention"><div class="am2-chead"><h2>Needs attention</h2><span class="am2-sub">${esc(attn.length)} ${attn.length === 1 ? 'Service' : 'Services'} with failed checks or warnings across ${where}</span></div><table class="am2-attn"><tbody>${shown.map(r => {
+  const cols = [
+    {key: 'state', label: 'State', width: '96px', sortValue: r => (r.state === 'warn' ? 1 : 0), filter: 'select', filterValue: r => (r.state === 'warn' ? 'Warning' : 'Failed')},
+    {key: 'svc', label: 'Service', sortValue: r => (r.ref?.namespace || '') + '/' + (r.ref?.name || ''), filter: 'text'},
+    {key: 'clusters', label: 'Clusters', sortValue: r => (r.clusters || [r.cluster]).join(', '), filter: 'select', filterValue: r => r.clusters || [r.cluster]},
+    {key: 'detail', label: 'Problem', sortValue: r => r.detail || '', filter: 'text', filterValue: r => (r.detail || '') + ' ' + (r.checks || []).map(c => c.title).join(' ')},
+    {key: 'more', label: 'Checks', sortValue: r => (r.more || 0) + 1},
+    {key: 'act', label: ''}
+  ];
+  const row = r => {
     const ref = r.ref || {}, cluster = S.cluster && (r.clusters || []).includes(S.cluster) ? S.cluster : (r.cluster || (r.clusters || [])[0]), path = am2SvcPath(cluster, ref.namespace, ref.name), svc = ref.kind === 'Service' || !ref.kind;
     const open = svc ? am2Hash({svc: path, stab: 'checks'}) : am2Hash({obj: [cluster, ref.kind, ref.namespace, ref.name].join('/'), otab: 'summary'});
     const fix = svc ? am2Hash({svc: path, stab: 'checks', drawer: 'fix:' + (r.checkId || '')}) : open;
-    const more = r.more ? ` <span class="am2-sub" title="${esc((r.checks || []).slice(1).map(c => c.cluster + ': ' + c.title).join('\n'))}">+${esc(r.more)} more</span>` : '';
-    return `<tr class="am2-click" data-am2-go="${esc(open)}"><td style="width:22px"><i class="am2-dot ${r.state === 'warn' ? 'warn' : 'bad'}" title="${r.state === 'warn' ? 'Warning' : 'Failed'}"></i></td><td class="am2-nowrap"><b>${esc(ref.namespace)}/${esc(ref.name)}</b> <span class="am2-sub">${esc((r.clusters || [r.cluster]).join(', '))}</span></td><td>${am2Mono(r.detail)}${more}</td><td class="am2-right am2-act am2-nowrap">${am2Btn('Open checks', `data-am2-go="${esc(open)}"`)}${r.hasFix === false ? '' : ' ' + am2Btn('Fix…', `data-am2-go="${esc(fix)}"`, 'sm p')}</td></tr>`;
-  }).join('')}</tbody></table>${attn.length > AM2_ATTN_CAP ? `<div class="am2-foot"><a href="#" data-am2-attnall>${S.am2.attnAll ? 'Show fewer' : `Show all ${attn.length}`}</a></div>` : ''}</div>`;
+    const n = (r.more || 0) + 1;
+    return `<tr class="am2-click" data-am2-go="${esc(open)}"><td class="am2-nowrap"><i class="am2-dot ${r.state === 'warn' ? 'warn' : 'bad'}"></i> <span class="am2-sub">${r.state === 'warn' ? 'Warning' : 'Failed'}</span></td><td class="am2-nowrap"><b>${esc(ref.namespace)}/${esc(ref.name)}</b></td><td class="am2-sub am2-nowrap">${esc((r.clusters || [r.cluster]).join(', '))}</td><td>${am2Mono(r.detail)}</td><td class="am2-sub" title="${esc((r.checks || []).map(c => c.cluster + ': ' + c.title).join('\n'))}">${n} ${n === 1 ? 'check' : 'checks'}</td><td class="am2-right am2-act am2-nowrap">${am2Btn('Open checks', `data-am2-go="${esc(open)}"`)}${r.hasFix === false ? '' : ' ' + am2Btn('Fix…', `data-am2-go="${esc(fix)}"`, 'sm p')}</td></tr>`;
+  };
+  return `<div class="am2-card am2-mb" id="am2-attention"><div class="am2-chead"><h2>Needs attention</h2><span class="am2-sub">${esc(attn.length)} ${attn.length === 1 ? 'Service' : 'Services'} with failed checks or warnings across ${where}</span></div>${am2Table('attention', cols, attn, row, {size: 5, empty: 'No Service matches these filters.'})}</div>`;
 }
 
 function am2ClusterCell(row, cluster) {
@@ -158,18 +166,30 @@ function am2ServicesInScope(rows, {inSvc, q, showAll, cluster}) {
   return {rows: hidden.length ? all.filter(r => am2HasConfig(r)) : all, hidden: hidden.length, total: all.length};
 }
 
+function am2ClusterWord(row, cluster) {
+  const c = row.perCluster?.[cluster];
+  return !c || !c.present ? 'Not here' : c.noEndpoints ? 'No endpoints' : c.differs ? 'Differs' : 'Present';
+}
 function am2ServiceTable(data) {
-  const A = S.am2, names = data.summary.clusters.names.filter(n => !S.cluster || n === S.cluster), q = A.filter.trim().toLowerCase();
-  const {rows, hidden, total} = am2ServicesInScope(data.services, {inSvc: am2InScopeSvc, q, showAll: A.showAllSvc, cluster: S.cluster});
-  const pages = Math.max(1, Math.ceil(rows.length / AM2_PAGE)); A.page = Math.min(A.page || 0, pages - 1);
-  const slice = rows.slice(A.page * AM2_PAGE, (A.page + 1) * AM2_PAGE);
-  const body = slice.map(r => {
+  const A = S.am2, names = data.summary.clusters.names.filter(n => !S.cluster || n === S.cluster);
+  const {rows, hidden} = am2ServicesInScope(data.services, {inSvc: am2InScopeSvc, q: '', showAll: A.showAllSvc, cluster: S.cluster});
+  const badges = l => (l || []).map(b => b.label);
+  const cols = [
+    {key: 'svc', label: 'Service', sortValue: r => r.ref.namespace + '/' + r.ref.name, filter: 'text'},
+    {key: 'wp', label: 'Waypoint', sortValue: r => r.waypoint || '', filter: 'text'},
+    {key: 'access', label: 'Access', sortValue: r => badges(r.access).join(' ') || 'open', filter: 'select', filterValue: r => badges(r.access).length ? badges(r.access) : ['open']},
+    {key: 'routing', label: 'Routing', sortValue: r => badges(r.routing).join(' '), filter: 'select', filterValue: r => badges(r.routing).length ? badges(r.routing) : ['none']},
+    {key: 'res', label: 'Resilience', sortValue: r => badges(r.resilience).join(' '), filter: 'select', filterValue: r => badges(r.resilience).length ? badges(r.resilience) : ['none']},
+    ...names.map(n => ({key: 'c:' + n, label: n, sortValue: r => am2ClusterWord(r, n), filter: 'select'})),
+    {key: 'checks', label: 'Checks', sortValue: r => -((r.checks?.fail || 0) * 100 + (r.checks?.warn || 0)), filter: 'select', filterValue: r => (r.checks?.fail ? 'Failed' : r.checks?.warn ? 'Warning' : 'Pass')},
+    {key: 'open', label: ''}
+  ];
+  const row = r => {
     const first = Object.keys(r.perCluster || {}).find(c => r.perCluster[c].present) || names[0], path = am2SvcPath(S.cluster || first, r.ref.namespace, r.ref.name), sel = A.lastSvc === path;
     return `<tr class="am2-click ${sel ? 'am2-sel' : ''}" data-am2-go="${esc(am2Hash({svc: path, stab: 'configuration'}))}"><td class="am2-nowrap"><b title="${esc(r.ref.namespace + '/' + r.ref.name)}">${esc(r.ref.namespace)}/${esc(am2MidEllipsis(r.ref.name, 30))}</b></td><td class="am2-nowrap">${r.waypoint ? `<span class="am2-mono" title="${esc(r.waypoint)}">${esc(am2MidEllipsis(r.waypoint, 24))}</span>` : '<span class="am2-muted">—</span>'}</td><td>${am2Badges(r.access, 'open')}</td><td>${am2Badges(r.routing, '—')}</td><td>${am2Badges(r.resilience, '—')}</td>${names.map(n => `<td>${am2ClusterCell(r, n)}</td>`).join('')}<td>${am2ChecksCell(r)}</td><td class="am2-right am2-act">${am2Btn('Open', '', sel ? 'sm p' : 'sm')}</td></tr>`;
-  }).join('') || `<tr><td colspan="${7 + names.length}" class="am2-empty">No Services match. ${am2ScopeAll() ? '' : 'Change the namespaces at the top right to see more.'}</td></tr>`;
-  const pager = rows.length > AM2_PAGE ? `<span class="am2-sub">${A.page * AM2_PAGE + 1}–${Math.min(rows.length, (A.page + 1) * AM2_PAGE)} of ${rows.length}</span><button type="button" class="am2-btn sm" data-am2-page="-1" ${A.page ? '' : 'disabled'}>Prev</button><button type="button" class="am2-btn sm" data-am2-page="1" ${A.page < pages - 1 ? '' : 'disabled'}>Next</button>` : `<span class="am2-sub">${rows.length} of ${total}</span>`;
-  const hide = hidden || A.showAllSvc ? `<label class="am2-sub" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-am2-showall ${A.showAllSvc ? 'checked' : ''}> Show Services with nothing configured${hidden ? ` (${hidden})` : ''}</label>` : '';
-  return `<thead><tr><th>Service</th><th>Waypoint</th><th>Access</th><th>Routing</th><th>Resilience</th>${names.map(n => `<th>${esc(n)}</th>`).join('')}<th>Checks</th><th></th></tr></thead><tbody>${body}</tbody><tfoot><tr><td colspan="${7 + names.length}"><div class="am2-pager">${hide}<span class="am2-spacer"></span>${pager}</div></td></tr></tfoot>`;
+  };
+  const left = hidden || A.showAllSvc ? `<label class="am2-sub am2-check"><input type="checkbox" data-am2-showall ${A.showAllSvc ? 'checked' : ''}> Show Services with nothing configured${hidden ? ` (${hidden})` : ''}</label>` : '';
+  return am2Table('services', cols, rows, row, {size: 25, empty: am2ScopeAll() ? 'No Services match.' : 'No Services match. Change the namespaces at the top right to see more.', footLeft: left});
 }
 
 function am2NamespaceFooter(data) {
@@ -183,7 +203,7 @@ function am2NamespaceFooter(data) {
 
 function am2Overview(data) {
   const attn = am2AttentionInScope(data.needsAttention, am2InScopeNs, S.cluster);
-  return `${am2SummaryCards(data, attn)}${am2AttentionRows(data, attn)}<div class="am2-card"><div class="am2-chead"><h2>Services in the mesh</h2><input class="am2-input" id="am2-filter" style="width:240px" placeholder="Filter Services…" value="${esc(S.am2.filter)}" aria-label="Filter Services"></div><table id="am2-svctable">${am2ServiceTable(data)}</table><div id="am2-nsfoot">${am2NamespaceFooter(data)}</div></div>`;
+  return `${am2SummaryCards(data, attn)}${am2AttentionRows(data, attn)}<div class="am2-card"><div class="am2-chead"><h2>Services in the mesh</h2></div><div id="am2-svctable">${am2ServiceTable(data)}</div><div id="am2-nsfoot">${am2NamespaceFooter(data)}</div></div>`;
 }
 
 // ---------- page dispatch ----------
@@ -214,12 +234,7 @@ function am2After() {
   const A = S.am2, data = A.data;
   am2ScopeWire();
   if (!route.svc && !route.obj && route.tab === 'overview' && data) {
-    const redraw = () => { $('#am2-svctable').innerHTML = am2ServiceTable(data); };
-    const f = $('#am2-filter');
-    if (f) f.oninput = () => { A.filter = f.value; A.page = 0; redraw(); };
-    $('#am2-svctable')?.addEventListener('click', e => { const pg = e.target.closest('[data-am2-page]'); if (pg) { e.stopPropagation(); A.page = (A.page || 0) + Number(pg.dataset.am2Page); redraw(); } });
-    $('#am2-svctable')?.addEventListener('change', e => { if (e.target.matches('[data-am2-showall]')) { A.showAllSvc = e.target.checked; A.page = 0; redraw(); } });
-    $('#am2-attention')?.addEventListener('click', e => { if (e.target.closest('[data-am2-attnall]')) { e.preventDefault(); A.attnAll = !A.attnAll; render(); } });
+    $('#am2-svctable')?.addEventListener('change', e => { if (e.target.matches('[data-am2-showall]')) { A.showAllSvc = e.target.checked; $('#am2-svctable').innerHTML = am2ServiceTable(data); } });
   }
   root.onclick = e => {
     const go = e.target.closest('[data-am2-go]');

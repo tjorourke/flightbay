@@ -238,12 +238,18 @@ async function am2DrawerHost(route, data) {
   const {kind, arg} = am2DrawerParts(route);
   const ref = kind === 'ns' ? {cluster: S.cluster || data.summary.clusters.names[0], namespace: arg, name: arg} : am2SvcRef(route.svc);
   const key = route.svc + '|' + route.drawer;
+  if (!S.ambient.contexts) S.ambient.contexts = await api('api/ambient/contexts').catch(() => []);
   let cfg = null;
   try {
     if (kind !== 'ns') cfg = S.am2.svc.cfg && S.am2.svc.key === route.svc ? S.am2.svc.cfg : await api('api/ambient/service-config', ref);
+    // Two renders can overlap (boot, live updates). The first prepares the drawer; any other waits for it,
+    // otherwise it would render while the draft is reset and show an empty form.
+    if (D.prepKey === key && D.prep) await D.prep;
     if (D.key !== key) {
       D.key = key; D.phase = 1; D.entries = []; D.plans = []; D.error = ''; D.results = null; D.progress = []; D.task = '';
-      const redirect = await am2PrepOld(route, ref, kind, arg, cfg);
+      D.prepKey = key; D.prep = am2PrepOld(route, ref, kind, arg, cfg);
+      let redirect;
+      try { redirect = await D.prep; } finally { D.prep = null; }
       if (redirect) { setTimeout(() => am2Go({svc: route.svc, stab: redirect}, true), 0); return ''; }
     }
     if (route.dphase === '3' && route.demo === '1' && await am2Demo() && D.phase !== 3) await am2DemoPhase3(route, ref, cfg);
@@ -274,7 +280,12 @@ function am2DrawerFooter(D, cfg, ref, route, kind) {
   if (D.phase === 3) return `<div class="am2-df"><button type="button" class="am2-btn" ${close}>Close</button><span style="flex:1"></span><a class="am2-btn" href="${am2Hash({svc: route.svc, stab: 'changes'})}">View change in Changes</a><button type="button" class="am2-btn p" ${close}>Back to ${esc(ref.name)}</button></div>`;
   const clusters = (cfg?.clusters || S.am2.data?.summary?.clusters?.names || []), selected = A.settings.applyClusters || [ref.cluster], others = clusters.filter(c => c !== ref.cluster);
   const ctxs = (A.contexts || []), live = amLiveContext(ref.cluster, ctxs);
-  const sel = `<select class="am2-sel" id="am2-context" aria-label="Write to">${live ? `<option value="${esc(live.name)}" ${A.context === live.name ? 'selected' : ''}>${esc(ref.cluster)} (live connection)</option>` : `<option value="">Choose the context for ${esc(ref.cluster)}…</option>`}${ctxs.filter(c => c !== live).map(c => `<option value="${esc(c.name)}" ${A.context === c.name ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select>`;
+  // Only contexts that reach a connected cluster can be written to (never the rest of the kubeconfig).
+  const reach = ctxs.filter(c => c.liveCluster === ref.cluster);
+  if (live && A.context !== live.name && !reach.some(c => c.name === A.context)) A.context = live.name;
+  const sel = live ? `<span class="am2-writeto" title="${esc(live.name)} · ${esc(live.server || '')}"><b>${esc(ref.cluster)}</b> <span class="am2-sub">live connection</span></span><input type="hidden" id="am2-context" value="${esc(live.name)}">`
+    : reach.length ? `<select class="am2-sel" id="am2-context" aria-label="Write to"><option value="">Choose the context for ${esc(ref.cluster)}…</option>${reach.map(c => `<option value="${esc(c.name)}" ${A.context === c.name ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select>`
+    : `<span class="am2-sub">No kubeconfig context reaches ${esc(ref.cluster)}. Open with --kubeconfig to change it.</span>`;
   const chips = others.map(c => `<button type="button" class="am2-chip ${selected.includes(c) ? 'on' : ''}" data-am2-addcluster="${esc(c)}">${selected.includes(c) ? '✓ ' : '+ '}${esc(c)}</button>`).join('');
   const primary = D.phase === 2 ? `Apply to ${esc(D.entries.map(e => e.cluster).join(', '))} →` : 'Check against cluster →';
   const writer = !!(live || A.context);

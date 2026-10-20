@@ -5,8 +5,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const load = f => fs.readFileSync(path.join(__dirname, '../web', f), 'utf8');
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
-const ctx = vm.createContext({S: {cluster: '', ambient: {}}, esc, URLSearchParams, location: {search: '', hash: ''}, localStorage: {getItem: () => null, setItem() {}}, LIVE: {}, render() {}, api: async () => ({}), apiPost: async () => ({}), amLiveContext: () => null});
-for (const f of ['ambient-v2.js', 'ambient-scope.js', 'ambient-service.js', 'ambient-drawer.js', 'ambient-policies.js', 'ambient-object.js']) vm.runInContext(load(f), ctx, {filename: f});
+const ctx = vm.createContext({document: {addEventListener() {}}, S: {cluster: '', ambient: {}}, esc, URLSearchParams, location: {search: '', hash: ''}, localStorage: {getItem: () => null, setItem() {}}, LIVE: {}, render() {}, api: async () => ({}), apiPost: async () => ({}), amLiveContext: () => null});
+for (const f of ['ambient-v2.js', 'ambient-scope.js', 'ambient-table.js', 'ambient-service.js', 'ambient-drawer.js', 'ambient-policies.js', 'ambient-object.js']) vm.runInContext(load(f), ctx, {filename: f});
 
 const g = n => vm.runInContext(n, ctx);
 const c = new Proxy({}, {get: (_, n) => g(n)});
@@ -90,10 +90,17 @@ test('long Service lists hide rows with nothing configured', () => {
   assert.equal(c.am2ServicesInScope(rows, {inSvc: () => true, q: '', showAll: true, cluster: ''}).rows.length, 30);
   assert.equal(c.am2ServicesInScope(rows, {inSvc: () => true, q: 's1', showAll: false, cluster: ''}).rows.length, 11);
 });
-test('policies sort by what they apply to, keeping a Service together', () => {
-  const r = (n, ns, phrase, kind) => ({ref: {name: n, namespace: ns}, appliesTo: {phrase, kind}, perCluster: {}});
-  const out = c.am2PolSort([r('b', 'x', 'Service s2'), r('z', 'x', 'nothing', 'nothing'), r('a', 'x', 'Service s1'), r('c', 'x', 'Service s1')], 'applies', 1).map(x => x.ref.name);
-  assert.deepEqual([...out], ['a', 'c', 'b', 'z']);
+test('table: column filters, sort and paging', () => {
+  const cols = [{key: 'n', sortValue: r => r.n, filter: 'text'}, {key: 'k', sortValue: r => r.k, filter: 'select', filterValue: r => r.tags}];
+  const rows = [{n: 'b-two', k: 'x', tags: ['a']}, {n: 'a-one', k: 'y', tags: ['a', 'b']}, {n: 'c-three', k: 'x', tags: ['b']}];
+  const st = {sort: 'n', dir: 1, filters: {}, page: 0, size: 2};
+  assert.deepEqual([...c.am2TApply(cols, rows, st).map(r => r.n)], ['a-one', 'b-two', 'c-three']);
+  assert.deepEqual([...c.am2TApply(cols, rows, {...st, dir: -1}).map(r => r.n)], ['c-three', 'b-two', 'a-one']);
+  assert.deepEqual([...c.am2TApply(cols, rows, {...st, filters: {n: 'tw'}}).map(r => r.n)], ['b-two']);
+  assert.deepEqual([...c.am2TApply(cols, rows, {...st, filters: {k: 'b'}}).map(r => r.n)], ['a-one', 'c-three']);
+  assert.deepEqual(JSON.parse(JSON.stringify(c.am2TPage(5, {page: 2, size: 2}))), {pages: 3, page: 2, from: 5, to: 5});
+  assert.deepEqual(JSON.parse(JSON.stringify(c.am2TPage(5, {page: 9, size: 2}))), {pages: 3, page: 2, from: 5, to: 5});
+  assert.deepEqual(JSON.parse(JSON.stringify(c.am2TPage(0, {page: 0, size: 25}))), {pages: 1, page: 0, from: 0, to: 0});
 });
 test('observed split percentages from streamed counts', () => {
   assert.deepEqual(JSON.parse(JSON.stringify(c.am2Observed({v1: 79, v2: 8}, 87))), {v1: 90.8, v2: 9.2});

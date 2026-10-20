@@ -25,7 +25,7 @@ Every difference that is not data and is accepted must be listed here (PLAN.md �
 | 01 | The Configuration item rows show the action pill only; Live and Verified are on the Changes tab | The mockup item row has no state pill |
 | 03 | The "Edit other fields" link (PLAN 4.9) is not built | Not in the mockup |
 | 00, 02 | Namespace chips and Scope chips are replaced by one **Namespaces** picker at the right of the home tabs, shared by Overview, Policies & routes, Map and Request path | Real data volume (27 namespaces): Tom could not multi-select or leave a namespace with the chips (REVIEW-2026-10-20 R1) |
-| 00 | Needs attention has one row per Service with "+N more", shows five rows then "Show all", and uses an 8 px status dot instead of the ✕ pill | Real data volume: 18 rows of red ✕ pills, with one fault reported twice (R2) |
+| 00 | Needs attention has one row per Service with a check count, is paged (5 rows by default) and uses an 8 px status dot instead of the ✕ pill | Real data volume: 18 rows of red ✕ pills, with one fault reported twice (R2) |
 | 00 | The Services table is paged at 25 rows and, when the scope holds more than 25 Services, hides those with nothing configured behind a checkbox | Real data volume (139 Services) (R2.6, R2.7) |
 | 02 | The filter bar is search, one Type dropdown, "Problems only" and "A column per cluster". The Type and Show pills, "Only drift", "Managed by Flightbay" and the By object / By Service toggle are gone | Too many controls on one row (R3.2) |
 | 02 | No group header rows; one dense row per object sorted by what it applies to. One Clusters cell with a dot per cluster replaces a column per cluster (shown again by "A column per cluster"). Enforced by moves to the object header | Real data volume: 20 one-object group headers (R3.3) |
@@ -38,3 +38,7 @@ Every difference that is not data and is accepted must be listed here (PLAN.md �
 | 04, 05 | Run becomes Stop while a run streams; the observed bars grow during the run and a progress bar shows requests sent | Live results (R6.3) |
 | 04 | "Other policies that also decide" always shows, with a "None" sentence when there are none | Restored block (R6.5) |
 | 05 | "Run on" chips also appear on the HTTPRoute page, under Other checks | Lets a reader switch to the cluster where the route exists |
+| 00, 02 | Every table has sortable column names, a filter row under the names and a pager with a rows-per-page choice; the Services "Filter Services…" box and the policies name box are replaced by the column filters | Tom asked to sort and filter on column names and to page rather than "Show all" |
+| 02 | Rows for ambient enrolment, waypoint use and global publication (label-based configuration) and inherited mesh-wide policies are listed, with Configure / Settings actions | Tom: "where is configuration?" |
+| Map | Waypoint lines are drawn only after **Show its Services** on the waypoint card | Always-on lines ran round the cluster boxes and made the map hard to read |
+| 03 | "Write to" shows the live connection for the cluster, or only the kubeconfig contexts that reach a connected cluster | It listed every context in the kubeconfig |

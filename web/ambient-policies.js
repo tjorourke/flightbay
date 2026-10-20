@@ -55,46 +55,43 @@ function am2PolRow(r, clusters, compare) {
   const states = Object.values(r.perCluster || {}), refStr = am2PolRefStr(r);
   const objHash = ['AuthorizationPolicy', 'HTTPRoute'].includes(r.kind) ? am2Hash({obj: refStr, otab: 'summary'}) : '';
   const btn = (label, attrs) => `<button type="button" class="am2-btn sm" ${attrs}>${label}</button>`;
+  const nsName = r.ref.kind === 'Namespace' ? r.ref.name : r.ref.namespace;
+  const conf = r.configure ? am2Hash({svc: am2SvcPath(r.configure.cluster, r.configure.namespace, r.configure.name), stab: 'configuration'}) : '';
   const acts = [
+    conf ? btn('Configure', `data-am2-go="${esc(conf)}"`) : r.ref.kind === 'Namespace' ? btn('Settings', `data-am2-go="${esc(am2Hash({tab: '', ...am2ScopeParams(), drawer: 'ns:' + r.ref.name}))}"`) : '',
     r.canTest ? btn('Test', `data-am2-go="${esc(am2Hash({obj: refStr, otab: 'tests'}))}"`) : '',
     states.includes('differs') ? btn('Diff', `data-am2-diff='${esc(JSON.stringify(r.ref))}'`) : '',
-    btn('Open', objHash ? `data-am2-go="${esc(objHash)}"` : `data-am2-open='${esc(JSON.stringify(r.ref))}'`)
+    r.setup && r.ref.kind !== 'Namespace' && conf ? '' : btn('Open', objHash ? `data-am2-go="${esc(objHash)}"` : `data-am2-open='${esc(JSON.stringify(r.ref))}'`)
   ].filter(Boolean).join(' ');
-  const svc = r.svc || (r.appliesTo?.kind === 'service' && r.appliesTo.targets?.[0]);
+  const svc = r.configure || r.svc;
   const applies = svc ? `<a href="${esc(am2Hash({svc: am2SvcPath(svc.cluster || r.ref.cluster, svc.namespace, svc.name), stab: 'configuration'}))}" class="am2-plain">${am2AppliesTo(r.appliesTo)}</a>` : am2AppliesTo(r.appliesTo);
   const cl = compare ? clusters.map(c => { const s = r.perCluster?.[c] || 'not-here', [t, l] = AM2_STATE[s] || ['mut', s]; return `<td title="${esc(r.perClusterDetail?.[c] || '')}">${am2Pill(t, l)}</td>`; }).join('') : `<td>${am2ClustersCell(r, clusters)}</td>`;
-  return `<tr><td class="am2-nowrap"><span class="am2-kindt">${esc(r.kind)}</span> <span class="am2-mono" title="${esc(r.ref.namespace)}/${esc(r.ref.name)}">${esc(am2MidEllipsis(r.ref.name, 40))}</span></td><td>${applies}</td><td>${eff}</td>${cl}<td class="am2-sub am2-nowrap">${esc(r.managedByLabel || r.managedBy || 'Unknown')}</td><td class="am2-right am2-nowrap">${acts}</td></tr>`;
+  const name = r.setup ? (r.ref.kind === 'Namespace' ? `Namespace ${r.ref.name}` : `Service ${r.ref.name}`) : r.ref.name;
+  return `<tr class="${r.setup ? 'am2-setuprow' : ''}"><td class="am2-nowrap"><span class="am2-kindt">${esc(r.kind)}</span>${r.inherited ? ' ' + am2Pill('mut', 'Inherited') : ''}</td><td class="am2-nowrap"><span class="${r.setup ? '' : 'am2-mono'}" title="${esc(nsName ? nsName + '/' : '')}${esc(r.ref.name)}">${esc(am2MidEllipsis(name, 40))}</span></td><td>${applies}</td><td>${eff}</td>${cl}<td class="am2-sub am2-nowrap">${esc(r.managedByLabel || r.managedBy || 'Unknown')}</td><td class="am2-right am2-nowrap">${acts}</td></tr>`;
 }
 
-// Pure: sort rows. Applies to keeps a Service's objects together.
-function am2PolSort(rows, key, dir) {
-  const k = {
-    name: r => r.ref.name,
-    applies: r => r.ref.namespace + '/' + (r.appliesTo?.kind === 'nothing' ? '\uffff' : '') + (r.appliesTo?.phrase || '') + '/' + r.ref.name,
-    clusters: r => (r.drift ? '0' : '1') + Object.values(r.perCluster || {}).sort().join(','),
-    managed: r => (r.managedByLabel || r.managedBy || '') + r.ref.name
-  }[key] || (r => r.ref.name);
-  return rows.slice().sort((a, b) => k(a).localeCompare(k(b)) * dir);
-}
+const am2PolStateWords = (r, clusters) => clusters.map(c => `${am2ShortCluster(c)}: ${(AM2_STATE[r.perCluster?.[c] || 'not-here'] || ['', r.perCluster?.[c]])[1]}`);
 
 function am2PolTable(d) {
   const P = S.am2.pol, clusters = d.clusters || [];
-  const rows = am2PolSort(d.rows || [], P.sort, P.dir);
-  const pages = Math.max(1, Math.ceil(rows.length / AM2_POL_PAGE)); P.page = Math.min(P.page, pages - 1);
-  const slice = rows.slice(P.page * AM2_POL_PAGE, (P.page + 1) * AM2_POL_PAGE);
-  const th = (key, label) => `<th><a href="#" class="am2-sort ${P.sort === key ? 'on' : ''}" data-am2-psort="${key}">${esc(label)}${P.sort === key ? (P.dir > 0 ? ' ↑' : ' ↓') : ''}</a></th>`;
-  const cols = 5 + (P.compare ? clusters.length : 1);
-  const head = `<thead><tr>${th('name', 'Name')}${th('applies', 'Applies to')}<th>Effect</th>${P.compare ? clusters.map(c => `<th>${esc(c)}</th>`).join('') : th('clusters', 'Clusters')}${th('managed', 'Managed by')}<th></th></tr></thead>`;
-  const body = slice.map(r => am2PolRow(r, clusters, P.compare)).join('') || `<tr><td colspan="${cols}" class="am2-empty">Nothing matches these filters.${am2ScopeAll() ? '' : ' Change the namespaces at the top right to see more.'}</td></tr>`;
-  const pager = rows.length > AM2_POL_PAGE ? `<div class="am2-pager"><span class="am2-spacer"></span><span class="am2-sub">${P.page * AM2_POL_PAGE + 1}–${Math.min(rows.length, (P.page + 1) * AM2_POL_PAGE)} of ${rows.length}</span><button type="button" class="am2-btn sm" data-am2-ppage="-1" ${P.page ? '' : 'disabled'}>Prev</button><button type="button" class="am2-btn sm" data-am2-ppage="1" ${P.page < pages - 1 ? '' : 'disabled'}>Next</button></div>` : '';
-  return `<table class="am2-dense">${head}<tbody>${body}</tbody></table>${pager}`;
+  const cols = [
+    {key: 'kind', label: 'Kind', sortValue: r => r.kind, filter: 'select'},
+    {key: 'name', label: 'Name', sortValue: r => (r.ref.kind === 'Namespace' ? '' : r.ref.namespace) + '/' + r.ref.name, filter: 'text', filterValue: r => r.ref.namespace + ' ' + r.ref.name},
+    {key: 'applies', label: 'Applies to', sortValue: r => (r.ref.kind === 'Namespace' ? r.ref.name : r.ref.namespace) + '/' + (r.appliesTo?.kind === 'nothing' ? '\uffff' : '') + (r.appliesTo?.phrase || '') + '/' + r.ref.name, filter: 'text', filterValue: r => (r.appliesTo?.phrase || '') + ' ' + (r.appliesTo?.reason || '')},
+    {key: 'effect', label: 'Effect', sortValue: r => (r.effect?.action || '') + ' ' + (r.effect?.phrase || ''), filter: 'text', filterValue: r => (r.effect?.action || '') + ' ' + (r.effect?.phrase || '')},
+    ...(P.compare ? clusters.map(c => ({key: 'c:' + c, label: c, sortValue: r => (AM2_STATE[r.perCluster?.[c] || 'not-here'] || ['', ''])[1], filter: 'select'}))
+      : [{key: 'clusters', label: 'Clusters', sortValue: r => (r.drift ? '0' : '1') + am2PolStateWords(r, clusters).join(','), filter: 'select', filterValue: r => am2PolStateWords(r, clusters)}]),
+    {key: 'managed', label: 'Managed by', sortValue: r => r.managedByLabel || r.managedBy || 'Unknown', filter: 'select'},
+    {key: 'act', label: ''}
+  ];
+  return am2Table('policies' + (P.compare ? '-c' : ''), cols, d.rows || [], r => am2PolRow(r, clusters, P.compare), {sort: 'applies', size: 25, cls: 'am2-dense', empty: am2ScopeAll() ? 'Nothing matches these filters.' : 'Nothing matches these filters. Change the namespaces at the top right to see more.'});
 }
 
 function am2PolFilters(d) {
   const P = S.am2.pol, by = d.counts?.byType || {};
   const typeLabel = P.types.length ? P.types.join(', ') : 'All types';
   const typePop = P.typeOpen ? `<div class="am2-menu" id="am2-ptypemenu">${AM2_TYPES.map(t => `<label class="am2-scope-opt"><input type="checkbox" data-am2-ptype="${t}" ${P.types.includes(t) ? 'checked' : ''}><span class="am2-scope-name">${t}</span><span class="am2-sub">${esc(by[t] ?? 0)}</span></label>`).join('')}</div>` : '';
-  return `<div class="am2-card am2-filterbar"><input class="am2-input" id="am2-pq" style="width:260px" placeholder="Filter by name or target" value="${esc(P.q)}" aria-label="Filter"><span class="am2-rel"><button type="button" class="am2-scopebtn" data-am2-ptypebtn aria-expanded="${P.typeOpen}">Type: ${esc(typeLabel)} <span aria-hidden="true">▾</span></button>${typePop}</span><label class="am2-check"><input type="checkbox" data-am2-pproblems ${P.problems ? 'checked' : ''}> Problems only${d.counts?.problems ? ` <span class="am2-sub">(${esc(d.counts.problems)})</span>` : ''}</label>${(d.clusters || []).length > 1 ? `<label class="am2-check"><input type="checkbox" data-am2-pcompare ${P.compare ? 'checked' : ''}> A column per cluster</label>` : ''}<span class="am2-spacer"></span><button type="button" class="am2-btn sm0" data-am2-export>Export YAML</button></div>`;
+  return `<div class="am2-card am2-filterbar"><span class="am2-rel"><button type="button" class="am2-scopebtn" data-am2-ptypebtn aria-expanded="${P.typeOpen}">Type: ${esc(typeLabel)} <span aria-hidden="true">▾</span></button>${typePop}</span><label class="am2-check"><input type="checkbox" data-am2-pproblems ${P.problems ? 'checked' : ''}> Problems only${d.counts?.problems ? ` <span class="am2-sub">(${esc(d.counts.problems)})</span>` : ''}</label>${(d.clusters || []).length > 1 ? `<label class="am2-check"><input type="checkbox" data-am2-pcompare ${P.compare ? 'checked' : ''}> A column per cluster</label>` : ''}<span class="am2-sub">Click a column name to sort it; use the row under the names to filter.</span><span class="am2-spacer"></span><button type="button" class="am2-btn sm0" data-am2-export>Export YAML</button></div>`;
 }
 
 async function am2PoliciesPage(route, data) {
@@ -128,7 +125,7 @@ function am2PoliciesAfter(route) {
     const t = e.target;
     if (t.matches('[data-am2-ptype]')) { const n = t.dataset.am2Ptype; P.types = t.checked ? [...P.types, n] : P.types.filter(x => x !== n); P.page = 0; render(); }
     else if (t.matches('[data-am2-pproblems]')) { P.problems = t.checked; P.page = 0; render(); }
-    else if (t.matches('[data-am2-pcompare]')) { P.compare = t.checked; redraw(); }
+    else if (t.matches('[data-am2-pcompare]')) { P.compare = t.checked; render(); }
   });
   if (!S.am2.polDocWired) S.am2.polDocWired = document.addEventListener('click', e => { if (P.typeOpen && !e.target.closest('#am2-ptypemenu') && !e.target.closest('[data-am2-ptypebtn]')) { P.typeOpen = false; render(); } }) || true;
   root.addEventListener('click', async e => {

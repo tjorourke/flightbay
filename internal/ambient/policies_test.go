@@ -406,11 +406,13 @@ func TestPolicyFiltersAndCounts(t *testing.T) {
 		f    PolicyFilter
 		want string
 	}{
-		{"everything", PolicyFilter{}, "split,deny-red,orphan,default,elsewhere"},
-		{"namespace keeps mesh-wide objects", PolicyFilter{Namespaces: []string{"app"}}, "split,deny-red,orphan,default"},
+		// polWS labels the app namespace, so it carries two setup rows
+		// (Ambient enrolment, Waypoint use) named after the Namespace.
+		{"everything", PolicyFilter{}, "app,app,split,deny-red,orphan,default,elsewhere"},
+		{"namespace keeps mesh-wide objects", PolicyFilter{Namespaces: []string{"app"}}, "app,app,split,deny-red,orphan,default"},
 		{"another namespace", PolicyFilter{Namespaces: []string{"other"}}, "default,elsewhere"},
-		{"type", PolicyFilter{Types: []string{"routing"}}, "split"},
-		{"two types", PolicyFilter{Types: []string{"Routing", "Transport"}}, "split,default"},
+		{"type", PolicyFilter{Types: []string{"routing"}}, "app,split"},
+		{"two types", PolicyFilter{Types: []string{"Routing", "Transport"}}, "app,app,split,default"},
 		{"waypoints are not a type", PolicyFilter{Types: []string{"Waypoints"}}, ""},
 		{"problems", PolicyFilter{Problems: true}, "orphan"},
 		{"text on effect", PolicyFilter{Q: "COLOR"}, "deny-red"},
@@ -429,7 +431,7 @@ func TestPolicyFiltersAndCounts(t *testing.T) {
 	}
 	all := NewPolicies(ws, PolicyFilter{Types: []string{"Access"}})
 	c := all.Counts
-	if c.All != 5 || c.Shown != 3 || c.Problems != 1 || c.ByType["Access"] != 3 || c.ByType["Routing"] != 1 || c.ByType["Transport"] != 1 || c.ByType["Resilience"] != 0 || c.Waypoints != 1 {
+	if c.All != 7 || c.Shown != 3 || c.Problems != 1 || c.ByType["Access"] != 3 || c.ByType["Routing"] != 2 || c.ByType["Transport"] != 2 || c.ByType["Resilience"] != 0 || c.Waypoints != 1 {
 		t.Errorf("counts %+v", c)
 	}
 	if _, ok := c.ByType["Waypoints"]; ok {
@@ -442,7 +444,7 @@ func TestPolicyFiltersAndCounts(t *testing.T) {
 	for _, n := range c.Namespaces {
 		ns = append(ns, n.Name+"="+string(rune('0'+n.Count)))
 	}
-	if strings.Join(ns, ",") != "app=3,istio-system=1,other=1" {
+	if strings.Join(ns, ",") != "app=5,istio-system=1,other=1" {
 		t.Errorf("namespaces %v", ns)
 	}
 	if strings.Join(all.Clusters, ",") != "c1,c2" {
@@ -479,7 +481,7 @@ func TestPolicyGrouping(t *testing.T) {
 	want := []g{
 		{"service:app/front", "app/front", "service", "split,deny-front,l4"},
 		{"service:app/stable", "app/stable", "service", "deny-stable"},
-		{"namespace:app", "Namespace app", "namespace", "ns-lock,orphan"},
+		{"namespace:app", "Namespace app", "namespace", "app,app,ns-lock,orphan"},
 		{"mesh", "Whole mesh", "mesh", "default"},
 	}
 	if len(got) != len(want) {
@@ -847,5 +849,300 @@ func TestPolicyManagedByOwner(t *testing.T) {
 	}
 	if n := len(NewPolicies(ws, PolicyFilter{ManagedBy: []string{"kagent (Agent)"}}).Rows); n != 1 {
 		t.Errorf("managedBy label filter left %d rows", n)
+	}
+}
+
+// ---- setup rows: labels on Services and Namespaces ----------------------------
+
+func polSetupRow(t *testing.T, r *PoliciesResponse, kind, name string) PolicyRow {
+	t.Helper()
+	for _, x := range r.Rows {
+		if x.Kind == kind && x.Ref.Name == name {
+			return x
+		}
+	}
+	var got []string
+	for _, x := range r.Rows {
+		got = append(got, x.Kind+" "+x.Ref.Name)
+	}
+	t.Fatalf("no %s row for %s in %v", kind, name, got)
+	return PolicyRow{}
+}
+
+func polNoRow(t *testing.T, r *PoliciesResponse, kind, name string) {
+	t.Helper()
+	for _, x := range r.Rows {
+		if x.Kind == kind && x.Ref.Name == name {
+			t.Errorf("unexpected %s row for %s: %+v", kind, name, x)
+		}
+	}
+}
+
+// polLabelSvc replaces a polWS Service on one cluster with a labelled copy.
+func polLabelSvc(ws *store.Workspace, cl, name string, labels map[string]any) {
+	s := object("Service", name, map[string]any{"selector": map[string]any{"app": name}, "ports": []any{map[string]any{"port": 80}}})
+	M(s["metadata"])["labels"] = labels
+	polPut(ws, cl, "", "services", "Service", s)
+}
+
+func TestPolicySetupWaypointUse(t *testing.T) {
+	ws := polWS(t)
+	polLabelSvc(ws, "c1", "front", map[string]any{"istio.io/use-waypoint": "wp", "app.kubernetes.io/managed-by": "flightbay"})
+	polLabelSvc(ws, "c1", "stable", map[string]any{"istio.io/use-waypoint": "gone", "istio.io/use-waypoint-namespace": "infra"})
+	polLabelSvc(ws, "c2", "stable", map[string]any{"istio.io/use-waypoint": "gone", "istio.io/use-waypoint-namespace": "infra"})
+	polLabelSvc(ws, "c1", "canary", map[string]any{"istio.io/use-waypoint": "none"})
+	out := NewPolicies(ws, PolicyFilter{})
+
+	front := polSetupRow(t, out, "Waypoint use", "front")
+	if !front.Setup || front.Ref.Kind != "Service" || front.AppliesTo.Kind != "service" || front.AppliesTo.Phrase != "Service front" || front.Effect.Phrase != "Uses waypoint app/wp" {
+		t.Errorf("front %+v", front)
+	}
+	if strings.Join(front.Types, ",") != "Routing" || front.EnforcedBy != "ztunnel" || front.CanTest || front.Editable || front.ManagedByLabel != "Flightbay" {
+		t.Errorf("front flags %+v", front)
+	}
+	if front.Svc == nil || front.Svc.Name != "front" || front.Configure == nil || *front.Configure != (PolicyService{"c1", "app", "front"}) {
+		t.Errorf("front links svc %+v configure %+v", front.Svc, front.Configure)
+	}
+	// front serves on both clusters, so the label missing on c2 is drift.
+	if front.PerCluster["c1"] != "live" || front.PerClusterDetail["c1"] != "Waypoint app/wp: Programmed=True" || front.PerCluster["c2"] != "not-here" || front.PerClusterDetail["c2"] != "Service front has no istio.io/use-waypoint label here" || !front.Drift {
+		t.Errorf("front clusters %+v %+v drift %v", front.PerCluster, front.PerClusterDetail, front.Drift)
+	}
+
+	stable := polSetupRow(t, out, "Waypoint use", "stable")
+	if stable.Effect.Phrase != "Uses waypoint infra/gone" || stable.PerCluster["c1"] != "failed" || stable.PerCluster["c2"] != "failed" || stable.PerClusterDetail["c1"] != "Waypoint infra/gone does not exist on this cluster" {
+		t.Errorf("stable %+v %+v", stable.Effect, stable.PerClusterDetail)
+	}
+	if !polHasProblem(stable, "Waypoint infra/gone does not exist") || stable.Drift {
+		t.Errorf("stable problems %v drift %v", stable.Problems, stable.Drift)
+	}
+
+	canary := polSetupRow(t, out, "Waypoint use", "canary")
+	if canary.Effect.Phrase != "Opts out of the waypoint" || canary.PerCluster["c1"] != "live" || canary.PerClusterDetail["c1"] != "Label istio.io/use-waypoint=none" {
+		t.Errorf("canary %+v %+v", canary.Effect, canary.PerClusterDetail)
+	}
+
+	ns := polSetupRow(t, out, "Waypoint use", "app")
+	if ns.Ref.Kind != "Namespace" || ns.AppliesTo.Kind != "namespace" || ns.AppliesTo.Phrase != "Namespace app" || ns.Effect.Phrase != "Uses waypoint app/wp" {
+		t.Errorf("namespace row %+v", ns)
+	}
+	if ns.Svc != nil || ns.Configure != nil || ns.PerCluster["c1"] != "live" || ns.PerCluster["c2"] != "live" || ns.Drift {
+		t.Errorf("namespace row links/clusters %+v %+v %+v", ns.Svc, ns.Configure, ns.PerCluster)
+	}
+	// Services that take the namespace label, across clusters: on c1 all
+	// three have their own label; on c2 only stable does.
+	if strings.Join(ns.Services, ",") != "canary,front" {
+		t.Errorf("namespace row services %v", ns.Services)
+	}
+}
+
+func TestPolicySetupWaypointDiffers(t *testing.T) {
+	ws := polWS(t)
+	other := object("Gateway", "wp2", map[string]any{"gatewayClassName": "istio-waypoint"})
+	polPut(ws, "c2", GatewayGroup, "gateways", "Gateway", other)
+	polLabelSvc(ws, "c1", "front", map[string]any{"istio.io/use-waypoint": "wp"})
+	polLabelSvc(ws, "c2", "front", map[string]any{"istio.io/use-waypoint": "wp2"})
+	r := polSetupRow(t, NewPolicies(ws, PolicyFilter{}), "Waypoint use", "front")
+	if r.PerCluster["c1"] != "live" || r.PerCluster["c2"] != "differs" || !r.Drift || !strings.Contains(r.PerClusterDetail["c2"], "label differs from c1") {
+		t.Errorf("%+v %+v", r.PerCluster, r.PerClusterDetail)
+	}
+}
+
+func TestPolicySetupEnrolment(t *testing.T) {
+	ws := polWS(t)
+	zt := object("Pod", "ztunnel-1", map[string]any{})
+	M(zt["metadata"])["namespace"] = "istio-system"
+	M(zt["metadata"])["labels"] = map[string]any{"app": "ztunnel"}
+	polPut(ws, "c1", "", "pods", "Pod", zt)
+	legacy := object("Namespace", "legacy", nil)
+	M(legacy["metadata"])["namespace"] = ""
+	M(legacy["metadata"])["labels"] = map[string]any{"istio.io/dataplane-mode": "none"}
+	polPut(ws, "c1", "", "namespaces", "Namespace", legacy)
+	out := NewPolicies(ws, PolicyFilter{})
+
+	app := polSetupRow(t, out, "Ambient enrolment", "app")
+	if !app.Setup || app.Effect.Phrase != "In ambient" || app.AppliesTo.Phrase != "Namespace app" || app.AppliesTo.Kind != "namespace" || strings.Join(app.Types, ",") != "Transport" || app.EnforcedBy != "ztunnel" {
+		t.Errorf("app %+v", app)
+	}
+	if app.PerCluster["c1"] != "live" || app.PerClusterDetail["c1"] != "Label istio.io/dataplane-mode=ambient; ztunnel is running" || app.PerCluster["c2"] != "applied" || app.Configure != nil || app.Svc != nil || app.Drift {
+		t.Errorf("app clusters %+v %+v", app.PerCluster, app.PerClusterDetail)
+	}
+	legacyRow := polSetupRow(t, out, "Ambient enrolment", "legacy")
+	if legacyRow.Effect.Phrase != "Opted out of ambient" || legacyRow.PerCluster["c1"] != "live" || legacyRow.PerCluster["c2"] != "not-here" || legacyRow.PerClusterDetail["c2"] != "Namespace legacy is not on this cluster" || legacyRow.Drift {
+		t.Errorf("legacy %+v %+v", legacyRow.PerCluster, legacyRow.PerClusterDetail)
+	}
+	// Namespace rows belong to their own namespace for the filter and counts.
+	scoped := NewPolicies(ws, PolicyFilter{Namespaces: []string{"legacy"}})
+	if len(scoped.Rows) != 1 || scoped.Rows[0].Kind != "Ambient enrolment" {
+		t.Errorf("legacy scope rows %+v", scoped.Rows)
+	}
+	for _, n := range scoped.Counts.Namespaces {
+		if n.Name == "" {
+			t.Errorf("a Namespace row was counted under an empty namespace")
+		}
+	}
+}
+
+func TestPolicySetupGlobal(t *testing.T) {
+	ws := polWS(t)
+	for _, cl := range []string{"c1", "c2"} {
+		polLabelSvc(ws, cl, "front", map[string]any{"solo.io/service-scope": "global", "solo.io/service-takeover": "true"})
+		polLabelSvc(ws, cl, "stable", map[string]any{"istio.io/global": "true"})
+		cm := object("ConfigMap", "istio", nil)
+		delete(cm, "spec")
+		M(cm["metadata"])["namespace"] = "istio-system"
+		cm["data"] = map[string]any{"mesh": "rootNamespace: istio-system\nserviceScopeConfigs:\n- scope: GLOBAL\n  servicesSelector:\n    matchExpressions:\n    - key: istio.io/global\n      operator: In\n      values: [\"true\"]\n"}
+		polPut(ws, cl, "", "configmaps", "ConfigMap", cm)
+	}
+	se := object("ServiceEntry", "autogen.app.front", map[string]any{"hosts": []any{"front.app.mesh.internal"}})
+	M(se["metadata"])["namespace"] = "istio-system"
+	polPut(ws, "c1", "networking.istio.io", "serviceentries", "ServiceEntry", se)
+	out := NewPolicies(ws, PolicyFilter{Namespaces: []string{"app"}})
+
+	front := polSetupRow(t, out, "Global Service", "front")
+	if !front.Setup || front.Effect.Phrase != "Published as front.app.mesh.internal" || strings.Join(front.Types, ",") != "Routing" || front.AppliesTo.Phrase != "Service front" {
+		t.Errorf("front %+v", front)
+	}
+	if front.PerCluster["c1"] != "live" || front.PerClusterDetail["c1"] != "Label solo.io/service-scope=global; ServiceEntry istio-system/autogen.app.front; takes over the local name" {
+		t.Errorf("front c1 %q %q", front.PerCluster["c1"], front.PerClusterDetail["c1"])
+	}
+	if front.PerCluster["c2"] != "applied" || front.PerClusterDetail["c2"] != "Label solo.io/service-scope=global; no generated ServiceEntry captured yet; takes over the local name" || front.Drift {
+		t.Errorf("front c2 %q %q drift %v", front.PerCluster["c2"], front.PerClusterDetail["c2"], front.Drift)
+	}
+	if front.Svc == nil || front.Svc.Name != "front" || front.Configure == nil || front.Configure.Cluster != "c1" {
+		t.Errorf("front links %+v %+v", front.Svc, front.Configure)
+	}
+	stable := polSetupRow(t, out, "Global Service", "stable")
+	if stable.PerCluster["c1"] != "applied" || !strings.HasPrefix(stable.PerClusterDetail["c1"], "Selected by serviceScopeConfigs in meshConfig") || stable.Effect.Phrase != "Published to the peered mesh" {
+		t.Errorf("stable %+v %+v", stable.Effect, stable.PerClusterDetail)
+	}
+	polNoRow(t, out, "Global Service", "canary")
+	// The generated ServiceEntry is not a row of its own.
+	polNoRow(t, out, "ServiceEntry", "autogen.app.front")
+}
+
+func TestPolicySetupFilterAndGrouping(t *testing.T) {
+	ws := polWS(t)
+	polLabelSvc(ws, "c1", "front", map[string]any{"istio.io/use-waypoint": "wp"})
+	if out := NewPolicies(ws, PolicyFilter{Namespaces: []string{"other"}}); len(out.Rows) != 0 {
+		t.Errorf("rows for another namespace %+v", out.Rows)
+	}
+	out := NewPolicies(ws, PolicyFilter{Group: "service", Namespaces: []string{"app"}})
+	got := map[string]string{}
+	for _, g := range out.Groups {
+		for _, r := range g.Rows {
+			got[r.Kind+" "+r.Ref.Name] = g.Key
+		}
+	}
+	if got["Waypoint use front"] != "service:app/front" || got["Waypoint use app"] != "namespace:app" || got["Ambient enrolment app"] != "namespace:app" {
+		t.Errorf("groups %v", got)
+	}
+	// Setup rows come first in their namespace.
+	if out.Rows[0].Kind != "Ambient enrolment" || out.Rows[1].Kind != "Waypoint use" {
+		t.Errorf("order %s, %s", out.Rows[0].Kind, out.Rows[1].Kind)
+	}
+	if out := NewPolicies(ws, PolicyFilter{Types: []string{"Transport"}}); len(out.Rows) != 1 || out.Rows[0].Kind != "Ambient enrolment" {
+		t.Errorf("type filter %+v", out.Rows)
+	}
+	if out := NewPolicies(ws, PolicyFilter{Q: "uses waypoint"}); len(out.Rows) != 2 {
+		t.Errorf("text filter found %d rows", len(out.Rows))
+	}
+}
+
+func TestPolicyInheritedMeshWide(t *testing.T) {
+	ws := polWS(t)
+	for _, k := range []struct{ kind, res string }{{"PeerAuthentication", "peerauthentications"}, {"AuthorizationPolicy", "authorizationpolicies"}} {
+		o := object(k.kind, "mesh-"+strings.ToLower(k.kind), map[string]any{"mtls": map[string]any{"mode": "STRICT"}})
+		M(o["metadata"])["namespace"] = "istio-system"
+		polPut(ws, "c1", "security.istio.io", k.res, k.kind, o)
+	}
+	// A selector policy in the root namespace is not mesh-wide.
+	sel := polAuthz("root-selector", "ALLOW", map[string]any{"selector": map[string]any{"matchLabels": map[string]any{"app": "x"}}, "rules": []any{map[string]any{}}})
+	M(sel["metadata"])["namespace"] = "istio-system"
+	polPut(ws, "c1", "security.istio.io", "authorizationpolicies", "AuthorizationPolicy", sel)
+
+	out := NewPolicies(ws, PolicyFilter{Namespaces: []string{"app"}})
+	for _, name := range []string{"mesh-peerauthentication", "mesh-authorizationpolicy"} {
+		r := polRow(t, out, name)
+		if !r.Inherited || r.AppliesTo.Kind != "mesh" || r.AppliesTo.Phrase != "Whole mesh (inherited)" {
+			t.Errorf("%s %+v inherited %v", name, r.AppliesTo, r.Inherited)
+		}
+	}
+	for _, r := range out.Rows {
+		if r.Ref.Name == "root-selector" {
+			t.Errorf("selector policy in the root namespace shown as inherited")
+		}
+	}
+	// Two app setup rows plus the two inherited policies.
+	if out.Counts.Shown != 4 || out.Counts.Shown != len(out.Rows) {
+		t.Errorf("shown %d rows %d", out.Counts.Shown, len(out.Rows))
+	}
+	ns := map[string]int{}
+	for _, n := range out.Counts.Namespaces {
+		ns[n.Name] = n.Count
+	}
+	if ns["app"] != 2 || ns["istio-system"] != 3 {
+		t.Errorf("namespaces %v", ns)
+	}
+	// Unscoped, or scoped to the root namespace itself, nothing is inherited.
+	for _, f := range []PolicyFilter{{}, {Namespaces: []string{"istio-system"}}} {
+		r := polRow(t, NewPolicies(ws, f), "mesh-peerauthentication")
+		if r.Inherited || r.AppliesTo.Phrase != "Whole mesh" {
+			t.Errorf("filter %+v: %+v inherited %v", f, r.AppliesTo, r.Inherited)
+		}
+	}
+	b, _ := json.Marshal(polRow(t, NewPolicies(ws, PolicyFilter{}), "mesh-peerauthentication"))
+	if strings.Contains(string(b), `"inherited"`) {
+		t.Errorf("inherited emitted when false: %s", b)
+	}
+}
+
+func TestPolicySummaryEqualsCounts(t *testing.T) {
+	ws := polWS(t)
+	polLabelSvc(ws, "c1", "front", map[string]any{"istio.io/use-waypoint": "wp", "solo.io/service-scope": "global"})
+	polPut(ws, "c1", "security.istio.io", "authorizationpolicies", "AuthorizationPolicy",
+		polAuthz("deny", "DENY", map[string]any{"targetRefs": polSvcTarget("front"), "rules": []any{map[string]any{}}}))
+	pa := object("PeerAuthentication", "default", map[string]any{"mtls": map[string]any{"mode": "STRICT"}})
+	M(pa["metadata"])["namespace"] = "istio-system"
+	polPut(ws, "c1", "security.istio.io", "peerauthentications", "PeerAuthentication", pa)
+	all := NewPolicies(ws, PolicyFilter{})
+	objects, drift := PolicyInventorySummary(ws)
+	if objects != all.Counts.All || drift != all.Counts.Drift {
+		t.Errorf("summary %d/%d, counts %d/%d", objects, drift, all.Counts.All, all.Counts.Drift)
+	}
+	setup := 0
+	for _, r := range all.Rows {
+		if r.Setup {
+			setup++
+		}
+	}
+	// Enrolment and waypoint use on app, waypoint use and global on front.
+	if setup != 4 || all.Counts.All != 6 {
+		t.Errorf("setup %d all %d", setup, all.Counts.All)
+	}
+}
+
+func TestPolicyConfigureLink(t *testing.T) {
+	ws := polWS(t)
+	polPut(ws, "c2", "security.istio.io", "authorizationpolicies", "AuthorizationPolicy",
+		polAuthz("deny-front", "DENY", map[string]any{"targetRefs": polSvcTarget("front"), "rules": []any{map[string]any{}}}),
+		polAuthz("two", "DENY", map[string]any{"targetRefs": append(polSvcTarget("front"), polSvcTarget("stable")...), "rules": []any{map[string]any{}}}),
+		polAuthz("l4", "ALLOW", map[string]any{"selector": map[string]any{"matchLabels": map[string]any{"app": "front"}}, "rules": []any{map[string]any{}}}),
+		polAuthz("ns-lock", "ALLOW", map[string]any{}))
+	polPut(ws, "c1", GatewayGroup, "httproutes", "HTTPRoute", polRoute("split", polBackend("stable", 80), polBackend("canary", 20)))
+	out := NewPolicies(ws, PolicyFilter{})
+	if r := polRow(t, out, "deny-front"); r.Configure == nil || *r.Configure != (PolicyService{"c2", "app", "front"}) {
+		t.Errorf("deny-front configure %+v", r.Configure)
+	}
+	if r := polRow(t, out, "split"); r.Configure == nil || *r.Configure != (PolicyService{"c1", "app", "front"}) {
+		t.Errorf("split configure %+v", r.Configure)
+	}
+	for _, n := range []string{"two", "l4", "ns-lock"} {
+		if r := polRow(t, out, n); r.Configure != nil {
+			t.Errorf("%s configure %+v", n, r.Configure)
+		}
+	}
+	b, _ := json.Marshal(polRow(t, out, "ns-lock"))
+	if !strings.Contains(string(b), `"configure":null`) || !strings.Contains(string(b), `"setup":false`) {
+		t.Errorf("json %s", b)
 	}
 }

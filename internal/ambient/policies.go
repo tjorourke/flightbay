@@ -81,9 +81,28 @@ type PolicyRow struct {
 	Editable         bool              `json:"editable"`
 	EditKey          string            `json:"editKey"`
 	Svc              *PolicyService    `json:"svc,omitempty"`
+	// Configure is the Service the row's appliesTo names when it names
+	// exactly one, on the first cluster that has the row. Null otherwise.
+	Configure *PolicyService `json:"configure"`
+	// Setup marks rows read from labels on a Service or Namespace (waypoint
+	// use, global publication, ambient enrolment) rather than a policy object.
+	Setup bool `json:"setup"`
+	// Inherited marks a mesh-wide policy from the root namespace shown in a
+	// namespace-scoped view.
+	Inherited bool `json:"inherited,omitempty"`
 
 	groupKey string
+	ns       string   // the namespace the row belongs to (a Namespace row's own name)
 	nsNames  []string // namespaces of the Services reached, for the namespace filter
+}
+
+// namespace is the namespace a row belongs to. For a Namespace object the
+// ref has no namespace, so it is the Namespace's name.
+func (r PolicyRow) namespace() string {
+	if r.ns != "" {
+		return r.ns
+	}
+	return r.Ref.Namespace
 }
 
 type PolicyGroup struct {
@@ -145,6 +164,33 @@ type polObs struct {
 	services   []*store.Object
 	primary    *store.Object // the Service the row groups under
 	grouped    bool          // placed in a Service group rather than a namespace group
+	// Setup rows only: the row kind, the namespace the row belongs to and
+	// the values compared between clusters for drift.
+	setup bool
+	kind  string
+	ns    string
+	spec  string
+}
+
+func (p polObs) rowKind() string {
+	if p.kind != "" {
+		return p.kind
+	}
+	return p.obj.Kind
+}
+
+func (p polObs) namespace() string {
+	if p.ns != "" {
+		return p.ns
+	}
+	return p.obj.Namespace
+}
+
+func (p polObs) specKey() string {
+	if p.setup {
+		return p.spec
+	}
+	return policySpecKey(p.obj)
 }
 
 type polCtx struct {
@@ -181,7 +227,7 @@ func NewPolicies(ws *store.Workspace, f PolicyFilter) *PoliciesResponse {
 		for _, t := range r.Types {
 			out.Counts.ByType[t]++
 		}
-		nsCount[r.Ref.Namespace]++
+		nsCount[r.namespace()]++
 		if r.hasProblem() {
 			out.Counts.Problems++
 		}
@@ -202,6 +248,12 @@ func NewPolicies(ws *store.Workspace, f PolicyFilter) *PoliciesResponse {
 	out.Rows = []PolicyRow{}
 	for _, r := range all {
 		if f.keep(r) {
+			// A mesh-wide policy from the root namespace reaches the
+			// filtered namespaces without belonging to them.
+			if len(f.Namespaces) > 0 && r.inheritable() && !contains(f.Namespaces, r.namespace()) {
+				r.Inherited = true
+				r.AppliesTo.Phrase = "Whole mesh (inherited)"
+			}
 			out.Rows = append(out.Rows, r)
 		}
 	}
@@ -224,6 +276,16 @@ func PolicyInventorySummary(ws *store.Workspace) (objects, drift int) {
 		}
 	}
 	return objects, drift
+}
+
+// inheritable is a mesh-wide security policy: one in the root namespace
+// with no selector or targetRefs.
+func (r PolicyRow) inheritable() bool {
+	switch r.Kind {
+	case "AuthorizationPolicy", "PeerAuthentication", "RequestAuthentication":
+		return r.AppliesTo.Kind == "mesh"
+	}
+	return false
 }
 
 type policyInventory struct {
@@ -260,12 +322,22 @@ func buildPolicyInventory(ws *store.Workspace, edit bool) *policyInventory {
 			}
 			byKey[key] = append(byKey[key], held{cl, ob})
 		}
+		for _, ob := range c.setupObs(cl) {
+			key := ob.kind + "|" + ob.obj.Kind + "/" + ob.obj.Namespace + "/" + ob.obj.Name
+			if _, ok := byKey[key]; !ok {
+				order = append(order, key)
+			}
+			byKey[key] = append(byKey[key], held{cl, ob})
+		}
 	}
 	for _, key := range order {
 		hs := byKey[key]
 		p := hs[0].obs
 		code, label := ManagedByInfo(p.obj)
-		row := PolicyRow{Ref: reference(p.obj), Kind: p.obj.Kind, AppliesTo: p.applies, Effect: p.effect, Types: p.types, EnforcedBy: p.enforcedBy, ManagedBy: code, ManagedByLabel: label, PerCluster: map[string]string{}, PerClusterDetail: map[string]string{}, Problems: []string{}, Services: []string{}}
+		row := PolicyRow{Ref: reference(p.obj), Kind: p.rowKind(), AppliesTo: p.applies, Effect: p.effect, Types: p.types, EnforcedBy: p.enforcedBy, ManagedBy: code, ManagedByLabel: label, PerCluster: map[string]string{}, PerClusterDetail: map[string]string{}, Problems: []string{}, Services: []string{}, Setup: p.setup, ns: p.namespace()}
+		if p.setup && p.obj.Kind == "Namespace" {
+			row.nsNames = []string{p.namespace()}
+		}
 		if len(row.Types) == 0 {
 			row.Types = []string{PolicyTypeOther}
 		}
@@ -273,16 +345,20 @@ func buildPolicyInventory(ws *store.Workspace, edit bool) *policyInventory {
 		row.groupKey = c.groupKey(p)
 		seen := map[string]bool{}
 		holders := map[string]bool{}
-		refSpec := policySpecKey(p.obj)
+		refSpec := p.specKey()
 		for i, h := range hs {
 			holders[h.cluster] = true
 			st, detail := h.obs.state, h.obs.detail
-			if i > 0 && policySpecKey(h.obs.obj) != refSpec {
+			if i > 0 && h.obs.specKey() != refSpec {
 				row.Drift = true
 				if st == PolicyStateLive || st == PolicyStateApplied {
 					st = PolicyStateDiffers
 				}
-				detail = strings.TrimPrefix(detail+"; spec differs from "+hs[0].cluster, "; ")
+				what := "spec"
+				if p.setup {
+					what = "label"
+				}
+				detail = strings.TrimPrefix(detail+"; "+what+" differs from "+hs[0].cluster, "; ")
 			}
 			row.PerCluster[h.cluster] = st
 			row.PerClusterDetail[h.cluster] = detail
@@ -297,7 +373,7 @@ func buildPolicyInventory(ws *store.Workspace, edit bool) *policyInventory {
 			}
 			for _, s := range h.obs.services {
 				n := s.Name
-				if s.Namespace != p.obj.Namespace {
+				if s.Namespace != p.namespace() {
 					n = s.Namespace + "/" + s.Name
 				}
 				if !contains(row.Services, n) {
@@ -314,6 +390,12 @@ func buildPolicyInventory(ws *store.Workspace, edit bool) *policyInventory {
 			}
 			row.PerCluster[cl] = PolicyStateNotHere
 			row.PerClusterDetail[cl] = "Not on this cluster"
+			if p.setup {
+				detail, drift := c.setupAbsent(p, hs[0].cluster, cl)
+				row.PerClusterDetail[cl] = detail
+				row.Drift = row.Drift || drift
+				continue
+			}
 			// Absence is drift only when a Service the object applies to
 			// runs on both clusters. Otherwise it is a different estate.
 			for _, h := range hs {
@@ -326,12 +408,23 @@ func buildPolicyInventory(ws *store.Workspace, edit bool) *policyInventory {
 		sort.Strings(row.Services)
 		if p.primary != nil {
 			row.Svc = svcRef(p.primary)
-		} else if len(p.services) > 0 {
+		} else if len(p.services) > 0 && !p.setup {
 			row.Svc = svcRef(p.services[0])
+		}
+		if t := singleServiceTarget(p.applies); t != nil {
+			for _, h := range hs {
+				if c.ws.Get(h.cluster, "", "services", t.Namespace, t.Name) != nil {
+					row.Configure = &PolicyService{Cluster: h.cluster, Namespace: t.Namespace, Name: t.Name}
+					break
+				}
+			}
 		}
 		row.CanTest = (row.Kind == "AuthorizationPolicy" || row.Kind == "HTTPRoute") && row.Svc != nil && p.applies.Kind == "service"
 		row.EditKey = EditKeyFor(row.Ref, 0)
-		if edit {
+		if p.setup {
+			// Unique per row: a Service can carry several setup labels.
+			row.EditKey = row.Kind + ":" + row.namespace() + "/" + row.Ref.Name + "#0"
+		} else if edit {
 			row.Editable = c.editability(&row, p)
 		}
 		inv.rows = append(inv.rows, row)
@@ -372,7 +465,7 @@ func (r PolicyRow) hasProblem() bool {
 
 func (f PolicyFilter) keep(r PolicyRow) bool {
 	if len(f.Namespaces) > 0 {
-		ok := r.AppliesTo.Kind == "mesh" || contains(f.Namespaces, r.Ref.Namespace)
+		ok := r.AppliesTo.Kind == "mesh" || contains(f.Namespaces, r.namespace())
 		for _, n := range r.nsNames {
 			ok = ok || contains(f.Namespaces, n)
 		}
@@ -426,13 +519,13 @@ func (f PolicyFilter) keep(r PolicyRow) bool {
 	return true
 }
 
-var kindOrder = map[string]int{"Gateway": 0, "HTTPRoute": 1, "DestinationRule": 2, "AuthorizationPolicy": 3, "RequestAuthentication": 4, "PeerAuthentication": 5}
+var kindOrder = map[string]int{PolicyKindEnrolment: -3, PolicyKindWaypointUse: -2, PolicyKindGlobal: -1, "Gateway": 0, "HTTPRoute": 1, "DestinationRule": 2, "AuthorizationPolicy": 3, "RequestAuthentication": 4, "PeerAuthentication": 5}
 
 func sortRows(rows []PolicyRow) {
 	sort.SliceStable(rows, func(i, j int) bool {
 		a, b := rows[i], rows[j]
-		if a.Ref.Namespace != b.Ref.Namespace {
-			return a.Ref.Namespace < b.Ref.Namespace
+		if a.namespace() != b.namespace() {
+			return a.namespace() < b.namespace()
 		}
 		if a.Kind != b.Kind {
 			ka, oka := kindOrder[a.Kind]
@@ -456,11 +549,11 @@ func (c *polCtx) groupKey(p polObs) string {
 	case p.applies.Kind == "mesh":
 		return "mesh"
 	case p.applies.Kind == "namespace":
-		return "namespace:" + p.obj.Namespace
+		return "namespace:" + p.namespace()
 	case p.grouped && p.primary != nil:
 		return "service:" + p.primary.Namespace + "/" + p.primary.Name
 	}
-	return "namespace:" + p.obj.Namespace
+	return "namespace:" + p.namespace()
 }
 
 func groupRows(rows []PolicyRow) []PolicyGroup {
