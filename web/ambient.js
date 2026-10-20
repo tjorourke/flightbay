@@ -51,6 +51,7 @@ function amLanding(){return `<section class="panel am-landing"><div class="panel
 async function ambientPage() {
   const A = S.ambient;
   if(S.ws?.istioAmbient&&!istioAmbientAvailable())return head('Istio Ambient','No confirmed ambient installation in the selected capture scope.')+'<div class="notice info">Include Istio API discovery plus an ambient-enrolled Namespace or ztunnel Pods. Gateway API CRDs or a sidecar-only installation do not establish ambient support. Missing capture data does not prove the cluster lacks ambient.</div>';
+  if(typeof am2On==='function'&&am2On()){if(A.clusterScope!==S.cluster)A.clusterScope=S.cluster;return amV2Page();}
   if(A.clusterScope!==S.cluster){if(A.clusterScope!==undefined) {amResetDraft();A.key='';A.kind='';A.result=null;}A.clusterScope=S.cluster;}
   if (!A.inventory) A.inventory = await api('api/ambient');
   A.objects = (A.inventory.objects || A.inventory.services).filter(o => !S.cluster || o.cluster === S.cluster);
@@ -360,6 +361,7 @@ function amWirePicker() {
   $('#am-kind').onchange = e => {const kind=e.target.value;if(amTarget()&&kind&&kind!==amTarget().kind){amResetDraft();A.key='';A.result=null;history.replaceState(null,'','#ambient');}A.kind=kind;render().then(()=>$('#am-object-search')?.focus());};
 }
 after.ambient = () => {
+  if(typeof am2On==='function'&&am2On())return am2After();
   if($('#am-bookinfo'))$('#am-bookinfo').onclick=()=>{S.ambient.tab='demo';nav('ambient?tab=demo');};
   if(S.ambient.tab==='demo'){bookinfoAfter();return;}
   if(S.ambient.tab==='path'){rpAfter();return;}

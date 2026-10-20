@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -37,7 +38,7 @@ func TestAmbientBrowserPreview(t *testing.T) {
 	h := s.Handler()
 	webRoot := filepath.Join("..", "..", "web")
 	static := http.StripPrefix("/static/", http.FileServer(http.Dir(webRoot)))
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/ambient/test" || r.URL.Path == "/api/ambient/http-test" || r.URL.Path == "/api/ambient/http-mesh-test" {
 			jerr(w, 403, "browser preview: real cluster actions are disabled")
 			return
@@ -55,10 +56,26 @@ func TestAmbientBrowserPreview(t *testing.T) {
 		}
 		h.ServeHTTP(w, r)
 	}))
+	if addr := os.Getenv("FLIGHTBAY_PREVIEW_ADDR"); addr != "" {
+		l, err := net.Listen("tcp", addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		srv.Listener.Close()
+		srv.Listener = l
+	}
+	srv.Start()
 	defer srv.Close()
 	fmt.Printf("AMBIENT_PREVIEW=%s/?token=ambient-ui-test#ambient\n", srv.URL)
 	select {
-	case <-time.After(15 * time.Minute):
+	case <-time.After(previewLifetime()):
 	case <-t.Context().Done():
 	}
+}
+
+func previewLifetime() time.Duration {
+	if m, err := time.ParseDuration(os.Getenv("FLIGHTBAY_PREVIEW_LIFETIME")); err == nil {
+		return m
+	}
+	return 15 * time.Minute
 }

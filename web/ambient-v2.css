@@ -1,0 +1,56 @@
+/* Ambient v2: ported from docs/ux/ambient/mock.css (am2- prefix), mapped onto the tokens in app.css.
+   Structure, order and control types follow the approved mockups. */
+.am2{--am2-card:var(--panel);--am2-line:var(--line);--am2-ink:var(--text);--am2-muted:var(--muted);--am2-th:var(--raised);--am2-row:color-mix(in srgb,var(--line) 55%,transparent);
+--am2-grp:color-mix(in srgb,var(--raised) 70%,var(--panel));--am2-sel:color-mix(in srgb,var(--teal) 14%,var(--panel));--am2-navy:#0f2a3a;--am2-navy-ink:#fff;--am2-field:var(--panel);
+--am2-ok:var(--green);--am2-ok-bg:color-mix(in srgb,var(--green) 14%,transparent);--am2-warn:var(--amber);--am2-warn-bg:color-mix(in srgb,var(--amber) 14%,transparent);
+--am2-bad:var(--red);--am2-bad-bg:color-mix(in srgb,var(--red) 13%,transparent);--am2-info:var(--blue);--am2-info-bg:color-mix(in srgb,var(--blue) 13%,transparent);
+--am2-mut-bg:color-mix(in srgb,var(--muted) 14%,transparent);--am2-tl:var(--teal);--am2-tl-bg:color-mix(in srgb,var(--teal) 14%,transparent);--am2-btn-p-ink:#fff;
+color:var(--am2-ink);font:13px/1.45 var(--sans)}
+[data-theme=dark] .am2,:root:not([data-theme=light]) .am2{--am2-navy:var(--teal);--am2-navy-ink:#0f2025;--am2-btn-p-ink:#0f2025;--am2-th:#1c2a33;--am2-field:#0c171e}
+.am2 *{box-sizing:border-box}
+.am2 table{width:100%;border-collapse:collapse;font-size:13px}
+.am2 th{text-align:left;font-size:11px;color:var(--am2-muted);font-weight:600;letter-spacing:0;text-transform:none;padding:8px 12px;border-bottom:1px solid var(--am2-line);background:var(--am2-th);white-space:nowrap;position:static}
+.am2 td{padding:9px 12px;border-bottom:1px solid var(--am2-row);vertical-align:middle;white-space:normal}
+.am2 tbody tr{cursor:default}.am2 tbody tr:hover{background:transparent}
+.am2 tr.am2-click{cursor:pointer}.am2 tr.am2-click:hover,.am2 tr.am2-sel{background:var(--am2-sel)}
+.am2 tr.am2-grp td{background:var(--am2-grp);font-weight:700;font-size:11.5px;color:var(--am2-ink);letter-spacing:.02em;padding:7px 12px}
+.am2 tr.am2-dim td{color:var(--am2-muted)}
+.am2 h1{margin:0;font-size:20px;letter-spacing:0;font-weight:700}.am2 h2{font-size:15px;margin:0;font-weight:700}.am2 h3{font-size:13px;margin:0;font-weight:600}
+.am2 a{color:var(--teal)}.am2 a.am2-btn{color:var(--am2-ink)}.am2 a.am2-btn.p{color:var(--am2-btn-p-ink)}
+.am2-head{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.am2-head h1{margin-right:10px}
+.am2-tabs{display:flex;gap:2px}
+.am2 .am2-tabs a{padding:7px 12px;border-radius:7px;font-weight:600;color:var(--am2-ink);text-decoration:none}
+.am2 .am2-tabs a:hover{background:var(--am2-mut-bg);text-decoration:none}
+.am2 .am2-tabs a.on{background:var(--am2-navy);color:var(--am2-navy-ink)}
+.am2-tabs .am2-c{font-size:11px;background:var(--am2-mut-bg);color:var(--am2-muted);border-radius:8px;padding:0 6px;margin-left:4px}
+.am2-tabs a.on .am2-c{background:rgba(255,255,255,.2);color:inherit}
+.am2-spacer{flex:1}
+.am2-btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--am2-line);background:var(--am2-card);border-radius:7px;padding:6px 11px;font-weight:600;font-size:12px;color:var(--am2-ink);white-space:nowrap;cursor:pointer;text-decoration:none;line-height:1.45}
+.am2-btn:hover{border-color:var(--teal);text-decoration:none;background:var(--am2-card)}
+.am2-btn.p{background:var(--teal);border-color:var(--teal);color:var(--am2-btn-p-ink)}.am2-btn.d{background:var(--am2-bad);border-color:var(--am2-bad);color:#fff}
+.am2-btn.g{border-color:transparent;background:transparent;color:var(--teal)}.am2-btn.sm{padding:3px 8px;font-size:11px}
+.am2-btn[disabled]{opacity:.5;cursor:not-allowed}
+.am2-pill{display:inline-flex;align-items:center;gap:4px;border-radius:10px;padding:1px 8px;font-size:11px;font-weight:600;white-space:nowrap}
+.am2-pill.ok{background:var(--am2-ok-bg);color:var(--am2-ok)}.am2-pill.warn{background:var(--am2-warn-bg);color:var(--am2-warn)}.am2-pill.bad{background:var(--am2-bad-bg);color:var(--am2-bad)}
+.am2-pill.info{background:var(--am2-info-bg);color:var(--am2-info)}.am2-pill.mut{background:var(--am2-mut-bg);color:var(--am2-muted)}.am2-pill.tl{background:var(--am2-tl-bg);color:var(--am2-tl)}
+.am2-kind{font:600 10.5px var(--mono);background:var(--am2-mut-bg);border:1px solid var(--am2-line);border-radius:5px;padding:1px 6px;color:var(--am2-muted)}
+.am2-mono{font-family:var(--mono)}.am2-muted{color:var(--am2-muted)}.am2-sub{font-size:11.5px;color:var(--am2-muted)}.am2-right{text-align:right}.am2-nowrap{white-space:nowrap}
+.am2-card{background:var(--am2-card);border:1px solid var(--am2-line);border-radius:10px;overflow:hidden}
+.am2-chead{padding:12px 16px;border-bottom:1px solid var(--am2-line);display:flex;align-items:center;gap:8px}
+.am2-chead h2{flex:1}
+.am2-sum{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:4px 0 16px}
+.am2-sum .am2-card{padding:12px 14px;overflow:visible}
+.am2-sum a.am2-card{display:block;color:inherit;text-decoration:none}.am2-sum a.am2-card:hover{border-color:var(--teal)}
+.am2-sum .am2-q{font-size:11px;color:var(--am2-muted);font-weight:600;text-transform:uppercase;letter-spacing:.05em}
+.am2-sum .am2-a{font-size:13.5px;margin-top:4px}.am2-sum .am2-a b{font-weight:650}
+.am2-input{border:1px solid var(--am2-line);border-radius:7px;padding:5px 10px;background:var(--am2-field);font-size:13px;color:var(--am2-ink)}
+.am2-chip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--am2-line);border-radius:16px;padding:4px 11px;font-size:12px;font-weight:600;background:var(--am2-card);color:var(--am2-ink);cursor:pointer}
+.am2-chip.on{background:var(--am2-tl-bg);border-color:var(--teal);color:var(--teal)}
+.am2-foot{padding:10px 16px;border-top:1px solid var(--am2-line);display:flex;gap:10px;align-items:center;font-size:11.5px;color:var(--am2-muted)}
+.am2-foot b{color:var(--am2-ink)}
+.am2-empty{padding:18px 16px;color:var(--am2-muted)}
+.am2-note{border:1px solid var(--am2-line);border-radius:8px;padding:10px 12px;margin-bottom:12px}
+.am2-card+.am2-card{margin-top:0}.am2-mb{margin-bottom:16px}
+@media (max-width:1100px){.am2-sum{grid-template-columns:repeat(2,1fr)}}
+.am2 td.am2-act{white-space:nowrap;width:1%}

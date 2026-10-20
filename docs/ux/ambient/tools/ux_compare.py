@@ -92,9 +92,11 @@ def run(base, screen, routes, outdir):
     w, h = route.get("viewport", [1600, 1100])
     out = outdir / screen; out.mkdir(parents=True, exist_ok=True)
     app_png = out / "app.png"
-    chrome([f"--window-size={w},{h}", f"--screenshot={app_png}", url])
-    dom = chrome([f"--window-size={w},{h}", "--dump-dom", url]).stdout
-    (out / "dom.html").write_text(dom)
+    r = subprocess.run(["node", str(ROOT / "tools" / "shot.mjs"), url, str(w), str(h), str(app_png), str(out / "dom.html")],
+                       capture_output=True, text=True, timeout=120)
+    if r.stderr.strip():
+        print(r.stderr.strip())
+    dom = (out / "dom.html").read_text() if (out / "dom.html").exists() else ""
     rows, failed = check(spec, dom)
     mock_png = ROOT / spec["mockup_png"]
     if app_png.exists() and mock_png.exists():

@@ -1,0 +1,20 @@
+// Screenshot + DOM dump with a real wait. Usage: node shot.mjs URL W H out.png out.html
+import {createRequire} from 'node:module';
+import fs from 'node:fs';
+const require = createRequire(process.env.PW_ROOT || '/Users/thomasorourke/.claude/skills/gstack/');
+const {chromium} = require('playwright-core');
+const [url, w, h, png, html] = process.argv.slice(2);
+const b = await chromium.launch({executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true});
+const ctx = await b.newContext({viewport: {width: +w, height: +h}});
+const u = new URL(url);
+await ctx.addCookies([{name: 'flightbay-theme', value: process.env.THEME || 'light', domain: u.hostname, path: '/'}]);
+await ctx.addInitScript(() => { try { localStorage.setItem('flightbay.amv2', '1'); } catch (e) {} });
+const p = await ctx.newPage();
+const errs = []; p.on('pageerror', e => errs.push(String(e)));
+await p.goto(url, {waitUntil: 'load'});
+await p.waitForTimeout(+(process.env.SHOT_WAIT || 3500));
+await p.screenshot({path: png, fullPage: false});
+await p.screenshot({path: png.replace(/\.png$/, '-full.png'), fullPage: true});
+fs.writeFileSync(html, await p.content());
+if (errs.length) console.error('PAGEERRORS ' + errs.join(' | '));
+await b.close();
