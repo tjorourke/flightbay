@@ -4,6 +4,26 @@ weight: 17
 description: Trace Service-to-waypoint attachment, explain controller errors, generate L4/L7 configuration and explicitly apply a test plan to a selected real cluster.
 ---
 
+## The Ambient pages
+
+The Istio Ambient page has two levels. The home page has five tabs, and each Service has its own page.
+
+| Where | What it shows |
+|---|---|
+| **Overview** | A health summary, **Needs attention** (failed checks with **Open checks** and **Fix…**), and every Service with its waypoint, access, routing and resilience badges and its state on each cluster. A namespace footer holds **Namespace settings** (enrol in ambient, set up a waypoint). |
+| **Policies & routes** | Every ambient policy, route and waypoint, what it applies to in plain words, its state on each cluster, and who manages it. Filter by scope, type, problems, drift and managed by. **Export YAML** downloads the filtered set. |
+| **Map** and **Request path** | The attachment map and the request-path tracer. Service cards open the Service page. |
+| **Changes** | Every change Flightbay applied from this machine, with its state, whether its tests pass, and undo. |
+| **Service page** | **Configuration**, **Checks**, **Tests**, **Request path** and **Changes** for one Service. |
+
+**Configuration** answers four questions: who can call it, where traffic goes, whether traffic is encrypted, and what happens under load or failure. Each card has one sentence, the items that are configured, at most one recommendation, and short **Add** links. Tasks that cannot run on this waypoint stay visible with a lock and a **Why?** reason. **All tasks** lists every task in groups, as cards or a list.
+
+Every **Add**, **Edit** and **Override** link opens the same one-task drawer: choose settings, check against the cluster (a server dry-run, nothing written), then apply and test. The right-hand column says what the change does to the Service and which other policies it interacts with. After apply, Flightbay runs the saved test suites for that Service. A change is **Draft**, **Checked**, **Applied**, **Live**, **Verified** or **Failed**.
+
+**Tests** are per AuthorizationPolicy and HTTPRoute. Cases are generated from the rule (a request that matches, near misses, interactions with other policies, a waypoint bypass), kept under `~/.flightbay/ambient-suites/`, and run from an existing Pod or a temporary one. A route suite compares expected and observed traffic weights.
+
+The previous Ambient page, with its picker, four-step wizard and Active tests list, is still in this build for rollback. Add `?amv2=0` to the URL to use it. The sections below describe it; the Service page, drawer and tabs above replace the picker, the stepper and the Configure tab.
+
 ## Open an investigation
 
 Open a capture normally, then choose **Istio Ambient** in the sidebar, or open a Service in Resources and choose **Investigate Istio Ambient**.

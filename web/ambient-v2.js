@@ -1,15 +1,15 @@
 'use strict';
 /* Ambient v2: the rebuilt Istio Ambient pages (docs/ux/ambient/PLAN.md).
    Markup, order and wording follow the approved mockups in docs/ux/ambient/*.html.
-   Enabled with ?amv2=1 (kept in localStorage 'flightbay.amv2') until the switch-over in Phase 10. */
+   On by default. ?amv2=0 (kept in localStorage 'flightbay.amv2') returns to the previous Ambient UI. */
 
 const AM2_FLAG = 'flightbay.amv2';
 function am2On() {
   try {
     const q = new URLSearchParams(location.search).get('amv2');
     if (q === '1' || q === '0') { try { localStorage.setItem(AM2_FLAG, q); } catch (_) { /* private mode */ } return q === '1'; }
-    return localStorage.getItem(AM2_FLAG) === '1';
-  } catch (_) { return false; }
+    return localStorage.getItem(AM2_FLAG) !== '0';
+  } catch (_) { return true; }
 }
 
 // ---------- routes ----------
@@ -59,6 +59,16 @@ function am2Go(patch, replace) {
 }
 const am2SvcRef = svc => { const [cluster, namespace, ...rest] = String(svc || '').split('/'); return {cluster, namespace, name: rest.join('/')}; };
 const am2SvcPath = (cluster, ns, name) => [cluster, ns, name].join('/');
+
+// The hash that opens an object from search or an object drawer: a Service opens its page, a route or policy
+// its object page, anything else the matching list.
+function am2OpenHash(o) {
+  if (!o || !o.name) return '';
+  if (o.kind === 'Service') return am2Hash({svc: am2SvcPath(o.cluster, o.namespace, o.name), stab: 'configuration'});
+  if (['HTTPRoute', 'AuthorizationPolicy'].includes(o.kind)) return am2Hash({obj: [o.cluster, o.kind, o.namespace, o.name].join('/'), otab: 'summary'});
+  if (['Gateway', 'Namespace', 'ServiceEntry'].includes(o.kind)) return am2Hash({tab: 'policies', ns: o.kind === 'Namespace' ? o.name : o.namespace});
+  return '';
+}
 
 // ---------- state ----------
 const AM2_AFTER = [];

@@ -33,7 +33,7 @@ function amResetDraft(keepEdits=false) {const A=S.ambient;if(!keepEdits){A.editD
 function amChoose(o) { const A = S.ambient; amResetDraft(); A.key = amKey(o); A.kind=o.kind; A.serviceFilter='';A.checkFilter='all';A.pickerOpen=false;if(A.tab==='map')A.mapFocus=amKey(o); history.replaceState(null,'','#ambient'); if(S.cluster&&S.cluster!==o.cluster){A.clusterScope=o.cluster;setCluster(o.cluster);}else render(); }
 function amClear(wizard=false){const A=S.ambient;amResetDraft();A.key='';A.kind='';A.result=null;A.serviceFilter='';if(wizard)A.tab='wizard';A.pickerOpen=A.tab!=='map';history.replaceState(null,'','#ambient');render().then(()=>{if(A.pickerOpen)$('#am-object-search')?.focus();});}
 function ambientObjectButton(o) { return S.ws?.istioAmbient?.some(c=>c.cluster===o.cluster&&c.available)&&['Service', 'Namespace', 'Pod', 'Gateway', 'HTTPRoute', 'ServiceEntry'].includes(o.kind) ? '<button id="d-ambient">Investigate Istio Ambient →</button>' : ''; }
-function ambientWireObject(o) { if (!$('#d-ambient')) $('#d-describe')?.insertAdjacentHTML('afterend', ambientObjectButton(o)); const b = $('#d-ambient'); if (b) b.onclick = () => { amResetDraft();S.ambient.key = amKey(o);S.ambient.kind=o.kind;S.ambient.tab='investigate';closeDrawer();nav('ambient'); }; }
+function ambientWireObject(o) { if (!$('#d-ambient')) $('#d-describe')?.insertAdjacentHTML('afterend', ambientObjectButton(o)); const b = $('#d-ambient'); if (b) b.onclick = () => { if(typeof am2On==='function'&&am2On()){closeDrawer();nav((am2OpenHash(o)||'#ambient').slice(1));return;} amResetDraft();S.ambient.key = amKey(o);S.ambient.kind=o.kind;S.ambient.tab='investigate';closeDrawer();nav('ambient'); }; }
 function amDownload(text, name) { const url = URL.createObjectURL(new Blob([text], {type: 'application/yaml'})); const a = document.createElement('a'); a.href = url; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
 
 function amPicker(objects, target) {
@@ -203,7 +203,7 @@ function amOpenEdit(entry,task) {
 function amWizard(svc) {
   const A = S.ambient, F = A.settings, selected = id => !!A.tasks[id];
   const others = A.inventory.services.filter(s => s.cluster === svc.cluster && s.namespace === svc.namespace), namespaces = A.inventory.namespaces.filter(n => n.cluster === svc.cluster).map(n => n.name);
-  const backends = F.backends || [svc, others.find(s => s.name !== svc.name) || svc].map((s, i) => ({name: s.name, port: s.ports[0], weight: i ? 10 : 90}));
+  const backends = F.backends || [svc, others.find(s => s.name !== svc.name && s.name.startsWith(svc.name + '-')) || others.find(s => s.name !== svc.name && !s.infrastructure) || others.find(s => s.name !== svc.name) || svc].map((s, i) => ({name: s.name, port: s.ports[0], weight: i ? 10 : 90}));
   const edit = A.edit ? `<div class="notice info"><div><strong>Editing ${esc(A.edit.ref.kind)} ${esc(A.edit.ref.namespace)}/${esc(A.edit.ref.name)}${A.edit.ref.kind === 'HTTPRoute' ? ' · rule ' + (A.edit.rule + 1) : ''}</strong><p>Existing attachments and unedited fields are retained. The preview shows the exact existing-field changes.</p><button data-amconfig-home>← All configurations for this Service</button></div></div>` : '';
   if(A.phase===1){
     if(A.edit)return edit+amTaskCards();
@@ -492,7 +492,7 @@ function amP1Fields(){
 
 async function amReviewExplanation(x){
   const p=await apiPost('api/ambient/plan',{cluster:x.cluster,namespace:x.to.ref.namespace,service:x.to.ref.name,tasks:['explain'],explain:{from:x.from.label,to:x.to.label,...(x.fixScope||{})}});
-  amResetDraft();const A=S.ambient;if(S.cluster&&S.cluster!==x.cluster){S.cluster=x.cluster;$('#cluster').value=x.cluster;}A.clusterScope=S.cluster;A.key=JSON.stringify([x.cluster,x.to.ref.namespace,x.to.ref.name]);A.kind='Service';A.tab='wizard';A.phase=3;A.plan=p;A.tasks={explain:true};A.settings={...p.request};nav('ambient');
+  amResetDraft();const A=S.ambient;if(S.cluster&&S.cluster!==x.cluster){S.cluster=x.cluster;$('#cluster').value=x.cluster;}A.clusterScope=S.cluster;A.key=JSON.stringify([x.cluster,x.to.ref.namespace,x.to.ref.name]);A.kind='Service';A.tab='wizard';A.phase=3;A.plan=p;A.tasks={explain:true};A.settings={...p.request};if(typeof am2On==='function'&&am2On()){S.am2.seed={tasks:{explain:true},settings:{...p.request},key:'add:explain'};nav('ambient?svc='+[x.cluster,x.to.ref.namespace,x.to.ref.name].join('/')+'&drawer=add:explain');return;}nav('ambient');
 }
 
 // ---------- Allow or deny requests: a Service-targeted AuthorizationPolicy ----------

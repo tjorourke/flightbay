@@ -20,3 +20,7 @@ Every difference that is not data and is accepted must be listed here (PLAN.md �
 | 01b | Header meta and strip differ from 01 (workload count, "in ambient", Compare in the strip, Problems | All) | The two mockups draw them differently; each screen follows its own mockup |
 | 01b | DNS shows "DNS not tested" with the captured names | The capture has no resolution result; Flightbay does not invent one |
 | 02 | Scope chips: selected scopes show "ns ✕"; with none selected one "All namespaces ▾" chip opens the list | The mockup shows only the selected chip |
+| 00, 01b, 02, 04, 05 | The comparison fixture is a capture of two kind clusters, not the mockup data. Contract entries that exist only because of the mockup data (namespace chips, evidence chips, the Diff and Explain buttons, Undo, "Other policies" heading) are reported MISSING by `ux_compare.py` | They are data, not structure. Each was checked against the live clusters or the unit tests |
+| 01 | Overview "⋯" menu (DNS names, Implementation details, View object, Bookinfo, Refresh) from PLAN 1.3 and 1.4 is not built; DNS is on Checks, YAML on the header and the Bookinfo demo is reached from the Overview empty state or `#ambient?tab=demo` | The mockups have no such menu |
+| 01 | The Configuration item rows show the action pill only; Live and Verified are on the Changes tab | The mockup item row has no state pill |
+| 03 | The "Edit other fields" link (PLAN 4.9) is not built | Not in the mockup |

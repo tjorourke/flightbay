@@ -2719,7 +2719,7 @@ function openSearch() {
     $('#gs-res').innerHTML = hits.map((h, i) => `<button class="${i === sel ? 'sel' : ''}" data-i="${i}">${h.all ? `<span class="green">⌕</span> Search everything for “${esc(h.all)}”<small>Resources · Search</small>` : h.view ? `<span class="green">↗</span> ${esc(viewLabel(h.view))}<small>view</small>` : `<span class="badge">${esc(h.kind)}</span>${esc(h.namespace ? h.namespace + '/' : '')}${esc(h.name)}${h.snippet ? ` <span class="muted mono" style="font-size:10px">…${esc(h.snippet.slice(0, 70))}…</span>` : ''}<small>${esc(h.cluster)}</small>`}</button>`).join('');
     document.querySelectorAll('#gs-res [data-i]').forEach(b => b.onclick = () => pick(hits[+b.dataset.i]));
   };
-  const pick = h => { closeModal(); if (h.all) { S.search.q = h.all; nav(searchHash(h.all)); } else if (h.view) nav(h.view); else if(S.view==='ambient'&&S.ambient.tab==='map'&&['Service','Namespace','Gateway','Pod','HTTPRoute','ServiceEntry'].includes(h.kind)){S.ambient.mapAllNamespaces=true;S.ambient.inventory=null;amChoose(h);}else openObject(h); };
+  const pick = h => { closeModal(); if (h.all) { S.search.q = h.all; nav(searchHash(h.all)); } else if (h.view) nav(h.view); else if(S.view==='ambient'&&typeof am2On==='function'&&am2On()&&typeof am2OpenHash==='function'&&am2OpenHash(h)){nav(am2OpenHash(h).slice(1));}else if(S.view==='ambient'&&S.ambient.tab==='map'&&['Service','Namespace','Gateway','Pod','HTTPRoute','ServiceEntry'].includes(h.kind)){S.ambient.mapAllNamespaces=true;S.ambient.inventory=null;amChoose(h);}else openObject(h); };
   let t;
   const input = $('#gs');
   typeahead(input, {scope: 'objects', alias: objAlias});

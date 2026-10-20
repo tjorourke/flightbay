@@ -976,7 +976,7 @@ after.traffic = () => {
   if($('#tf-service-yaml'))$('#tf-service-yaml').onclick=()=>{const [cluster,namespace,name]=JSON.parse(S.tf.service);openObject({cluster,namespace,name,resource:'services',group:'',kind:'Service'},'yaml');};
   const T = S.tf, d = T.data, A = S.act, a = A.data || tfNoAct;
   document.querySelectorAll('[data-amcopycommand]').forEach(b=>b.onclick=()=>copyTerminalCommand(b.dataset.amcopycommand,b));
-  document.querySelectorAll('[data-tfrequire]').forEach(b=>b.onclick=()=>{const ref=JSON.parse(b.dataset.tfrequire);amResetDraft();S.ambient.key=amKey(ref);S.ambient.kind='Service';S.ambient.tab='wizard';S.ambient.phase=2;S.ambient.tasks={'require-waypoint':true};nav('ambient');});
+  document.querySelectorAll('[data-tfrequire]').forEach(b=>b.onclick=()=>{const ref=JSON.parse(b.dataset.tfrequire);amResetDraft();S.ambient.key=amKey(ref);S.ambient.kind='Service';S.ambient.tab='wizard';S.ambient.phase=2;S.ambient.tasks={'require-waypoint':true};if(typeof am2On==='function'&&am2On()){nav('ambient?svc='+[ref.cluster,ref.namespace,ref.name].join('/')+'&drawer=add:require-waypoint');return;}nav('ambient');});
   $('#tf-term')?.addEventListener('click', () => termRun('fbtraffic'));
   if ((!feature('traffic') && !feature('reach')) || !d) return;
   const keepY = fn => { const y = scrollY; fn(); render().then(() => scrollTo(0, y)); };

@@ -60,7 +60,9 @@ async function am2PrepOld(route, ref, kind, arg, cfg) {
     if (first) A.tasks = {[first.id]: true};
     A.settings.applyClusters = [arg];
   }
-  if (saved) { Object.assign(A.settings, saved.settings); if (!A.edit) A.tasks = saved.tasks || A.tasks; }
+  const seed = S.am2.seed;
+  if (seed && seed.key === kind + ':' + arg) { A.tasks = seed.tasks; A.settings = seed.settings; S.am2.seed = null; }
+  else if (saved) { Object.assign(A.settings, saved.settings); if (!A.edit) A.tasks = saved.tasks || A.tasks; }
   return '';
 }
 
@@ -254,7 +256,7 @@ async function am2DrawerHost(route, data) {
   const where = kind === 'ns' ? `Namespace settings for <b>${esc(ref.namespace)}</b>` : `${kind === 'edit' ? 'Edit configuration of' : 'Add configuration to'} <b>${esc(ref.namespace)}/${esc(ref.name)}</b>`;
   const step = (n, label) => `<span class="${phase === n ? 'on' : ''}"><i>${phase > n ? '✓' : n}</i>${esc(label)}</span>`;
   const stateText = phase === 1 ? 'Draft saved · nothing written' : phase === 2 ? 'Checked · nothing written' : `Applied to ${esc(D.entries.map(e => e.cluster).join(', ') || ref.cluster)} at ${am2Time(D.entries[0]?.record?.applyFinished)}`;
-  const left = phase === 1 ? (svc || kind === 'ns' ? am2Form(svc, cfg) + (kind === 'ns' ? '' : am2YamlBlock()) : '') : phase === 2 ? am2ProgressHtml(D) : am2ProgressHtml(D) + am2TestsTable(D);
+  const left = phase === 1 ? (svc || kind === 'ns' ? am2Form(svc, cfg) + am2YamlBlock() : '') : phase === 2 ? am2ProgressHtml(D) : am2ProgressHtml(D) + am2TestsTable(D);
   const right = phase === 3 ? am2DoneColumn(D, cfg, ref) : am2EffectsPlaceholder(ref.name);
   const menu = am2SwitchMenu(cfg, route, kind, ref);
   const footer = am2DrawerFooter(D, cfg, ref, route, kind);
@@ -369,8 +371,9 @@ async function am2RunTests() {
     } catch (err) { D.testsError = err.message; }
   }
   const bad = rows.find(x => !x.ok && x.message);
-  if (bad) failure = `<b>${esc(bad.message.split('. ')[0])}.</b> ${esc(bad.message.split('. ').slice(1).join('. '))}`;
+  if (bad) failure = `<b>${esc(bad.message.split('. ')[0].replace(/\.$/, ''))}.</b> ${esc(bad.message.split('. ').slice(1).join('. '))}`;
   D.results = rows.length ? {rows, from, failure} : null;
+  if (total && e?.record?.token && e.context) apiPost('api/ambient/test', {operation: 'verified', context: e.context, validation: e.record.token, verified: passed === total}).then(r => { e.record.verified = passed === total; }).catch(() => {});
   D.testsRow = total ? `<div class="am2-case">${am2Pill(passed === total ? 'ok' : 'warn', `${passed} / ${total}`)}<b style="width:210px">Tests</b><span class="am2-sub">${passed === total ? 'All matched what we expected' : `${total - passed} did not match what we expected`}</span></div>` : '';
 }
 

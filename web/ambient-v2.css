@@ -190,3 +190,4 @@ color:var(--am2-ink);font:13px/1.45 var(--sans)}
 .am2 .am2-card.am2-pad{overflow:visible}
 .am2 td.am2-mono{white-space:nowrap}
 .am2-grid>div:first-child{display:flex;flex-direction:column}.am2-grid>div:first-child>.am2-card:last-child{flex:1}
+#modal-root .modal-backdrop{z-index:90}

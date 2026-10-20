@@ -34,7 +34,7 @@ Publication distinguishes the export label from generated alias/address evidence
 
 ## Testing a service
 
-**Test service** runs saved HTTP-header profiles from Flightbay's native client, directly or through a temporary port-forward to existing Pods, or uses curl in an explicitly selected existing client Pod. Native reachable-endpoint requests need no Kubernetes connection; optional read-only metadata lookup identifies existing application responders. No helper workloads are deployed.
+**Test service** runs saved HTTP-header profiles from Flightbay's native client, directly or through a temporary port-forward to existing Pods, or uses curl in an explicitly selected existing client Pod. Native reachable-endpoint requests need no Kubernetes connection; optional read-only metadata lookup identifies existing application responders. The temporary-Pod mode deploys one short-lived `flightbay-http` Pod that Flightbay deletes when the test finishes. The other modes deploy nothing.
 
 Both clients support up to 1,000 sequential requests with streaming Results, Stop and Run again. Results distinguish the request origin, destination and actual authority, and group identified responders by cluster and version. Ambiguous or missing identities stay unverified. Backend-only port-forward bypasses mesh routing; existing-Pod mode uses cluster DNS and the mesh path. **Back to HTTP test** restores the originating map or wizard, profile and results without rerunning the request. Investigation status badges filter the checks.
 

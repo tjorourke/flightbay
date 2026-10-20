@@ -59,6 +59,10 @@ type ambientRecord struct {
 	Plan          *ambient.Plan    `json:"plan"`
 	Validated     time.Time        `json:"validated"`
 	Created       []ambientCreated `json:"created"`
+	// Verified is set after the saved tests ran against this change: true when
+	// they all pass, false when one fails. nil means they have not run.
+	Verified   *bool     `json:"verified,omitempty"`
+	VerifiedAt time.Time `json:"verifiedAt,omitempty"`
 }
 type ambientState struct {
 	mu      sync.Mutex
@@ -71,6 +75,7 @@ type ambientTestRequest struct {
 	Context    string          `json:"context"`
 	Validation string          `json:"validation"`
 	Request    ambient.Request `json:"request"`
+	Verified   bool            `json:"verified"`
 }
 
 func (s *Server) ambientInventory(w http.ResponseWriter, r *http.Request) {
@@ -671,6 +676,15 @@ func (s *Server) ambientTest(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, 200, map[string]any{"test": rec, "message": "Configuration applied. Workload readiness and request connectivity have not yet been verified."})
+	case "verified":
+		ok := req.Verified
+		rec.Verified = &ok
+		rec.VerifiedAt = time.Now().UTC()
+		if err := s.saveAmbientRecord(rec); err != nil {
+			jerr(w, 500, err.Error())
+			return
+		}
+		writeJSON(w, 200, map[string]any{"test": rec})
 	case "cleanup":
 		if err := ambientCleanupDependency(rec, s.ambientS.records); err != nil {
 			jerr(w, 409, err.Error())
