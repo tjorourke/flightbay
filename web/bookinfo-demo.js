@@ -66,7 +66,7 @@ async function bdRun(fn){if(BD.busy)return;BD.busy=true;BD.error='';try{await re
 async function bdRefresh(){BD.catalog=await api('api/ambient/bookinfo',{namespace:BD.namespace});S.ambient.inventory=null;RP.options=null;}
 function bookinfoAfter(){
   bdWireResources();
-  document.querySelectorAll('[data-amtab]').forEach(b=>b.onclick=()=>{S.ambient.tab=b.dataset.amtab;render();});$('#am-start-new').onclick=()=>amClear(true);$('#am-refresh').onclick=()=>bdRun(async()=>{await bdRefresh();});
+  document.querySelectorAll('[data-amtab]').forEach(b=>b.onclick=()=>{S.ambient.tab=b.dataset.amtab;render();});if($('#am-start-new'))$('#am-start-new').onclick=()=>amClear(true);if($('#am-refresh'))$('#am-refresh').onclick=()=>bdRun(async()=>{await bdRefresh();});
   $('#bd-namespace').onchange=e=>{BD.namespace=e.target.value.trim();try{localStorage.setItem('flightbay.bookinfo.namespace',BD.namespace);}catch{}BD.catalog=null;bdInvalidate();render();};document.querySelectorAll('[data-bdcluster]').forEach(b=>b.onchange=()=>{BD.selected[b.dataset.bdcluster]=b.checked;bdInvalidate();if(!BD.catalog.clusters.filter(c=>BD.selected[c.cluster]).every(c=>c.globalSupported))BD.global=false;render();});
   document.querySelectorAll('[name="bd-waypoint-scope"]').forEach(b=>b.onchange=()=>{if(b.checked){BD.waypointScope=b.value;bdInvalidate();render();}});$('#bd-waypoint-name').onchange=e=>{BD.waypointName=e.target.value.trim();bdInvalidate();render();};
   document.querySelectorAll('[data-bdclass]').forEach(b=>b.onchange=()=>{BD.classes[b.dataset.bdclass]=b.value;bdInvalidate();render();});$('#bd-global').onchange=e=>{BD.global=e.target.checked;bdInvalidate();render();};$('#bd-traffic').onchange=e=>{BD.traffic=e.target.checked;bdInvalidate();render();};

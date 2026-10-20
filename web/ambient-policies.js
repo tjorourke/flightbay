@@ -8,7 +8,7 @@ const AM2_MANAGED = {flightbay: ['tl', 'Flightbay'], helm: ['mut', 'Helm'], argo
 const AM2_STATE = {applied: ['ok', 'Applied'], accepted: ['ok', 'Accepted'], programmed: ['ok', 'Programmed'], missing: ['mut', 'Missing'], differs: ['warn', 'Differs'], 'not-enforced': ['warn', 'Not enforced']};
 
 function am2MidEllipsis(name, max = 32) {
-  return name.length <= max ? name : name.slice(0, 21) + '…' + name.slice(-8);
+  return name.length <= max ? name : name.slice(0, 19) + '…' + name.slice(-10);
 }
 
 function am2PolQuery() {

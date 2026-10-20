@@ -25,7 +25,7 @@ function am2Crumb(ref) {
 
 function am2WaypointMeta(h) {
   if (!h?.waypoint) return 'no waypoint';
-  return `waypoint <span class="am2-mono">${esc(h.waypoint.name)}</span> ${h.waypoint.ready ? am2Pill('ok', 'Ready') : `<span title="${esc(h.waypoint.reason)}">${am2Pill('warn', 'Not ready')}</span>`}`;
+  return `waypoint <span class="am2-whywrap"><a href="#" class="am2-mono am2-wplink" data-am2-wp>${esc(h.waypoint.name)}</a><div class="am2-pop am2-wppop" hidden><div class="am2-pop-i"><b>${esc(h.waypoint.namespace)}/${esc(h.waypoint.name)}</b><div>${h.waypoint.ready ? 'Accepted and programmed.' : esc(h.waypoint.reason || 'Not ready.')}</div></div><div style="margin-top:8px"><a class="am2-lnk" href="${am2Hash({...am2Route(), drawer: 'add:waypoint'})}">Change waypoint…</a></div></div></span> ${h.waypoint.ready ? am2Pill('ok', 'Ready') : `<span title="${esc(h.waypoint.reason)}">${am2Pill('warn', 'Not ready')}</span>`}`;
 }
 
 function am2ChecksLabel(data, ref) {
@@ -110,6 +110,7 @@ function am2Card(cfg, g, ctx) {
     else if (t.hint && t.status === 'configured' && !hint) hint = `<div class="am2-hint"><span>!</span><span style="flex:1">${esc(t.hint)}</span></div>`;
   }
   for (const o of cfg.other || []) if (o.group === g.id) items.push({html: `<div class="am2-item">${am2Pill('mut', 'Other')}<div class="am2-nm"><div class="am2-l">Other configuration</div><div class="am2-s">${esc(o.ref?.kind)} · ${esc(o.ref?.name)}</div></div><a class="am2-lnk" href="#" data-am2-open='${esc(JSON.stringify(o.ref))}'>Open</a></div>`});
+  if (g.id === 'access' && !cfg.header?.waypoint && !hint) hint = `<div class="am2-hint"><span>!</span><span style="flex:1">L7 rules need a waypoint.</span><a class="am2-lnk" href="${am2Hash({...ctx.route, drawer: 'add:waypoint'})}">Set one up →</a></div>`;
   const order = AM2_ADD_ORDER[g.id] || [];
   const addable = order.map(id => tasks.find(t => t.id === id)).filter(t => t && !['unavailable', 'needs-waypoint', 'recommended'].includes(t.status) && !(t.status === 'configured' && t.id !== 'access-rule' && t.id !== 'timeouts'));
   const shown = addable.slice(0, 3), more = addable.length > 3;
@@ -235,6 +236,8 @@ function am2ServiceAfter(route) {
     if (t.closest('[data-am2-yaml]')) { openObject({...svcObj(), kind: 'Service'}, 'yaml'); return; }
     const open = t.closest('[data-am2-open]');
     if (open) { e.preventDefault(); openObject(JSON.parse(open.dataset.am2Open)); return; }
+    const wp = t.closest('[data-am2-wp]');
+    if (wp) { e.preventDefault(); const pop = wp.parentElement.querySelector('.am2-pop'), was = pop.hidden; root.querySelectorAll('.am2-pop').forEach(p => { p.hidden = true; }); pop.hidden = !was; return; }
     const why = t.closest('[data-am2-why]');
     if (why) { e.preventDefault(); const pop = why.parentElement.querySelector('.am2-pop'); const was = pop.hidden; root.querySelectorAll('.am2-pop').forEach(p => p.hidden = true); pop.hidden = !was; return; }
     if (!t.closest('.am2-whywrap')) root.querySelectorAll('.am2-pop').forEach(p => p.hidden = true);
