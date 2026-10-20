@@ -7,6 +7,6 @@
   "02-configuration-inventory":   {"hash": "#ambient?tab=policies&ns=bookinfo", "viewport": [1600, 1120]},
   "03-simple-wizard":             {"hash": "#ambient?svc=kind-mesh2/bookinfo/reviews&stab=configuration&drawer=add:methods", "viewport": [1600, 1000]},
   "03b-apply-and-test":           {"hash": "#ambient?svc=kind-mesh2/bookinfo/reviews&stab=configuration&drawer=add:methods&dphase=3&demo=1", "viewport": [1600, 1000]},
-  "04-authorizationpolicy-tests": {"hash": "#ambient?obj=kind-mesh1/AuthorizationPolicy/bookinfo/REPLACE_WITH_POLICY&otab=tests", "viewport": [1600, 1120]},
-  "05-httproute-tests":           {"hash": "#ambient?obj=kind-mesh1/HTTPRoute/bookinfo/REPLACE_WITH_ROUTE&otab=tests", "viewport": [1600, 1040]}
+  "04-authorizationpolicy-tests": {"hash": "#ambient?obj=kind-mesh2/AuthorizationPolicy/bookinfo/flightbay-test-f4a039e06a0956fc-deny-rule&otab=tests", "viewport": [1600, 1120]},
+  "05-httproute-tests":           {"hash": "#ambient?obj=kind-mesh2/HTTPRoute/bookinfo/flightbay-test-ff550919261455fe-route&otab=tests", "viewport": [1600, 1040]}
 }

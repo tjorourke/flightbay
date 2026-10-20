@@ -2913,6 +2913,7 @@ async function liveRefresh() {
     const wasAvailable=istioAmbientAvailable();
     await loadWorkspace();
     if(wasAvailable!==istioAmbientAvailable()){await render();return;}
+    if(typeof am2On==='function'&&am2On()){if(!document.querySelector('.am2-drawer,.modal-backdrop,.am-dragging,.am-panning')&&!/drawer=/.test(location.hash)){S.ambient.inventory=null;if(typeof S.am2==='object')S.am2.data=null;await render();}return;}
     if(S.ambient.tab==='map'&&!document.querySelector('.am-dragging,.am-panning,.am-implementation[open]')&&!S.ambient.pickerOpen){S.ambient.inventory=null;await render();}
     else if(S.ambient.tab==='investigate'&&!S.ambient.pickerOpen){S.ambient.inventory=null;await render();}
     return;

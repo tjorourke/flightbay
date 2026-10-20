@@ -175,3 +175,18 @@ color:var(--am2-ink);font:13px/1.45 var(--sans)}
 [data-theme=light] .am2,[data-theme=light] .am2-drawer,:root:not([data-theme]) .am2,:root:not([data-theme]) .am2-drawer{--am2-th:#fafbfc;--am2-grp:#f8f9fb;--am2-row:#eef0f3}
 .am2-tabs .am2-c{background:var(--am2-row)}
 .am2-filterbar .am2-seg{margin-left:auto}
+/* Object pages */
+.am2-pad{padding:14px 16px}
+.am2-grid{display:grid;grid-template-columns:420px 1fr;gap:16px;margin-top:16px}
+.am2-grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px}
+@media (max-width:1280px){.am2-grid,.am2-grid2{grid-template-columns:1fr}}
+.am2-rule{border:1px solid var(--am2-line);border-radius:8px;padding:10px 12px;margin-top:8px;background:var(--am2-th)}
+.am2-src{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+.am2-rrow{display:grid;grid-template-columns:110px 1fr 70px 70px 60px;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--am2-row)}
+.am2-lg{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+.am2 tr.am2-failrow td{background:var(--am2-warn-bg)}
+.am2 a.am2-ea2{color:var(--am2-warn);font-weight:600}
+.am2 .am2-card table .am2-btn.g{background:transparent}
+.am2 .am2-card.am2-pad{overflow:visible}
+.am2 td.am2-mono{white-space:nowrap}
+.am2-grid>div:first-child{display:flex;flex-direction:column}.am2-grid>div:first-child>.am2-card:last-child{flex:1}

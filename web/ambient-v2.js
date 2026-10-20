@@ -180,7 +180,7 @@ async function amV2Page() {
   else if (route.tab === 'changes' && typeof am2ChangesPage === 'function') body = await am2ChangesPage(route, data);
   else if (route.tab === 'demo' && typeof am2DemoPage === 'function') body = await am2DemoPage(route, data);
   else if (route.svc || route.obj || route.tab !== 'overview') body = `<div class="am2-note am2-muted">This page is not built yet.</div>`;
-  else body = am2Overview(data);
+  else body = (data.services || []).length ? am2Overview(data) : `<div class="am2-card"><div class="am2-empty">No mesh Services were captured on the connected clusters. <a href="${am2Hash({tab: 'demo'})}">Deploy the Bookinfo demo</a> to try Ambient.</div></div>`;
   return `<div class="am2" id="am2-root">${route.svc || route.obj ? '' : am2Header(route, data)}${body}</div>${typeof am2DrawerHost === 'function' ? await am2DrawerHost(route, data) : ''}`;
 }
 

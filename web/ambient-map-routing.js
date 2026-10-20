@@ -46,6 +46,15 @@ function amRoutePorts(a,b,obstacles,from,to){
   return null;
 }
 
+// A relationship is never dropped because two cards overlap or no clear lane exists.
+// Offset elbow between the two cards; it may cross other cards, which beats hiding it.
+function amFallbackRoute(a,b){
+  const ac={x:a.x+a.w/2,y:a.y+a.h/2},bc={x:b.x+b.w/2,y:b.y+b.h/2};
+  if(a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y){const y=Math.min(a.y,b.y)-14;return [{x:ac.x,y:a.y-6},{x:ac.x,y},{x:bc.x,y},{x:bc.x,y:b.y-6}].filter((p,i,l)=>i===0||p.x!==l[i-1].x||p.y!==l[i-1].y);}
+  const horizontal=Math.abs(ac.x-bc.x)>=Math.abs(ac.y-bc.y);
+  if(horizontal){const sx=bc.x>=ac.x?a.x+a.w+6:a.x-6,ex=bc.x>=ac.x?b.x-6:b.x+b.w+6,mx=(sx+ex)/2;return [{x:sx,y:ac.y},{x:mx,y:ac.y},{x:mx,y:bc.y},{x:ex,y:bc.y}];}
+  const sy=bc.y>=ac.y?a.y+a.h+6:a.y-6,ey=bc.y>=ac.y?b.y-6:b.y+b.h+6,my=(sy+ey)/2;return [{x:ac.x,y:sy},{x:ac.x,y:my},{x:bc.x,y:my},{x:bc.x,y:ey}];
+}
 function amRoundedRoute(points){
   let d=`M${points[0].x} ${points[0].y}`;
   for(let i=1;i<points.length-1;i++){const prev=points[i-1],p=points[i],next=points[i+1],r=Math.min(6,(Math.abs(p.x-prev.x)+Math.abs(p.y-prev.y))/2,(Math.abs(next.x-p.x)+Math.abs(next.y-p.y))/2),entry={x:p.x-Math.sign(p.x-prev.x)*r,y:p.y-Math.sign(p.y-prev.y)*r},exit={x:p.x+Math.sign(next.x-p.x)*r,y:p.y+Math.sign(next.y-p.y)*r};d+=` L${entry.x} ${entry.y} Q${p.x} ${p.y} ${exit.x} ${exit.y}`;}
@@ -64,7 +73,7 @@ function amDrawMapLinks(world,zoom,links,selected){
   nodes.forEach(e=>e.classList.remove('am-link-endpoint'));
   for(const link of links){
     const source=nodes.get(amMapKey(link.source)),target=nodes.get(amMapKey(link.target));if(!source||!target){hidden++;continue;}
-    const route=amRoute(rect(source),rect(target),obstacles);if(!route){blocked++;continue;}
+    const route=amRoute(rect(source),rect(target),obstacles)||amFallbackRoute(rect(source),rect(target));if(!route){blocked++;continue;}
     const path=document.createElementNS(ns,'path');path.setAttribute('d',amRoundedRoute(route));path.setAttribute('fill','none');path.setAttribute('stroke',link.kind==='peering'?'#138b9d':'#9463db');path.setAttribute('stroke-width',selected===link.id?'3':'2');path.setAttribute('stroke-linecap','round');path.setAttribute('stroke-linejoin','round');path.setAttribute('class','am-map-line');path.dataset.linkId=link.id;
     if(link.kind==='peering')path.setAttribute('marker-end','url(#am-peer-arrow)');else path.setAttribute('stroke-dasharray','7 5');
     if(selected&&selected!==link.id)path.setAttribute('opacity','.2');

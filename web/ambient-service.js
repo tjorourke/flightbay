@@ -203,10 +203,10 @@ function am2AllTasks(cfg, route, ctx) {
 async function am2ServicePage(route, data) {
   const A = S.am2.svc, ref = am2SvcRef(route.svc);
   const stab = AM2_STABS.includes(route.stab) ? route.stab : 'configuration';
-  const [cfg, writer] = await Promise.all([api('api/ambient/service-config', ref), am2Writer(ref.cluster)]);
+  const [cfg, writer, suites] = await Promise.all([api('api/ambient/service-config', ref), am2Writer(ref.cluster), api('api/ambient/suites/service', ref).catch(() => ({cases: 0}))]);
   A.cfg = cfg; A.writer = writer; A.key = route.svc;
   const changes = (S.am2.tests || []).filter(t => t.request?.namespace === ref.namespace && (t.request?.service || t.request?.name) === ref.name).length;
-  const counts = {changes: changes || '', tests: cfg.tests?.length || ''};
+  const counts = {changes: changes || '', tests: suites.cases || ''};
   const ctx = {ref, route: {...route, drawer: ''}, writer, cfg};
   const view = route.cview || am2Pref('cview', 'summary');
   const variant = stab === 'checks' ? 'checks' : '';
