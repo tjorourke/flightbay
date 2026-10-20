@@ -48,17 +48,24 @@ function am2Freshness() {
   return `Reading snapshot ${esc(S.ws?.case ? 'case ' + S.ws.case : 'from this bundle')}`;
 }
 
-function am2Strip(route, data, ref, writer) {
+function am2Strip(route, data, ref, writer, variant, extra) {
   const clusters = data.summary.clusters.names.filter(n => (data.services || []).some(r => r.ref.namespace === ref.namespace && r.ref.name === ref.name && r.perCluster?.[n]?.present));
   const seg = clusters.length > 1 ? `<span class="am2-seg">${clusters.map(n => `<a href="${am2Hash({...route, svc: am2SvcPath(n, ref.namespace, ref.name)})}" class="${n === ref.cluster ? 'on' : ''}">${esc(n)}</a>`).join('')}</span>` : `<span class="am2-seg"><a class="on">${esc(ref.cluster)}</a></span>`;
+  if (variant === 'checks') {
+    const names = clusters.length > 1 ? clusters : [ref.cluster];
+    const fresh = S.ws?.live ? `<span class="am2-dot"></span> Reading the live mirror · updated ${Math.max(0, Math.round((Date.now() - (LIVE.lastRender || Date.now())) / 1000))}s ago` : am2Freshness();
+    const f = S.am2.checks?.filter || 'problems';
+    return `<div class="am2-mode"><span>Cluster</span><span class="am2-seg">${names.map(n => `<a href="${am2Hash({...route, svc: am2SvcPath(n, ref.namespace, ref.name)})}" class="${n === ref.cluster ? 'on' : ''}">${esc(n)}</a>`).join('')}${names.length > 1 ? '<a href="#" data-am2-compare>Compare</a>' : ''}</span><span style="margin-left:12px">${fresh}</span><span class="am2-spacer"></span><span class="am2-seg"><a href="#" data-am2-filter="problems" class="${f === 'problems' ? 'on' : ''}">Problems ${esc(extra?.problems ?? 0)}</a><a href="#" data-am2-filter="all" class="${f === 'all' ? 'on' : ''}">All ${esc(extra?.all ?? 0)}</a></span></div>`;
+  }
   const right = writer ? `Changes are written to <b>${esc(ref.cluster)}</b>` : 'Read-only: open with --kubeconfig to change this';
   return `<div class="am2-strip">${seg}<span>${am2Freshness()}</span><span class="am2-spacer"></span><span>${right}</span></div>`;
 }
 
-function am2SvcHeader(route, data, ref, cfg, writer, counts) {
+function am2SvcHeader(route, data, ref, cfg, writer, counts, variant, extra) {
   const h = cfg.header || {};
-  const meta = [h.ports?.length ? `${h.ports.length === 1 ? 'port' : 'ports'} ${h.ports.join(', ')}` : '', h.versions?.length ? esc(h.versions.join(', ')) : '', am2WaypointMeta(h)].filter(Boolean).join(' · ');
-  return `${am2Crumb(ref)}<div class="am2-card"><div class="am2-objhead"><span class="am2-kind">Service</span><div style="flex:1"><h1>${esc(ref.namespace)}/${esc(ref.name)}</h1><div class="am2-meta">${meta}</div></div>${am2Btn('Test service', 'data-am2-testsvc', 'sm0')}${am2Btn('YAML', 'data-am2-yaml', 'sm0')}</div>${am2SvcTabs(route, data, ref, counts)}${am2Strip(route, data, ref, writer)}</div>`;
+  const ports = h.ports?.length ? `${h.ports.length === 1 ? 'port' : 'ports'} ${h.ports.join(', ')}` : '';
+  const meta = (variant === 'checks' ? [ports, h.selectorPods ? `${h.selectorPods} ${h.selectorPods === 1 ? 'workload' : 'workloads'}${h.versions?.length ? ' (' + esc(h.versions.join(', ')) + ')' : ''}` : '', h.inAmbient ? 'in ambient' : '', am2WaypointMeta(h)] : [ports, h.versions?.length ? esc(h.versions.join(', ')) : '', am2WaypointMeta(h)]).filter(Boolean).join(' · ');
+  return `${am2Crumb(ref)}<div class="am2-card"><div class="am2-objhead"><span class="am2-kind">Service</span><div style="flex:1"><h1>${esc(ref.namespace)}/${esc(ref.name)}</h1><div class="am2-meta">${meta}</div></div>${am2Btn('Test service', 'data-am2-testsvc', 'sm0')}${am2Btn('YAML', 'data-am2-yaml', 'sm0')}</div>${am2SvcTabs(route, data, ref, counts)}${am2Strip(route, data, ref, writer, variant, extra)}</div>`;
 }
 
 // ---------- Configuration: shared helpers ----------
@@ -202,7 +209,10 @@ async function am2ServicePage(route, data) {
   const counts = {changes: changes || '', tests: cfg.tests?.length || ''};
   const ctx = {ref, route: {...route, drawer: ''}, writer, cfg};
   const view = route.cview || am2Pref('cview', 'summary');
-  const head = am2SvcHeader(route, data, ref, cfg, writer, counts);
+  const variant = stab === 'checks' ? 'checks' : '';
+  let extra = {};
+  if (stab === 'checks' && typeof am2LoadChecks === 'function') extra = await am2LoadChecks(route, ref);
+  const head = am2SvcHeader(route, data, ref, cfg, writer, counts, variant, extra);
   let body;
   if (stab === 'configuration') body = view === 'all' ? am2AllTasks(cfg, {...route, cview: 'all'}, ctx) : am2Summary(cfg, {...route, cview: 'summary'}, ctx);
   else if (stab === 'checks' && typeof am2ChecksTab === 'function') body = await am2ChecksTab(route, data, ref, ctx);
@@ -228,6 +238,7 @@ function am2ServiceAfter(route) {
     const why = t.closest('[data-am2-why]');
     if (why) { e.preventDefault(); const pop = why.parentElement.querySelector('.am2-pop'); const was = pop.hidden; root.querySelectorAll('.am2-pop').forEach(p => p.hidden = true); pop.hidden = !was; return; }
     if (!t.closest('.am2-whywrap')) root.querySelectorAll('.am2-pop').forEach(p => p.hidden = true);
+    if (t.closest('[data-am2-compare]')) { e.preventDefault(); am2Compare(ref); return; }
     const cv = t.closest('[data-am2-cview]'); if (cv) am2SetPref('cview', cv.dataset.am2Cview);
     const sh = t.closest('[data-am2-show]'); if (sh) am2SetPref('show', sh.dataset.am2Show);
     if (t.closest('[data-am2-more]')) am2SetPref('cview', 'all');
@@ -238,3 +249,10 @@ function am2ServiceAfter(route) {
   if (hl) hl.onclick = () => { A.hideLocked = !A.hideLocked; render(); };
 }
 AM2_AFTER.push(am2ServiceAfter);
+
+// Per-cluster state of every configured resource, from the service-config drift data.
+function am2Compare(ref) {
+  const cfg = S.am2.svc.cfg, clusters = cfg.clusters || [];
+  const rows = (cfg.drift || []).map(d => `<tr><td><span class="am2-kind">${esc(d.ref?.kind)}</span> ${esc(d.ref?.name || '')}</td>${clusters.map(c => `<td>${c === ref.cluster ? am2Pill('ok', 'here') : ({same: am2Pill('ok', 'same'), differs: am2Pill('warn', 'differs'), missing: am2Pill('bad', 'missing')}[d.clusters?.[c]] || am2Pill('mut', '—'))}</td>`).join('')}</tr>`).join('');
+  modal('Compare ' + ref.namespace + '/' + ref.name + ' across clusters', `<div class="am2"><p class="am2-sub" style="margin-bottom:10px">${esc(cfg.multicluster || 'The configuration is the same on every connected cluster.')}</p><table><thead><tr><th>Resource</th>${clusters.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>${rows || `<tr><td colspan="${clusters.length + 1}" class="am2-empty">No configured resources to compare.</td></tr>`}</tbody></table></div>`);
+}

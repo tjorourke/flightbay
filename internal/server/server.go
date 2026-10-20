@@ -294,6 +294,7 @@ func (s *Server) Handler() http.Handler {
 	api("/api/ambient", s.ambientInventory)
 	api("/api/ambient/investigate", s.ambientInvestigation)
 	api("/api/ambient/services", s.ambientServices)
+	api("/api/ambient/policies", s.ambientPolicies)
 	api("/api/ambient/preview-demo", s.ambientPreviewDemo)
 	api("/api/ambient/request-path/options", s.ambientPathOptions)
 	api("/api/ambient/bookinfo", s.bookinfoOptions)

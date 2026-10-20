@@ -16,3 +16,7 @@ Every difference that is not data and is accepted must be listed here (PLAN.md �
 | 03 | The resource name is not an input; the plan request accepts `name` and the default is `<service>-<task>` | The mockup shows no input, only the sentence "Name is editable" |
 | 03 | The Check button stays enabled in read-only and reports the missing connection inline | Lets a reader draft and download YAML |
 | 03b | "Service UID unchanged" is only appended to the identity row when editing a resource | The check only has a UID for existing resources |
+| 01b | The expanded problem row also holds a collapsed "Official troubleshooting commands" disclosure and docs links | PLAN 5.6 moves them into the expanded row; dropping them would lose the runbook |
+| 01b | Header meta and strip differ from 01 (workload count, "in ambient", Compare in the strip, Problems | All) | The two mockups draw them differently; each screen follows its own mockup |
+| 01b | DNS shows "DNS not tested" with the captured names | The capture has no resolution result; Flightbay does not invent one |
+| 02 | Scope chips: selected scopes show "ns ✕"; with none selected one "All namespaces ▾" chip opens the list | The mockup shows only the selected chip |

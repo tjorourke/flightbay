@@ -50,7 +50,7 @@ async function am2PrepOld(route, ref, kind, arg, cfg) {
     if (!entry) throw new Error('That configuration is no longer captured. Refresh and try again.');
     amOpenEdit(entry);
   } else if (kind === 'fix') {
-    const step = (A.result.steps || []).find(s => s.id === arg), remedy = (step?.actions || [])[0];
+    const step = (A.result.steps || []).find(s => s.id === arg), remedy = (step?.actions || [])[0] || (arg === 'require-waypoint' ? {id: 'require-waypoint'} : null);
     if (!remedy) return 'checks';
     const field = step?.evidence?.find(e => e.ref.kind === 'HTTPRoute')?.field, match = field?.match(/parentRefs\[(\d+)\]/);
     if (remedy.id === 'require-waypoint') A.tasks[remedy.id] = true; else A.mode = remedy.id;

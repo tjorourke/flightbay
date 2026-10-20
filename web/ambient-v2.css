@@ -157,3 +157,21 @@ color:var(--am2-ink);font:13px/1.45 var(--sans)}
 [data-theme=light] .am2,[data-theme=light] .am2-drawer,:root:not([data-theme]) .am2,:root:not([data-theme]) .am2-drawer{--am2-warn:#b7791f;--am2-warn-bg:#fdf3e1;--am2-ok:#027a48;--am2-ok-bg:#e6f6ee;--am2-bad:#b42318;--am2-bad-bg:#fdecea;--am2-info:#1769aa;--am2-info-bg:#e8f1fa;--am2-mut-bg:#f2f4f7;--am2-tl:#06606a;--am2-tl-bg:#e1f4f6}
 .am2 select,.am2-drawer select{appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5'%3E%3Cpath d='M0 0l4 5 4-5z' fill='%23667085'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;padding-right:26px}
 .am2-pre .y-k{color:#8fc7ff}.am2-pre .y-a{color:#7ee2a8}.am2-pre .y-r{color:#ff9b91}
+/* Checks */
+.am2-mode{display:flex;align-items:center;gap:8px;padding:8px 18px;background:var(--am2-th);border-bottom:1px solid var(--am2-line);font-size:12px;color:var(--am2-muted)}
+.am2-ck{display:grid;grid-template-columns:34px 1fr 150px 190px;gap:10px;align-items:center;padding:11px 16px;border-bottom:1px solid var(--am2-row)}
+.am2-ck .am2-t{font-weight:600;color:var(--am2-ink)}
+.am2-prob{background:color-mix(in srgb,var(--am2-warn-bg) 55%,transparent)}
+.am2-evbox{padding:10px 16px 14px 60px;background:color-mix(in srgb,var(--am2-warn-bg) 55%,transparent);border-bottom:1px solid var(--am2-line)}
+.am2-passhead{padding:8px 16px;background:var(--am2-th);border-bottom:1px solid var(--am2-line)}
+.am2-chip.am2-static{cursor:default;font-weight:500;font-size:12px}
+.am2-sub-row{background:var(--am2-grp)}
+.am2 .am2-seg a[href="#"]{cursor:pointer}
+.am2 a.am2-btn.sm.p{color:var(--am2-btn-p-ink)}
+.am2-runbook{margin-top:10px}.am2-runbook summary{cursor:pointer}
+.am2-filterbar{padding:10px 12px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px;overflow:visible}
+.am2 button.am2-chip{font:inherit;font-size:12px;font-weight:600}
+.am2 td.am2-nowrap,.am2 th.am2-nowrap{white-space:nowrap}
+[data-theme=light] .am2,[data-theme=light] .am2-drawer,:root:not([data-theme]) .am2,:root:not([data-theme]) .am2-drawer{--am2-th:#fafbfc;--am2-grp:#f8f9fb;--am2-row:#eef0f3}
+.am2-tabs .am2-c{background:var(--am2-row)}
+.am2-filterbar .am2-seg{margin-left:auto}

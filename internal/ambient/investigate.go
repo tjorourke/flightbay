@@ -43,6 +43,7 @@ type Step struct {
 	Evidence     []Evidence       `json:"evidence,omitempty"`
 	FixYAML      string           `json:"fixYaml,omitempty"`
 	Actions      []Remediation    `json:"actions,omitempty"`
+	Area         string           `json:"area,omitempty"`
 }
 type Remediation struct {
 	ID     string `json:"id"`
@@ -125,7 +126,7 @@ func evidence(o *store.Object, field string, value any) Evidence {
 	return Evidence{reference(o), field, string(b)}
 }
 func add(r *Investigation, id, title, state, detail string, es ...Evidence) {
-	r.Steps = append(r.Steps, Step{ID: id, Title: title, State: state, Detail: detail, Evidence: es})
+	r.Steps = append(r.Steps, Step{ID: id, Title: title, State: state, Detail: detail, Evidence: es, Area: StepArea(id)})
 	r.Counts[state]++
 }
 func defaultString(s, d string) string {
@@ -862,4 +863,24 @@ func grants(ws *store.Workspace, c, ns, from, name string) bool {
 		}
 	}
 	return false
+}
+
+// StepArea groups an investigation step into the area the Checks tab shows it under:
+// Data plane, Waypoint, Access, Routing or DNS.
+func StepArea(id string) string {
+	switch {
+	case id == "require-waypoint":
+		return "Access"
+	case id == "takeover-control-plane", id == "enrolment", id == "dataplane", strings.HasPrefix(id, "pod-"):
+		return "Data plane"
+	case id == "waypoint", id == "traffic-type", strings.HasPrefix(id, "waypoint"):
+		return "Waypoint"
+	case strings.HasPrefix(id, "policy"):
+		return "Access"
+	case strings.HasPrefix(id, "route"), strings.HasPrefix(id, "backend"), id == "endpoints", strings.HasPrefix(id, "listener"):
+		return "Routing"
+	case strings.HasPrefix(id, "dns"):
+		return "DNS"
+	}
+	return "Routing"
 }
