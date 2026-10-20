@@ -1,0 +1,193 @@
+{
+  "screen": "03-simple-wizard",
+  "mockup_html": "03-simple-wizard.html",
+  "mockup_png": "03-simple-wizard.png",
+  "required": [
+    {
+      "role": "tab",
+      "text": "Configuration",
+      "severity": "must"
+    },
+    {
+      "role": "tab",
+      "text": "Checks",
+      "severity": "must"
+    },
+    {
+      "role": "tab",
+      "text": "Tests",
+      "severity": "must"
+    },
+    {
+      "role": "tab",
+      "text": "Request path",
+      "severity": "must"
+    },
+    {
+      "role": "tab",
+      "text": "Changes",
+      "severity": "must"
+    },
+    {
+      "role": "heading",
+      "text": "Allow or block methods",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "Switch task ▾",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "✕",
+      "severity": "must"
+    },
+    {
+      "role": "step",
+      "text": "Choose settings",
+      "severity": "must"
+    },
+    {
+      "role": "step",
+      "text": "Check against the cluster",
+      "severity": "must"
+    },
+    {
+      "role": "step",
+      "text": "Apply and test",
+      "severity": "must"
+    },
+    {
+      "role": "step",
+      "text": "Draft saved · nothing written",
+      "severity": "must"
+    },
+    {
+      "role": "label",
+      "text": "What should happen?",
+      "severity": "must"
+    },
+    {
+      "role": "label",
+      "text": "Methods",
+      "severity": "must"
+    },
+    {
+      "role": "chip",
+      "text": "✓ GET",
+      "severity": "must"
+    },
+    {
+      "role": "chip",
+      "text": "✓ HEAD",
+      "severity": "must"
+    },
+    {
+      "role": "chip",
+      "text": "POST",
+      "severity": "must"
+    },
+    {
+      "role": "chip",
+      "text": "PUT",
+      "severity": "must"
+    },
+    {
+      "role": "chip",
+      "text": "PATCH",
+      "severity": "must"
+    },
+    {
+      "role": "chip",
+      "text": "DELETE",
+      "severity": "must"
+    },
+    {
+      "role": "chip",
+      "text": "OPTIONS",
+      "severity": "must"
+    },
+    {
+      "role": "label",
+      "text": "Port",
+      "severity": "must"
+    },
+    {
+      "role": "label",
+      "text": "Callers this applies to",
+      "severity": "must"
+    },
+    {
+      "role": "heading",
+      "text": "What this does to reviews",
+      "severity": "must"
+    },
+    {
+      "role": "heading",
+      "text": "Tests that will run after apply",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "Cancel",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "Download YAML",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "Check against cluster →",
+      "severity": "must"
+    }
+  ],
+  "example": [
+    {
+      "role": "title",
+      "text": "bookinfo/reviews"
+    },
+    {
+      "role": "data",
+      "text": "color: red"
+    },
+    {
+      "role": "data",
+      "text": "bookinfo/productpage"
+    },
+    {
+      "role": "pill",
+      "text": "expect 200"
+    },
+    {
+      "role": "data",
+      "text": "GET /reviews/0"
+    },
+    {
+      "role": "data",
+      "text": "HEAD /reviews/0"
+    },
+    {
+      "role": "pill",
+      "text": "expect 403"
+    },
+    {
+      "role": "data",
+      "text": "POST /reviews/0"
+    },
+    {
+      "role": "data",
+      "text": "DELETE /reviews/0"
+    },
+    {
+      "role": "data",
+      "text": "GET /reviews/0"
+    },
+    {
+      "role": "chip",
+      "text": "+ kind-mesh2"
+    }
+  ]
+}

@@ -1,0 +1,219 @@
+{
+  "screen": "03b-apply-and-test",
+  "mockup_html": "03b-apply-and-test.html",
+  "mockup_png": "03b-apply-and-test.png",
+  "required": [
+    {
+      "role": "tab",
+      "text": "Configuration",
+      "severity": "must"
+    },
+    {
+      "role": "tab",
+      "text": "Checks",
+      "severity": "must"
+    },
+    {
+      "role": "tab",
+      "text": "Tests",
+      "severity": "must"
+    },
+    {
+      "role": "tab",
+      "text": "Request path",
+      "severity": "must"
+    },
+    {
+      "role": "tab",
+      "text": "Changes",
+      "severity": "must"
+    },
+    {
+      "role": "heading",
+      "text": "Allow or block methods",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "Switch task ▾",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "✕",
+      "severity": "must"
+    },
+    {
+      "role": "step",
+      "text": "Choose settings",
+      "severity": "must"
+    },
+    {
+      "role": "step",
+      "text": "Check against the cluster",
+      "severity": "must"
+    },
+    {
+      "role": "step",
+      "text": "Apply and test",
+      "severity": "must"
+    },
+    {
+      "role": "heading",
+      "text": "Progress",
+      "severity": "must"
+    },
+    {
+      "role": "heading",
+      "text": "Test results",
+      "severity": "must"
+    },
+    {
+      "role": "column",
+      "text": "Request",
+      "severity": "must"
+    },
+    {
+      "role": "column",
+      "text": "Expected",
+      "severity": "must"
+    },
+    {
+      "role": "column",
+      "text": "Got",
+      "severity": "must"
+    },
+    {
+      "role": "column",
+      "text": "Decided by",
+      "severity": "must"
+    },
+    {
+      "role": "heading",
+      "text": "Done. What now?",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "Add \"Block traffic that skips the waypoint\" →",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "Run the tests again",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "Undo this change",
+      "severity": "must"
+    },
+    {
+      "role": "heading",
+      "text": "Status words used everywhere",
+      "severity": "must"
+    },
+    {
+      "role": "pill",
+      "text": "Draft",
+      "severity": "should"
+    },
+    {
+      "role": "pill",
+      "text": "Checked",
+      "severity": "should"
+    },
+    {
+      "role": "pill",
+      "text": "Applied",
+      "severity": "should"
+    },
+    {
+      "role": "pill",
+      "text": "Live",
+      "severity": "should"
+    },
+    {
+      "role": "pill",
+      "text": "Verified",
+      "severity": "should"
+    },
+    {
+      "role": "pill",
+      "text": "Failed",
+      "severity": "should"
+    },
+    {
+      "role": "button",
+      "text": "Close",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "View change in Changes",
+      "severity": "must"
+    }
+  ],
+  "example": [
+    {
+      "role": "title",
+      "text": "bookinfo/reviews"
+    },
+    {
+      "role": "step",
+      "text": "Applied to kind-mesh1 at 11:52:07"
+    },
+    {
+      "role": "pill",
+      "text": "✓"
+    },
+    {
+      "role": "pill",
+      "text": "4 / 5"
+    },
+    {
+      "role": "data",
+      "text": "GET /reviews/0"
+    },
+    {
+      "role": "pill",
+      "text": "200"
+    },
+    {
+      "role": "data",
+      "text": "HEAD /reviews/0"
+    },
+    {
+      "role": "data",
+      "text": "POST /reviews/0"
+    },
+    {
+      "role": "pill",
+      "text": "403"
+    },
+    {
+      "role": "data",
+      "text": "DELETE /reviews/0"
+    },
+    {
+      "role": "data",
+      "text": "GET /reviews/0"
+    },
+    {
+      "role": "data",
+      "text": "Color: Red"
+    },
+    {
+      "role": "data",
+      "text": "red"
+    },
+    {
+      "role": "button",
+      "text": "Apply the same to kind-mesh2 →"
+    },
+    {
+      "role": "button",
+      "text": "Back to reviews"
+    }
+  ]
+}

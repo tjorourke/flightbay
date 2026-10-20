@@ -1,0 +1,111 @@
+<!doctype html><html><head><meta charset="utf-8"><title>03 Simple wizard</title><link rel="stylesheet" href="mock.css">
+<style>
+.shade{position:absolute;inset:0;background:rgba(15,27,38,.38)}
+.drawer{position:absolute;top:0;right:0;bottom:0;width:1060px;background:#fff;box-shadow:-10px 0 30px rgba(0,0,0,.15);display:flex;flex-direction:column}
+.dh{padding:16px 22px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px}
+.steps{display:flex;gap:0;padding:10px 22px;border-bottom:1px solid var(--line);background:#fafbfc;font-size:12px}
+.steps span{display:flex;align-items:center;gap:6px;color:var(--muted);font-weight:600;margin-right:22px}
+.steps span i{font-style:normal;width:18px;height:18px;border-radius:50%;border:1.5px solid #c7ccd4;display:grid;place-items:center;font-size:10px}
+.steps span.on{color:var(--ink)}.steps span.on i{background:var(--teal);border-color:var(--teal);color:#fff}
+.db{flex:1;display:grid;grid-template-columns:1fr 440px;min-height:0}
+.form{padding:18px 22px;border-right:1px solid var(--line)}
+.eff{padding:18px 20px;background:#fbfcfd}
+.df{border-top:1px solid var(--line);padding:12px 22px;display:flex;align-items:center;gap:10px;background:#fff}
+.radio{display:flex;gap:10px;align-items:flex-start;border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:8px}
+.radio.on{border-color:var(--teal);background:var(--accent-bg)}
+.radio b{display:block}.radio .o{width:14px;height:14px;border-radius:50%;border:2px solid #98a2b3;margin-top:2px;flex:none}
+.radio.on .o{border:4px solid var(--teal)}
+.eff ul{margin:6px 0 0;padding-left:18px}.eff li{margin:4px 0}
+.case{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #eef0f3;font-size:12px}
+</style></head><body>
+<div class="app" style="position:relative">
+<aside class="side">
+  <div class="logo"><i>F</i>flightbay</div>
+  <div class="ws"><b>Live</b>kind-mesh1, kind-mesh2 · read-only</div>
+  <div class="nav">
+    <a class="off">Overview</a><a class="off">Resources</a><a class="off">RBAC</a><a class="off">Log explorer</a><a class="off">Timeline</a>
+    <div class="nav-h">Connectivity</div>
+    <a class="on">Istio Ambient</a><a class="off">Traffic</a>
+    <div class="nav-h">Diagnostics</div>
+    <a class="off">Findings <span class="n">23</span></a><a class="off">Scorecard</a><a class="off">Compare</a><a class="off">Proxy diagnostics</a><a class="off">Coverage</a>
+  </div>
+</aside>
+<main class="main">
+  <div class="top"><div class="crumb">Workspace / Live kind-mesh1, kind-mesh2 / <b>ambient</b></div><div class="search">Search objects… ⌘K</div><div class="sel">All clusters ▾</div></div>
+  <div class="bc"><a>Istio Ambient</a> › <a>Services</a> › <b>bookinfo/reviews</b></div>
+  <div class="card" style="height:900px"><div class="objhead"><span class="kind">Service</span><h1>bookinfo/reviews</h1></div><div class="tabs"><a class="on">Configuration <span class="c">2</span></a><a>Checks <span class="c">1 warning</span></a><a>Tests <span class="c">11</span></a><a>Request path</a><a>Changes <span class="c">4</span></a></div></div>
+</main>
+<div class="shade"></div>
+<div class="drawer">
+  <div class="dh">
+    <div style="flex:1"><div class="sub">Add configuration to <b style="color:var(--ink)">bookinfo/reviews</b> · kind-mesh1</div><h2 style="font-size:18px;margin-top:2px">Allow or block methods</h2></div>
+    <span class="btn">Switch task ▾</span><span class="btn g">✕</span>
+  </div>
+  <div class="steps"><span class="on"><i>1</i>Choose settings</span><span><i>2</i>Check against the cluster</span><span><i>3</i>Apply and test</span>
+    <span style="margin-left:auto;font-weight:500">Draft saved · nothing written</span></div>
+  <div class="db">
+    <div class="form">
+      <span class="lbl">What should happen?</span>
+      <div class="radio on"><span class="o"></span><div><b>Only allow the methods I pick</b><span class="sub">Pick which HTTP methods reach reviews. Adds an ALLOW policy.</span></div></div>
+      <div class="radio"><span class="o"></span><div><b>Block the methods I pick</b><span class="sub">Everything else still works. Adds a DENY policy.</span></div></div>
+
+      <span class="lbl" style="margin-top:16px">Methods</span>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <span class="chip on">✓ GET</span><span class="chip on">✓ HEAD</span><span class="chip">POST</span><span class="chip">PUT</span><span class="chip">PATCH</span><span class="chip">DELETE</span><span class="chip">OPTIONS</span>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:16px">
+        <div><span class="lbl">Port</span><div class="input">9080 (http) ▾</div><div class="sub" style="margin-top:4px">Only port on this Service</div></div>
+        <div><span class="lbl">Callers this applies to</span><div class="input">Everyone ▾</div></div>
+      </div>
+
+      <details style="margin-top:18px" open><summary class="t" style="cursor:pointer">Generated YAML <span class="sub">1 new object · security.istio.io/v1</span></summary>
+<pre style="margin-top:8px">apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: <span class="k">reviews-methods</span>
+  namespace: bookinfo
+spec:
+  targetRefs:
+  - {kind: Service, group: "", name: reviews}
+  action: <span class="a">ALLOW</span>
+  rules:
+  - to:
+    - operation:
+        methods: [<span class="a">GET</span>, <span class="a">HEAD</span>]
+        ports: ["9080"]</pre></details>
+      <div class="sub" style="margin-top:8px">Name is editable. Flightbay labels it so it shows as "Managed by Flightbay" and can be undone.</div>
+    </div>
+
+    <div class="eff">
+      <h3>What this does to reviews</h3>
+      <ul>
+        <li>GET and HEAD keep working.</li>
+        <li><b>POST, PUT, PATCH, DELETE return 403</b> from the waypoint.</li>
+        <li>Requests with <span class="mono">color: red</span> still get 403: your existing DENY runs first.</li>
+      </ul>
+
+      <div class="callout w" style="margin-top:14px"><div>⚠</div><div><b>This is the first ALLOW on reviews.</b> Once it exists, anything it does not match is denied. You do not need "Deny by default" as well for L7 traffic.</div></div>
+      <div class="callout i" style="margin-top:8px"><div>ℹ</div><div>Callers that reach pod IPs directly skip the waypoint and skip this rule. <a style="color:var(--blue);font-weight:600">Also add "Block traffic that skips the waypoint"</a></div></div>
+
+      <h3 style="margin-top:18px">Tests that will run after apply</h3>
+      <div class="sub">Generated from the rule. From <span class="mono">bookinfo/productpage</span> (in mesh).</div>
+      <div style="margin-top:6px">
+        <div class="case"><span class="pill ok">expect 200</span><span class="mono">GET /reviews/0</span></div>
+        <div class="case"><span class="pill ok">expect 200</span><span class="mono">HEAD /reviews/0</span></div>
+        <div class="case"><span class="pill bad">expect 403</span><span class="mono">POST /reviews/0</span></div>
+        <div class="case"><span class="pill bad">expect 403</span><span class="mono">DELETE /reviews/0</span></div>
+        <div class="case"><span class="pill bad">expect 403</span><span class="mono">GET /reviews/0</span> <span class="sub">color: red (existing DENY)</span></div>
+      </div>
+      <div class="sub" style="margin-top:6px">Edit cases on the Tests tab. They are saved with this policy.</div>
+    </div>
+  </div>
+  <div class="df">
+    <span class="btn">Cancel</span>
+    <span class="sub" style="margin-left:8px">Write to</span><span class="sel">kind-mesh1 (live connection) ▾</span><span class="chip">+ kind-mesh2</span>
+    <span style="flex:1"></span>
+    <span class="btn">Download YAML</span>
+    <span class="btn p">Check against cluster →</span>
+  </div>
+</div>
+</div></body></html>

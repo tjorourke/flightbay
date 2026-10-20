@@ -1,0 +1,229 @@
+{
+  "screen": "01-service-configuration",
+  "mockup_html": "01-service-configuration.html",
+  "mockup_png": "01-service-configuration.png",
+  "required": [
+    {
+      "role": "button",
+      "text": "Test service",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "YAML",
+      "severity": "must"
+    },
+    {
+      "role": "tab",
+      "text": "Configuration",
+      "severity": "must"
+    },
+    {
+      "role": "tab",
+      "text": "Checks",
+      "severity": "must"
+    },
+    {
+      "role": "tab",
+      "text": "Tests",
+      "severity": "must"
+    },
+    {
+      "role": "tab",
+      "text": "Request path",
+      "severity": "must"
+    },
+    {
+      "role": "tab",
+      "text": "Changes",
+      "severity": "must"
+    },
+    {
+      "role": "toggle",
+      "text": "Summary",
+      "severity": "must"
+    },
+    {
+      "role": "toggle",
+      "text": "All tasks",
+      "severity": "must"
+    },
+    {
+      "role": "heading",
+      "text": "Who can call it?",
+      "severity": "must"
+    },
+    {
+      "role": "pill",
+      "text": "DENY",
+      "severity": "should"
+    },
+    {
+      "role": "link",
+      "text": "Test",
+      "severity": "should"
+    },
+    {
+      "role": "link",
+      "text": "Edit",
+      "severity": "should"
+    },
+    {
+      "role": "link",
+      "text": "Block that →",
+      "severity": "should"
+    },
+    {
+      "role": "link",
+      "text": "Allow or block methods",
+      "severity": "should"
+    },
+    {
+      "role": "link",
+      "text": "Require a JWT",
+      "severity": "should"
+    },
+    {
+      "role": "link",
+      "text": "Allow or deny requests",
+      "severity": "should"
+    },
+    {
+      "role": "link",
+      "text": "More…",
+      "severity": "should"
+    },
+    {
+      "role": "heading",
+      "text": "Where does traffic go?",
+      "severity": "must"
+    },
+    {
+      "role": "pill",
+      "text": "Split",
+      "severity": "should"
+    },
+    {
+      "role": "link",
+      "text": "Route by header or path",
+      "severity": "should"
+    },
+    {
+      "role": "link",
+      "text": "Mirror requests",
+      "severity": "should"
+    },
+    {
+      "role": "link",
+      "text": "Balance endpoints",
+      "severity": "should"
+    },
+    {
+      "role": "heading",
+      "text": "Is traffic encrypted?",
+      "severity": "must"
+    },
+    {
+      "role": "pill",
+      "text": "Inherited",
+      "severity": "should"
+    },
+    {
+      "role": "link",
+      "text": "Open",
+      "severity": "should"
+    },
+    {
+      "role": "heading",
+      "text": "What happens under load or failure?",
+      "severity": "must"
+    },
+    {
+      "role": "link",
+      "text": "Set a timeout",
+      "severity": "should"
+    },
+    {
+      "role": "link",
+      "text": "Eject failing endpoints",
+      "severity": "should"
+    },
+    {
+      "role": "link",
+      "text": "Circuit breakers",
+      "severity": "should"
+    },
+    {
+      "role": "link",
+      "text": "Why?",
+      "severity": "should"
+    },
+    {
+      "role": "link",
+      "text": "Compare",
+      "severity": "should"
+    }
+  ],
+  "example": [
+    {
+      "role": "title",
+      "text": "bookinfo/reviews"
+    },
+    {
+      "role": "data",
+      "text": "bookinfo-waypoint"
+    },
+    {
+      "role": "pill",
+      "text": "Ready"
+    },
+    {
+      "role": "toggle",
+      "text": "kind-mesh"
+    },
+    {
+      "role": "toggle",
+      "text": "kind-mesh"
+    },
+    {
+      "role": "answer",
+      "text": "Anyone in the mesh, except requests with"
+    },
+    {
+      "role": "item",
+      "text": "Block header color = red"
+    },
+    {
+      "role": "answer",
+      "text": "80% to v1, 20% to v2"
+    },
+    {
+      "role": "item",
+      "text": "All paths on port 9080"
+    },
+    {
+      "role": "answer",
+      "text": "Yes between mesh workloads. Non-mesh callers are still accepted."
+    },
+    {
+      "role": "item",
+      "text": "mTLS permissive, from the mesh default"
+    },
+    {
+      "role": "link",
+      "text": "Require mTLS for reviews"
+    },
+    {
+      "role": "answer",
+      "text": "Nothing is set. No timeout, no limits, and failing Pods keep getting traffic."
+    },
+    {
+      "role": "pill",
+      "text": "kind-mesh2"
+    },
+    {
+      "role": "link",
+      "text": "Copy to kind-mesh2 →"
+    }
+  ]
+}

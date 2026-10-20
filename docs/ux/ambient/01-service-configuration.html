@@ -1,0 +1,120 @@
+<!doctype html><html><head><meta charset="utf-8"><title>01 Service configuration</title><link rel="stylesheet" href="mock.css">
+<style>
+.strip{display:flex;align-items:center;gap:10px;padding:10px 18px;font-size:12px;color:var(--muted)}
+.qgrid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:6px}
+.q{background:#fff;border:1px solid var(--line);border-radius:12px;padding:18px 20px 14px;display:flex;flex-direction:column}
+.q .qh{font-size:11px;font-weight:700;letter-spacing:.07em;color:var(--muted);text-transform:uppercase}
+.q .ans{font-size:16px;line-height:1.4;margin:6px 0 14px;font-weight:500}
+.q .ans code{font-family:var(--mono);font-size:14px;background:#f2f4f7;border-radius:4px;padding:0 4px}
+.item{display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid #eef0f3}
+.item .nm{flex:1;min-width:0}
+.item .nm .l{font-weight:600}
+.item .nm .s{font-size:11.5px;color:var(--muted);font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lnk{color:var(--teal);font-weight:600;font-size:12.5px;text-decoration:none;white-space:nowrap}
+.add{margin-top:auto;padding-top:12px;border-top:1px solid #eef0f3;font-size:12.5px;color:var(--muted);display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center}
+.add b{color:var(--ink);font-weight:600;margin-right:2px}
+.hint{display:flex;gap:10px;align-items:center;background:var(--amber-bg);border-radius:8px;padding:9px 12px;font-size:12.5px;margin-top:10px}
+.hint .lnk{color:var(--amber)}
+.empty{color:var(--muted)}
+.lock{color:#98a2b3;font-weight:600;font-size:12.5px;white-space:nowrap}
+.foot{margin-top:16px;display:flex;align-items:center;gap:10px;background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 18px;font-size:12.5px}
+</style></head><body>
+<div class="app">
+<aside class="side">
+  <div class="logo"><i>F</i>flightbay</div>
+  <div class="ws"><b>Live</b>kind-mesh1, kind-mesh2 · read-only</div>
+  <div class="nav">
+    <a class="off">Overview</a><a class="off">Resources</a><a class="off">RBAC</a><a class="off">Log explorer</a><a class="off">Timeline</a>
+    <div class="nav-h">Connectivity</div>
+    <a class="on">Istio Ambient</a><a class="off">Traffic</a>
+    <div class="nav-h">Diagnostics</div>
+    <a class="off">Findings <span class="n">23</span></a><a class="off">Scorecard</a><a class="off">Compare</a><a class="off">Proxy diagnostics</a><a class="off">Coverage</a>
+  </div>
+</aside>
+<main class="main">
+  <div class="top"><div class="crumb">Workspace / Live kind-mesh1, kind-mesh2 / <b>ambient</b></div><div class="search">Search objects… ⌘K</div><div class="sel">All clusters ▾</div></div>
+  <div class="bc"><a>Istio Ambient</a> › <a>Services</a> › <b>bookinfo/reviews</b></div>
+
+  <div class="card">
+    <div class="objhead">
+      <span class="kind">Service</span>
+      <div style="flex:1"><h1>bookinfo/reviews</h1><div class="meta">port 9080 · v1, v2, v3 · waypoint <span class="mono">bookinfo-waypoint</span> <span class="pill ok">Ready</span></div></div>
+      <span class="btn">Test service</span><span class="btn">YAML</span>
+    </div>
+    <div class="tabs"><a class="on">Configuration</a><a>Checks <span class="c">1 warning</span></a><a>Tests <span class="c">11</span></a><a>Request path</a><a>Changes <span class="c">4</span></a></div>
+    <div class="strip">
+      <span class="seg"><span class="on">kind-mesh1</span><span>kind-mesh2</span></span>
+      <span><span class="dot"></span> Live · updated 1s ago</span>
+      <span style="flex:1"></span>
+      <span>Changes are written to <b style="color:var(--ink)">kind-mesh1</b></span>
+    </div>
+  </div>
+
+  <div style="display:flex;align-items:center;margin-top:16px"><span class="sub" style="flex:1">What is configured for reviews today, and what you can add.</span><span class="seg"><span class="on">Summary</span><span>All tasks · 20</span></span></div>
+  <div class="qgrid" style="margin-top:10px">
+    <!-- ACCESS -->
+    <div class="q">
+      <div class="qh">Who can call it?</div>
+      <div class="ans">Anyone in the mesh, except requests with <code>color: red</code></div>
+      <div class="item">
+        <span class="pill bad">DENY</span>
+        <div class="nm"><div class="l">Block header color = red</div><div class="s">AuthorizationPolicy · flightbay-test-d7c9c42a35b58c95-deny-rule</div></div>
+        <a class="lnk">Test</a><a class="lnk">Edit</a>
+      </div>
+      <div class="hint"><span>!</span><span style="flex:1">Callers can skip this rule by going straight to the Pods.</span><a class="lnk">Block that →</a></div>
+      <div class="add"><b>Add</b><a class="lnk">Allow or block methods</a><a class="lnk">Require a JWT</a><a class="lnk">Allow or deny requests</a><a class="lnk">More…</a></div>
+    </div>
+
+    <!-- ROUTING -->
+    <div class="q">
+      <div class="qh">Where does traffic go?</div>
+      <div class="ans">80% to v1, 20% to v2</div>
+      <div class="item" style="border:0;padding-top:0">
+        <div style="flex:1"><div class="bar" style="height:12px"><i style="width:80%;background:var(--teal)"></i><i style="width:20%;background:#7a3fc0"></i></div>
+        <div class="sub" style="display:flex;justify-content:space-between;margin-top:4px"><span>reviews-v1 80%</span><span>reviews-v2 20%</span></div></div>
+      </div>
+      <div class="item">
+        <span class="pill info">Split</span>
+        <div class="nm"><div class="l">All paths on port 9080</div><div class="s">HTTPRoute · flightbay-test-f45172c71264f530-route</div></div>
+        <a class="lnk">Test</a><a class="lnk">Edit</a>
+      </div>
+      <div class="add"><b>Add</b><a class="lnk">Route by header or path</a><a class="lnk">Mirror requests</a><a class="lnk">Balance endpoints</a></div>
+    </div>
+
+    <!-- TRANSPORT -->
+    <div class="q">
+      <div class="qh">Is traffic encrypted?</div>
+      <div class="ans">Yes between mesh workloads. Non-mesh callers are still accepted.</div>
+      <div class="item">
+        <span class="pill mut">Inherited</span>
+        <div class="nm"><div class="l">mTLS permissive, from the mesh default</div><div class="s">PeerAuthentication · istio-system/default</div></div>
+        <a class="lnk">Open</a>
+      </div>
+      <div class="add"><b>Add</b><a class="lnk">Require mTLS for reviews</a></div>
+    </div>
+
+    <!-- LOAD AND FAILURE -->
+    <div class="q">
+      <div class="qh">What happens under load or failure?</div>
+      <div class="ans empty">Nothing is set. No timeout, no limits, and failing Pods keep getting traffic.</div>
+      <div class="add"><b>Add</b><a class="lnk">Set a timeout</a><a class="lnk">Eject failing endpoints</a><a class="lnk">Circuit breakers</a><a class="lnk">More…</a></div>
+      <div class="add" style="border:0;padding-top:6px"><span class="lock">🔒 Limit request rate</span><span class="lock">🔒 Retry failed requests</span><span class="sub" style="flex:1;text-align:right">Not available on this waypoint · <a class="lnk" style="font-weight:500">Why?</a></span></div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <span class="pill warn">kind-mesh2</span>
+    <span style="flex:1">The DENY and the split only exist on kind-mesh1. On kind-mesh2, reviews has no configuration.</span>
+    <a class="lnk">Compare</a><a class="lnk">Copy to kind-mesh2 →</a>
+  </div>
+
+  <div class="notes"><h3>Why this is calmer than v1</h3><ol>
+    <li><b>Four questions, not 20 rows.</b> Each card answers one question in a sentence and lists only what is configured underneath. The answer cards and the table from v1 were saying the same thing twice; now the answer is the heading.</li>
+    <li><b>Things that are not set are links, not rows.</b> "Add" at the bottom of each card holds the tasks for that area (short labels, no descriptions). "More…" opens the full list. Unavailable tasks are one muted link.</li>
+    <li><b>One recommendation, inside the card it belongs to.</b> The bypass warning sits under the rule it weakens.</li>
+    <li><b>Detail is one click away.</b> Enforced by, Managed by, layer (L4/L7) and status move to the drawer and object page. The resource name stays, small and grey, so you can still recognise it.</li>
+    <li><b>Multicluster is one line at the bottom</b>, only shown when the clusters differ.</li>
+    <li><b>Locked tasks stay visible.</b> Rate limiting and retries show greyed with a lock and a one-line reason, so you can see they exist and why you cannot use them on this waypoint.</li>
+    <li><b>Summary | All tasks.</b> Summary (this view) is the default. All tasks shows the full catalogue of 20 tasks grouped under the same four questions, as cards or a list (see 01c and 01d).</li>
+  </ol></div>
+</main></div></body></html>

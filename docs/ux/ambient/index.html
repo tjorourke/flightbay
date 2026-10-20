@@ -1,0 +1,74 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Flightbay Configure UX proposal</title><link rel="stylesheet" href="mock.css">
+<style>body{background:#fff}.wrap{max-width:1180px;margin:0 auto;padding:32px 28px 60px}h1{font-size:24px;margin:0 0 4px}
+h2{font-size:17px;margin:28px 0 8px}ol li,ul li{margin:5px 0}figure{margin:16px 0 28px}figure img{width:100%;border:1px solid var(--line);border-radius:10px}
+figcaption{font-weight:650;margin-bottom:6px}</style></head><body><div class="wrap">
+<h1>Flightbay: making Configure simpler</h1>
+<div class="muted">Proposal based on the 20 Oct screen recording (bookinfo/reviews on kind-mesh1) and the current web/ambient*.js code.</div>
+
+<h2>What is confusing today</h2>
+<ol>
+<li><b>Three navigation layers for one job.</b> Sidebar "Istio Ambient", then five page tabs, then a target bar, then a breadcrumb ("All configurations › bookinfo/reviews › …" with "Switch configuration · 2"), then a 4-step stepper. On top of that there are three primary-looking buttons (New configuration, Test current traffic, Configure selected tasks).</li>
+<li><b>The stepper is not a sequence.</b> Step 2 "Configurations" is really a read-only overview of the Service. Editing an existing route skips step 2. Adding new tasks lives in a collapsed "Add another capability" at the bottom of step 2.</li>
+<li><b>Existing config and available tasks are in different places.</b> "Security policies" and "Routing" cards at the top, then a separate 10-card grid of tasks, then "7 tasks not available · why?". You cannot see in one place "for reviews: split is set, timeout is not, retries is impossible".</li>
+<li><b>Target picking is a global search, not a scope.</b> The Configure tab opens with a combobox over every Gateway and Service in every cluster. The scope you were already looking at (a Service in Resources, the map, a Finding) is not carried over by default.</li>
+<li><b>Multiple tasks then one form.</b> In the recording "Deny by default" and "Control HTTP methods" were both ticked, but the Configure and Review steps only show Control HTTP methods (1 to create). Either the first task was dropped or merged silently. Either way the UI did not say.</li>
+<li><b>No effect or interaction explanation.</b> Adding an ALLOW for GET/HEAD/PATCH/DELETE on a Service that already has a DENY changes the default for every other method. The Review step shows a resource diff but not "POST will now return 403".</li>
+<li><b>Apply is buried and the states blur.</b> "Review and apply" sits below the summary with a dry-run button, a context box and a second "Review and apply…" button, then a modal. Dry-run passed, applied and verified look similar (already noted in docs/ambient-follow-up-tasks.md #2).</li>
+<li><b>Testing is per Service, not per thing you configured.</b> "Test this rule" pre-fills one request. There is no saved expectation, no pass/fail, and nothing for HTTPRoutes beyond a generic HTTP batch.</li>
+<li><b>Cluster scope is split.</b> Global "All clusters" select, the target's cluster, and a separate write context. There is no way to see that the split exists on kind-mesh1 but not kind-mesh2.</li>
+<li><b>Machine names everywhere.</b> <span class="mono">flightbay-test-f45172c71264f530-route</span> is what a person has to recognise. Let the user name it and show a short description.</li>
+</ol>
+
+<h2>Improvements (Istio Ambient only)</h2>
+<p class="muted">The rest of the app (Overview, Resources, RBAC, Traffic, Diagnostics) and the sidebar stay as they are. Everything below happens inside the Istio Ambient entry.</p>
+<h3>Structure inside Istio Ambient</h3>
+<ol>
+<li>Today there are five tabs, all needing a target: Investigate, Attachment map, Request path, Configure and Changes. Replace them with <b>two levels</b>:
+  <ul><li><b>Ambient home</b> tabs: Overview · Policies &amp; routes · Map · Request path · Changes.</li>
+  <li><b>Service page</b> (opened from any of those): Configuration · Checks · Tests · Request path · Changes.</li></ul></li>
+<li><b>Investigate becomes the Service's Checks tab</b> and <b>Configure becomes its Configuration tab</b>. Same header, same cluster strip, so going from "what is wrong" to "change it" never changes target. Remedies open the same drawer as + Add.</li>
+<li><b>Overview replaces the Investigate landing and the Configure Target step.</b> Needs attention comes first, then a list of every mesh Service with its waypoint, access, routing and resilience badges, plus drift per cluster. You choose a target by clicking a row, so there's no Object type select or search over every Gateway.</li>
+<li>Namespace setup (enrol in ambient, set up a waypoint) moves to a namespace footer on Overview, so the three-way intent picker ("Service traffic / Namespace setup / Waypoint connections") goes.</li>
+<li>One <b>read/write strip</b> on the Service page shows which cluster you are reading, how fresh it is and where writes go. Compare shows drift between kind-mesh1 and kind-mesh2.</li>
+<li>Remove "New configuration" and "Deploy Bookinfo demo" as header buttons. Keep one primary action per screen.</li>
+<li><b>Map and Request path stay as they are.</b> Only the Service card buttons are pointed at the new Service page, the dropped-line bug is fixed, and Request path gets a link into the task drawer when it finds a problem.</li>
+</ol>
+<h3>See all tasks and existing config (one list)</h3>
+<ol start="8">
+<li>The Configuration tab is <b>four question cards</b>: Who can call it? Where does traffic go? Is traffic encrypted? What happens when it fails? Each gives a one-sentence answer, lists only what is configured (Test, Edit), shows at most one hint, and ends with short "Add" links for what is not set. Unavailable tasks are one muted link.</li>
+<li>Show <b>Managed by</b> (Flightbay / Helm / Argo CD / kubectl from managedFields) and warn before editing GitOps-owned objects.</li>
+<li>An Ambient <b>Policies &amp; routes</b> tab listing every policy and route with "Applies to" in words, a column per connected cluster (Applied / Missing / Differs), and broken targets flagged. Extend coverage to GRPCRoute, TCPRoute and ServiceEntry over time.</li>
+</ol>
+<h3>Simpler wizard</h3>
+<ol start="12">
+<li><b>One task per drawer</b>, opened from the row's + Add or Edit. No multi-select grid, no Target step. Three inline phases: Choose settings → Check against the cluster → Apply and test.</li>
+<li>Lead with <b>intent wording</b> ("Only allow the methods I pick" / "Block the methods I pick"), not "additive ALLOW policy".</li>
+<li>A right-hand <b>"What this does"</b> panel: plain outcomes, interactions with existing policies on the same target ("this is the first ALLOW, everything else is now denied", "the existing DENY still runs first"), and bypass warnings with a one-click follow-up task.</li>
+<li>YAML stays visible but secondary. Let the user name the resource; keep the Flightbay label for ownership and undo.</li>
+<li>One footer, one primary button. Dry-run runs automatically on "Check"; the apply button only appears once it passes. Cluster targets are chips in the footer ("kind-mesh1" + "kind-mesh2").</li>
+<li>Use the same <b>status words</b> everywhere: Draft, Checked, Applied, Live, Verified, Failed.</li>
+<li>After apply, show <b>"What now?"</b>: apply to the other cluster, add the recommended follow-up, run tests again, undo.</li>
+<li>If multiple tasks are ever combined, list every object it will write before the user continues (follow-up task #9), and never drop a ticked task silently.</li>
+</ol>
+<h3>Tests per AuthorizationPolicy and HTTPRoute</h3>
+<ol start="20">
+<li>Every AuthorizationPolicy and HTTPRoute gets a <b>Tests</b> tab with saved cases, each with an <b>expected</b> result, so the outcome is pass/fail.</li>
+<li><b>Generate cases from the rule</b>: one match, near misses (other value, header absent, other method), interaction with other policies on the target, and a waypoint bypass case.</li>
+<li>Show <b>Decided by</b> per case (which policy allowed or denied it), from waypoint RBAC logs or reach.Explain, with a link to the log line.</li>
+<li>For routes, compare <b>expected vs observed weights</b> with a tolerance, check which rule matched, and add a negative case. Timeouts, retries and mirrors add their own generated cases.</li>
+<li>Choose the <b>source</b> (existing in-mesh workload, temporary pod, outside the mesh) and the <b>cluster</b>. Reuse the existing http-mesh-test runners.</li>
+<li>Re-run a target's suites automatically after every Flightbay apply on that target, and show the result in Changes ("Verified" vs "Applied").</li>
+</ol>
+
+<h2>Mockups</h2>
+<figure><figcaption>0. Ambient · Overview: needs attention and every Service with its config</figcaption><img src="00-ambient-overview.png"></figure>
+<figure><figcaption>1. Service · Configuration: four questions, what is set, and what you can add</figcaption><img src="01-service-configuration.png"></figure>
+<figure><figcaption>1c. Service · Configuration · All tasks (Cards): every task in the same groups</figcaption><img src="01c-all-tasks-cards.png"></figure>
+<figure><figcaption>1d. Service · Configuration · All tasks (List)</figcaption><img src="01d-all-tasks-list.png"></figure>
+<figure><figcaption>1b. Service · Checks (was Investigate): problems first, Fix opens the same drawer</figcaption><img src="01b-service-checks.png"></figure>
+<figure><figcaption>2. Ambient · Policies & routes: everything, with what it applies to and drift per cluster</figcaption><img src="02-configuration-inventory.png"></figure>
+<figure><figcaption>3. One-task drawer: settings, effect and generated tests</figcaption><img src="03-simple-wizard.png"></figure>
+<figure><figcaption>3b. Same drawer after apply: progress, test results, what now</figcaption><img src="03b-apply-and-test.png"></figure>
+<figure><figcaption>4. AuthorizationPolicy · Tests</figcaption><img src="04-authorizationpolicy-tests.png"></figure>
+<figure><figcaption>5. HTTPRoute · Tests</figcaption><img src="05-httproute-tests.png"></figure>
+</div></body></html>

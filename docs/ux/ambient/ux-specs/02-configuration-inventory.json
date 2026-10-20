@@ -1,0 +1,249 @@
+{
+  "screen": "02-configuration-inventory",
+  "mockup_html": "02-configuration-inventory.html",
+  "mockup_png": "02-configuration-inventory.png",
+  "required": [
+    {
+      "role": "tab",
+      "text": "Overview",
+      "severity": "must"
+    },
+    {
+      "role": "tab",
+      "text": "Policies & routes",
+      "severity": "must"
+    },
+    {
+      "role": "tab",
+      "text": "Map",
+      "severity": "must"
+    },
+    {
+      "role": "tab",
+      "text": "Request path",
+      "severity": "must"
+    },
+    {
+      "role": "tab",
+      "text": "Changes",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "Docs ↗",
+      "severity": "must"
+    },
+    {
+      "role": "heading",
+      "text": "All policies and routes",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "Export YAML",
+      "severity": "must"
+    },
+    {
+      "role": "chip",
+      "text": "Access",
+      "severity": "must"
+    },
+    {
+      "role": "chip",
+      "text": "Routing",
+      "severity": "must"
+    },
+    {
+      "role": "chip",
+      "text": "Resilience",
+      "severity": "must"
+    },
+    {
+      "role": "chip",
+      "text": "Transport",
+      "severity": "must"
+    },
+    {
+      "role": "chip",
+      "text": "Waypoints",
+      "severity": "must"
+    },
+    {
+      "role": "chip",
+      "text": "Only problems",
+      "severity": "must"
+    },
+    {
+      "role": "chip",
+      "text": "Only drift",
+      "severity": "must"
+    },
+    {
+      "role": "chip",
+      "text": "Managed by Flightbay",
+      "severity": "must"
+    },
+    {
+      "role": "toggle",
+      "text": "By object",
+      "severity": "must"
+    },
+    {
+      "role": "toggle",
+      "text": "By Service",
+      "severity": "must"
+    },
+    {
+      "role": "column",
+      "text": "Kind / name",
+      "severity": "must"
+    },
+    {
+      "role": "column",
+      "text": "Applies to",
+      "severity": "must"
+    },
+    {
+      "role": "column",
+      "text": "Effect",
+      "severity": "must"
+    },
+    {
+      "role": "column",
+      "text": "Enforced by",
+      "severity": "must"
+    },
+    {
+      "role": "column",
+      "text": "Managed by",
+      "severity": "must"
+    },
+    {
+      "role": "pill",
+      "text": "DENY",
+      "severity": "should"
+    },
+    {
+      "role": "pill",
+      "text": "Applied",
+      "severity": "should"
+    },
+    {
+      "role": "pill",
+      "text": "Missing",
+      "severity": "should"
+    },
+    {
+      "role": "button",
+      "text": "Test",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "Open",
+      "severity": "must"
+    },
+    {
+      "role": "pill",
+      "text": "ALLOW",
+      "severity": "should"
+    },
+    {
+      "role": "pill",
+      "text": "Differs",
+      "severity": "should"
+    },
+    {
+      "role": "button",
+      "text": "Diff",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "Explain",
+      "severity": "must"
+    }
+  ],
+  "example": [
+    {
+      "role": "title",
+      "text": "Istio Ambient"
+    },
+    {
+      "role": "chip",
+      "text": "bookinfo ✕"
+    },
+    {
+      "role": "column",
+      "text": "kind-mesh1"
+    },
+    {
+      "role": "column",
+      "text": "kind-mesh2"
+    },
+    {
+      "role": "data",
+      "text": "flightbay-test-d7c9…-deny-rule"
+    },
+    {
+      "role": "pill",
+      "text": "Flightbay"
+    },
+    {
+      "role": "data",
+      "text": "flightbay-test-f451…-route"
+    },
+    {
+      "role": "pill",
+      "text": "Accepted"
+    },
+    {
+      "role": "data",
+      "text": "istio-system/default"
+    },
+    {
+      "role": "pill",
+      "text": "Helm"
+    },
+    {
+      "role": "data",
+      "text": "ratings-allow-reviews"
+    },
+    {
+      "role": "pill",
+      "text": "Argo CD"
+    },
+    {
+      "role": "data",
+      "text": "ratings-l4"
+    },
+    {
+      "role": "data",
+      "text": "app=ratings"
+    },
+    {
+      "role": "pill",
+      "text": "kubectl"
+    },
+    {
+      "role": "data",
+      "text": "bookinfo-waypoint"
+    },
+    {
+      "role": "pill",
+      "text": "Programmed"
+    },
+    {
+      "role": "data",
+      "text": "orphan-productpage-v0"
+    },
+    {
+      "role": "pill",
+      "text": "Targets nothing"
+    },
+    {
+      "role": "pill",
+      "text": "Not enforced"
+    }
+  ]
+}

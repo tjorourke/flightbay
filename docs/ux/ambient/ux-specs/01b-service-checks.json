@@ -1,0 +1,136 @@
+{
+  "screen": "01b-service-checks",
+  "mockup_html": "01b-service-checks.html",
+  "mockup_png": "01b-service-checks.png",
+  "required": [
+    {
+      "role": "button",
+      "text": "Test service",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "YAML",
+      "severity": "must"
+    },
+    {
+      "role": "tab",
+      "text": "Configuration",
+      "severity": "must"
+    },
+    {
+      "role": "tab",
+      "text": "Checks",
+      "severity": "must"
+    },
+    {
+      "role": "tab",
+      "text": "Tests",
+      "severity": "must"
+    },
+    {
+      "role": "tab",
+      "text": "Request path",
+      "severity": "must"
+    },
+    {
+      "role": "tab",
+      "text": "Changes",
+      "severity": "must"
+    },
+    {
+      "role": "toggle",
+      "text": "Compare",
+      "severity": "must"
+    },
+    {
+      "role": "toggle",
+      "text": "Problems",
+      "severity": "must"
+    },
+    {
+      "role": "toggle",
+      "text": "All",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "Evidence",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "Fix: block bypass…",
+      "severity": "must"
+    },
+    {
+      "role": "chip",
+      "text": "flightbay-test-d7c9…-deny-rule · waypoint",
+      "severity": "must"
+    },
+    {
+      "role": "chip",
+      "text": "No ztunnel AuthorizationPolicy selecting",
+      "severity": "must"
+    },
+    {
+      "role": "chip",
+      "text": "Test case \"waypoint bypass\" returned 200",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "5 checks ▸",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "6 checks ▸",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "4 checks ▸",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "3 checks ▸",
+      "severity": "must"
+    }
+  ],
+  "example": [
+    {
+      "role": "title",
+      "text": "bookinfo/reviews"
+    },
+    {
+      "role": "data",
+      "text": "bookinfo-waypoint"
+    },
+    {
+      "role": "pill",
+      "text": "Ready 1/1"
+    },
+    {
+      "role": "toggle",
+      "text": "kind-mesh"
+    },
+    {
+      "role": "toggle",
+      "text": "kind-mesh"
+    },
+    {
+      "role": "pill",
+      "text": "!"
+    },
+    {
+      "role": "data",
+      "text": "app=reviews"
+    },
+    {
+      "role": "pill",
+      "text": "✓"
+    }
+  ]
+}

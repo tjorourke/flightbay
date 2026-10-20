@@ -1,0 +1,62 @@
+<!doctype html><html><head><meta charset="utf-8"><title>00 Ambient overview</title><link rel="stylesheet" href="mock.css"></head><body>
+<div class="app">
+<aside class="side">
+  <div class="logo"><i>F</i>flightbay</div>
+  <div class="ws"><b>Live</b>kind-mesh1, kind-mesh2 · read-only</div>
+  <div class="nav">
+    <a class="off">Overview</a><a class="off">Resources</a><a class="off">RBAC</a><a class="off">Log explorer</a><a class="off">Timeline</a>
+    <div class="nav-h">Connectivity</div>
+    <a class="on">Istio Ambient</a><a class="off">Traffic</a>
+    <div class="nav-h">Diagnostics</div>
+    <a class="off">Findings <span class="n">23</span></a><a class="off">Scorecard</a><a class="off">Compare</a><a class="off">Proxy diagnostics</a><a class="off">Coverage</a>
+  </div>
+</aside>
+<main class="main">
+  <div class="top"><div class="crumb">Workspace / Live kind-mesh1, kind-mesh2 / <b>ambient</b></div><div class="search">Search objects… ⌘K</div><div class="sel">All clusters ▾</div></div>
+  <div class="amhead"><h1>Istio Ambient</h1><div class="amtabs"><a class="on">Overview</a><a>Policies &amp; routes<span class="c">41</span></a><a>Map</a><a>Request path</a><a>Changes<span class="c">22</span></a></div><span style="flex:1"></span><span class="btn">Docs ↗</span></div>
+
+  <div class="sum" style="margin-top:4px;position:relative">
+    <div class="card"><div class="q">Clusters</div><div class="a"><b>2 connected</b> · kind-mesh1, kind-mesh2 · ambient on both</div></div>
+    <div class="card"><div class="q">Namespaces in ambient</div><div class="a"><b>6 of 14</b> · 3 with a waypoint</div></div>
+    <div class="card"><div class="q">Policies and routes</div><div class="a"><b>41 objects</b> · 3 differ between clusters</div></div>
+    <div class="card"><div class="q">Needs attention</div><div class="a" style="color:var(--red)"><b>3 Services</b> fail a check</div></div>
+    <div class="annot" style="left:-12px;top:-8px">1</div>
+  </div>
+
+  <div class="card" style="margin-bottom:16px;position:relative">
+    <div style="padding:12px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center"><h2 style="flex:1">Needs attention</h2><span class="sub">Failed checks across both clusters</span></div>
+    <table>
+      <tr><td style="width:36px"><span class="pill bad">✕</span></td><td><b>bookinfo/details</b> <span class="sub">kind-mesh2</span></td><td>No ready endpoints: selector <span class="mono">app=details</span> matches 0 Pods</td><td class="right"><span class="btn sm">Open checks</span> <span class="btn sm p">Fix…</span></td></tr>
+      <tr><td><span class="pill bad">✕</span></td><td><b>kagent/github-mcp</b> <span class="sub">kind-mesh1</span></td><td>AuthorizationPolicy targets the waypoint but the Service does not use it</td><td class="right"><span class="btn sm">Open checks</span> <span class="btn sm p">Fix…</span></td></tr>
+      <tr><td><span class="pill warn">!</span></td><td><b>bookinfo/reviews</b> <span class="sub">kind-mesh1</span></td><td>L7 DENY can be bypassed: nothing blocks traffic that skips the waypoint</td><td class="right"><span class="btn sm">Open checks</span> <span class="btn sm p">Fix…</span></td></tr>
+    </table>
+    <div class="annot" style="left:-12px;top:10px">2</div>
+  </div>
+
+  <div class="card" style="position:relative">
+    <div style="padding:12px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px">
+      <h2 style="flex:1">Services in the mesh</h2>
+      <div class="input" style="width:240px;color:var(--muted);padding:5px 10px">Filter Services…</div>
+      <span class="chip on">bookinfo</span><span class="chip">kagent</span><span class="chip">agentgateway-system</span><span class="chip">+ 3</span>
+    </div>
+    <table>
+      <tr><th>Service</th><th>Waypoint</th><th>Access</th><th>Routing</th><th>Resilience</th><th>kind-mesh1</th><th>kind-mesh2</th><th>Checks</th><th></th></tr>
+      <tr><td><b>bookinfo/productpage</b></td><td><span class="mono">bookinfo-waypoint</span></td><td class="muted">open</td><td class="muted">—</td><td class="muted">—</td><td><span class="pill ok">✓</span></td><td><span class="pill ok">✓</span></td><td><span class="pill ok">Pass</span></td><td class="right"><span class="btn sm">Open</span></td></tr>
+      <tr style="background:var(--accent-bg)"><td><b>bookinfo/reviews</b></td><td><span class="mono">bookinfo-waypoint</span></td><td><span class="pill bad">1 DENY</span></td><td><span class="pill info">split 80/20</span></td><td class="muted">—</td><td><span class="pill ok">✓</span></td><td><span class="pill warn">differs</span></td><td><span class="pill warn">1 warning</span></td><td class="right"><span class="btn sm p">Open</span></td></tr>
+      <tr><td><b>bookinfo/ratings</b></td><td><span class="mono">bookinfo-waypoint</span></td><td><span class="pill ok">1 ALLOW</span> <span class="pill ok">L4 lock</span></td><td class="muted">—</td><td><span class="pill info">outlier</span></td><td><span class="pill ok">✓</span></td><td><span class="pill warn">differs</span></td><td><span class="pill ok">Pass</span></td><td class="right"><span class="btn sm">Open</span></td></tr>
+      <tr><td><b>bookinfo/details</b></td><td><span class="mono">bookinfo-waypoint</span></td><td class="muted">open</td><td class="muted">—</td><td class="muted">—</td><td><span class="pill ok">✓</span></td><td><span class="pill bad">no endpoints</span></td><td><span class="pill bad">1 failed</span></td><td class="right"><span class="btn sm">Open</span></td></tr>
+      <tr><td><b>bookinfo/reviews-v1</b></td><td><span class="mono">bookinfo-waypoint</span></td><td class="muted">open</td><td class="muted">backend of reviews</td><td class="muted">—</td><td><span class="pill ok">✓</span></td><td><span class="pill ok">✓</span></td><td><span class="pill ok">Pass</span></td><td class="right"><span class="btn sm">Open</span></td></tr>
+      <tr><td><b>bookinfo/reviews-v2</b></td><td><span class="mono">bookinfo-waypoint</span></td><td class="muted">open</td><td class="muted">backend of reviews</td><td class="muted">—</td><td><span class="pill ok">✓</span></td><td><span class="pill ok">✓</span></td><td><span class="pill ok">Pass</span></td><td class="right"><span class="btn sm">Open</span></td></tr>
+    </table>
+    <div style="padding:10px 16px;border-top:1px solid var(--line);display:flex;gap:10px;align-items:center" class="sub">
+      Namespace <b style="color:var(--ink)">bookinfo</b>: in ambient · waypoint <span class="mono">bookinfo-waypoint</span> for all Services <span style="flex:1"></span><span class="btn sm">Namespace settings</span>
+    </div>
+    <div class="annot" style="left:-12px;top:10px">3</div>
+  </div>
+
+  <div class="notes"><h3>Ambient Overview (replaces the Investigate landing and the Configure Target step)</h3><ol>
+    <li>A one-line health summary of the ambient install across connected clusters.</li>
+    <li><b>Needs attention</b> leads the page (follow-up task #4). Each row opens the Service's Checks tab, and Fix… opens the same drawer as Configure.</li>
+    <li><b>Every Service with its config at a glance</b>: waypoint, access, routing and resilience badges and per-cluster drift. This list is how you choose a target, so there is no search-everything combobox and no Object type select. Namespace-level setup (enrol, waypoint) sits on the namespace footer, not in a separate intent picker.</li>
+  </ol></div>
+</main></div></body></html>

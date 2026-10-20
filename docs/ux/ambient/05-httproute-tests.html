@@ -1,0 +1,79 @@
+<!doctype html><html><head><meta charset="utf-8"><title>05 HTTPRoute tests</title><link rel="stylesheet" href="mock.css">
+<style>.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px}.pad{padding:14px 16px}
+.rrow{display:grid;grid-template-columns:110px 1fr 70px 70px 60px;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid #eef0f3}
+.lg{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}</style></head><body>
+<div class="app">
+<aside class="side">
+  <div class="logo"><i>F</i>flightbay</div>
+  <div class="ws"><b>Live</b>kind-mesh1, kind-mesh2 · read-only</div>
+  <div class="nav">
+    <a class="off">Overview</a><a class="off">Resources</a><a class="off">RBAC</a><a class="off">Log explorer</a><a class="off">Timeline</a>
+    <div class="nav-h">Connectivity</div>
+    <a class="on">Istio Ambient</a><a class="off">Traffic</a>
+    <div class="nav-h">Diagnostics</div>
+    <a class="off">Findings <span class="n">23</span></a><a class="off">Scorecard</a><a class="off">Compare</a><a class="off">Proxy diagnostics</a><a class="off">Coverage</a>
+  </div>
+</aside>
+<main class="main">
+  <div class="top"><div class="crumb">Workspace / Live kind-mesh1, kind-mesh2 / <b>ambient</b></div><div class="search">Search objects… ⌘K</div><div class="sel">All clusters ▾</div></div>
+  <div class="bc"><a>Istio Ambient</a> › <a>Services</a> › <a>bookinfo/reviews</a> › <a>Configuration</a> › <b>flightbay-test-f45172c71264f530-route</b></div>
+  <div class="card">
+    <div class="objhead">
+      <span class="kind">HTTPRoute</span>
+      <div style="flex:1"><h1 style="font-size:18px">flightbay-test-f45172c71264f530-route</h1>
+      <div class="meta">parent Service <b>reviews</b> :9080 · served by <b>bookinfo-waypoint</b> · <span class="pill ok">Accepted</span> <span class="pill ok">ResolvedRefs</span> · 1 rule · managed by Flightbay</div></div>
+      <span class="btn">YAML</span><span class="btn">Edit split</span><span class="btn">Undo</span>
+    </div>
+    <div class="tabs"><a>Summary</a><a class="on">Tests <span class="c">3</span></a><a>Explain a request</a><a>History</a></div>
+  </div>
+
+  <div class="grid">
+    <div class="card" style="overflow:hidden">
+      <div class="pad" style="display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--line)">
+        <div style="flex:1"><h2>Rule 1 · split</h2><div class="sub">Matches PathPrefix / · 200 requests from bookinfo/productpage · 11:53:40</div></div>
+        <span class="input" style="padding:4px 8px">200 requests ▾</span><span class="btn p">▶ Run</span>
+      </div>
+      <div class="pad">
+        <div class="rrow" style="font-size:11px;color:var(--muted);font-weight:600"><span>Backend</span><span>Expected vs observed</span><span class="right">Expected</span><span class="right">Observed</span><span></span></div>
+        <div class="rrow"><span><span class="lg" style="background:var(--teal)"></span><b>reviews-v1</b></span>
+          <div><div class="bar" style="height:7px;margin-bottom:3px"><i style="width:80%;background:#9bd5dc"></i></div><div class="bar" style="height:7px"><i style="width:78.5%;background:var(--teal)"></i></div></div>
+          <span class="right">80%</span><span class="right"><b>78.5%</b></span><span class="pill ok">✓</span></div>
+        <div class="rrow"><span><span class="lg" style="background:#7a3fc0"></span><b>reviews-v2</b></span>
+          <div><div class="bar" style="height:7px;margin-bottom:3px"><i style="width:20%;background:#d4bff0"></i></div><div class="bar" style="height:7px"><i style="width:21.5%;background:#7a3fc0"></i></div></div>
+          <span class="right">20%</span><span class="right"><b>21.5%</b></span><span class="pill ok">✓</span></div>
+        <div class="rrow"><span><span class="lg" style="background:#c7ccd4"></span><b>reviews-v3</b></span>
+          <div><div class="bar" style="height:7px;margin-bottom:3px"></div><div class="bar" style="height:7px"></div></div>
+          <span class="right">0%</span><span class="right"><b>0%</b></span><span class="pill ok">✓</span></div>
+        <div class="callout s" style="margin-top:12px"><div>✓</div><div><b>Split behaves as configured.</b> Within ±5% tolerance at 200 requests. Responses identified by pod name in the reply (<span class="mono">reviews-v1-7f…</span>, <span class="mono">reviews-v2-5c…</span>).</div></div>
+        <div style="margin-top:12px;font-size:12px" class="sub">Status codes: 200 × 200 · p50 9 ms · p95 31 ms</div>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:16px">
+      <div class="card" style="overflow:hidden">
+        <div class="pad" style="display:flex;align-items:center;border-bottom:1px solid var(--line)"><h2 style="flex:1">Match cases</h2><span class="btn sm">+ Add case</span></div>
+        <table>
+          <tr><th>Request</th><th>Expect</th><th>Got</th><th></th></tr>
+          <tr><td class="mono">GET /reviews/0</td><td>rule 1 → split</td><td>rule 1 → v1</td><td><span class="pill ok">✓</span></td></tr>
+          <tr><td class="mono">GET /health</td><td>rule 1 → split</td><td>rule 1 → v2</td><td><span class="pill ok">✓</span></td></tr>
+          <tr><td class="mono">GET reviews-v1:9080/reviews/0</td><td>not this route</td><td>reviews-v1 direct</td><td><span class="pill ok">✓</span></td></tr>
+        </table>
+      </div>
+      <div class="card pad">
+        <h2>Other checks on this route</h2>
+        <div style="margin-top:8px">
+          <div class="rrow" style="grid-template-columns:24px 1fr 90px"><span class="pill ok">✓</span><span>Every backendRef resolves to a Service with ready endpoints</span><span class="sub right">3 / 3</span></div>
+          <div class="rrow" style="grid-template-columns:24px 1fr 90px"><span class="pill ok">✓</span><span>Only one route targets reviews :9080, no overlap</span><span class="sub right"></span></div>
+          <div class="rrow" style="grid-template-columns:24px 1fr 90px"><span class="pill warn">!</span><span>Same route missing in kind-mesh2: callers there get v1/v2/v3 round robin</span><span class="right"><span class="btn sm">Copy →</span></span></div>
+          <div class="rrow" style="grid-template-columns:24px 1fr 90px;border:0"><span class="pill mut">–</span><span class="muted">No timeout or retry on this rule. Add one to get a timeout test</span><span class="right"><span class="btn sm">+ Add</span></span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="notes"><h3>Per-route testing</h3><ol>
+    <li>A route test answers "did traffic go where the route says?", not just "did I get 200?". Expected weights come from the rule; observed comes from identifying the responding pod (already grouped by version in today's HTTP test results).</li>
+    <li>Match cases check which rule handled a request, including a negative case (a port or path the route should not catch).</li>
+    <li>Timeouts, retries, mirrors and header routing each add their own generated case when present (e.g. inject a slow backend and expect 504 at the configured timeout).</li>
+  </ol></div>
+</main></div></body></html>

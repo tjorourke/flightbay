@@ -1,0 +1,77 @@
+<!doctype html><html><head><meta charset="utf-8"><title>04 AuthorizationPolicy tests</title><link rel="stylesheet" href="mock.css">
+<style>.grid{display:grid;grid-template-columns:420px 1fr;gap:16px;margin-top:16px}.pad{padding:14px 16px}
+.rule{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-top:8px;background:#fafbfc}
+.src{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}</style></head><body>
+<div class="app">
+<aside class="side">
+  <div class="logo"><i>F</i>flightbay</div>
+  <div class="ws"><b>Live</b>kind-mesh1, kind-mesh2 · read-only</div>
+  <div class="nav">
+    <a class="off">Overview</a><a class="off">Resources</a><a class="off">RBAC</a><a class="off">Log explorer</a><a class="off">Timeline</a>
+    <div class="nav-h">Connectivity</div>
+    <a class="on">Istio Ambient</a><a class="off">Traffic</a>
+    <div class="nav-h">Diagnostics</div>
+    <a class="off">Findings <span class="n">23</span></a><a class="off">Scorecard</a><a class="off">Compare</a><a class="off">Proxy diagnostics</a><a class="off">Coverage</a>
+  </div>
+</aside>
+<main class="main">
+  <div class="top"><div class="crumb">Workspace / Live kind-mesh1, kind-mesh2 / <b>ambient</b></div><div class="search">Search objects… ⌘K</div><div class="sel">All clusters ▾</div></div>
+  <div class="bc"><a>Istio Ambient</a> › <a>Services</a> › <a>bookinfo/reviews</a> › <a>Configuration</a> › <b>flightbay-test-d7c9c42a35b58c95-deny-rule</b></div>
+  <div class="card">
+    <div class="objhead">
+      <span class="kind">AuthorizationPolicy</span>
+      <div style="flex:1"><h1 style="font-size:18px">flightbay-test-d7c9c42a35b58c95-deny-rule</h1>
+      <div class="meta"><span class="pill bad">DENY</span> &nbsp;applies to Service <b>reviews</b> · enforced by <b>bookinfo-waypoint</b> · <span class="pill ok">WaypointAccepted</span> · managed by Flightbay</div></div>
+      <span class="btn">YAML</span><span class="btn">Edit</span><span class="btn">Undo</span>
+    </div>
+    <div class="tabs"><a>Summary</a><a class="on">Tests <span class="c">6</span></a><a>Explain a request</a><a>History</a></div>
+  </div>
+
+  <div class="grid">
+    <div style="display:flex;flex-direction:column;gap:16px">
+      <div class="card pad">
+        <h3>The rule, in words</h3>
+        <div class="rule"><b>Deny</b> any request to reviews when header <span class="mono">color</span> equals <span class="mono">red</span>.</div>
+        <div class="sub" style="margin-top:8px">Evaluated at the waypoint, before ALLOW policies. Traffic that bypasses the waypoint is not checked.</div>
+        <h3 style="margin-top:14px">Other policies that also decide for reviews</h3>
+        <div class="rule" style="display:flex;gap:8px;align-items:center"><span class="pill ok">ALLOW</span><span class="mono">reviews-methods</span><span class="sub">GET, HEAD only</span></div>
+        <div class="rule" style="display:flex;gap:8px;align-items:center"><span class="pill info">mTLS</span><span class="mono">istio-system/default</span><span class="sub">PERMISSIVE</span></div>
+      </div>
+      <div class="card pad">
+        <h3>Send test requests from</h3>
+        <div class="src"><span class="chip on">bookinfo/productpage <span class="sub">in mesh</span></span><span class="chip">bookinfo/ratings</span><span class="chip">Temporary pod</span><span class="chip">Outside the mesh</span></div>
+        <div class="sub" style="margin-top:8px">Identity used: <span class="mono">spiffe://cluster.local/ns/bookinfo/sa/bookinfo-productpage</span></div>
+        <h3 style="margin-top:14px">Run on</h3>
+        <div class="src"><span class="chip on">kind-mesh1</span><span class="chip">kind-mesh2 <span class="sub">(policy missing)</span></span></div>
+        <div class="callout i" style="margin-top:12px"><div>ℹ</div><div>Test cases are stored with the policy. They re-run automatically after any change to reviews from Flightbay, and on demand.</div></div>
+      </div>
+    </div>
+
+    <div class="card" style="overflow:hidden">
+      <div class="pad" style="display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--line)">
+        <div style="flex:1"><h2>Test cases</h2><div class="sub">Last run 11:52:09 · 5 of 6 behaved as expected</div></div>
+        <span class="btn">+ Add case</span><span class="btn">Generate from rule</span><span class="btn p">▶ Run all</span>
+      </div>
+      <table>
+        <tr><th style="width:30px"></th><th>Request</th><th>Why this case</th><th>Expect</th><th>Got</th><th>Decided by</th><th></th></tr>
+        <tr><td>✓</td><td class="mono">GET /reviews/0<div class="sub">color: red</div></td><td class="sub">Rule matches</td><td><span class="pill bad">403</span></td><td><span class="pill bad">403</span></td><td class="sub">this policy</td><td class="right"><span class="btn sm g">Log</span></td></tr>
+        <tr><td>✓</td><td class="mono">GET /reviews/0<div class="sub">color: blue</div></td><td class="sub">Different value</td><td><span class="pill ok">200</span></td><td><span class="pill ok">200</span></td><td class="sub">reviews-methods</td><td class="right"><span class="btn sm g">Log</span></td></tr>
+        <tr><td>✓</td><td class="mono">GET /reviews/0<div class="sub">no header</div></td><td class="sub">Header absent</td><td><span class="pill ok">200</span></td><td><span class="pill ok">200</span></td><td class="sub">reviews-methods</td><td class="right"><span class="btn sm g">Log</span></td></tr>
+        <tr><td>✓</td><td class="mono">POST /reviews/0<div class="sub">color: red</div></td><td class="sub">DENY wins over method</td><td><span class="pill bad">403</span></td><td><span class="pill bad">403</span></td><td class="sub">this policy</td><td class="right"><span class="btn sm g">Log</span></td></tr>
+        <tr style="background:var(--amber-bg)"><td style="color:var(--red)">✕</td><td class="mono">GET /reviews/0<div class="sub">color: Red</div></td><td class="sub">Case of value</td><td><span class="pill bad">403</span></td><td><span class="pill ok">200</span></td><td class="sub">reviews-methods</td><td class="right"><span class="btn sm g">Log</span></td></tr>
+        <tr><td>✓</td><td class="mono">GET pod-ip:9080/reviews/0<div class="sub">color: red · direct to pod</div></td><td class="sub">Waypoint bypass</td><td><span class="pill ok">200</span></td><td><span class="pill ok">200</span></td><td class="sub">ztunnel (no L7)</td><td class="right"><span class="btn sm g">Log</span></td></tr>
+      </table>
+      <div class="pad">
+        <div class="callout w"><div>⚠</div><div><b>"color: Red" got through.</b> Header values are matched exactly. If you meant any case, change the rule to a regex or add both values. <a style="color:var(--amber);font-weight:600">Edit rule</a> · <a style="color:var(--amber);font-weight:600">Mark 200 as expected</a></div></div>
+        <div class="callout i" style="margin-top:8px"><div>ℹ</div><div>The bypass case passes because nothing blocks direct pod traffic. That is expected today, but it means this DENY can be skipped. <a style="color:var(--blue);font-weight:600">Fix with "Block traffic that skips the waypoint"</a></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="notes"><h3>Per-policy testing</h3><ol>
+    <li>Every AuthorizationPolicy gets a <b>Tests</b> tab. Cases are generated from the rule: one that matches, near misses (other value, header absent), interaction with other policies on the same target, and a waypoint bypass case.</li>
+    <li>Each case has an <b>expected</b> result, so the outcome is pass/fail rather than a raw status code to interpret. "Decided by" names the policy that made the call (from waypoint RBAC log / reach.Explain).</li>
+    <li>Builds on what exists: Test this rule (prefill), the Test service modal runners (in-mesh curl, temporary pod) and Traffic's Explain. The new part is saving cases and expectations against the policy and re-running them after changes.</li>
+    <li>The "color: Red" failure is an illustration of the kind of thing a suite catches, not something observed in the recording.</li>
+  </ol></div>
+</main></div></body></html>

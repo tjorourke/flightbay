@@ -1,0 +1,244 @@
+{
+  "screen": "01d-all-tasks-list",
+  "mockup_html": "01d-all-tasks-list.html",
+  "mockup_png": "01d-all-tasks-list.png",
+  "required": [
+    {
+      "role": "button",
+      "text": "Test service",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "YAML",
+      "severity": "must"
+    },
+    {
+      "role": "tab",
+      "text": "Configuration",
+      "severity": "must"
+    },
+    {
+      "role": "tab",
+      "text": "Checks",
+      "severity": "must"
+    },
+    {
+      "role": "tab",
+      "text": "Tests",
+      "severity": "must"
+    },
+    {
+      "role": "tab",
+      "text": "Request path",
+      "severity": "must"
+    },
+    {
+      "role": "tab",
+      "text": "Changes",
+      "severity": "must"
+    },
+    {
+      "role": "toggle",
+      "text": "Summary",
+      "severity": "must"
+    },
+    {
+      "role": "toggle",
+      "text": "All tasks",
+      "severity": "must"
+    },
+    {
+      "role": "chip",
+      "text": "Hide unavailable",
+      "severity": "must"
+    },
+    {
+      "role": "toggle",
+      "text": "Cards",
+      "severity": "must"
+    },
+    {
+      "role": "toggle",
+      "text": "List",
+      "severity": "must"
+    },
+    {
+      "role": "heading",
+      "text": "Who can call it?",
+      "severity": "must"
+    },
+    {
+      "role": "pill",
+      "text": "Configured",
+      "severity": "should"
+    },
+    {
+      "role": "link",
+      "text": "Test",
+      "severity": "should"
+    },
+    {
+      "role": "link",
+      "text": "Edit",
+      "severity": "should"
+    },
+    {
+      "role": "pill",
+      "text": "Not set",
+      "severity": "should"
+    },
+    {
+      "role": "link",
+      "text": "Add →",
+      "severity": "should"
+    },
+    {
+      "role": "pill",
+      "text": "Recommended",
+      "severity": "should"
+    },
+    {
+      "role": "pill",
+      "text": "🔒 Not available",
+      "severity": "should"
+    },
+    {
+      "role": "link",
+      "text": "Why?",
+      "severity": "should"
+    },
+    {
+      "role": "heading",
+      "text": "Where does traffic go?",
+      "severity": "must"
+    },
+    {
+      "role": "heading",
+      "text": "Is traffic encrypted?",
+      "severity": "must"
+    },
+    {
+      "role": "pill",
+      "text": "Inherited",
+      "severity": "should"
+    },
+    {
+      "role": "link",
+      "text": "Override →",
+      "severity": "should"
+    },
+    {
+      "role": "heading",
+      "text": "What happens under load or failure?",
+      "severity": "must"
+    },
+    {
+      "role": "heading",
+      "text": "Is it available in other clusters?",
+      "severity": "must"
+    }
+  ],
+  "example": [
+    {
+      "role": "title",
+      "text": "bookinfo/reviews"
+    },
+    {
+      "role": "data",
+      "text": "bookinfo-waypoint"
+    },
+    {
+      "role": "pill",
+      "text": "Ready"
+    },
+    {
+      "role": "toggle",
+      "text": "kind-mesh"
+    },
+    {
+      "role": "toggle",
+      "text": "kind-mesh"
+    },
+    {
+      "role": "data",
+      "text": "1 DENY · color = red"
+    },
+    {
+      "role": "data",
+      "text": "—"
+    },
+    {
+      "role": "data",
+      "text": "—"
+    },
+    {
+      "role": "data",
+      "text": "—"
+    },
+    {
+      "role": "data",
+      "text": "Your DENY can be bypassed today"
+    },
+    {
+      "role": "data",
+      "text": "Not used when a waypoint is in place. Use Allow or deny requests"
+    },
+    {
+      "role": "data",
+      "text": "v1 80% · v2 20%"
+    },
+    {
+      "role": "data",
+      "text": "—"
+    },
+    {
+      "role": "data",
+      "text": "—"
+    },
+    {
+      "role": "data",
+      "text": "—"
+    },
+    {
+      "role": "data",
+      "text": "Endpoints are in one region only"
+    },
+    {
+      "role": "data",
+      "text": "Gateway API has no priority failover"
+    },
+    {
+      "role": "data",
+      "text": "Permissive, from the mesh default"
+    },
+    {
+      "role": "data",
+      "text": "—"
+    },
+    {
+      "role": "data",
+      "text": "—"
+    },
+    {
+      "role": "data",
+      "text": "—"
+    },
+    {
+      "role": "data",
+      "text": "Retry is not in the installed Gateway API version"
+    },
+    {
+      "role": "data",
+      "text": "Needs an agentgateway waypoint or Solo Enterprise Istio"
+    },
+    {
+      "role": "data",
+      "text": "Needs Solo Enterprise Istio and a rate limit service"
+    },
+    {
+      "role": "data",
+      "text": "—"
+    }
+  ]
+}

@@ -1,0 +1,62 @@
+<!doctype html><html><head><meta charset="utf-8"><title>01b Service checks</title><link rel="stylesheet" href="mock.css">
+<style>.ck{display:grid;grid-template-columns:34px 1fr 150px 190px;gap:10px;align-items:center;padding:11px 16px;border-bottom:1px solid #eef0f3}
+.ck .t{font-weight:600}.open{background:#fffaf0}</style></head><body>
+<div class="app">
+<aside class="side">
+  <div class="logo"><i>F</i>flightbay</div>
+  <div class="ws"><b>Live</b>kind-mesh1, kind-mesh2 · read-only</div>
+  <div class="nav">
+    <a class="off">Overview</a><a class="off">Resources</a><a class="off">RBAC</a><a class="off">Log explorer</a><a class="off">Timeline</a>
+    <div class="nav-h">Connectivity</div>
+    <a class="on">Istio Ambient</a><a class="off">Traffic</a>
+    <div class="nav-h">Diagnostics</div>
+    <a class="off">Findings <span class="n">23</span></a><a class="off">Scorecard</a><a class="off">Compare</a><a class="off">Proxy diagnostics</a><a class="off">Coverage</a>
+  </div>
+</aside>
+<main class="main">
+  <div class="top"><div class="crumb">Workspace / Live kind-mesh1, kind-mesh2 / <b>ambient</b></div><div class="search">Search objects… ⌘K</div><div class="sel">All clusters ▾</div></div>
+  <div class="bc"><a>Istio Ambient</a> › <a>Services</a> › <b>bookinfo/reviews</b></div>
+  <div class="card">
+    <div class="objhead">
+      <span class="kind">Service</span>
+      <div style="flex:1"><h1>bookinfo/reviews</h1><div class="meta">port 9080 · 3 workloads (v1, v2, v3) · in ambient · waypoint <span class="mono">bookinfo-waypoint</span> <span class="pill ok">Ready 1/1</span></div></div>
+      <span class="btn">Test service</span><span class="btn">YAML</span>
+    </div>
+    <div class="tabs"><a>Configuration <span class="c">2</span></a><a class="on">Checks <span class="c">1 warning</span></a><a>Tests <span class="c">11</span></a><a>Request path</a><a>Changes <span class="c">4</span></a></div>
+    <div class="mode">
+      <span>Cluster</span><span class="seg"><span class="on">kind-mesh1</span><span>kind-mesh2</span><span>Compare</span></span>
+      <span style="margin-left:12px"><span class="dot"></span> Reading the live mirror · updated 1s ago</span>
+      <span style="flex:1"></span><span class="seg"><span class="on">Problems 1</span><span>All 24</span></span>
+    </div>
+
+    <div class="ck open">
+      <span class="pill warn">!</span>
+      <div><div class="t">L7 policies can be bypassed</div><div class="sub">reviews has a DENY enforced by the waypoint, but no ztunnel policy stops callers reaching the Pods directly. Pod-IP traffic is not checked.</div></div>
+      <span class="sub">Access · ztunnel</span>
+      <div class="right nowrap"><span class="btn sm">Evidence</span> <span class="btn sm p">Fix: block bypass…</span></div>
+    </div>
+    <div style="padding:10px 16px 14px 60px;background:#fffaf0;border-bottom:1px solid var(--line)">
+      <div class="sub" style="margin-bottom:6px">What Flightbay looked at</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <span class="chip"><span class="kind">AuthorizationPolicy</span> flightbay-test-d7c9…-deny-rule · waypoint</span>
+        <span class="chip">No ztunnel AuthorizationPolicy selecting <span class="mono">app=reviews</span></span>
+        <span class="chip">Test case "waypoint bypass" returned 200</span>
+      </div>
+    </div>
+
+    <div style="padding:8px 16px;background:#fafbfc;border-bottom:1px solid var(--line)" class="sub">PASSED · 23 checks, grouped</div>
+    <div class="ck"><span class="pill ok">✓</span><div><div class="t">Enrolled in ambient</div><div class="sub">Namespace bookinfo has istio.io/dataplane-mode=ambient · ztunnel ready on 3 nodes</div></div><span class="sub">Data plane</span><div class="right"><span class="btn sm g">5 checks ▸</span></div></div>
+    <div class="ck"><span class="pill ok">✓</span><div><div class="t">Waypoint in use and healthy</div><div class="sub">bookinfo-waypoint via namespace label · Programmed · handles service traffic</div></div><span class="sub">Waypoint</span><div class="right"><span class="btn sm g">6 checks ▸</span></div></div>
+    <div class="ck"><span class="pill ok">✓</span><div><div class="t">Policies bound and enforced</div><div class="sub">1 AuthorizationPolicy · WaypointAccepted · no accepted-but-not-enforced policies</div></div><span class="sub">Access</span><div class="right"><span class="btn sm g">4 checks ▸</span></div></div>
+    <div class="ck"><span class="pill ok">✓</span><div><div class="t">Routes accepted and backends ready</div><div class="sub">1 HTTPRoute · Accepted · ResolvedRefs · v1 and v2 have ready endpoints</div></div><span class="sub">Routing</span><div class="right"><span class="btn sm g">5 checks ▸</span></div></div>
+    <div class="ck" style="border:0"><span class="pill ok">✓</span><div><div class="t">DNS resolves</div><div class="sub">reviews.bookinfo.svc.cluster.local → 10.96.41.12 from in-mesh Pods</div></div><span class="sub">DNS</span><div class="right"><span class="btn sm g">3 checks ▸</span></div></div>
+  </div>
+
+  <div class="notes"><h3>Checks tab (was Investigate)</h3><ol>
+    <li>Same object, same header, same cluster strip as Configuration. Moving between "what is wrong" and "change it" no longer changes page, tab bar or target.</li>
+    <li>Opens on <b>Problems</b> (follow-up task #4). Passing checks are grouped by area with a count, so 24 rows become 5.</li>
+    <li>Each problem says what Flightbay looked at in one line of chips, instead of a separate "View evidence / Check details · captured fields" view.</li>
+    <li>"Fix…" opens the same one-task drawer as Configuration, pre-filled. Remedies and Configure stop being two flows.</li>
+    <li>DNS gets one verdict line here instead of four widgets (follow-up task #8).</li>
+  </ol></div>
+</main></div></body></html>

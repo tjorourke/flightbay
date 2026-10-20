@@ -1,0 +1,214 @@
+{
+  "screen": "04-authorizationpolicy-tests",
+  "mockup_html": "04-authorizationpolicy-tests.html",
+  "mockup_png": "04-authorizationpolicy-tests.png",
+  "required": [
+    {
+      "role": "pill",
+      "text": "DENY",
+      "severity": "should"
+    },
+    {
+      "role": "button",
+      "text": "YAML",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "Edit",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "Undo",
+      "severity": "must"
+    },
+    {
+      "role": "tab",
+      "text": "Summary",
+      "severity": "must"
+    },
+    {
+      "role": "tab",
+      "text": "Tests",
+      "severity": "must"
+    },
+    {
+      "role": "tab",
+      "text": "Explain a request",
+      "severity": "must"
+    },
+    {
+      "role": "tab",
+      "text": "History",
+      "severity": "must"
+    },
+    {
+      "role": "heading",
+      "text": "The rule, in words",
+      "severity": "must"
+    },
+    {
+      "role": "heading",
+      "text": "Other policies that also decide for reviews",
+      "severity": "must"
+    },
+    {
+      "role": "pill",
+      "text": "ALLOW",
+      "severity": "should"
+    },
+    {
+      "role": "heading",
+      "text": "Send test requests from",
+      "severity": "must"
+    },
+    {
+      "role": "chip",
+      "text": "Temporary pod",
+      "severity": "must"
+    },
+    {
+      "role": "chip",
+      "text": "Outside the mesh",
+      "severity": "must"
+    },
+    {
+      "role": "heading",
+      "text": "Run on",
+      "severity": "must"
+    },
+    {
+      "role": "heading",
+      "text": "Test cases",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "+ Add case",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "Generate from rule",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "▶ Run all",
+      "severity": "must"
+    },
+    {
+      "role": "column",
+      "text": "Request",
+      "severity": "must"
+    },
+    {
+      "role": "column",
+      "text": "Why this case",
+      "severity": "must"
+    },
+    {
+      "role": "column",
+      "text": "Expect",
+      "severity": "must"
+    },
+    {
+      "role": "column",
+      "text": "Got",
+      "severity": "must"
+    },
+    {
+      "role": "column",
+      "text": "Decided by",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "Log",
+      "severity": "must"
+    }
+  ],
+  "example": [
+    {
+      "role": "title",
+      "text": "flightbay-test-d7c9c42a35b58c95-deny-rule"
+    },
+    {
+      "role": "pill",
+      "text": "WaypointAccepted"
+    },
+    {
+      "role": "data",
+      "text": "color"
+    },
+    {
+      "role": "data",
+      "text": "red"
+    },
+    {
+      "role": "data",
+      "text": "reviews-methods"
+    },
+    {
+      "role": "pill",
+      "text": "mTLS"
+    },
+    {
+      "role": "data",
+      "text": "istio-system/default"
+    },
+    {
+      "role": "chip",
+      "text": "bookinfo/productpage"
+    },
+    {
+      "role": "chip",
+      "text": "bookinfo/ratings"
+    },
+    {
+      "role": "data",
+      "text": "spiffe://cluster.local/ns/bookinfo/sa/bookinfo-productpage"
+    },
+    {
+      "role": "chip",
+      "text": "kind-mesh1"
+    },
+    {
+      "role": "chip",
+      "text": "kind-mesh2"
+    },
+    {
+      "role": "data",
+      "text": "GET /reviews/0"
+    },
+    {
+      "role": "pill",
+      "text": "403"
+    },
+    {
+      "role": "data",
+      "text": "GET /reviews/0"
+    },
+    {
+      "role": "pill",
+      "text": "200"
+    },
+    {
+      "role": "data",
+      "text": "GET /reviews/0"
+    },
+    {
+      "role": "data",
+      "text": "POST /reviews/0"
+    },
+    {
+      "role": "data",
+      "text": "GET /reviews/0"
+    },
+    {
+      "role": "data",
+      "text": "GET pod-ip:9080/reviews/0"
+    }
+  ]
+}

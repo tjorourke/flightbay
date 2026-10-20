@@ -1,0 +1,71 @@
+<!doctype html><html><head><meta charset="utf-8"><title>02 Configuration inventory</title><link rel="stylesheet" href="mock.css"></head><body>
+<div class="app">
+<aside class="side">
+  <div class="logo"><i>F</i>flightbay</div>
+  <div class="ws"><b>Live</b>kind-mesh1, kind-mesh2 · read-only</div>
+  <div class="nav">
+    <a class="off">Overview</a><a class="off">Resources</a><a class="off">RBAC</a><a class="off">Log explorer</a><a class="off">Timeline</a>
+    <div class="nav-h">Connectivity</div>
+    <a class="on">Istio Ambient</a><a class="off">Traffic</a>
+    <div class="nav-h">Diagnostics</div>
+    <a class="off">Findings <span class="n">23</span></a><a class="off">Scorecard</a><a class="off">Compare</a><a class="off">Proxy diagnostics</a><a class="off">Coverage</a>
+  </div>
+</aside>
+<main class="main">
+  <div class="top"><div class="crumb">Workspace / Live kind-mesh1, kind-mesh2 / <b>ambient</b></div><div class="search">Search objects… ⌘K</div><div class="sel">All clusters ▾</div></div>
+  <div class="amhead"><h1>Istio Ambient</h1><div class="amtabs"><a class="">Overview</a><a class="on">Policies &amp; routes<span class="c">41</span></a><a class="">Map</a><a class="">Request path</a><a class="">Changes<span class="c">22</span></a></div><span style="flex:1"></span><span class="btn">Docs ↗</span></div>
+
+  <div style="display:flex;align-items:flex-end;gap:12px;margin-bottom:12px">
+    <div style="flex:1"><h2 style="font-size:16px">All policies and routes</h2><div class="muted">Every ambient policy, route and waypoint in the connected clusters, with what it applies to. 41 objects across 2 clusters.</div></div>
+    <span class="btn">Export YAML</span>
+  </div>
+
+  <div class="card" style="padding:10px 12px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px">
+    <div class="input" style="width:260px;color:var(--muted)">Filter by name, kind or target</div>
+    <span class="muted" style="margin-left:6px">Scope</span>
+    <span class="chip on">bookinfo ✕</span>
+    <span class="muted" style="margin-left:6px">Type</span>
+    <span class="chip on">Access</span><span class="chip on">Routing</span><span class="chip">Resilience</span><span class="chip">Transport</span><span class="chip">Waypoints</span>
+    <span class="muted" style="margin-left:6px">Show</span>
+    <span class="chip">Only problems</span><span class="chip">Only drift</span><span class="chip">Managed by Flightbay</span>
+    <span style="flex:1"></span>
+    <span class="seg"><span class="on">By object</span><span>By Service</span></span>
+  </div>
+
+  <div class="card" style="overflow:hidden;position:relative">
+  <table>
+    <tr><th>Kind / name</th><th>Applies to <span class="annot" style="position:static;display:inline-grid;width:17px;height:17px;font-size:10px;vertical-align:middle">1</span></th><th>Effect</th><th>Enforced by</th><th>kind-mesh1 <span class="annot" style="position:static;display:inline-grid;width:17px;height:17px;font-size:10px;vertical-align:middle">2</span></th><th>kind-mesh2</th><th>Managed by <span class="annot" style="position:static;display:inline-grid;width:17px;height:17px;font-size:10px;vertical-align:middle">3</span></th><th class="right"></th></tr>
+    <tr class="grp"><td colspan="8">bookinfo/reviews · 3 objects</td></tr>
+    <tr><td><span class="kind">AuthorizationPolicy</span><div class="t mono" style="margin-top:3px">flightbay-test-d7c9…-deny-rule</div></td>
+      <td>Service <b>reviews</b></td><td><span class="pill bad">DENY</span> header color = red</td><td>waypoint</td>
+      <td><span class="pill ok">Applied</span></td><td><span class="pill mut">Missing</span></td><td><span class="pill tl">Flightbay</span></td><td class="right nowrap"><span class="btn sm">Test</span> <span class="btn sm">Open</span></td></tr>
+    <tr><td><span class="kind">HTTPRoute</span><div class="t mono" style="margin-top:3px">flightbay-test-f451…-route</div></td>
+      <td>Service <b>reviews</b> :9080</td><td>Split v1 80 / v2 20</td><td>waypoint</td>
+      <td><span class="pill ok">Accepted</span></td><td><span class="pill mut">Missing</span></td><td><span class="pill tl">Flightbay</span></td><td class="right nowrap"><span class="btn sm">Test</span> <span class="btn sm">Open</span></td></tr>
+    <tr><td><span class="kind">PeerAuthentication</span><div class="t mono" style="margin-top:3px">istio-system/default</div></td>
+      <td>Whole mesh <span class="sub">(inherited)</span></td><td>mTLS PERMISSIVE</td><td>ztunnel</td>
+      <td><span class="pill ok">Applied</span></td><td><span class="pill ok">Applied</span></td><td><span class="pill mut">Helm</span></td><td class="right"><span class="btn sm">Open</span></td></tr>
+    <tr class="grp"><td colspan="8">bookinfo/ratings · 2 objects</td></tr>
+    <tr><td><span class="kind">AuthorizationPolicy</span><div class="t mono" style="margin-top:3px">ratings-allow-reviews</div></td>
+      <td>Service <b>ratings</b></td><td><span class="pill ok">ALLOW</span> from SA bookinfo-reviews</td><td>waypoint</td>
+      <td><span class="pill ok">Applied</span></td><td><span class="pill warn">Differs</span></td><td><span class="pill mut">Argo CD</span></td><td class="right nowrap"><span class="btn sm">Diff</span> <span class="btn sm">Open</span></td></tr>
+    <tr><td><span class="kind">AuthorizationPolicy</span><div class="t mono" style="margin-top:3px">ratings-l4</div></td>
+      <td>Pods <span class="mono">app=ratings</span></td><td><span class="pill ok">ALLOW</span> from waypoint SA only</td><td>ztunnel</td>
+      <td><span class="pill ok">Applied</span></td><td><span class="pill ok">Applied</span></td><td><span class="pill mut">kubectl</span></td><td class="right"><span class="btn sm">Open</span></td></tr>
+    <tr class="grp"><td colspan="8">bookinfo (namespace-wide) · 2 objects</td></tr>
+    <tr><td><span class="kind">Gateway</span><div class="t mono" style="margin-top:3px">bookinfo-waypoint</div></td>
+      <td>Namespace <b>bookinfo</b> (use-waypoint label)</td><td>Istio waypoint, 7 Services</td><td>—</td>
+      <td><span class="pill ok">Programmed</span></td><td><span class="pill ok">Programmed</span></td><td><span class="pill mut">kubectl</span></td><td class="right"><span class="btn sm">Open</span></td></tr>
+    <tr><td><span class="kind">AuthorizationPolicy</span><div class="t mono" style="margin-top:3px">orphan-productpage-v0</div></td>
+      <td><span class="pill bad">Targets nothing</span> <span class="sub">Service productpage-v0 not found</span></td><td><span class="pill ok">ALLOW</span> GET /</td><td>—</td>
+      <td><span class="pill warn">Not enforced</span></td><td><span class="pill mut">Missing</span></td><td><span class="pill mut">kubectl</span></td><td class="right nowrap"><span class="btn sm">Explain</span></td></tr>
+  </table>
+  </div>
+
+  <div class="notes"><h3>Why this page</h3><ol>
+    <li><b>"Applies to" in words.</b> The scope Flightbay already computes (targetRefs, selector, namespace, root namespace) becomes a column, so you never have to read targetRefs to know what a policy hits. Broken targets are flagged.</li>
+    <li><b>One column per connected cluster.</b> Drift shows straight away: the split and the DENY exist in kind-mesh1 only. "Differs" opens a field diff. Uses the live mirror, so it costs nothing extra.</li>
+    <li><b>Managed by.</b> Read from managedFields / labels (Flightbay, Helm, Argo CD, kubectl). This tells you whether editing in Flightbay will be fought by GitOps.</li>
+    <li>Covers the ambient kinds only: AuthorizationPolicy, PeerAuthentication, RequestAuthentication, HTTPRoute, DestinationRule, waypoint Gateways and agentgateway policies on waypoints. Clicking a group header opens that Service in Ambient. Replaces the per-Service "Existing configuration" table hidden in the Attachment map.</li>
+  </ol></div>
+</main></div></body></html>

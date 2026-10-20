@@ -1,0 +1,138 @@
+{
+  "screen": "05-httproute-tests",
+  "mockup_html": "05-httproute-tests.html",
+  "mockup_png": "05-httproute-tests.png",
+  "required": [
+    {
+      "role": "button",
+      "text": "YAML",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "Edit split",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "Undo",
+      "severity": "must"
+    },
+    {
+      "role": "tab",
+      "text": "Summary",
+      "severity": "must"
+    },
+    {
+      "role": "tab",
+      "text": "Tests",
+      "severity": "must"
+    },
+    {
+      "role": "tab",
+      "text": "Explain a request",
+      "severity": "must"
+    },
+    {
+      "role": "tab",
+      "text": "History",
+      "severity": "must"
+    },
+    {
+      "role": "heading",
+      "text": "Rule 1 · split",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "▶ Run",
+      "severity": "must"
+    },
+    {
+      "role": "heading",
+      "text": "Match cases",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "+ Add case",
+      "severity": "must"
+    },
+    {
+      "role": "column",
+      "text": "Request",
+      "severity": "must"
+    },
+    {
+      "role": "column",
+      "text": "Expect",
+      "severity": "must"
+    },
+    {
+      "role": "column",
+      "text": "Got",
+      "severity": "must"
+    },
+    {
+      "role": "heading",
+      "text": "Other checks on this route",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "Copy →",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "+ Add",
+      "severity": "must"
+    }
+  ],
+  "example": [
+    {
+      "role": "title",
+      "text": "flightbay-test-f45172c71264f530-route"
+    },
+    {
+      "role": "pill",
+      "text": "Accepted"
+    },
+    {
+      "role": "pill",
+      "text": "ResolvedRefs"
+    },
+    {
+      "role": "pill",
+      "text": "✓"
+    },
+    {
+      "role": "data",
+      "text": "reviews-v1-7f…"
+    },
+    {
+      "role": "data",
+      "text": "reviews-v2-5c…"
+    },
+    {
+      "role": "data",
+      "text": "GET /reviews/0"
+    },
+    {
+      "role": "data",
+      "text": "GET /health"
+    },
+    {
+      "role": "data",
+      "text": "GET reviews-v1:9080/reviews/0"
+    },
+    {
+      "role": "pill",
+      "text": "!"
+    },
+    {
+      "role": "pill",
+      "text": "–"
+    }
+  ]
+}

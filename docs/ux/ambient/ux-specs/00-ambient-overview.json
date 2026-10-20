@@ -1,0 +1,214 @@
+{
+  "screen": "00-ambient-overview",
+  "mockup_html": "00-ambient-overview.html",
+  "mockup_png": "00-ambient-overview.png",
+  "required": [
+    {
+      "role": "tab",
+      "text": "Overview",
+      "severity": "must"
+    },
+    {
+      "role": "tab",
+      "text": "Policies & routes",
+      "severity": "must"
+    },
+    {
+      "role": "tab",
+      "text": "Map",
+      "severity": "must"
+    },
+    {
+      "role": "tab",
+      "text": "Request path",
+      "severity": "must"
+    },
+    {
+      "role": "tab",
+      "text": "Changes",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "Docs ↗",
+      "severity": "must"
+    },
+    {
+      "role": "heading",
+      "text": "Needs attention",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "Open checks",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "Fix…",
+      "severity": "must"
+    },
+    {
+      "role": "heading",
+      "text": "Services in the mesh",
+      "severity": "must"
+    },
+    {
+      "role": "chip",
+      "text": "kagent",
+      "severity": "must"
+    },
+    {
+      "role": "chip",
+      "text": "agentgateway-system",
+      "severity": "must"
+    },
+    {
+      "role": "chip",
+      "text": "+ 3",
+      "severity": "must"
+    },
+    {
+      "role": "column",
+      "text": "Service",
+      "severity": "must"
+    },
+    {
+      "role": "column",
+      "text": "Waypoint",
+      "severity": "must"
+    },
+    {
+      "role": "column",
+      "text": "Access",
+      "severity": "must"
+    },
+    {
+      "role": "column",
+      "text": "Routing",
+      "severity": "must"
+    },
+    {
+      "role": "column",
+      "text": "Resilience",
+      "severity": "must"
+    },
+    {
+      "role": "column",
+      "text": "Checks",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "Open",
+      "severity": "must"
+    },
+    {
+      "role": "button",
+      "text": "Namespace settings",
+      "severity": "must"
+    }
+  ],
+  "example": [
+    {
+      "role": "title",
+      "text": "Istio Ambient"
+    },
+    {
+      "role": "pill",
+      "text": "✕"
+    },
+    {
+      "role": "data",
+      "text": "app=details"
+    },
+    {
+      "role": "pill",
+      "text": "!"
+    },
+    {
+      "role": "chip",
+      "text": "bookinfo"
+    },
+    {
+      "role": "column",
+      "text": "kind-mesh1"
+    },
+    {
+      "role": "column",
+      "text": "kind-mesh2"
+    },
+    {
+      "role": "data",
+      "text": "bookinfo-waypoint"
+    },
+    {
+      "role": "pill",
+      "text": "✓"
+    },
+    {
+      "role": "pill",
+      "text": "Pass"
+    },
+    {
+      "role": "data",
+      "text": "bookinfo-waypoint"
+    },
+    {
+      "role": "pill",
+      "text": "1 DENY"
+    },
+    {
+      "role": "pill",
+      "text": "split 80/20"
+    },
+    {
+      "role": "pill",
+      "text": "differs"
+    },
+    {
+      "role": "pill",
+      "text": "1 warning"
+    },
+    {
+      "role": "data",
+      "text": "bookinfo-waypoint"
+    },
+    {
+      "role": "pill",
+      "text": "1 ALLOW"
+    },
+    {
+      "role": "pill",
+      "text": "L4 lock"
+    },
+    {
+      "role": "pill",
+      "text": "outlier"
+    },
+    {
+      "role": "data",
+      "text": "bookinfo-waypoint"
+    },
+    {
+      "role": "pill",
+      "text": "no endpoints"
+    },
+    {
+      "role": "pill",
+      "text": "1 failed"
+    },
+    {
+      "role": "data",
+      "text": "bookinfo-waypoint"
+    },
+    {
+      "role": "data",
+      "text": "bookinfo-waypoint"
+    },
+    {
+      "role": "data",
+      "text": "bookinfo-waypoint"
+    }
+  ]
+}
