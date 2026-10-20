@@ -138,6 +138,7 @@ func (s *Server) ambientPlan(w http.ResponseWriter, r *http.Request) {
 		jerr(w, 400, err.Error())
 		return
 	}
+	ambient.AnnotatePlan(s.WS, plan)
 	writeJSON(w, 200, plan)
 }
 func (s *Server) ambientContexts(w http.ResponseWriter, r *http.Request) {

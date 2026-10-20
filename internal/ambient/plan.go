@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"time"
 
@@ -25,6 +26,9 @@ type Backend struct {
 	Weight int    `json:"weight"`
 }
 type Request struct {
+	// Name optionally names the primary generated resource. It must be a
+	// DNS-1123 label. The default is <service>-<task> for a single task.
+	Name               string                 `json:"name,omitempty"`
 	Resilience         *ResilienceRequest     `json:"resilience,omitempty"`
 	CircuitBreaker     *CircuitBreakerRequest `json:"circuitBreaker,omitempty"`
 	Demo               *BookinfoRequest       `json:"demo,omitempty"`
@@ -137,6 +141,10 @@ type Plan struct {
 	YAML       string           `json:"yaml"`
 	Notes      []string         `json:"notes"`
 	Evidence   []Evidence       `json:"evidence"`
+	// Effects and Interactions describe what the change does and how it
+	// combines with existing configuration. Set by AnnotatePlan.
+	Effects      []string      `json:"effects"`
+	Interactions []Interaction `json:"interactions"`
 }
 
 func hasResource(ws *store.Workspace, c, g, r string) bool {
@@ -315,7 +323,10 @@ func generate(ws *store.Workspace, req Request) (*Plan, error) {
 	encoded, _ := json.Marshal(inputs)
 	sum := sha256.Sum256(encoded)
 	id := hex.EncodeToString(sum[:])[:16]
-	name := "flightbay-test-" + id
+	name, explicit, err := resourceName(req, id)
+	if err != nil {
+		return nil, err
+	}
 	p := &Plan{ID: id, Request: req, ServiceUID: S(Path(svc.Obj, "metadata", "uid")), Objects: []map[string]any{}, Notes: []string{"Generated from this workspace. Validate against the explicitly selected real kubeconfig context before applying.", "New traffic resources use owned names and cannot overwrite existing objects. Existing edits are shown as scoped field changes with undo.", "Policies and routes can change real traffic. Existing ALLOW policies are additive and existing routes may take precedence."}, Evidence: []Evidence{evidence(svc, "spec", svc.Obj["spec"])}}
 	if selected["l4-default-deny"] || selected["l4-allow-namespace"] || selected["strict-mtls"] {
 		p.Notes = append(p.Notes, "L4 workload-selector policies affect every Service targeting those Pods, not only the selected Service VIP.")
@@ -324,7 +335,11 @@ func generate(ws *store.Workspace, req Request) (*Plan, error) {
 		p.Notes = append(p.Notes, "Waypoint L7 policies only apply to traffic that traverses that waypoint. Direct Pod-IP traffic or other bypass paths need separate L4 controls.")
 	}
 	obj := func(api, kind, suffix string, spec map[string]any) {
-		p.Objects = append(p.Objects, map[string]any{"apiVersion": api, "kind": kind, "metadata": map[string]any{"name": name + suffix, "namespace": req.Namespace, "labels": map[string]any{"app.kubernetes.io/managed-by": "flightbay", "flightbay.dev/test-id": id}}, "spec": spec})
+		objName := name + suffix
+		if explicit && len(p.Objects) == 0 {
+			objName = name // the primary resource carries the chosen name exactly
+		}
+		p.Objects = append(p.Objects, map[string]any{"apiVersion": api, "kind": kind, "metadata": map[string]any{"name": objName, "namespace": req.Namespace, "labels": map[string]any{"app.kubernetes.io/managed-by": "flightbay", "flightbay.dev/test-id": id}}, "spec": spec})
 	}
 	sel := map[string]any{"matchLabels": Path(svc.Obj, "spec", "selector")}
 	if selected["l4-default-deny"] {
@@ -580,6 +595,35 @@ func generate(ws *store.Workspace, req Request) (*Plan, error) {
 	}
 	return p, nil
 }
+
+var dns1123Label = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
+
+// ValidResourceName reports whether s is a DNS-1123 label (at most 63 characters).
+func ValidResourceName(s string) bool { return len(s) <= 63 && dns1123Label.MatchString(s) }
+
+// resourceName chooses the base name for generated resources. A requested
+// name, or <service>-<task> for one task, names the primary resource exactly;
+// further resources add their suffix. Edits never rename existing resources and
+// multi-task requests keep the hash-based name so their objects stay distinct.
+func resourceName(req Request, id string) (name string, explicit bool, err error) {
+	legacy := "flightbay-test-" + id
+	if req.Edit != nil {
+		return legacy, false, nil
+	}
+	if req.Name != "" {
+		if !ValidResourceName(req.Name) {
+			return "", false, fmt.Errorf("%q is not a valid name. Use lowercase letters, digits and hyphens, starting and ending with a letter or digit, up to 63 characters", req.Name)
+		}
+		return req.Name, true, nil
+	}
+	if len(req.Tasks) == 1 {
+		if d := req.Service + "-" + req.Tasks[0]; ValidResourceName(d) {
+			return d, true, nil
+		}
+	}
+	return legacy, false, nil
+}
+
 func contains(xs []string, s string) bool {
 	for _, x := range xs {
 		if x == s {

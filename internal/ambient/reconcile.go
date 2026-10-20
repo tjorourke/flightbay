@@ -34,7 +34,7 @@ func ReconcilePlan(ws *store.Workspace, p *Plan) (*Plan, error) {
 			continue
 		}
 		if !flightbayOwned(current) {
-			return nil, fmt.Errorf("%s %s/%s already exists and is not Flightbay-owned; select that existing configuration to review an explicit edit", kind, ns, name)
+			return nil, fmt.Errorf("A %s named %s/%s already exists and is not managed by Flightbay. Choose another name.", kind, ns, name)
 		}
 		values := map[string]any{}
 		configurationFields(kind, "/spec", current.Obj["spec"], desired["spec"], values)

@@ -1,0 +1,15 @@
+import {createRequire} from 'node:module';
+const require = createRequire('/Users/thomasorourke/.claude/skills/gstack/');
+const {chromium} = require('playwright-core');
+const [url, js] = process.argv.slice(2);
+const b = await chromium.launch({executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true});
+const ctx = await b.newContext({viewport: {width: 1600, height: 1000}});
+await ctx.addCookies([{name: 'flightbay-theme', value: 'light', domain: '127.0.0.1', path: '/'}]);
+await ctx.addInitScript(() => { try { localStorage.setItem('flightbay.amv2', '1'); } catch (e) {} });
+const p = await ctx.newPage();
+p.on('console', m => console.log('console:', m.text()));
+p.on('pageerror', e => console.log('PAGEERROR', String(e)));
+await p.goto(url, {waitUntil: 'load'});
+await p.waitForTimeout(3500);
+console.log(JSON.stringify(await p.evaluate(js), null, 1));
+await b.close();
