@@ -23,6 +23,11 @@ function amGlobalClusterChoices(svc){
 // names the controller generated, and a per-cluster choice to keep it, stop
 // publishing or start publishing. Clusters left on "keep" are not touched.
 function amGlobalPublished(svc){return amGlobalTargets(svc).some(r=>r.global||r.cleanup);}
+function amPublicationConfigurationCard(svc){
+  const rows=amGlobalTargets(svc),published=rows.filter(r=>r.global);if(!published.length&&!rows.some(r=>r.cleanup))return '';
+  const routing=amGlobalRouting(svc),names=[...new Set(published.flatMap(r=>r.service.globalHosts||r.publication?.globalNames||[]))],routes=(S.ambient.result?.editable||[]).filter(e=>e.ref.kind==='HTTPRoute'),label=AM_GLOBAL_DIST.find(d=>d[0]===routing.distribution)?.[1]||routing.distribution;
+  return `<section class="am-publication-config"><div class="row between wrap"><h3>Global Service configuration <span class="badge">${published.length} clusters</span></h3><button class="primary" data-am-global-config>Edit global publication</button></div><article class="am-policy-card"><div class="row wrap"><span class="badge">Service labels</span><strong>${esc(svc.namespace+'/'+svc.name)}</strong><span class="badge blue">${published.length?'Published globally':'Publication cleanup'}</span></div><p>Published from ${esc(published.map(r=>r.cluster).join(', ')||'no cluster')}. ${esc(label)}.${routing.mixed?' Settings differ between clusters.':''}</p><p>${names.map(n=>`<code>${esc(n)}</code>`).join(' ')}</p><div class="am-publication-clusters">${published.map(r=>`<div><strong>${esc(r.cluster)}</strong><span>${r.service.takeover?'Local DNS included':'Global DNS only'}</span><small>${esc(amPublicationEvidenceLabel(r))}</small></div>`).join('')}</div><p class="muted">Publication is configured on the Service; the mesh generates ServiceEntries. It is not a separate security policy and does not copy authorisation rules between clusters.</p>${routes.length?`<div class="notice info"><div><strong>Explicit HTTP routes still apply</strong><p>Local-name takeover does not rewrite an HTTPRoute’s backend references. Matching requests can still be routed to local version Services, even when the global name has healthy remote endpoints.</p>${routes.map(r=>`<button class="link" data-amyaml="${attr(r.ref)}">${esc(r.ref.namespace+'/'+r.ref.name)}</button>`).join(' ')}</div></div>`:''}</article></section>`;
+}
 function amGlobalEdits(){return S.ambient.settings.globalEdits||{};}
 function amGlobalPendingEdits(svc){
   const e=amGlobalEdits(),r=amGlobalRouting(svc),wantDist=S.ambient.settings.globalDistribution??r.distribution,wantTake=S.ambient.settings.globalTakeover;
@@ -49,7 +54,7 @@ function amGlobalRoutingMarkup(svc){
     <div class="am-global-choice am-global-dist" role="radiogroup" aria-label="Traffic distribution">${AM_GLOBAL_DIST.map(([v,l,d])=>`<label><input type="radio" name="am-global-dist" data-amglobaldist value="${v}" ${dist===v?'checked':''}> <span><strong>${esc(l)}</strong><small>${esc(d)}</small></span></label>`).join('')}</div>
     ${dist==='weighted'?amGlobalWeightsMarkup(svc):''}
     ${dist==='Any'?'<p class="muted">Spread is per endpoint, not per cluster: 3 Pods in one cluster and 1 in another is about 75/25. ztunnel balances per connection, so a client that reuses one connection stays on one backend; a waypoint balances per request.</p>':''}
-    <label class="row am-global-takeover"><input type="checkbox" id="am-global-takeover" ${take?'checked':''}> <span>Send the local name to the global Service too <small class="muted"><code>solo.io/service-takeover=true</code>: requests for <code>${esc(svc.name+'.'+svc.namespace+'.svc.cluster.local')}</code> use every cluster's endpoints, not just this cluster's.</small></span></label>
+    <label class="row am-global-takeover"><input type="checkbox" id="am-global-takeover" ${take?'checked':''}> <span>Send the local name to the global Service too <small class="muted"><code>solo.io/service-takeover=true</code>: makes global endpoints available to <code>${esc(svc.name+'.'+svc.namespace+'.svc.cluster.local')}</code>. Explicit HTTPRoute backends and authorisation policies still apply.</small></span></label>
   </section>`;
 }
 function amGlobalCurrentConfig(svc){
@@ -100,7 +105,7 @@ async function amGenerateGlobalBatch(){
     try{row.plan=await apiPost('api/ambient/plan',{cluster,namespace:svc.namespace,service:svc.name,tasks:['global-service'],...(action==='unpublish'?{unpublish:true}:amGlobalRoutingRequest(svc))});if(!row.plan.changes?.length&&!row.plan.objects.length)row.state=action==='unpublish'?'Already local':'Already global';}catch(e){row.error=e.message;row.state='Preview failed';}
     rows.push(row);
   }
-  A.globalBatch=rows;A.plan=null;A.validation=null;A.phase=3;
+  A.globalBatch=rows;A.batchKind='global';A.plan=null;A.validation=null;A.phase=3;
 }
 function amGlobalBatchPanel(){
   const A=S.ambient,rows=A.globalBatch;
@@ -108,7 +113,7 @@ function amGlobalBatchPanel(){
   const pending=rows.filter(r=>r.plan&&!r.applied&&(r.plan.changes?.length||r.plan.objects.length));
   const failedPreview=rows.some(r=>!r.plan);
   return `<section class="panel am-review am-global-review">
-    <div class="panel-head"><div><h2>Review global publication · ${esc(amService().namespace+'/'+amService().name)}</h2><p>Separate plans and operations per cluster. Clusters you left unchanged are not touched.</p></div><button id="am-back-options">← Edit clusters</button></div>
+    <div class="panel-head"><div><h2>Review ${A.batchKind==='configuration'?'configuration':'global publication'} · ${esc(amService()?.namespace||amTarget()?.namespace||'')}/${esc(amService()?.name||amTarget()?.name||'')}</h2><p>Separate plans and operations per cluster. Clusters you left unchanged are not touched.</p></div><button id="am-back-options">← Edit clusters</button></div>
     <div class="panel-body"><p>Live cluster connections are reused automatically. Review and apply runs any required server dry-runs, then opens the final confirmation. Failures in one row do not roll back another cluster; successful changes appear in Active tests with undo available.</p>
     <div class="am-wizard-footer"><button id="am-global-validate-all" ${failedPreview||!pending.length||pending.some(r=>!r.context)?'disabled':''}>Dry-run only</button><button id="am-global-apply-all" class="primary" ${failedPreview||!pending.length||pending.some(r=>!r.context)?'disabled':''}>Review and apply…</button></div>
     ${rows.map((row,i)=>`<article class="am-global-plan">
@@ -119,7 +124,7 @@ function amGlobalBatchPanel(){
         ${!amGlobalNoop(row)?amContextControl(row.cluster,A.contexts,row.context,`data-amglobalcontext="${i}" ${row.applied?'disabled':''}`):''}
         <div class="row wrap"><button data-amglobalcopy="${i}">Copy YAML</button>${!amGlobalNoop(row)?`<button data-amglobalvalidate="${i}" ${!row.context||row.applied?'disabled':''}>Dry-run only</button><button class="primary" data-amglobalapply="${i}" ${!row.context||row.applied?'disabled':''}>Review and apply to ${esc(row.cluster)}…</button>`:''}</div>
         ${row.validation&&!row.applied?'<p class="green">Validated for this exact context and plan. Apply within ten minutes.</p>':''}`:''}
-    </article>`).join('')}${amTaskLinks(['global-service'])}</div></section>`;
+    </article>`).join('')}${amTaskLinks(A.batchKind==='configuration'?(rows[0]?.plan?.request.tasks||[]):['global-service'])}</div></section>`;
 }
 async function amGlobalOperation(index,operation){
   const A=S.ambient,row=A.globalBatch[index];row.error='';
@@ -135,10 +140,11 @@ async function amGlobalOperation(index,operation){
   // Once every cluster with changes is applied, go back to the Service's
   // configuration list, where Retest traffic and the new state are shown.
   const pending=(A.globalBatch||[]).filter(r=>r.plan&&(r.plan.changes?.length||r.plan.objects?.length));
-  if(operation==='apply'&&row.applied&&pending.every(r=>r.applied)&&typeof amRefreshAppliedConfiguration==='function'){await amGlobalWaitForCapture(amService(),pending);await amRefreshAppliedConfiguration(row.plan);A.globalBatch=null;A.settings={};await render();$('#am-retest-current')?.scrollIntoView({block:'center'});}
+  if(operation==='apply'&&row.applied&&pending.every(r=>r.applied)&&typeof amRefreshAppliedConfiguration==='function'){if(A.batchKind!=='configuration')await amGlobalWaitForCapture(amService(),pending);const source=(A.globalBatch||[]).find(r=>r.cluster===amService()?.cluster&&r.plan)||row;await amRefreshAppliedConfiguration(source.plan);A.globalBatch=null;A.settings={};A.phase=1;A.edit=null;A.tasks={};A.mode='';await render();$('#am-retest-current')?.scrollIntoView({block:'center'});}
 }
 function amWireGlobalPublication(){
   const A=S.ambient;
+  document.querySelectorAll('[data-am-global-config]').forEach(b=>b.onclick=()=>{amSaveConfigurationDraft();amResetDraft(true);A.tab='wizard';A.tasks={'global-service':true};A.phase=2;render();});
   const publicationRows=amService()?amGlobalTargets(amService()):[];
   document.querySelectorAll('.am-global-cluster').forEach(el=>{
     const cluster=el.querySelector('[data-amglobalcluster]')?.dataset.amglobalcluster,row=publicationRows.find(r=>r.cluster===cluster);if(!row?.global)return;
@@ -153,7 +159,7 @@ function amWireGlobalPublication(){
   document.querySelectorAll('[data-amglobaldist], #am-global-takeover').forEach(input=>input.addEventListener('change',()=>{const F=S.ambient.settings,d=document.querySelector('[data-amglobaldist]:checked');if(d)F.globalDistribution=d.value;const t=$('#am-global-takeover');if(t)F.globalTakeover=t.checked;amInvalidate();render();}));
   document.querySelectorAll('[data-amglobalsetup]').forEach(b=>b.onclick=()=>amGlobalSetupGuide(b.dataset.amglobalsetup));
   document.querySelectorAll('.am-global-plan').forEach((el,i)=>{const row=A.globalBatch[i],badge=el.querySelector('.badge'),ok=row.applied||!!row.validation||amGlobalNoop(row);badge.className='badge '+(row.error?'red':ok?'green':'blue');badge.textContent=(row.error?'✕ ':ok?'✓ ':'')+row.state;});
-  document.querySelectorAll('.am-global-plan').forEach((el,i)=>{const row=A.globalBatch[i];if(!amGlobalNoop(row))return;const evidence=publicationRows.find(r=>r.cluster===row.cluster),aliases=evidence?.publication?.globalAliases||[],allocated=aliases.length>0&&aliases.every(a=>a.addresses?.length),badge=el.querySelector('.badge');badge.className='badge '+(allocated?'blue':'amber');badge.textContent=amPublicationEvidenceLabel({...evidence,global:true});});
+  document.querySelectorAll('.am-global-plan').forEach((el,i)=>{const row=A.globalBatch[i];if(A.batchKind==='configuration'||!amGlobalNoop(row))return;const evidence=publicationRows.find(r=>r.cluster===row.cluster),aliases=evidence?.publication?.globalAliases||[],allocated=aliases.length>0&&aliases.every(a=>a.addresses?.length),badge=el.querySelector('.badge');badge.className='badge '+(allocated?'blue':'amber');badge.textContent=amPublicationEvidenceLabel({...evidence,global:true});});
   document.querySelectorAll('[data-amglobalcluster]').forEach(box=>box.onchange=()=>{amCapture();A.globalBatch=null;amInvalidate();});
   document.querySelectorAll('[data-amglobalcontext]').forEach(select=>select.onchange=()=>{const row=A.globalBatch[Number(select.dataset.amglobalcontext)];row.context=select.value;row.validation=null;row.error='';row.state='Preview';render();});
   document.querySelectorAll('[data-amglobalcopy]').forEach(button=>button.onclick=()=>copyTerminalCommand(A.globalBatch[Number(button.dataset.amglobalcopy)].plan.yaml));

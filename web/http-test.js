@@ -6,7 +6,8 @@ const HTTP_TEST={profiles:[],profile:{name:'',method:'GET',path:'/',headers:{},b
 function httpInMesh(mode){return mode==='mesh'||mode==='ephemeral';}
 const httpSecretHeader=name=>/authorization|cookie|token|secret|key/i.test(name);
 
-async function amOpenHTTPTest(service){
+async function amOpenHTTPTest(service,options={}){
+  if(HTTP_TEST.policyTest&&!options.policyTest){HTTP_TEST.profile={name:'',method:'GET',path:'/',headers:{},body:'',timeout:10};HTTP_TEST.policyTest=null;HTTP_TEST.results=[];HTTP_TEST.meshSummary=null;HTTP_TEST.meshSnapshot=null;HTTP_TEST.panel='request';}
   const T=HTTP_TEST;if(T.busy){toast('An HTTP test is already running');return;}const changed=!T.service||amKey(T.service)!==amKey(service);if(changed){T.results=[];T.meshSummary=null;T.meshWarnings=[];T.meshRoutes=[];T.meshSnapshot=null;T.panel='request';}T.service=service;T.error='';T.names=[];
   T.logReturn=null;
   try{
@@ -38,16 +39,21 @@ function drawHTTPTest(){
   if($('#http-stop'))$('#http-stop').onclick=()=>{T.abortController?.abort();};
   document.querySelectorAll('[data-http-stop]').forEach(b=>b.onclick=()=>T.abortController?.abort());
   $('#http-mode').onchange=()=>{const oldMode=T.mode,oldCount=T.count;captureHTTPTest();T.countByMode??={};T.countByMode[oldMode]=oldCount;T.count=T.countByMode[T.mode]??1;T.nativeAttribution=T.mode!=='public';T.results=[];T.meshSummary=null;drawHTTPTest();};
+  httpWireCleanRequest();
+  if($('#http-headers'))$('#http-headers').oninput=()=>{captureHTTPTest();httpPaintHeaderNotice();};
   if($('#http-ephemeral-ns'))$('#http-ephemeral-ns').onchange=()=>{captureHTTPTest();drawHTTPTest();};
   if($('#http-attribute'))$('#http-attribute').onchange=()=>{captureHTTPTest();drawHTTPTest();};
-  $('#http-profile').onchange=e=>{if(e.target.value===''){T.profile={name:'',method:'GET',path:'/',headers:{},body:'',timeout:10};}else{T.profile=JSON.parse(JSON.stringify(T.profiles[Number(e.target.value)]));}drawHTTPTest();};
+  $('#http-profile').onchange=e=>{T.policyTest=null;if(e.target.value===''){T.profile={name:'',method:'GET',path:'/',headers:{},body:'',timeout:10};}else{T.profile=JSON.parse(JSON.stringify(T.profiles[Number(e.target.value)]));}drawHTTPTest();};
   $('#http-add-header').onclick=()=>{captureHTTPTest();const row=document.createElement('div');row.className='http-header-row';row.dataset.httpHeader='';row.innerHTML='<input data-http-name aria-label="Header name" placeholder="Header name"><input data-http-value aria-label="Header value" placeholder="Value"><button>Remove</button>';$('#http-headers').appendChild(row);row.querySelector('button').onclick=()=>row.remove();row.querySelector('[data-http-name]').onchange=e=>row.querySelector('[data-http-value]').type=httpSecretHeader(e.target.value)?'password':'text';row.querySelector('input').focus();};
-  document.querySelectorAll('[data-http-remove]').forEach(b=>b.onclick=()=>b.closest('[data-http-header]').remove());
+  document.querySelectorAll('[data-http-remove]').forEach(b=>b.onclick=()=>{b.closest('[data-http-header]').remove();captureHTTPTest();httpPaintHeaderNotice();});
   document.querySelectorAll('[data-http-name]').forEach(e=>e.onchange=()=>e.closest('[data-http-header]').querySelector('[data-http-value]').type=httpSecretHeader(e.value)?'password':'text');
   $('#http-save-profile').onclick=async()=>{captureHTTPTest();try{T.profiles=await apiPost('api/ambient/http-profiles',T.profile);T.error='';toast('Profile saved locally');}catch(e){T.error=e.message;}drawHTTPTest();};
-  $('#http-run').onclick=async()=>{captureHTTPTest();if(T.busy)return;T.busy=true;T.panel='results';T.error='';T.results=[];T.meshSummary=null;T.meshCleanup=null;T.meshEphemeral=null;T.meshRequested=T.count*(T.mode==='public'?1:T.names.length);T.meshSnapshot={count:T.count,names:[...T.names],method:T.profile.method,path:T.profile.path};drawHTTPTest();try{if(httpInMesh(T.mode)){await httpRunMeshTest();}else{await httpRunNativeTest();}}catch(e){T.error=e.name==='AbortError'?'Test stopped. Completed responses are retained.':e.message;T.meshSummary={stopped:e.name==='AbortError',failed:e.name!=='AbortError',unattempted:Math.max(0,T.meshRequested-T.results.length),remainingUnconfirmed:true};}finally{T.busy=false;T.abortController=null;if(document.querySelector('.http-test'))drawHTTPTest();else toast('HTTP test finished. Reopen Test service to see the result.');}};
+   $('#http-run').onclick=async()=>{captureHTTPTest();if(T.busy)return;T.busy=true;T.panel='results';T.error='';T.results=[];T.meshSummary=null;T.meshCleanup=null;T.meshEphemeral=null;T.meshRequested=T.count*(T.mode==='public'?1:T.names.length);T.meshSnapshot={count:T.count,names:[...T.names],method:T.profile.method,path:T.profile.path,headers:{...T.profile.headers},policyTest:T.policyTest?{...T.policyTest}:null};drawHTTPTest();try{if(httpInMesh(T.mode)){await httpRunMeshTest();}else{await httpRunNativeTest();}}catch(e){T.error=e.name==='AbortError'?'Test stopped. Completed responses are retained.':e.message;T.meshSummary={stopped:e.name==='AbortError',failed:e.name!=='AbortError',unattempted:Math.max(0,T.meshRequested-T.results.length),remainingUnconfirmed:true};}finally{T.busy=false;T.abortController=null;if(document.querySelector('.http-test'))drawHTTPTest();else toast('HTTP test finished. Reopen Test service to see the result.');}};
   document.querySelectorAll('[data-http-logs]').forEach(b=>b.onclick=()=>httpTestOpenLogs(Number(b.dataset.httpLogs)));
 }
+
+function httpWireCleanRequest(){const T=HTTP_TEST;if($('#http-clean-request'))$('#http-clean-request').onclick=()=>{T.profile={name:'',method:'GET',path:T.options.defaultPath||'/',headers:{},body:'',timeout:10};T.policyTest=null;T.results=[];T.meshSummary=null;T.meshSnapshot=null;T.panel='request';drawHTTPTest();};}
+function httpPaintHeaderNotice(){const root=$('#http-header-status');if(root){root.innerHTML=httpRequestHeaderNotice();httpWireCleanRequest();}}
 
 function httpTestOpenLogs(index){
   captureHTTPTest();const T=HTTP_TEST,r=T.results[index];if(!r)return;

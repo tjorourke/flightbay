@@ -102,7 +102,6 @@ function openLogs(filters) {
 
 async function render() {
   const seq = ++S.renderSeq;
-  const ambientView = typeof amCaptureView==='function' ? amCaptureView() : null;
   updateIstioAmbientNav();
   document.body.classList.toggle('ambient-view',S.view==='ambient');
   const navView = S.view === 'navigator' ? 'resources' : S.view;
@@ -113,6 +112,9 @@ async function render() {
   try {
     const html = await fn(seq);
     if (seq !== S.renderSeq || html === undefined) return;
+    // Capture immediately before replacing the DOM: the reader may have
+    // scrolled while the asynchronous view request was in flight.
+    const ambientView = typeof amCaptureView==='function' ? amCaptureView() : null;
     taClose(true);
     if (S.morph && S.lastView === S.view) morphHTML($('#main'), html); else $('#main').innerHTML = html;
     S.lastView = S.view;
@@ -2823,7 +2825,7 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
 // (state.live). This block swaps the offline banner for a live one, adds Save
 // as bundle, and refreshes views as the mirror changes. It wraps the shared
 // functions rather than editing them, so bundle workspaces behave as before.
-const LIVE = {lastRender: 0, pending: false, timer: null, tick: null, saving: false};
+const LIVE = {lastRender: 0, pending: false, timer: null, tick: null, saving: false, pausing: false};
 const isLive = () => !!(S.ws?.live?.live || S.state?.live?.live);
 
 function liveAgo(t) {
@@ -2837,12 +2839,13 @@ function renderLiveBanner() {
   const badge = document.querySelector('#snapshot-bar .badge');
   if (badge) {
     const up = lv.connected !== false;
-    badge.className = `badge ${up ? 'green' : 'amber'}`;
+    badge.className = `badge ${lv.paused ? 'amber' : up ? 'green' : 'amber'}`;
     badge.title = up ? `Connected to ${lv.server || lv.context}. Read-only: get, list, watch and pods/log only.` : `Some cluster connections or resource streams are retrying (${lv.reconnects} retries so far). Open connection details; healthy streams continue updating.`;
-    badge.innerHTML = `<span class="dot"></span> Live · ${esc(lv.context)} · ${num(lv.objectsWatched)} objects · ${num(lv.logStreams)}${lv.logStreamsTotal > lv.logStreams ? ' of ' + num(lv.logStreamsTotal) : ''} log streams · last change ${esc(liveAgo(lv.lastEvent))}${up ? '' : ' · some streams retrying'}`;
+    badge.innerHTML = `<span class="dot"></span> ${lv.paused?'Ingestion paused':'Live'} · ${esc(lv.context)} · ${num(lv.objectsWatched)} objects · ${num(lv.logStreams)}${lv.logStreamsTotal > lv.logStreams ? ' of ' + num(lv.logStreamsTotal) : ''} log streams · last change ${esc(liveAgo(lv.lastEvent))}${up ? '' : ' · some streams retrying'}`;
   }
   const t = $('#snapshot-time');
-  if (t) t.innerHTML = `<span class="muted">Read-only mirror${lv.logLinesDropped ? ` · ${num(lv.logLinesDropped)} old log lines dropped` : ''}</span> <button id="live-save" class="ghost" title="Write the mirror as it is now to a normal, verified bundle">${LIVE.saving ? 'Saving…' : 'Save as bundle'}</button> <button id="live-review" class="primary" title="Choose what to send, sign it and export it">Export and sign…</button>`;
+  if (t) t.innerHTML = `<span class="muted">Read-only mirror${lv.logLinesDropped ? ` · ${num(lv.logLinesDropped)} old log lines dropped` : ''}</span> <button id="live-pause" ${LIVE.pausing?'disabled':''} aria-pressed="${!!lv.paused}" title="Pause incoming data for this workspace. Resume catches up object watches; log buffers remain bounded.">${LIVE.pausing?'Updating…':lv.paused?'Resume ingestion':'Pause ingestion'}</button> <button id="live-save" class="ghost" title="Write the mirror as it is now to a normal, verified bundle">${LIVE.saving ? 'Saving…' : 'Save as bundle'}</button> <button id="live-review" class="primary" title="Choose what to send, sign it and export it">Export and sign…</button>`;
+  const pause=$('#live-pause');if(pause)pause.onclick=liveToggleIngestion;
   const b = $('#live-save'); if (b) b.onclick = liveSave;
   const rv = $('#live-review'); if (rv) rv.onclick = () => nav('review');
   let fleet=$('#live-cluster-status');
@@ -2852,6 +2855,19 @@ function renderLiveBanner() {
     const rows=lv.clusters.map(c=>`<div><strong>${esc(c.context)}</strong> <span class="badge ${c.phase==='live'&&c.connected?'green':'amber'}">${esc(c.phase==='live'?(c.connected?'Watching':'Watching · some streams retrying'):c.phase==='failed'?'Retrying connection':'Initial sync')}</span><small>${esc(c.server)} · ${num(c.objectsWatched)} objects · ${num(c.watches)} watches · ${num(c.logStreams)} log streams${c.retryingStreams?' · '+num(c.retryingStreams)+' resource streams retrying':''}${c.error?' · '+esc(c.error):''}</small></div>`).join('');
     const html=summary+rows;if(fleet.innerHTML!==html){const open=fleet.open;fleet.innerHTML=html;fleet.open=open;}
   }
+}
+
+async function liveToggleIngestion(){
+  if(LIVE.pausing)return;
+  const paused=!(S.state?.live||S.ws?.live)?.paused;
+  LIVE.pausing=true;renderLiveBanner();
+  try{
+    const state=await apiPost('api/live/ingestion',{paused});
+    onState(state);
+    if(paused){clearTimeout(LIVE.timer);LIVE.timer=null;clearTimeout(refreshTimer);refreshTimer=null;}
+    else liveSchedule();
+  }catch(e){toast('Could not change ingestion: '+e.message);}
+  finally{LIVE.pausing=false;renderLiveBanner();}
 }
 
 async function liveSave() {
@@ -2877,6 +2893,7 @@ function liveBusy() {
 }
 function liveSchedule() {
   LIVE.pending = true;
+  if(S.state?.live?.paused)return;
   if (LIVE.timer) return;
   const wait = Math.max(0, 3000 - (Date.now() - LIVE.lastRender));
   LIVE.timer = setTimeout(liveRefresh, wait);
@@ -2884,6 +2901,7 @@ function liveSchedule() {
 async function liveRefresh() {
   LIVE.timer = null;
   if (!LIVE.pending) return;
+  if(S.state?.live?.paused)return;
   if (liveBusy() || document.hidden) { LIVE.timer = setTimeout(liveRefresh, 1000); return; }
   LIVE.pending = false; LIVE.lastRender = Date.now();
   if (S.view === 'logs') { checkNewLines(); return; } // the log explorer has Follow incoming data
@@ -2929,6 +2947,7 @@ async function liveRefresh() {
     if (!prev || prev.phase !== st.phase || st.phase !== 'live') return baseOnState(st);
     S.state = st;
     renderImportStatus();
+    if(st.live.paused){clearTimeout(LIVE.timer);LIVE.timer=null;return;}
     if (st.revision !== prev.revision) { TA.cache.clear(); TA.keys.clear(); liveSchedule(); }
   };
 

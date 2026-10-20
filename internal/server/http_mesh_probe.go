@@ -97,10 +97,11 @@ type meshRouteRule struct {
 	Backends []meshRouteBackend `json:"backends"`
 }
 type meshRouteBackend struct {
-	Namespace string  `json:"namespace"`
-	Name      string  `json:"name"`
-	Weight    int     `json:"weight"`
-	Percent   float64 `json:"percent"`
+	ReadyEndpoints *int    `json:"readyEndpoints,omitempty"`
+	Namespace      string  `json:"namespace"`
+	Name           string  `json:"name"`
+	Weight         int     `json:"weight"`
+	Percent        float64 `json:"percent"`
 }
 type meshResponder struct {
 	Pod      ambient.Ref `json:"pod"`
@@ -533,6 +534,17 @@ func meshRouteEvidence(ctx context.Context, c ambientConnection, target ambient.
 					weight = ambient.N(b["weight"])
 				}
 				row.Backends = append(row.Backends, meshRouteBackend{Namespace: ns, Name: ambient.S(b["name"]), Weight: weight})
+				if ambient.S(b["group"]) == "" && (ambient.S(b["kind"]) == "" || ambient.S(b["kind"]) == "Service") {
+					ready, err := meshBackendReadyEndpoints(ctx, c, ns, ambient.S(b["name"]), ambient.N(b["port"]))
+					if err != nil {
+						warnings = append(warnings, "Backend readiness could not be read for "+ns+"/"+ambient.S(b["name"])+": "+err.Error())
+					} else {
+						row.Backends[len(row.Backends)-1].ReadyEndpoints = &ready
+						if ready == 0 && weight > 0 {
+							warnings = append(warnings, fmt.Sprintf("Backend %s/%s has no ready endpoints on the route's port (weight %d). Requests selected for it can return HTTP 503 no healthy upstream; weights do not provide failover to another Service.", ns, ambient.S(b["name"]), weight))
+						}
+					}
+				}
 				backends[ns+"/"+ambient.S(b["name"])] = true
 				total += weight
 			}
@@ -551,6 +563,46 @@ func meshRouteEvidence(ctx context.Context, c ambientConnection, target ambient.
 		// No route is the normal case (no split configured); not a notice.
 	}
 	return rules, backends, warnings
+}
+
+func meshBackendReadyEndpoints(ctx context.Context, c ambientConnection, ns, name string, port int) (int, error) {
+	svc, err := c.client.Resource(schema.GroupVersionResource{Version: "v1", Resource: "services"}).Namespace(ns).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return 0, err
+	}
+	portName, found := "", false
+	for _, v := range ambient.L(ambient.Path(svc.Object, "spec", "ports")) {
+		p := ambient.M(v)
+		if ambient.N(p["port"]) == port {
+			portName, found = ambient.S(p["name"]), true
+			break
+		}
+	}
+	if !found {
+		return 0, fmt.Errorf("Service does not expose port %d", port)
+	}
+	slices, err := c.client.Resource(schema.GroupVersionResource{Group: "discovery.k8s.io", Version: "v1", Resource: "endpointslices"}).Namespace(ns).List(ctx, metav1.ListOptions{LabelSelector: "kubernetes.io/service-name=" + name})
+	if err != nil {
+		return 0, err
+	}
+	ready := 0
+	for _, slice := range slices.Items {
+		portFound := false
+		for _, v := range ambient.L(slice.Object["ports"]) {
+			p := ambient.M(v)
+			portFound = portFound || ambient.S(p["name"]) == portName && ambient.N(p["port"]) > 0
+		}
+		if !portFound {
+			continue
+		}
+		for _, v := range ambient.L(slice.Object["endpoints"]) {
+			e := ambient.M(v)
+			if ambient.Path(e, "conditions", "ready") != false && len(ambient.L(e["addresses"])) > 0 {
+				ready++
+			}
+		}
+	}
+	return ready, nil
 }
 
 func (s *Server) httpMeshProbe(w http.ResponseWriter, r *http.Request) {
@@ -715,6 +767,9 @@ func (s *Server) httpMeshProbe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rules, backends, warnings := meshRouteEvidence(ctx, c, q.Service, q.Port)
+	if svc.Labels["solo.io/service-takeover"] == "true" && len(rules) > 0 {
+		warnings = append(warnings, "Local-name takeover does not replace HTTPRoute backend references. Requests to the local name still follow the matching route's selected Services; the global DNS name can have a different route. An empty local version backend can return 503 even when the global Service has healthy remote endpoints.")
+	}
 	backends[q.Service.Namespace+"/"+q.Service.Name] = len(backends) == 0
 	inventories := []meshResponderInventory{{Cluster: q.Service.Cluster, Pods: pods.Items, Services: services.Items, Backends: backends}}
 	remoteInventories, remoteRoutes, attributionWarnings := s.meshRemoteResponderInventories(ctx, q)

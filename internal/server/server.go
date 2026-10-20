@@ -345,6 +345,7 @@ func (s *Server) Handler() http.Handler {
 	api("/api/review/export", s.reviewExport)
 	api("/api/review/lines", s.reviewLines)
 	api("/api/live/save", s.liveSave)
+	api("/api/live/ingestion", s.liveIngestion)
 	api("/api/live/refresh-diagnostics", s.liveRefreshDiagnostics)
 	// MCP for agents that connect over HTTP (kagent RemoteMCPServer, hosted
 	// desks). Same token as the API; tools call back into this server.

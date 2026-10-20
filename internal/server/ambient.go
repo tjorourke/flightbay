@@ -671,6 +671,10 @@ func (s *Server) ambientTest(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, 200, map[string]any{"test": rec, "message": "Configuration applied. Workload readiness and request connectivity have not yet been verified."})
 	case "cleanup":
+		if err := ambientCleanupDependency(rec, s.ambientS.records); err != nil {
+			jerr(w, 409, err.Error())
+			return
+		}
 		if err := cleanupAmbient(ctx, c, rec); err != nil {
 			_ = s.saveAmbientRecord(rec)
 			writeJSON(w, 409, map[string]any{"error": err.Error(), "test": rec})

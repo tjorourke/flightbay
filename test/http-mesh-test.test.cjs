@@ -31,6 +31,13 @@ test('gateway failures without responder identities do not draw a 100% backend s
   assert.match(graph,/10 failed request results/);assert.match(graph,/No identified backend-response distribution/);assert.doesNotMatch(graph,/<svg|<polyline/);
 });
 
+test('503 diagnostics show observed upstream failure and empty weighted backend without blaming DNS',()=>{
+  const ctx=setup(),rows=[{...result(1,null,503),body:'no healthy upstream'}];ctx.rows=rows;
+  vm.runInContext('HTTP_TEST.meshRoutes=[{backends:[{namespace:"bookinfo",name:"reviews-v2",weight:20,readyEndpoints:0}]}];',ctx);
+  const html=ctx.httpMeshFailureDiagnosis(rows);assert.match(html,/No healthy upstream endpoints/);assert.match(html,/bookinfo\/reviews-v2/);assert.match(html,/does not prove a DNS failure/);
+  assert.doesNotMatch(ctx.httpMeshFailureDiagnosis([result(2,null,503)]),/No healthy upstream endpoints/,'status alone cannot establish the specific proxy cause');
+});
+
 test('stopping a successful remote run keeps origin and responding cluster distinct',()=>{
   const ctx=setup(),rows=Array.from({length:12},(_,i)=>{const r=result(i+1,'v2');r.responder.pod.cluster='mesh2';r.authority='reviews.bookinfo.mesh.internal:9080';return r;});ctx.rows=rows;
   vm.runInContext('HTTP_TEST.mode="mesh";HTTP_TEST.service={cluster:"mesh1"};HTTP_TEST.meshClient={pod:{cluster:"mesh1",namespace:"bookinfo",name:"existing-client"}};HTTP_TEST.meshSummary={stopped:true};',ctx);

@@ -62,10 +62,11 @@ type Investigation struct {
 }
 type Service struct {
 	Ref
-	UID         string      `json:"uid"`
-	Ports       []int       `json:"ports"`
-	Regions     []string    `json:"regions"`
-	Publication *ServiceDNS `json:"publication,omitempty"`
+	UID         string            `json:"uid"`
+	Ports       []int             `json:"ports"`
+	PortDetails []ServicePortInfo `json:"portDetails,omitempty"`
+	Regions     []string          `json:"regions"`
+	Publication *ServiceDNS       `json:"publication,omitempty"`
 }
 type Inventory struct {
 	Issues         []AmbientIssue   `json:"issues"`
@@ -79,7 +80,9 @@ type Inventory struct {
 	Routes         []Ref            `json:"routes"`
 	Namespaces     []Ref            `json:"namespaces"`
 	// EnrolledNamespaces carry istio.io/dataplane-mode=ambient.
-	EnrolledNamespaces []Ref `json:"enrolledNamespaces"`
+	EnrolledNamespaces    []Ref                  `json:"enrolledNamespaces"`
+	RateLimitQuotas       []RateLimitQuota       `json:"rateLimitQuotas,omitempty"`
+	PublishedGRPCServices []PublishedGRPCService `json:"publishedGRPCServices,omitempty"`
 }
 type WaypointChoice struct {
 	Ref
@@ -149,6 +152,8 @@ func List(ws *store.Workspace) Inventory {
 			}
 			for _, p := range L(Path(o.Obj, "spec", "ports")) {
 				v.Ports = append(v.Ports, N(M(p)["port"]))
+				port := M(p)
+				v.PortDetails = append(v.PortDetails, ServicePortInfo{Port: N(port["port"]), Name: S(port["name"]), AppProtocol: S(port["appProtocol"])})
 			}
 			r.Services = append(r.Services, v)
 		}
@@ -163,6 +168,8 @@ func List(ws *store.Workspace) Inventory {
 	expandInventory(ws, &r)
 	r.Topology = capturedTopology(ws)
 	r.Issues = Issues(ws)
+	r.RateLimitQuotas = capturedRateLimitQuotas(ws)
+	r.PublishedGRPCServices = capturedPublishedGRPCServices(ws)
 	return r
 }
 

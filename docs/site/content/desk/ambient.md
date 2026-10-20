@@ -232,6 +232,10 @@ The map and its companion table have **Edit in wizard** actions for supported ex
 
 **Service → Configure** starts with **Current configuration** cards showing the original resources, individual route rules, configured weights, matches and policy settings. Choose the relevant Edit action to load those captured fields and review an update to that resource. If several routes or policies apply, choose the intended resource explicitly. **Add another capability** is collapsed when existing resources are present; capabilities already installed are edited from their cards rather than creating competing resources. Unsupported shapes explain why they cannot be edited. After Apply, the view refreshes its captured configuration and offers **Retest traffic**; it reports when the live capture has not caught up yet.
 
+Global Service publication is also shown in Current configuration and the configuration switcher. Its card lists publisher clusters, published names, distribution and local-name takeover. Publication is Service metadata with generated ServiceEntries, not a separate security policy. An explicit HTTPRoute still chooses its configured backends: takeover does not rewrite local version-Service references. An empty version backend can therefore return 503 while the global Service has healthy remote endpoints.
+
+**Test this rule** deliberately loads matching policy headers. The test displays those headers prominently and identifies an expected DENY result as HTTP 403 before an application responds. **Start a clean traffic test** removes the policy profile. Opening the general **Test service** action after a rule test starts a neutral request rather than retaining auto-filled deny-test headers. Explicitly selected saved profiles remain reusable.
+
 Every Configure workflow has the same breadcrumb in its options and Review screens: **All configurations → target → resource/rule or task → Configure/Review**. **All configurations** and the **Configurations** progress step return to the selected target's full list. **Switch configuration** lists captured resources and individual route rules, with backend weights or policy settings, so you can move directly between split rules. Rule drafts are retained separately while navigating within the same target; reopening a rule resumes its draft. **Resume configuration draft** restores a new task, waypoint setup or repair after returning to the list. Switching targets, starting a new configuration or refreshing inventory clears saved drafts. Returning to the list or switching rules clears any generated preview and validation; review and validate the chosen draft again before applying it.
 
 ![Existing route weights loaded into the appropriate editor](/images/ambient-edit.png)
@@ -314,8 +318,11 @@ The selected task names the options panel, with a separate **This change** summa
 | Route by HTTP header | Exact HTTPRoute header matches, on an Istio or agentgateway waypoint with captured schema evidence |
 | Endpoint load balancing | Istio-waypoint DestinationRule: ROUND_ROBIN, LEAST_REQUEST or RANDOM |
 | Eject unhealthy endpoints | Istio-waypoint DestinationRule outlier detection |
+| Set circuit breakers | Istio-waypoint DestinationRule connectionPool: connection, pending-request, concurrent-request and outstanding-retry limits |
 | Region failover | DestinationRule locality failover with outlier detection; requires captured endpoint regions |
 | Local request rate limit | Service-targeted AgentgatewayPolicy or EnterpriseAgentgatewayPolicy on the matching agentgateway waypoint |
+| Enterprise Istio local rate limit | Route- or Service-scoped EnvoyFilter on a captured Solo Enterprise waypoint; token bucket per waypoint process |
+| Shared/global rate limit | Route-scoped client for an existing Envoy Rate Limit Service, with an existing shared Redis backend configured by ambient setup |
 
 ![Generated ambient configuration plan](/images/ambient-wizard.png)
 
@@ -330,12 +337,13 @@ Options are task-specific:
 - Ambient mTLS supports STRICT or PERMISSIVE; DISABLE is rejected.
 - Timeouts expose request and optional backend timeouts, including supported zero-duration semantics.
 - Outlier detection exposes failure threshold, check interval, base ejection duration and maximum ejection percentage.
+- Circuit breakers expose maximum connections, pending requests, concurrent requests, outstanding retries, requests per connection and TCP connect timeout. Limits apply after routing to the selected backend, per upstream cluster in each waypoint proxy. Editing preserves TLS, outlier detection and other connection-pool settings. Zero requests per connection means unlimited; connection timeout must be at least 1ms.
 - Local rate limiting exposes request count, time unit and independent burst capacity. Existing bucket keys and other fields are preserved when editing.
 - Require waypoint reads the waypoint's actual Pod service account and the mesh trust domain from captured mesh configuration or identities. Missing or conflicting identity evidence keeps the task unavailable. The policy is workload-wide and other ALLOW policies remain additive.
 - JWT configuration takes an issuer, either an HTTPS JWKS URI or inline public JWKS, and explicit `issuer/subject` or `issuer/*` request principals. Optional paths, methods and exact header values narrow the ALLOW rule. RequestAuthentication validates presented tokens; the accompanying authorization requires a matching principal. A snapshot cannot verify a request's signature, claims or JWKS retrieval.
 - Header routing takes an exact header name/value JSON object and a captured backend Service port. All supplied headers must match. A catch-all rule retains the selected Service's original backend for non-matching requests. Mirroring copies requests to another captured Service and ignores its response.
 
-New captures retain the HTTPRoute CRD schema so these tasks can distinguish installed fields from API discovery alone. Older captures without that schema leave schema-dependent tasks unavailable. Retries remain unavailable on the tested kind clusters because their installed HTTPRoute schemas omit `retry`. Agentgateway JWT, mirroring and retry mappings are marked **UNVERIFIED** and unavailable until the generator and waypoint behaviour are verified; installing an Enterprise CRD does not enable an unverified mapping.
+New captures retain the HTTPRoute CRD schema so these tasks can distinguish installed fields from API discovery alone. Older captures without that schema leave schema-dependent tasks unavailable. The Enterprise Istio retry editor can use the supported waypoint EnvoyFilter extension when the installed HTTPRoute schema omits `retry`. Agentgateway JWT, mirroring and retry mappings remain **UNVERIFIED** and unavailable until their generator and waypoint behaviour are verified; installing an Enterprise CRD does not enable an unverified mapping.
 
 Traffic's **To allow it → Review in Ambient wizard** opens the same Review step with a server-regenerated repair, not arbitrary pasted YAML. Generated ztunnel repairs include numeric destination workload ports; waypoint repairs include Service ports and paths. **Edit options** can narrow the repair to captured ports and selected waypoint paths. ztunnel path restrictions are rejected. The normal explicit-context dry-run, Apply confirmation and undo controls follow.
 
@@ -343,11 +351,12 @@ These controls have different semantics:
 
 - **ztunnel is L4.** It cannot enforce HTTP methods, paths or request-rate limits. A selector policy affects the selected Pods, including other Services that select those Pods.
 - **Waypoint L7 controls need traffic to traverse the waypoint.** For example, allowing an original caller namespace at ztunnel is not the same as allowing it at a waypoint: the destination-side ztunnel may see the waypoint's identity.
-- **Local rate limits are per proxy.** They are not a shared quota across replicas. Stock Istio waypoints do not have a built-in rate-limit template in this wizard.
+- **Local rate limits are per proxy.** They are not a shared quota across replicas or a budget per backend application Pod. Enterprise Istio supports the generated waypoint EnvoyFilter; upstream Istio waypoint EnvoyFilter support is not assumed.
+- **Circuit breakers limit concurrency, not request rate.** Overflow can return HTTP 503. Configure the backend Service when an HTTPRoute forwards to another Service. Rate-limit cards remain visible with their implementation prerequisites when unavailable.
 - **Outlier detection ejects endpoints.** It does not establish primary/backup priority between different Service names. A zero-weight HTTPRoute backend is not a standby.
 - **Existing policies and routes matter.** ALLOW policies are additive, existing routes may take precedence, and another DestinationRule can conflict with the generated one.
 
-Primary/backup service failover and shared/global rate limiting are shown as unavailable until a supported integration and its required configuration are provided. No EnvoyFilter workaround is generated for waypoints.
+Primary/backup service failover remains unavailable without a supported integration. Global rate limiting requires an existing limiter and shared Redis configured by ambient setup; Flightbay does not deploy either component or embed Redis credentials. See [Ambient resilience controls](/desk/ambient-resilience/) for API-level scope, shared quotas, circuit isolation and request-chain retry boundaries.
 
 ## Apply
 

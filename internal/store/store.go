@@ -95,6 +95,10 @@ type typeKey struct{ cluster, group, resource string }
 
 // Workspace is one opened bundle.
 type Workspace struct {
+	liveGate          sync.RWMutex
+	livePauseMu       sync.Mutex
+	liveResume        chan struct{}
+	livePaused        bool // protected by mu; reported independently of collector status
 	mu                sync.RWMutex
 	header            *bundle.Header
 	policy            *policy.Policy
@@ -249,7 +253,13 @@ func (w *Workspace) SetState(fn func(*ImportState)) {
 func (w *Workspace) State() ImportState {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	return w.state
+	state := w.state
+	if state.Live != nil {
+		live := *state.Live
+		live.Paused = w.livePaused
+		state.Live = &live
+	}
+	return state
 }
 
 func objKey(cluster, group, resource, ns, name string) string {

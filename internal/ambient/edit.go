@@ -110,6 +110,10 @@ func editableConfigurations(ws *store.Workspace, svc *store.Object) []Editable {
 		}
 		req.Algorithm = defaultString(S(Path(tp, "loadBalancer", "simple")), "DEFAULT")
 		req.Tasks = []string{"load-balancing"}
+		if cp := M(tp["connectionPool"]); len(cp) > 0 {
+			req.Tasks = append(req.Tasks, "circuit-breaker")
+			req.CircuitBreaker = &CircuitBreakerRequest{MaxConnections: N(Path(cp, "tcp", "maxConnections")), MaxPendingRequests: N(Path(cp, "http", "http1MaxPendingRequests")), MaxRequests: N(Path(cp, "http", "http2MaxRequests")), MaxRetries: N(Path(cp, "http", "maxRetries")), MaxRequestsPerConnection: N(Path(cp, "http", "maxRequestsPerConnection")), ConnectTimeout: S(Path(cp, "tcp", "connectTimeout"))}
+		}
 		if od := M(tp["outlierDetection"]); len(od) > 0 {
 			req.Tasks = append(req.Tasks, "endpoint-failover")
 			req.FailureThreshold = N(od["consecutive5xxErrors"])
@@ -211,6 +215,18 @@ func editableConfigurations(ws *store.Workspace, svc *store.Object) []Editable {
 		}
 		out = append(out, e)
 	}
+	for _, o := range ws.List(svc.Cluster, "networking.istio.io", "envoyfilters", svc.Namespace, nil) {
+		if o.Labels()["flightbay.dev/resilience-service"] != svc.Name || !flightbayOwned(o) {
+			continue
+		}
+		var req Request
+		if json.Unmarshal([]byte(S(Path(o.Obj, "metadata", "annotations", "flightbay.dev/resilience-request"))), &req) != nil || req.Resilience == nil {
+			continue
+		}
+		req.Cluster, req.Namespace, req.Service = svc.Cluster, svc.Namespace, svc.Name
+		req.Edit = &EditTarget{Ref: reference(o), Fingerprint: configurationFingerprint(o)}
+		out = append(out, Editable{Ref: reference(o), Supported: true, Request: &req, Reason: "Generated route-scoped resilience. Updates this owned configuration and retains independent API policies."})
+	}
 	for i := range out {
 		e := &out[i]
 		o := ws.Get(e.Ref.Cluster, e.Ref.Group, e.Ref.Resource, e.Ref.Namespace, e.Ref.Name)
@@ -310,7 +326,7 @@ func editGenerated(ws *store.Workspace, p *Plan) error {
 				tasks = []string{"weighted-routing", "timeouts"}
 			}
 			if o.Kind == "DestinationRule" {
-				tasks = []string{"load-balancing", "endpoint-failover"}
+				tasks = []string{"load-balancing", "endpoint-failover", "circuit-breaker"}
 			}
 			for _, task := range req.Tasks {
 				if !contains(tasks, task) {
@@ -376,6 +392,23 @@ func editGenerated(ws *store.Workspace, p *Plan) error {
 			tp = map[string]any{}
 		}
 		fresh := M(Path(generated, "spec", "trafficPolicy"))
+		if contains(req.Tasks, "circuit-breaker") {
+			cp := M(tp["connectionPool"])
+			if cp == nil {
+				cp = map[string]any{}
+			}
+			for protocol, settings := range M(fresh["connectionPool"]) {
+				merged := M(cp[protocol])
+				if merged == nil {
+					merged = map[string]any{}
+				}
+				for key, value := range M(settings) {
+					merged[key] = value
+				}
+				cp[protocol] = merged
+			}
+			tp["connectionPool"] = cp
+		}
 		if contains(req.Tasks, "load-balancing") {
 			lb := M(tp["loadBalancer"])
 			if lb == nil {

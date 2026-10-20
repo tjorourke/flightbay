@@ -1,0 +1,99 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: flightbay-resilience-check
+  labels:
+    flightbay.dev/purpose: resilience-verification
+    istio.io/dataplane-mode: ambient
+    istio.io/use-waypoint: waypoint
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: waypoint
+  namespace: flightbay-resilience-check
+spec:
+  gatewayClassName: istio-waypoint
+  listeners:
+  - name: mesh
+    port: 15008
+    protocol: HBONE
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: flightbay-resilience-check
+  labels:
+    solo.io/service-scope: global
+spec:
+  selector:
+    app: resilience-api
+  ports:
+  - name: http
+    port: 9080
+    targetPort: 9080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: flightbay-resilience-check
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: resilience-api
+  template:
+    metadata:
+      labels:
+        app: resilience-api
+    spec:
+      containers:
+      - name: api
+        image: docker.io/istio/examples-bookinfo-productpage-v1:1.20.2
+        command:
+        - python
+        - -u
+        - -c
+        - |
+          import json, os, threading, time
+          from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+          counts = {}
+          lock = threading.Lock()
+          class Handler(BaseHTTPRequestHandler):
+              def do_GET(self):
+                  with lock:
+                      counts[self.path] = counts.get(self.path, 0) + 1
+                      attempt = counts[self.path]
+                  if self.path.startswith('/slow'):
+                      time.sleep(1)
+                  code = 503 if self.path.startswith('/fail') or (self.path.startswith('/retry') and attempt % 3 != 0) else 200
+                  body = json.dumps({'podname': os.getenv('HOSTNAME'), 'path': self.path, 'attempt': attempt}).encode()
+                  self.send_response(code)
+                  self.send_header('Content-Type', 'application/json')
+                  self.send_header('Content-Length', str(len(body)))
+                  self.end_headers()
+                  self.wfile.write(body)
+          ThreadingHTTPServer(('0.0.0.0', 9080), Handler).serve_forever()
+        ports:
+        - containerPort: 9080
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+          limits:
+            memory: 256Mi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: client
+  namespace: flightbay-resilience-check
+spec:
+  activeDeadlineSeconds: 3600
+  restartPolicy: Never
+  containers:
+  - name: curl
+    image: docker.io/curlimages/curl:8.12.1
+    command: [sleep, '3600']

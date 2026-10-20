@@ -1,0 +1,131 @@
+# Test infrastructure, installed separately from Flightbay's Configure tasks.
+# Create rls-test-redis-auth with a generated password before applying this file.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rls-config
+  namespace: flightbay-resilience-check
+data:
+  config.yaml: |
+    domain: flightbay-check
+    descriptors:
+    - key: api
+      value: shared-api
+      rate_limit:
+        unit: minute
+        requests_per_unit: 3
+    - key: api
+      value: mesh-shared-api
+      rate_limit:
+        unit: minute
+        requests_per_unit: 3
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: flightbay-resilience-check
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: resilience-redis}
+  template:
+    metadata:
+      labels: {app: resilience-redis}
+    spec:
+      containers:
+      - name: redis
+        image: docker.io/redis:7.4-alpine
+        command: [sh, -c, 'exec redis-server --requirepass "$REDIS_PASSWORD"']
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef: {name: rls-test-redis-auth, key: password}
+        ports: [{containerPort: 6379}]
+        readinessProbe:
+          exec:
+            command: [sh, -c, 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli ping']
+        resources:
+          requests: {cpu: 10m, memory: 32Mi}
+          limits: {memory: 128Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: flightbay-resilience-check
+spec:
+  selector: {app: resilience-redis}
+  ports: [{name: tcp, port: 6379, targetPort: 6379}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rls
+  namespace: flightbay-resilience-check
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: resilience-rls}
+  template:
+    metadata:
+      labels: {app: resilience-rls}
+    spec:
+      containers:
+      - name: ratelimit
+        image: docker.io/envoyproxy/ratelimit@sha256:b3e5d52c9b1d10b4cfc49417bec2a47d4da3c083284b556d18198e91fde39467
+        command: [/bin/ratelimit]
+        env:
+        - {name: LOG_LEVEL, value: info}
+        - {name: USE_STATSD, value: 'false'}
+        - {name: REDIS_SOCKET_TYPE, value: tcp}
+        - {name: REDIS_URL, value: 'redis:6379'}
+        - name: REDIS_AUTH
+          valueFrom:
+            secretKeyRef: {name: rls-test-redis-auth, key: password}
+        - {name: RUNTIME_ROOT, value: /data}
+        - {name: RUNTIME_SUBDIRECTORY, value: ratelimit}
+        - {name: RUNTIME_WATCH_ROOT, value: 'false'}
+        - {name: HEALTHY_WITH_AT_LEAST_ONE_CONFIG_LOADED, value: 'true'}
+        ports: [{containerPort: 8081}]
+        readinessProbe:
+          httpGet: {path: /healthcheck, port: 8080}
+        volumeMounts:
+        - {name: config, mountPath: /data/ratelimit/config/config.yaml, subPath: config.yaml}
+        resources:
+          requests: {cpu: 10m, memory: 32Mi}
+          limits: {memory: 256Mi}
+      volumes:
+      - name: config
+        configMap: {name: rls-config}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rls
+  namespace: flightbay-resilience-check
+  labels:
+    solo.io/service-scope: global
+spec:
+  selector: {app: resilience-rls}
+  ports: [{name: grpc, port: 8081, targetPort: 8081}]
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: waypoint2
+  namespace: flightbay-resilience-check
+spec:
+  gatewayClassName: istio-waypoint
+  listeners: [{name: mesh, port: 15008, protocol: HBONE}]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api2
+  namespace: flightbay-resilience-check
+  labels:
+    istio.io/use-waypoint: waypoint2
+spec:
+  selector: {app: resilience-api}
+  ports: [{name: http, port: 9080, targetPort: 9080}]

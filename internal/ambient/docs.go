@@ -44,7 +44,11 @@ func TaskDocs(e Environment, id string) []DocLink {
 	case "jwt":
 		return []DocLink{{"JWT validation", istioDocs + "reference/config/security/request_authentication/", "Istio shared API"}, {"JWT authorization", istioDocs + "tasks/security/authorization/authz-jwt/", "Istio OSS"}}
 	case "retries", "mirroring", "header-routing":
-		return []DocLink{{"HTTPRoute API", gatewayDocs + "reference/api-spec/1.4/spec/#httprouterule", "Gateway API"}, {"Waypoint L7 support", istioDocs + "ambient/usage/l7-features/", "Istio OSS"}}
+		links := []DocLink{{"HTTPRoute API", gatewayDocs + "reference/api-spec/1.4/spec/#httprouterule", "Gateway API"}, {"Waypoint L7 support", istioDocs + "ambient/usage/l7-features/", "Istio OSS"}}
+		if id == "retries" && e.Selected != nil && e.Selected.Edition == "enterprise" {
+			links = append(links, DocLink{"Waypoint EnvoyFilter", enterpriseIstioDocs + "ambient/waypoints/envoy-filters/", "Enterprise Istio"})
+		}
+		return links
 	case "weighted-routing":
 		return []DocLink{{"Weighted backend routing", gatewayDocs + "guides/user-guides/traffic-splitting/", "Gateway API"}}
 	case "timeouts":
@@ -53,11 +57,19 @@ func TaskDocs(e Environment, id string) []DocLink {
 		return append(istioGuide(e, "reference/config/networking/destination-rule/#LoadBalancerSettings", "traffic-management/load-balancing/", "Endpoint load balancing"), DocLink{"DestinationRule API", istioDocs + "reference/config/networking/destination-rule/", "Istio shared API"})
 	case "endpoint-failover":
 		return istioGuide(e, "reference/config/networking/destination-rule/#OutlierDetection", "resiliency/outlier-detection/", "Outlier detection")
+	case "circuit-breaker":
+		return []DocLink{{"Connection pool circuit breakers", istioDocs + "reference/config/networking/destination-rule/#ConnectionPoolSettings", "Istio shared API"}}
 	case "locality-failover":
 		return istioGuide(e, "tasks/traffic-management/locality-load-balancing/failover/", "resiliency/failover/", "Locality failover")
 	case "rate-limit":
+		if e.Selected != nil && e.Selected.Product == "istio" && e.Selected.Edition == "enterprise" {
+			return []DocLink{{"Waypoint rate limiting", enterpriseIstioDocs + "ambient/traffic-management/rate-limiting/", "Enterprise Istio"}}
+		}
 		return agentGuide(e, "documentation/security/rate-limit-http/", "Local request rate limits")
 	case "global-rate-limit":
+		if e.Selected != nil && e.Selected.Product == "istio" {
+			return []DocLink{{"Envoy global rate limit protocol", "https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/rate_limit_filter", "Envoy"}}
+		}
 		return agentGuide(e, "documentation/security/rate-limit-global/", "Global rate limiting")
 	case "service-failover":
 		return []DocLink{{"HTTPRoute backend semantics", gatewayDocs + "reference/api-types/httproute/", "Gateway API"}}

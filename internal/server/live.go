@@ -2,10 +2,30 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
 )
+
+func (s *Server) liveIngestion(w http.ResponseWriter, r *http.Request) {
+	if !probePost(w, r) {
+		return
+	}
+	if !s.WS.IsLive() || s.WS.State().Phase != "live" {
+		jerr(w, http.StatusConflict, "ingestion can be paused after the live workspace has completed initial sync")
+		return
+	}
+	var q struct {
+		Paused *bool `json:"paused"`
+	}
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&q) != nil || q.Paused == nil {
+		jerr(w, http.StatusBadRequest, "provide paused: true or false")
+		return
+	}
+	s.WS.SetLivePaused(*q.Paused)
+	writeJSON(w, http.StatusOK, s.WS.State())
+}
 
 // liveSave writes the live mirror as a normal, verified bundle: the same
 // thing flightbay collect would have produced at this moment, without asking

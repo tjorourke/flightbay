@@ -266,11 +266,16 @@ waitInit:
 		case <-status.C:
 			l.publish(false)
 		case <-redactTick.C:
+			release, ok := l.WS.TryLiveIngest()
+			if !ok {
+				continue
+			}
 			rep, _ := json.Marshal(l.C.Redactor.Report())
 			if string(rep) != string(l.WS.Redaction()) {
 				l.WS.SetRedaction(rep)
 			}
 			l.flushCollectionLog()
+			release()
 		}
 	}
 }
@@ -371,7 +376,12 @@ func (l *Live) readCRDs(ctx context.Context, selected []bundle.APIResource) {
 			}
 			continue
 		}
+		release, ok := l.WS.BeginLiveIngest(ctx)
+		if !ok {
+			return
+		}
 		l.WS.AddCRD(l.cluster, SlimCRD(u.Object))
+		release()
 	}
 }
 
@@ -395,6 +405,11 @@ func (l *Live) namespaceLoop(ctx context.Context, selected []bundle.APIResource)
 		State: bundle.StateComplete, Reason: "namespaces in scope only, read every 60s"}
 	seen := map[string]string{}
 	poll := func() {
+		release, ok := l.WS.BeginLiveIngest(ctx)
+		if !ok {
+			return
+		}
+		defer release()
 		found := map[string]bool{}
 		upsert := func(obj map[string]any) {
 			_, name := objNsName(obj)
@@ -833,10 +848,15 @@ func (l *Live) runFeed(ctx context.Context, f *feed) {
 	for ctx.Err() == nil {
 		if rv == "" {
 			items, v, err := l.listAll(ctx, f)
+			release, ingest := l.WS.BeginLiveIngest(ctx)
+			if !ingest {
+				return
+			}
 			if f.listed != nil {
 				f.listed(len(items), err)
 			}
 			if err != nil {
+				release()
 				if first {
 					first = false
 					f.initDone()
@@ -870,6 +890,7 @@ func (l *Live) runFeed(ctx context.Context, f *feed) {
 			} else {
 				f.relist(items)
 			}
+			release()
 			rv = v
 			ok()
 			backoff = time.Second
@@ -947,6 +968,10 @@ func (l *Live) consume(ctx context.Context, f *feed, w watch.Interface, rv strin
 				if !ok {
 					continue
 				}
+				release, ingest := l.WS.BeginLiveIngest(ctx)
+				if !ingest {
+					return rv
+				}
 				if v, _ := asMap(m["metadata"])["resourceVersion"].(string); v != "" {
 					rv = v
 				}
@@ -955,6 +980,7 @@ func (l *Live) consume(ctx context.Context, f *feed, w watch.Interface, rv strin
 				} else {
 					f.upsert(m)
 				}
+				release()
 			}
 		}
 	}
@@ -1388,6 +1414,11 @@ func (m *logManager) readFollow(ctx context.Context, f *follower, opts *corev1.P
 // flush stores what every stream buffered since the last flush, then keeps
 // the workspace under the total line cap.
 func (m *logManager) flush() {
+	release, ok := m.l.WS.TryLiveIngest()
+	if !ok {
+		return
+	}
+	defer release()
 	m.mu.Lock()
 	fs := make([]*follower, 0, len(m.followers))
 	for _, f := range m.followers {
@@ -1462,6 +1493,11 @@ func (m *logManager) fetchPrevious(ctx context.Context, ref streamRef) {
 	for i := range lines {
 		lines[i] = strings.TrimRight(lines[i], "\n")
 	}
+	release, ok := m.l.WS.BeginLiveIngest(ctx)
+	if !ok {
+		return
+	}
+	defer release()
 	m.l.WS.QueueLogLines(m.l.cluster, ref.ns, ref.pod, ref.container, "previous", lines, "live-previous", nil)
 	m.l.touch()
 	m.coverageFor(ref, "previous", bundle.StateComplete, "read after a restart; each restart adds that container's log", len(lines))
@@ -1532,6 +1568,11 @@ func (l *Live) diagnose(ctx context.Context, pods []podInfo, summary bool) (int,
 	if err != nil {
 		return 0, err
 	}
+	release, ok := l.WS.BeginLiveIngest(ctx)
+	if !ok {
+		return 0, ctx.Err()
+	}
+	defer release()
 	for _, p := range pods {
 		for _, kind := range []string{"proxies", "control-plane"} {
 			l.WS.RemoveDiagnostic(l.cluster, kind, p.ns, p.name)

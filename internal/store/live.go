@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -18,6 +19,7 @@ const SourceLive = "live"
 
 // LiveState describes the connection behind a live workspace.
 type LiveState struct {
+	Paused          bool               `json:"paused"`
 	Clusters        []LiveClusterState `json:"clusters,omitempty"`
 	Live            bool               `json:"live"`
 	Context         string             `json:"context"`
@@ -36,6 +38,65 @@ type LiveState struct {
 	Diagnostics     bool               `json:"diagnostics"`
 	Requests        map[string]int64   `json:"requests,omitempty"` // requests made to the cluster, by verb
 	Refused         int64              `json:"refused"`            // requests the read-only guard refused
+}
+
+// BeginLiveIngest blocks live data commits while ingestion is paused. Watches
+// retain their resourceVersions and use their normal reconnect/relist recovery.
+// Waiting is cancellable so closing a paused desk never strands its readers.
+func (w *Workspace) BeginLiveIngest(ctx context.Context) (func(), bool) {
+	for {
+		w.livePauseMu.Lock()
+		resume := w.liveResume
+		if resume == nil {
+			w.liveGate.RLock()
+			w.livePauseMu.Unlock()
+			if ctx.Err() != nil {
+				w.liveGate.RUnlock()
+				return nil, false
+			}
+			return w.liveGate.RUnlock, true
+		}
+		w.livePauseMu.Unlock()
+		select {
+		case <-ctx.Done():
+			return nil, false
+		case <-resume:
+		}
+	}
+}
+
+// TryLiveIngest lets periodic flushes leave bounded buffers alone while paused.
+func (w *Workspace) TryLiveIngest() (func(), bool) {
+	w.livePauseMu.Lock()
+	defer w.livePauseMu.Unlock()
+	if w.liveResume != nil {
+		return nil, false
+	}
+	w.liveGate.RLock()
+	return w.liveGate.RUnlock, true
+}
+
+// SetLivePaused waits for active data commits (including queued logs) before
+// reporting paused. Existing captured data remains readable throughout.
+func (w *Workspace) SetLivePaused(paused bool) {
+	w.livePauseMu.Lock()
+	defer w.livePauseMu.Unlock()
+	if paused == (w.liveResume != nil) {
+		return
+	}
+	w.liveGate.Lock()
+	defer w.liveGate.Unlock()
+	if paused {
+		w.liveResume = make(chan struct{})
+		w.WaitLogs()
+	} else {
+		close(w.liveResume)
+		w.liveResume = nil
+	}
+	w.mu.Lock()
+	w.livePaused = paused
+	w.commit()
+	w.mu.Unlock()
 }
 
 type LiveClusterState struct {

@@ -25,36 +25,38 @@ type Backend struct {
 	Weight int    `json:"weight"`
 }
 type Request struct {
-	Demo               *BookinfoRequest  `json:"demo,omitempty"`
-	Explain            *ExplainRequest   `json:"explain,omitempty"`
-	Paths              []string          `json:"paths,omitempty"`
-	Headers            map[string]string `json:"headers,omitempty"`
-	Issuer             string            `json:"issuer,omitempty"`
-	JWKSURI            string            `json:"jwksUri,omitempty"`
-	JWKS               string            `json:"jwks,omitempty"`
-	RequestPrincipals  []string          `json:"requestPrincipals,omitempty"`
-	Mirror             *Backend          `json:"mirror,omitempty"`
-	RetryAttempts      int               `json:"retryAttempts,omitempty"`
-	Scorecard          *ScorecardRequest `json:"scorecard,omitempty"`
-	Parent             *Ref              `json:"parent,omitempty"`
-	ParentSection      string            `json:"parentSection,omitempty"`
-	TargetKind         string            `json:"targetKind,omitempty"`
-	TargetName         string            `json:"targetName,omitempty"`
-	TrafficMode        string            `json:"trafficMode,omitempty"`
-	RelativeWeights    bool              `json:"relativeWeights,omitempty"`
-	MTLSMode           string            `json:"mtlsMode,omitempty"`
-	MethodAction       string            `json:"methodAction,omitempty"`
-	Burst              *int              `json:"burst,omitempty"`
-	BackendTimeout     string            `json:"backendTimeout,omitempty"`
-	FailureThreshold   int               `json:"failureThreshold,omitempty"`
-	EjectionInterval   string            `json:"ejectionInterval,omitempty"`
-	EjectionDuration   string            `json:"ejectionDuration,omitempty"`
-	MaxEjectionPercent int               `json:"maxEjectionPercent,omitempty"`
-	Waypoint           *WaypointRequest  `json:"waypoint,omitempty"`
-	Selector           map[string]string `json:"selector,omitempty"`
-	SelectedPod        string            `json:"selectedPod,omitempty"`
-	Workload           string            `json:"workload,omitempty"`
-	Replicas           int               `json:"replicas,omitempty"`
+	Resilience         *ResilienceRequest     `json:"resilience,omitempty"`
+	CircuitBreaker     *CircuitBreakerRequest `json:"circuitBreaker,omitempty"`
+	Demo               *BookinfoRequest       `json:"demo,omitempty"`
+	Explain            *ExplainRequest        `json:"explain,omitempty"`
+	Paths              []string               `json:"paths,omitempty"`
+	Headers            map[string]string      `json:"headers,omitempty"`
+	Issuer             string                 `json:"issuer,omitempty"`
+	JWKSURI            string                 `json:"jwksUri,omitempty"`
+	JWKS               string                 `json:"jwks,omitempty"`
+	RequestPrincipals  []string               `json:"requestPrincipals,omitempty"`
+	Mirror             *Backend               `json:"mirror,omitempty"`
+	RetryAttempts      int                    `json:"retryAttempts,omitempty"`
+	Scorecard          *ScorecardRequest      `json:"scorecard,omitempty"`
+	Parent             *Ref                   `json:"parent,omitempty"`
+	ParentSection      string                 `json:"parentSection,omitempty"`
+	TargetKind         string                 `json:"targetKind,omitempty"`
+	TargetName         string                 `json:"targetName,omitempty"`
+	TrafficMode        string                 `json:"trafficMode,omitempty"`
+	RelativeWeights    bool                   `json:"relativeWeights,omitempty"`
+	MTLSMode           string                 `json:"mtlsMode,omitempty"`
+	MethodAction       string                 `json:"methodAction,omitempty"`
+	Burst              *int                   `json:"burst,omitempty"`
+	BackendTimeout     string                 `json:"backendTimeout,omitempty"`
+	FailureThreshold   int                    `json:"failureThreshold,omitempty"`
+	EjectionInterval   string                 `json:"ejectionInterval,omitempty"`
+	EjectionDuration   string                 `json:"ejectionDuration,omitempty"`
+	MaxEjectionPercent int                    `json:"maxEjectionPercent,omitempty"`
+	Waypoint           *WaypointRequest       `json:"waypoint,omitempty"`
+	Selector           map[string]string      `json:"selector,omitempty"`
+	SelectedPod        string                 `json:"selectedPod,omitempty"`
+	Workload           string                 `json:"workload,omitempty"`
+	Replicas           int                    `json:"replicas,omitempty"`
 	// Unpublish reverses global-service publication for this one Service by
 	// removing global metadata and its owned weighted-split route and Service.
 	Unpublish bool `json:"unpublish,omitempty"`
@@ -90,6 +92,15 @@ type Request struct {
 	Timeout         string         `json:"timeout,omitempty"`
 	FromRegion      string         `json:"fromRegion,omitempty"`
 	ToRegion        string         `json:"toRegion,omitempty"`
+}
+
+type CircuitBreakerRequest struct {
+	MaxConnections           int    `json:"maxConnections"`
+	MaxPendingRequests       int    `json:"maxPendingRequests"`
+	MaxRequests              int    `json:"maxRequests"`
+	MaxRetries               int    `json:"maxRetries"`
+	MaxRequestsPerConnection int    `json:"maxRequestsPerConnection"`
+	ConnectTimeout           string `json:"connectTimeout"`
 }
 
 type ExplainRequest struct {
@@ -154,10 +165,11 @@ func Capabilities(ws *store.Workspace, c, ns, service string) []Task {
 	dr := hasResource(ws, c, "networking.istio.io", "destinationrules")
 	selector := len(M(Path(svc.Obj, "spec", "selector"))) > 0
 	globalSupported, globalReason := globalServiceSupport(ws, svc, env)
+	extensions := enterpriseWaypointFilters(ws, c, svc)
 	out := []Task{
 		{"require-waypoint", "Block traffic that skips the waypoint", "L4 ztunnel", security && selector && waypointPrincipal(ws, svc) != "", "Allows only the captured waypoint service account. Requires an unambiguous captured identity and trust domain. Existing ALLOW policies remain additive."},
 		{"jwt", "Require a JWT", "L7 Istio waypoint", istio && security && hasResource(ws, c, "security.istio.io", "requestauthentications"), "RequestAuthentication and requestPrincipals authorization on the Service. Agentgateway JWT generation is UNVERIFIED and unavailable: no tested installed-schema policy mapping is established."},
-		{"retries", "Retry failed requests", "L7 Istio waypoint", istio && routeField(ws, c, "retry", "attempts"), "Requires the experimental HTTPRoute retry.attempts field in the captured installed CRD schema and an Istio waypoint. Otherwise unavailable; agentgateway support is UNVERIFIED."},
+		{"retries", "Retry failed requests", "L7 Istio waypoint", istio && (routeField(ws, c, "retry", "attempts") || extensions), "Uses the installed HTTPRoute retry schema, or route-scoped EnvoyFilter on a captured Solo Enterprise waypoint. Attempts and timeouts apply to one proxy hop; applications must propagate deadlines and cancellation across service calls."},
 		{"mirroring", "Mirror requests", "L7 Istio waypoint", istio && routeField(ws, c, "filters", "requestMirror", "backendRef", "name"), "HTTPRoute RequestMirror to a captured Service. Agentgateway waypoint support is UNVERIFIED and unavailable."},
 		{"header-routing", "Route matching requests", "L7 waypoint", (istio || agent) && routeField(ws, c, "matches", "headers", "value"), "HTTPRoute match on path, method, headers and query parameters (exact or regular expression) to another backend. Requires the captured installed HTTPRoute schema."},
 		{"global-service", "Publish as a global Service", "Multicluster", globalSupported, globalReason},
@@ -170,10 +182,11 @@ func Capabilities(ws *store.Workspace, c, ns, service string) []Task {
 		{"timeouts", "Set a request timeout", "L7 waypoint", (istio || agent) && hasResource(ws, c, GatewayGroup, "httproutes"), "HTTPRoute request timeout, combined with weighted routing when selected. Existing routes may compete; inspect attachment status."},
 		{"load-balancing", "Choose endpoint load balancing", "L7 Istio waypoint", istio && dr, "DestinationRule for this Service's endpoints: ROUND_ROBIN, LEAST_REQUEST or RANDOM. This is not a ztunnel load-balancing setting."},
 		{"endpoint-failover", "Eject unhealthy endpoints", "L7 Istio waypoint", istio && dr, "DestinationRule outlier detection. Ejects failing endpoints within a Service; does not fail over between different Service names."},
+		{"circuit-breaker", "Limit connections and concurrent requests", "L7 Istio waypoint", istio && dr, "DestinationRule connectionPool limits TCP connections, pending HTTP requests, concurrent requests and retries per upstream cluster in each waypoint proxy. Overflow requests can receive HTTP 503. Endpoint ejection is a separate task."},
 		{"locality-failover", "Fail over between regions", "L7 Istio waypoint", istio && dr && len(regions(ws, svc)) > 1, "Needs captured endpoint nodes with region labels and endpoints in both regions. Uses locality failover plus outlier detection."},
-		{"rate-limit", "Limit request rate locally", "L7 agentgateway waypoint", agent && agentPolicyAvailable, "A Service-targeted AgentgatewayPolicy local limit. The bucket is per proxy, not a shared global quota. Stock Istio waypoint rate limiting has no built-in template here."},
+		{"rate-limit", "Limit request rate locally", "L7 waypoint", (agent && agentPolicyAvailable) || extensions, "AgentgatewayPolicy for agentgateway, or a route/Service-scoped EnvoyFilter on Solo Enterprise Istio. Buckets are per waypoint process, not per application Pod or shared globally. Upstream Istio waypoint EnvoyFilter is unsupported."},
 		{"service-failover", "Primary/backup between different Services", "L7 capability-dependent", false, "Gateway API weighted backends do not provide priority failover. No verified portable template is available; Flightbay will not substitute weights for failover."},
-		{"global-rate-limit", "Shared/global rate limit", "L7 capability-dependent", false, "Requires a controller-specific rate-limit service, its backend and descriptors. Not generated without that integration's configuration."},
+		{"global-rate-limit", "Shared/global rate limit", "L7 Enterprise Istio waypoint", extensions, "Calls an explicitly selected external Envoy Rate Limit Service for the selected API's domain and descriptor. The RLS quota and shared backing store must already be configured; this client policy does not deploy or configure the quota store."},
 	}
 	for i := range out {
 		if out[i].Supported {
@@ -188,12 +201,12 @@ func Capabilities(ws *store.Workspace, c, ns, service string) []Task {
 		case "service-failover":
 			why = "Not implemented in Flightbay. Enabling this task requires a tested generator for the selected controller's priority-failover API; installing more CRDs or changing weights will not enable it."
 		case "global-rate-limit":
-			why = "Not implemented in Flightbay. This needs both a configured external rate-limit service and a tested Flightbay integration for its backend and descriptors. Installing the service alone will not enable this task."
+			why = "This generator requires Solo Enterprise Istio waypoint EnvoyFilter support and an existing external Envoy Rate Limit Service with a shared quota store. A CRD alone does not establish that integration."
 		case "l4-allow-namespace":
 			if wpName != "" {
 				why = "This direct-path template is disabled because a waypoint is selected. For this topology, use a waypoint policy that checks the original caller; Flightbay does not generate that namespace rule here. Do not remove the waypoint just to enable this card."
 			}
-		case "methods", "access-rule", "load-balancing", "endpoint-failover", "locality-failover":
+		case "methods", "access-rule", "load-balancing", "endpoint-failover", "locality-failover", "circuit-breaker":
 			if !istio {
 				why = "This Flightbay generator requires an Istio/Envoy waypoint. To use this template, select or deploy a supported Istio waypoint and review the binding change. Keeping agentgateway requires a tested agentgateway-specific generator in Flightbay; installing Istio CRDs alone is not enough."
 			} else if out[i].ID == "methods" || out[i].ID == "access-rule" {
@@ -211,7 +224,7 @@ func Capabilities(ws *store.Workspace, c, ns, service string) []Task {
 			}
 		case "rate-limit":
 			if !agent {
-				why = "This Flightbay template requires an agentgateway waypoint. Select or deploy a supported agentgateway waypoint and review the binding change; Flightbay has no equivalent local-rate-limit generator for an Istio/Envoy waypoint."
+				why = "This needs an agentgateway policy API or captured Solo Enterprise Istio waypoint EnvoyFilter support. Upstream Istio does not support EnvoyFilter on waypoint proxies."
 			} else {
 				why = "The policy API matching the selected agentgateway controller was not captured. Confirm that edition's policy CRD is installed and refresh inventory. An OSS policy CRD does not substitute for the Enterprise policy CRD, or vice versa."
 			}
@@ -241,6 +254,9 @@ func Generate(ws *store.Workspace, req Request) (*Plan, error) {
 }
 
 func generate(ws *store.Workspace, req Request) (*Plan, error) {
+	if req.Resilience != nil {
+		return generateResilience(ws, req)
+	}
 	if contains(req.Tasks, "global-service") {
 		return generateGlobalService(ws, req)
 	}
@@ -444,8 +460,28 @@ func generate(ws *store.Workspace, req Request) (*Plan, error) {
 			}
 		}
 	}
-	if selected["load-balancing"] || selected["endpoint-failover"] || selected["locality-failover"] {
+	if selected["load-balancing"] || selected["endpoint-failover"] || selected["locality-failover"] || selected["circuit-breaker"] {
 		policy := map[string]any{}
+		if selected["circuit-breaker"] {
+			b := req.CircuitBreaker
+			if b == nil {
+				return nil, fmt.Errorf("provide circuit-breaker connection and request limits")
+			}
+			for _, n := range []int{b.MaxConnections, b.MaxPendingRequests, b.MaxRequests, b.MaxRetries} {
+				if n < 1 || n > 1000000 {
+					return nil, fmt.Errorf("circuit-breaker connection, pending, concurrent and retry limits must be between 1 and 1000000")
+				}
+			}
+			if b.MaxRequestsPerConnection < 0 || b.MaxRequestsPerConnection > 1000000 {
+				return nil, fmt.Errorf("requests per connection must be between 0 (unlimited) and 1000000")
+			}
+			d, err := time.ParseDuration(b.ConnectTimeout)
+			if err != nil || d < time.Millisecond || d > 5*time.Minute {
+				return nil, fmt.Errorf("choose a circuit-breaker connect timeout from 1ms to 5m")
+			}
+			policy["connectionPool"] = map[string]any{"tcp": map[string]any{"maxConnections": b.MaxConnections, "connectTimeout": b.ConnectTimeout}, "http": map[string]any{"http1MaxPendingRequests": b.MaxPendingRequests, "http2MaxRequests": b.MaxRequests, "maxRetries": b.MaxRetries, "maxRequestsPerConnection": b.MaxRequestsPerConnection}}
+			p.Notes = append(p.Notes, "Connection-pool circuit breakers apply per upstream cluster in each waypoint proxy, not as a shared request-rate quota. Overflow can return HTTP 503. maxRequestsPerConnection zero means unlimited requests per connection. These limits apply after routing: select the backend Service to limit when an HTTPRoute routes to another Service.")
+		}
 		if selected["load-balancing"] {
 			if req.Algorithm != "DEFAULT" && req.Algorithm != "ROUND_ROBIN" && req.Algorithm != "LEAST_REQUEST" && req.Algorithm != "RANDOM" {
 				return nil, fmt.Errorf("choose ROUND_ROBIN, LEAST_REQUEST or RANDOM")

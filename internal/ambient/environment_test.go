@@ -96,7 +96,7 @@ func TestAllStepsAndTasksHaveOfficialDocs(t *testing.T) {
 			t.Fatalf("task %s has no docs", task.ID)
 		}
 	}
-	allowed := map[string]bool{"istio.io": true, "docs.solo.io": true, "agentgateway.dev": true, "gateway-api.sigs.k8s.io": true, "kubernetes.io": true}
+	allowed := map[string]bool{"istio.io": true, "docs.solo.io": true, "agentgateway.dev": true, "gateway-api.sigs.k8s.io": true, "kubernetes.io": true, "www.envoyproxy.io": true}
 	for _, ls := range v.Environment.TaskDocs {
 		for _, d := range ls {
 			u, err := url.Parse(d.URL)

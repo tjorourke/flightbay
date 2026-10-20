@@ -13,7 +13,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic/fake"
 )
 
 func TestMeshProbeAttributionUsesExactLivePodAndBackendSelectors(t *testing.T) {
@@ -127,8 +129,34 @@ func TestMeshProbeReportsOverlappingRoutesAndFiltersWrongPort(t *testing.T) {
 		}
 	}
 	rules, backends, warnings := meshRouteEvidence(context.Background(), c, ambient.Ref{Cluster: "mesh1", Namespace: "bookinfo", Name: "reviews"}, 9080)
-	if len(rules) != 2 || !backends["bookinfo/reviews-v1"] || len(warnings) != 1 || !strings.Contains(warnings[0], "Multiple") {
+	if len(rules) != 2 || !backends["bookinfo/reviews-v1"] || !strings.Contains(strings.Join(warnings, " "), "Multiple") {
 		t.Fatalf("route conflicts hidden: %+v %+v %v", rules, backends, warnings)
+	}
+}
+
+func TestMeshBackendReadinessDoesNotInventEndpoints(t *testing.T) {
+	dc := fake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{{Version: "v1", Resource: "services"}: "ServiceList", {Group: "discovery.k8s.io", Version: "v1", Resource: "endpointslices"}: "EndpointSliceList"})
+	c := ambientConnection{client: dc}
+	ctx := context.Background()
+	svcGVR := schema.GroupVersionResource{Version: "v1", Resource: "services"}
+	svc := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": "empty-backend", "namespace": "bookinfo"}, "spec": map[string]any{"ports": []any{map[string]any{"name": "http", "port": int64(9080)}}}}}
+	if _, err := dc.Resource(svcGVR).Namespace("bookinfo").Create(ctx, svc, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	n, err := meshBackendReadyEndpoints(ctx, c, "bookinfo", "empty-backend", 9080)
+	if err != nil || n != 0 {
+		t.Fatalf("empty backend: %d %v", n, err)
+	}
+	slice := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "discovery.k8s.io/v1", "kind": "EndpointSlice", "metadata": map[string]any{"name": "backend-slice", "namespace": "bookinfo", "labels": map[string]any{"kubernetes.io/service-name": "empty-backend"}}, "ports": []any{map[string]any{"name": "http", "port": int64(9080)}}, "endpoints": []any{map[string]any{"addresses": []any{"10.0.0.1"}, "conditions": map[string]any{"ready": false}}, map[string]any{"addresses": []any{"10.0.0.2"}, "conditions": map[string]any{"ready": true}}}}}
+	if _, err := dc.Resource(schema.GroupVersionResource{Group: "discovery.k8s.io", Version: "v1", Resource: "endpointslices"}).Namespace("bookinfo").Create(ctx, slice, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	n, err = meshBackendReadyEndpoints(ctx, c, "bookinfo", "empty-backend", 9080)
+	if err != nil || n != 1 {
+		t.Fatalf("ready backend: %d %v", n, err)
+	}
+	if _, err := meshBackendReadyEndpoints(ctx, c, "bookinfo", "empty-backend", 9999); err == nil {
+		t.Fatal("wrong Service port accepted")
 	}
 }
 

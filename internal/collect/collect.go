@@ -236,15 +236,24 @@ func (c *Collector) discover(cluster string, cl Clients) ([]bundle.APIResource, 
 	}
 	seen := map[string]bool{}
 	var out []bundle.APIResource
-	for _, l := range lists {
+	// Prefer a resource's preferred group version when it is served there,
+	// but retain resources served only in another version (EnvoyFilter is
+	// v1alpha3 even when networking.istio.io prefers v1).
+	ordered := append([]*metav1.APIResourceList(nil), lists...)
+	isPreferred := func(l *metav1.APIResourceList) bool {
+		if l == nil {
+			return false
+		}
+		gv, e := schema.ParseGroupVersion(l.GroupVersion)
+		return e == nil && preferred[gv.Group] == l.GroupVersion
+	}
+	sort.SliceStable(ordered, func(i, j int) bool { return isPreferred(ordered[i]) && !isPreferred(ordered[j]) })
+	for _, l := range ordered {
 		if l == nil {
 			continue
 		}
 		gv, err := schema.ParseGroupVersion(l.GroupVersion)
 		if err != nil {
-			continue
-		}
-		if p, ok := preferred[gv.Group]; ok && p != l.GroupVersion {
 			continue
 		}
 		for _, r := range l.APIResources {

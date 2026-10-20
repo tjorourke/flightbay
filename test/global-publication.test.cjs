@@ -13,6 +13,15 @@ function setup(){
   return {context,A,boxes};
 }
 
+test('global publication is visible in Current configuration and its switcher',()=>{
+  const {context,A}=setup();context.esc=String;context.attr=JSON.stringify;context.amConfigurationSummary=()=>'';
+  const svc={cluster:'mesh1',namespace:'app',name:'web',kind:'Service'};
+  A.inventory.topology={clusters:['mesh1','mesh2'].map(cluster=>({context:cluster,services:[{namespace:'app',name:'web',scope:'global',takeover:true,distribution:'Any',globalHosts:['web.app.mesh.internal']}]}))};
+  A.result={editable:[{ref:{kind:'HTTPRoute',namespace:'app',name:'versions'},supported:true,rule:0}]};
+  const card=context.amPublicationConfigurationCard(svc);assert.match(card,/Global Service configuration/);assert.match(card,/mesh1, mesh2/);assert.match(card,/Local DNS included/);assert.match(card,/Explicit HTTP routes still apply/);
+  const nav=context.amConfigurationNav(svc);assert.match(nav,/Global Service publication/);assert.match(nav,/Switch configuration · 2/);
+});
+
 test('busy-state disabling retains selected participating clusters and excludes a missing Service',async()=>{
   const {context,A,boxes}=setup(),requests=[];
   context.apiPost=async(route,request)=>{requests.push(request);return {id:request.cluster,request,changes:[{}],objects:[]};};

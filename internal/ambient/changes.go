@@ -258,6 +258,8 @@ func Target(ws *store.Workspace, c, kind, ns, name string) *store.Object {
 		g, res = "security.istio.io", "peerauthentications"
 	case "DestinationRule":
 		g, res = "networking.istio.io", "destinationrules"
+	case "EnvoyFilter":
+		g, res = "networking.istio.io", "envoyfilters"
 	case "AgentgatewayPolicy":
 		g, res = "agentgateway.dev", "agentgatewaypolicies"
 	case "EnterpriseAgentgatewayPolicy":

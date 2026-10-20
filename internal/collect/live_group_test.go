@@ -93,6 +93,17 @@ func TestLiveGroupKeepsBothClustersWatchingAndExportsBoth(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, "remote watch", func() bool { return ws.Get("mesh2", "", "pods", "payments", "only-mesh2") != nil })
+	ws.SetLivePaused(true)
+	beforeLogs := ws.State().LogLines
+	if err := h2.dyn.Tracker().Create(schema.GroupVersionResource{Version: "v1", Resource: "pods"}, crashPod("payments", "arrived-while-paused"), "payments"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if ws.Get("mesh2", "", "pods", "payments", "arrived-while-paused") != nil || ws.State().LogLines != beforeLogs {
+		t.Fatal("paused mirror still ingested objects or logs")
+	}
+	ws.SetLivePaused(false)
+	waitFor(t, "resume catches up watch", func() bool { return ws.Get("mesh2", "", "pods", "payments", "arrived-while-paused") != nil })
 	if ws.Get("mesh1", "", "pods", "payments", "only-mesh2") != nil {
 		t.Fatal("watch leaked across clusters")
 	}

@@ -5,6 +5,7 @@ function amEditHeading(tasks){const titles={'weighted-routing':'Edit traffic spl
 function amExistingTaskEntries(task){return (S.ambient.result?.editable||[]).filter(e=>amConfigurationTasks(e).includes(task));}
 function amConfigurationTitle(entry){
   const tasks=amConfigurationTasks(entry);
+  if(entry.request?.resilience)return (amTaskText[tasks[0]]?.[0]||tasks[0])+' · '+(entry.request.resilience.scope==='service'?'Service':entry.request.resilience.scope==='api'?entry.request.resilience.match?.path||'API':'route '+entry.request.resilience.route);
   if(tasks.includes('weighted-routing'))return 'Traffic split';
   if(tasks.includes('strict-mtls'))return 'Mutual TLS';
   if(tasks.includes('l4-default-deny'))return 'Default deny';
@@ -23,6 +24,7 @@ function amConfigurationMatch(entry){
 }
 function amConfigurationValues(entry){
   const r=entry.request||{},tasks=amConfigurationTasks(entry),values=[];
+  if(r.resilience)values.push(`<p class="am-current-value">Scope <strong>${esc(r.resilience.scope)}</strong>${r.resilience.match?.path?' · '+esc(r.resilience.match.method||'Any method')+' '+esc(r.resilience.match.path):''}${r.resilience.global?' · external quota '+esc(r.resilience.global.domain)+' / '+esc(r.resilience.global.descriptorValue):''}</p>`);
   if(tasks.includes('weighted-routing')){
     const total=(r.backends||[]).reduce((n,b)=>n+b.weight,0);
     values.push(`<div class="am-current-weights">${(r.backends||[]).map((b,i)=>{const pct=total?100*b.weight/total:0;return `<div><span><i class="am-current-dot tone-${i%4}"></i><strong>${esc(b.name)}</strong><small>:${b.port}</small></span><b>${pct.toFixed(Number.isInteger(pct)?0:1)}%</b></div>`;}).join('')}</div>`);
@@ -37,6 +39,7 @@ function amConfigurationValues(entry){
   if(tasks.includes('rate-limit'))values.push(`<p class="am-current-value"><strong>${r.requests}</strong> requests / ${esc((r.unit||'').toLowerCase())}${r.burst!==undefined?' · burst '+r.burst:''}</p>`);
   if(tasks.includes('load-balancing'))values.push(`<p class="am-current-value">Endpoint algorithm <strong>${esc(r.algorithm||'Controller default')}</strong></p>`);
   if(tasks.includes('endpoint-failover'))values.push(`<p class="am-current-value">Eject after <strong>${r.failureThreshold}</strong> failures · ${esc(r.ejectionDuration||'default duration')}</p>`);
+  if(tasks.includes('circuit-breaker')){const b=r.circuitBreaker||{};values.push(`<p class="am-current-value">Circuit breakers · connections <strong>${b.maxConnections||'inherited'}</strong> · pending <strong>${b.maxPendingRequests||'inherited'}</strong> · concurrent requests <strong>${b.maxRequests||'inherited'}</strong> · retries <strong>${b.maxRetries||'inherited'}</strong></p>`);}
   return values.join('');
 }
 function amConfigurationHome(svc){
@@ -45,6 +48,7 @@ function amConfigurationHome(svc){
   return `<section class="panel am-current"><div class="panel-head"><div><h2>Current configuration</h2><p>${esc(svc.namespace+'/'+svc.name)} · ${esc(svc.cluster)}</p></div><button class="primary" id="am-retest-current">${applied?'Retest traffic':'Test current traffic'}</button></div><div class="panel-body">
     ${applied&&A.currentRefreshPending?'<div class="notice info" role="status">The cluster was updated. This capture has not caught up yet; refresh before editing again.</div>':''}
     ${amWaypointPanel(A.result.waypointBinding,svc)}
+    ${typeof amPublicationConfigurationCard==='function'?amPublicationConfigurationCard(svc):''}
     ${amPoliciesPanel(svc)}
     ${amRoutingPanel(svc,entries,routes)}
     </div></section>
@@ -151,7 +155,8 @@ async function amTestAccessRule(access){
   for(const c of rule.when||[]){const m=/^request\.headers\[(.+)\]$/.exec(c.key||'');if(m&&c.values?.length)headers[m[1]]=c.values[0];}
   HTTP_TEST.profile={name:'',method:to.methods?.[0]||'GET',path:(to.paths?.[0]||'/').replace(/\*$/,''),headers,body:'',timeout:10};
   HTTP_TEST.panel='request';
-  await amOpenHTTPTest(service);
+  HTTP_TEST.policyTest={action:access?.action||'',service:amKey(service)};
+  await amOpenHTTPTest(service,{policyTest:true});
   // Without an existing curl Pod, run from a temporary one in the Service's
   // namespace so the request still goes through ztunnel and the waypoint.
   if((HTTP_TEST.options?.clients||[]).length){HTTP_TEST.mode='mesh';HTTP_TEST.count=1;if(typeof drawHTTPTest==='function')drawHTTPTest();}
@@ -164,7 +169,7 @@ async function amTestAccessRule(access){
 // Edit / Open / YAML.
 function amRoutingPanel(svc,entries,routes){
   const items=entries.map((e,i)=>({e,i})).filter(({e})=>!AM_POLICY_KINDS.includes(e.ref.kind));
-  const labels={'weighted-routing':'Edit split',timeouts:'Edit timeout','load-balancing':'Edit balancing','endpoint-failover':'Edit ejection','strict-mtls':'Edit TLS','l4-allow-namespace':'Edit callers',methods:'Edit methods','rate-limit':'Edit rate limit','access-rule':'Edit rules'};
+  const labels={'weighted-routing':'Edit split',timeouts:'Edit timeout','load-balancing':'Edit balancing','endpoint-failover':'Edit ejection','circuit-breaker':'Edit circuit breakers','strict-mtls':'Edit TLS','l4-allow-namespace':'Edit callers',methods:'Edit methods','rate-limit':'Edit rate limit','access-rule':'Edit rules'};
   const body=items.length?items.map(({e,i})=>{
     const editTasks=e.request?.tasks||[];
     return `<article class="am-policy-card">

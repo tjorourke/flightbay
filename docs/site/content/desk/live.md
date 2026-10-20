@@ -128,6 +128,8 @@ Nothing is asked of the cluster when you save. The bundle contains all selected 
 
 ## The banner and refreshing
 
+**Pause ingestion** in the live banner stops incoming objects, events, logs and diagnostic results from being committed to this workspace. Existing data remains readable, and the pause applies to every connected cluster and browser using this desk. **Resume ingestion** lets object watches catch up through their normal resource-version reconnect and relist handling. Connections can remain open while paused; log buffers remain bounded and report any dropped lines. The API is `POST /api/live/ingestion` with `{"paused":true}` or `{"paused":false}`, after initial sync.
+
 The banner that says **Offline snapshot** for a bundle reads, in live mode:
 
 ```text
@@ -137,6 +139,8 @@ The banner that says **Offline snapshot** for a bundle reads, in live mode:
 It is green while every watch is connected and amber while any is reconnecting. A watch that drops resumes from the last resourceVersion it saw. A watch whose version has expired (410 Gone) lists again and reconciles, so a missed deletion is still applied. APIs which advertise list but not watch, such as Kubernetes componentstatuses, are polled every 30 seconds rather than repeatedly attempting an unsupported watch.
 
 Pages refresh themselves when the mirror changes, at most once every three seconds. A refresh updates the page in place: only what changed is redrawn, so where you have scrolled to (in the page, a table or a YAML block), open findings, graph zoom and the tab you are on stay put. Refreshes wait while you are typing, while you have text selected on the page, while a drawer or dialog is open, and while the tab is hidden. The Log explorer keeps its own **Follow incoming data** switch: off, it tells you how many new lines match; on, it keeps the newest in view.
+
+Ambient Configure also retains its scroll position and open sections when the same wizard step is redrawn. Changing target, tab or wizard step does not inherit the previous step's position.
 
 Ages in tables, certificate lifetimes and `since:` in log queries count from now, not from a capture time.
 
