@@ -60,6 +60,7 @@ type ServiceConfig struct {
 	Tasks       []ConfigTask     `json:"tasks"`
 	Other       []ConfigResource `json:"other"`
 	Clusters    []string         `json:"clusters"`
+	Header      ServiceHeader    `json:"header"`
 	Drift       []ResourceDrift  `json:"drift"`
 	// Multicluster is one plain sentence, empty when every connected cluster
 	// holds the same configuration.
@@ -158,6 +159,7 @@ func NewServiceConfig(ws *store.Workspace, cluster, ns, name string) (*ServiceCo
 	b.finishFacts()
 
 	out := &ServiceConfig{Subject: reference(svc), Groups: TaskGroups, Other: []ConfigResource{}, Clusters: ws.Clusters(), Drift: []ResourceDrift{}}
+	out.Header = b.buildHeader()
 	out.Answers = BuildAnswers(b.facts)
 	out.AnswerEmpty = map[string]bool{"resilience": b.facts.Resilience.none()}
 	caps := map[string]Task{}

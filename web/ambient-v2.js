@@ -61,6 +61,7 @@ const am2SvcRef = svc => { const [cluster, namespace, ...rest] = String(svc || '
 const am2SvcPath = (cluster, ns, name) => [cluster, ns, name].join('/');
 
 // ---------- state ----------
+const AM2_AFTER = [];
 S.am2 = S.am2 || {data: null, tests: [], ns: '', filter: '', moreNs: false, lastSvc: '', error: ''};
 
 async function am2Load(force) {
@@ -180,13 +181,13 @@ async function amV2Page() {
   else if (route.tab === 'demo' && typeof am2DemoPage === 'function') body = await am2DemoPage(route, data);
   else if (route.svc || route.obj || route.tab !== 'overview') body = `<div class="am2-note am2-muted">This page is not built yet.</div>`;
   else body = am2Overview(data);
-  return `<div class="am2" id="am2-root">${am2Header(route, data)}${body}</div>${typeof am2DrawerHost === 'function' ? await am2DrawerHost(route, data) : ''}`;
+  return `<div class="am2" id="am2-root">${route.svc || route.obj ? '' : am2Header(route, data)}${body}</div>${typeof am2DrawerHost === 'function' ? await am2DrawerHost(route, data) : ''}`;
 }
 
 function am2After() {
   const route = am2Route(), root = $('#am2-root');
   if (!root) return;
-  if (typeof am2AfterPage === 'function') am2AfterPage(route);
+  AM2_AFTER.forEach(f => f(route));
   const A = S.am2, data = A.data;
   if (!route.svc && !route.obj && route.tab === 'overview' && data) {
     const redraw = () => {
