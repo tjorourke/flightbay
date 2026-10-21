@@ -122,7 +122,7 @@ function amGraph(target) {
 }
 const amTaskText={
   explain:['Traffic repair','Review the caller access repair and its scope.','Access'],
-  'require-waypoint':['Block traffic that skips the waypoint','Pods accept connections only from this Service\'s waypoint, so port-forwards, Pod IPs and ingress paths cannot get round its L7 policies.','Access'],
+  'require-waypoint':['Block traffic that skips the waypoint','Allow the waypoint identity. Remove or narrow other caller-allowing rules to block direct Pod-IP bypass.','Access'],
   jwt:['Require a JWT','Validate tokens and restrict request principals at the Istio waypoint.','Access'],
    retries:['Retry failed requests','Choose which failures to retry, the attempt limit and the time budget.','Resilience'],
   mirroring:['Mirror requests','Copy requests to a captured Service; ignore its responses.','Routing'],
@@ -130,6 +130,8 @@ const amTaskText={
   'global-service':['Publish a global Service','Review the export label for this Service in the selected cluster.','Multicluster'],
   'l4-default-deny':['Deny by default','Require an explicit allow policy for this workload.','Access'],
   'l4-allow-namespace':['Allow a namespace','Permit callers from a selected namespace.','Access'],
+  'l4-allow-service-account':['Allow one service account','Allow direct L4 calls from one captured service account without a waypoint.','Access'],
+  'mesh-strict-mtls':['Mesh-wide STRICT mTLS','Set the cluster-wide default in istio-system. More-specific overrides remain effective.','Transport'],
   'strict-mtls':['Set mutual TLS','Choose how this workload accepts connections.','Access'],
   methods:['Control HTTP methods','Allow or deny selected methods at the waypoint.','Access'],
   'access-rule':['Allow or deny requests','Write your own rules: calling namespaces or Services, headers, paths and methods.','Access'],
@@ -218,8 +220,9 @@ function amWizard(svc) {
     ${selected('access-rule') ? amAccessRuleMarkup(svc) : ''}
     ${typeof amResilienceMarkup==='function'?amResilienceMarkup(svc):''}
     ${selected('l4-allow-namespace') ? `<label>Source namespace <select id="am-source">${amOpts(namespaces, F.sourceNamespace)}</select></label>` : ''}
+    ${selected('l4-allow-service-account')?`<label>Source service account<select id="am-sourceServiceAccount"><option value="">Choose a captured service account…</option>${amOpts((A.inventory.serviceAccounts||[]).filter(a=>a.cluster===svc.cluster).map(a=>a.namespace+'/'+a.name),F.sourceServiceAccount)}</select></label>`:''}
     ${selected('strict-mtls') ? `<fieldset class="am-choice-group"><legend>Which connections should this workload accept?</legend>${[['STRICT','Require mesh mTLS','Only callers with a mesh-authenticated connection can reach these Pods.'],['PERMISSIVE','Allow non-mesh callers too','Accept plaintext connections as well as mesh mTLS.']].map(([value,label,detail])=>`<label class="am-choice"><input type="radio" name="am-mtls-mode" value="${value}" ${(F.mtlsMode||'STRICT')===value?'checked':''}><span><strong>${label}</strong><small>${detail}</small><code>${value}</code></span></label>`).join('')}</fieldset>` : ''}
-    ${selected('methods') ? `<label>Method rule <select id="am-methodAction">${amOpts([{value:'ALLOW',label:'Allow only selected methods (additive ALLOW policy)'},{value:'DENY',label:'Deny selected methods'}], F.methodAction || 'ALLOW')}</select></label>` + amMethodChips('methods','HTTP methods',F.methods ?? 'GET,HEAD') : ''}
+    ${selected('methods') ? `<label>Method rule <select id="am-methodAction">${amOpts([{value:'ALLOW',label:'Allow only selected methods (additive ALLOW policy)'},{value:'DENY',label:'Deny selected methods'}], F.methodAction || 'ALLOW')}</select></label>` + amMethodChips('methods','HTTP methods',F.methods ?? 'GET,HEAD') + amMethodCallersMarkup(svc) : ''}
     ${selected('timeouts')&&!(selected('retries')&&typeof amUsesResilience==='function'&&amUsesResilience()) ? amInput('timeout', 'Request timeout · the whole request, retries included (0s = no limit)', F.timeout ?? '5s') + amInput('backendTimeout', 'Backend timeout · each attempt to a backend; only matters with retries (optional)', F.backendTimeout ?? '') + '<p class="muted am-field-help">HTTPRoute <code>timeouts.request</code> caps the time the caller waits for an answer. <code>timeouts.backendRequest</code> caps one try against a backend Pod; with retries a request can make several tries inside the request timeout. Leave backend empty unless you use retries.</p>' : ''}
     ${selected('load-balancing') ? `<label>Endpoint algorithm <select id="am-algorithm">${amOpts([{value:'DEFAULT',label:'Controller default — no override'},'ROUND_ROBIN','LEAST_REQUEST','RANDOM'], F.algorithm || 'DEFAULT')}</select></label>` : ''}
     ${selected('weighted-routing') ? `<label>Service traffic distribution <select id="am-trafficMode">${amOpts([{value:'equal',label:'Default/equal — omit explicit backend weights'},{value:'weighted',label:'Explicit backend weights'}], F.trafficMode || 'equal')}</select></label><label class="row"><input id="am-relativeWeights" type="checkbox" ${F.relativeWeights ? 'checked' : ''}> Relative weights, rather than percentages totalling 100</label>` : ''}
@@ -291,13 +294,14 @@ function amCapture() {
   if(document.querySelector('[data-amglobalcluster]'))F.globalClusters=[...document.querySelectorAll('[data-amglobalcluster]:checked')].map(e=>e.dataset.amglobalcluster).filter(cluster=>S.ambient.inventory.services.some(s=>s.cluster===cluster&&s.namespace===amService()?.namespace&&s.name===amService()?.name));
   const mtls=document.querySelector('input[name="am-mtls-mode"]:checked');if(mtls)F.mtlsMode=mtls.value;
   if($('#am-access'))amCaptureAccessRule();
+  const caller=$('#am-methodCaller');if(caller&&caller.value!=='preserve'){F.callerSources=caller.value==='everyone'?[]:[{serviceAccounts:[caller.value]}];F.callersEdited=true;}
   if(document.querySelectorAll)document.querySelectorAll('[data-ammethods]').forEach(g=>{F[g.dataset.ammethods]=[...g.querySelectorAll('input:checked')].map(i=>i.value).join(',');});
   if(document.querySelectorAll)document.querySelectorAll('[data-amheaders]').forEach(g=>{const o={};g.querySelectorAll('[data-amheaderrow]').forEach(r=>{const n=r.querySelector('[data-amh="name"]').value.trim();if(n)o[n]=r.querySelector('[data-amh="value"]').value;});F[g.dataset.amheaders]=JSON.stringify(o);});
   const jm=document.querySelector?.('input[name="am-jwksMode"]:checked');if(jm)F.jwksMode=jm.value;
   if(document.querySelector?.('#am-route-match'))amCaptureRouteMatch(F);
-  const text = ['source','methods','timeout','backendTimeout','algorithm','unit','fromRegion','toRegion','trafficMode','mtlsMode','methodAction','wpMode','wpScope','wpExisting','wpNamespace','wpName','wpClass','targetNamespace','repairOperation','selectedPod','workload','repairRoute'];
+  const text = ['source','sourceServiceAccount','meshPolicy','methods','timeout','backendTimeout','algorithm','unit','fromRegion','toRegion','trafficMode','mtlsMode','methodAction','wpMode','wpScope','wpExisting','wpNamespace','wpName','wpClass','targetNamespace','repairOperation','selectedPod','workload','repairRoute'];
   text.push('parentKind','parentGateway','parentSection');
-  text.push('issuer','jwksUri','jwks','requestPrincipals','paths','jwtMethods','p1Headers','mirrorService','headerService','explainPorts','explainPaths');
+  text.push('issuer','jwksUri','jwks','requestPrincipals','paths','jwtMethods','jwtCallerKind','jwtCaller','p1Headers','mirrorService','headerService','explainPorts','explainPaths');
   for (const k of text) if (get(k)) F[k === 'source' ? 'sourceNamespace' : k] = get(k).value;
   for (const k of ['port','requests','burst','failureThreshold','maxEjectionPercent','targetPort','replicas','parentIndex']) if (get(k)) F[k] = Number(get(k).value);
   for(const k of ['retryAttempts','mirrorPort','headerPort'])if(get(k))F[k]=Number(get(k).value);
@@ -309,6 +313,11 @@ function amCapture() {
 }
 function amRead() {
   amCapture(); const A = S.ambient, F = A.settings, o = amTarget(), s = amService();
+  if(A.mode==='mesh-strict-mtls'||A.tasks?.['mesh-strict-mtls']){
+    const state=(A.inventory.meshMtls||[]).find(m=>m.cluster===o.cluster),entry=(state?.defaults||[]).find(e=>e.ref.name===F.meshPolicy);
+    if(state?.defaults?.length&&!entry)throw new Error('Select the existing root default explicitly.');
+    return {cluster:o.cluster,namespace:'istio-system',tasks:['mesh-strict-mtls'],...(entry?{edit:entry.request.edit}:{})};
+  }
   if(F.explain)return {cluster:s.cluster,namespace:s.namespace,service:s.name,tasks:['explain'],explain:{...F.explain,ports:(F.explainPorts??F.explain.ports?.join(',')??'').split(',').map(x=>x.trim()).filter(Boolean),paths:(F.explainPaths??F.explain.paths?.join(',')??'').split(',').map(x=>x.trim()).filter(Boolean)}};
   if(A.mode==='route-parent'&&(F.parentKind||'Gateway')==='Gateway'){
     const parent=A.inventory.objects.find(o=>o.cluster===s.cluster&&o.kind==='Gateway'&&o.namespace+'/'+o.name===F.parentGateway);
@@ -323,11 +332,18 @@ function amRead() {
   if(typeof amUsesResilience==='function'&&amUsesResilience()){if(typeof amValidateResilienceForm==='function')amValidateResilienceForm();req.resilience=F.resilience||{scope:'service'};}
   if(A.tasks['circuit-breaker'])req.circuitBreaker=F.circuitBreaker||amCircuitBreakerDefaults();
   for (const k of ['sourceNamespace','timeout','backendTimeout','algorithm','requests','unit','burst','trafficMode','relativeWeights','mtlsMode','methodAction','failureThreshold','ejectionInterval','ejectionDuration','maxEjectionPercent','fromRegion','toRegion']) if (F[k] !== undefined && F[k] !== '') req[k] = F[k];
-  if (A.tasks['access-rule']) req.access = amAccessRequest();
-  if (A.tasks.methods) req.methods = (F.methods || '').split(',').map(x => x.trim()).filter(Boolean);
+  if(A.tasks['l4-allow-service-account'])req.sourceServiceAccount=F.sourceServiceAccount;
+  if (A.tasks['access-rule']) {
+    req.access = amAccessRequest(); req.accessOperation=F.accessOperation || (A.edit?'replace':'append');
+    if(F.accessTarget==='new'){if(!F.accessName)throw new Error('Choose a name for the new policy.');req.name=F.accessName;}
+    else if(F.accessTarget){const e=(A.result?.editable||[]).find(e=>e.ref.kind==='AuthorizationPolicy'&&e.ref.namespace+'/'+e.ref.name===F.accessTarget);if(!e?.request?.edit)throw new Error('Choose a captured policy.');req.edit=e.request.edit;}
+    else if(!A.edit&&(A.result?.editable||[]).some(e=>e.ref.kind==='AuthorizationPolicy'&&e.request?.edit&&e.request.tasks.some(t=>['access-rule','methods'].includes(t))))throw new Error('Select the existing policy explicitly, or choose a named new policy.');
+  }
+  if (A.tasks.methods) {req.methods = (F.methods || '').split(',').map(x => x.trim()).filter(Boolean);req.callerSources=F.callerSources||[];req.callersEdited=!!F.callersEdited;}
   if (A.tasks['weighted-routing']) req.backends = F.backends;
   if (A.edit) req.edit = A.edit;
   if(A.tasks.jwt){req.issuer=F.issuer;req.jwksUri=F.jwksUri;req.jwks=F.jwks;req.requestPrincipals=(F.requestPrincipals||'').split(',').map(x=>x.trim()).filter(Boolean);if(!req.requestPrincipals.length&&F.issuer)req.requestPrincipals=[F.issuer.trim()+'/*'];if(F.jwksMode==='inline')req.jwksUri='';else req.jwks='';req.paths=(F.paths||'').split(',').map(x=>x.trim()).filter(Boolean);req.methods=(F.jwtMethods||'').split(',').map(x=>x.trim()).filter(Boolean);}
+  if(A.tasks.jwt){if(['principal','serviceAccount'].includes(F.jwtCallerKind)&&!F.jwtCaller)throw new Error('Choose a captured workload caller.');if(F.jwtCallerKind==='principal'&&F.jwtCaller)req.jwtPrincipals=[F.jwtCaller];if(F.jwtCallerKind==='serviceAccount'&&F.jwtCaller)req.jwtServiceAccounts=[F.jwtCaller];}
   if(A.tasks.jwt||A.tasks['header-routing'])req.headers=JSON.parse(F.p1Headers||'{}');
   if(A.tasks['header-routing'])req.routeMatch=amRouteMatchRequest(F);
   if(A.tasks.retries)req.retryAttempts=F.retryAttempts;
@@ -478,16 +494,22 @@ function amP1Fields(){
   if(selected('explain'))fields+=amInput('explainPorts','Repair destination ports (comma separated; captured ports only)',F.explainPorts??F.explain?.ports?.join(',')??'')+(F.explain?.paths?.length?amInput('explainPaths','Waypoint repair paths (comma separated)',F.explainPaths??F.explain.paths.join(',')):'');
   if(selected('jwt')){
     F.jwksMode??=(F.jwks?'inline':'uri');
-    fields+=`<section class="am-form-block"><h4>1 · Who issues the tokens</h4>${amInput('issuer','Issuer (the token\'s iss claim)',F.issuer||'')}<p class="muted am-field-help">For example <code>https://accounts.example.com</code>. Tokens from any other issuer are rejected.</p></section>
+    fields+=`<section class="am-form-block"><h4>1 · Who issues the tokens</h4>${amInput('issuer','Issuer (the token\'s iss claim)',F.issuer||'')}<p class="muted am-field-help">For example <code>https://accounts.example.com</code>. Validates tokens for this issuer using the chosen signing keys. Other captured validators may also apply.</p></section>
       <section class="am-form-block"><h4>2 · Where the signing keys are</h4><div class="am-global-choice" role="radiogroup" aria-label="Key source">${[['uri','HTTPS URL (JWKS endpoint)'],['inline','Paste the public JWKS']].map(([v,l])=>`<label><input type="radio" name="am-jwksMode" value="${v}" ${F.jwksMode===v?'checked':''}> ${l}</label>`).join('')}</div>
       ${F.jwksMode==='inline'?`<label>Public JWKS JSON<textarea id="am-jwks" rows="5" spellcheck="false" placeholder='{"keys":[{"kty":"RSA","e":"AQAB","n":"…","kid":"…"}]}'>${esc(F.jwks||'')}</textarea></label>`:amInput('jwksUri','JWKS URL',F.jwksUri||'')}</section>
-      <section class="am-form-block"><h4>3 · Who may call</h4>${amInput('requestPrincipals','Allowed subjects (comma separated, empty = any subject from this issuer)',F.requestPrincipals||'')}<p class="muted am-field-help">Each entry is <code>issuer/subject</code>, or <code>issuer/*</code> for anyone the issuer signs. Requests without a valid token are refused.</p></section>
+      <section class="am-form-block"><h4>3 · Who may call</h4>${amInput('requestPrincipals','Allowed subjects (comma separated, empty = any subject from this issuer)',F.requestPrincipals||'')}<p class="muted am-field-help">Each entry is <code>issuer/subject</code>, or <code>issuer/*</code>. This ALLOW branch needs a matching validated JWT. Other ALLOW rules can admit requests without one.</p><label>Workload caller (optional)<select id="am-jwtCallerKind">${amOpts([{value:'any',label:'Any workload caller'},{value:'principal',label:'Source principal AND JWT'},{value:'serviceAccount',label:'Service account AND JWT'}],F.jwtCallerKind||'any')}</select></label>${F.jwtCallerKind&&F.jwtCallerKind!=='any'?`<label>Caller identity<select id="am-jwtCaller"><option value="">Choose a captured caller…</option>${(A.inventory.serviceAccounts||[]).filter(a=>a.cluster===svc.cluster&&(F.jwtCallerKind!=='principal'||a.principal)).map(a=>({value:F.jwtCallerKind==='principal'?a.principal:a.namespace+'/'+a.name,label:a.namespace+'/'+a.name})).map(a=>`<option value="${esc(a.value)}" ${F.jwtCaller===a.value?'selected':''}>${esc(a.label)}</option>`).join('')}</select></label>`:''}</section>
       <section class="am-form-block"><h4>4 · Only for some requests (optional)</h4>${amInput('paths','Paths (comma separated, empty = all)',F.paths||'')}${amMethodChips('jwtMethods','Methods (none ticked = all)',F.jwtMethods||'')}<h5>Also require these headers</h5>${amHeaderRows('p1Headers',F.p1Headers)}</section>`;
   }
   if(selected('header-routing'))fields+=amRouteMatchMarkup(F);
   if(selected('retries')&&!(typeof amUsesResilience==='function'&&amUsesResilience())){F.retryAttempts??=2;fields+=amInput('retryAttempts','Retry attempts (1–10)',F.retryAttempts,'number');}
   for(const [task,prefix]of [['mirroring','mirror'],['header-routing','header']])if(selected(task)&&(task!=='header-routing'||!selected('weighted-routing'))){const infra=new Set((A.inventory.topology?.clusters||[]).flatMap(c=>c.services.filter(x=>x.infrastructure).map(x=>c.context+'/'+x.namespace+'/'+x.name)));const others=A.inventory.services.filter(s=>s.cluster===svc.cluster&&s.namespace===svc.namespace&&!infra.has(s.cluster+'/'+s.namespace+'/'+s.name)&&!/waypoint/.test(s.name)&&(task!=='mirroring'||s.name!==svc.name));const chosen=others.find(s=>s.name===F[prefix+'Service'])||others[0];F[prefix+'Service']=chosen?.name||'';if(!chosen?.ports.includes(F[prefix+'Port']))F[prefix+'Port']=chosen?.ports[0];fields+=`<label>${task==='mirroring'?'Mirror requests to':'Send matching requests to'} Service<select id="am-${prefix}Service">${amOpts(others.map(s=>s.name),F[prefix+'Service'])}</select></label><label>Backend Service port<select id="am-${prefix}Port">${amOpts(chosen?.ports||[],F[prefix+'Port'])}</select></label>`;}
   box.insertAdjacentHTML('beforeend',fields);
+  $('#am-jwtCallerKind')?.addEventListener('change',()=>{amCapture();F.jwtCaller='';amInvalidate();render();});
+}
+
+function amMethodCallersMarkup(svc){
+  const F=S.ambient.settings,sources=F.callerSources||[],label=sources.length?JSON.stringify(sources):'Everyone';
+  return `<label>Callers this applies to<select id="am-methodCaller"><option value="preserve">${esc(label)}</option><option value="everyone">Everyone</option>${(S.ambient.inventory.serviceAccounts||[]).filter(a=>a.cluster===svc.cluster).map(a=>`<option value="${esc(a.namespace+'/'+a.name)}">${esc(a.namespace+'/'+a.name)}</option>`).join('')}</select></label>`;
 }
 
 async function amReviewExplanation(x){
@@ -523,10 +545,10 @@ function amAccessRuleMarkup(svc){
   const opFields=agw?AM_OP_FIELDS.filter(f=>['methods','paths'].includes(f[0])):AM_OP_FIELDS;
   const namespaces=(inv.namespaces||[]).filter(n=>n.cluster===svc.cluster).map(n=>n.name);
   const services=(inv.services||[]).filter(s=>s.cluster===svc.cluster).map(s=>s.namespace+'/'+s.name);
-  const fieldRow=(fields,row,path)=>{const f=fields.find(x=>x[0]===row.field)||fields[0];return `<div class="am-access-row" data-amaccessrow="${path}">
+  const fieldRow=(fields,row,path)=>{const f=fields.find(x=>x[0]===row.field)||fields[0],known=row.field==='namespaces'?namespaces:row.field==='services'?services:row.field==='serviceAccounts'?(inv.serviceAccounts||[]).filter(a=>a.cluster===svc.cluster).map(a=>a.namespace+'/'+a.name):row.field==='principals'?(inv.serviceAccounts||[]).filter(a=>a.cluster===svc.cluster&&a.principal).map(a=>a.principal):[],selected=String(row.values||'').split(',').map(v=>v.trim()).filter(Boolean),choices=[...new Set([...known,...selected])];return `<div class="am-access-row" data-amaccessrow="${path}">
       <select data-amaccessf="field" aria-label="Field">${amOpts(fields.map(([v,l])=>({value:v,label:l})),row.field||fields[0][0])}</select>
       <select data-amaccessf="op" aria-label="Match" ${f[2]?'':'disabled'}>${amOpts([{value:'is',label:'is one of'},{value:'not',label:'is not one of'}],f[2]?row.op:'is')}</select>
-      <input data-amaccessf="values" value="${esc(row.values)}" placeholder="${esc(f[3])}" list="${row.field==='namespaces'?'am-access-ns':row.field==='services'?'am-access-svc':''}" aria-label="Values" autocomplete="off" spellcheck="false">
+      ${known.length?`<select data-amaccessf="values" multiple aria-label="Values">${choices.map(v=>`<option value="${esc(v)}" ${selected.includes(v)?'selected':''}>${esc(v)}</option>`).join('')}</select>`:`<input data-amaccessf="values" value="${esc(row.values)}" placeholder="${esc(f[3])}" aria-label="Values" autocomplete="off" spellcheck="false">`}
       <button class="link" data-amaccessdel="${path}" aria-label="Remove">×</button></div>`;};
   const block=(kind,fields,items,i,label,hint)=>`<div class="am-access-block"><h5>${label} <small>${hint}</small></h5>${items.map((it,b)=>`<div class="am-access-group" data-amaccessgroup="${kind}:${i}:${b}">${b?'<span class="am-access-or">or</span>':''}${it.rows.map((row,k)=>fieldRow(fields,row,`${kind}:${i}:${b}:${k}`)).join('')}<div class="row"><button class="link" data-amaccessaddrow="${kind}:${i}:${b}">+ field (and)</button><button class="link" data-amaccessdelgroup="${kind}:${i}:${b}">remove ${kind==='from'?'caller':'operation'}</button></div></div>`).join('')}<button class="link" data-amaccessaddgroup="${kind}:${i}">+ ${items.length?'or another '+(kind==='from'?'caller':'operation'):(kind==='from'?'restrict who is calling':'restrict what they ask for')}</button></div>`;
   const rule=(r,i)=>`<article class="am-access-rule" data-amaccessrule="${i}">
@@ -537,7 +559,9 @@ function amAccessRuleMarkup(svc){
       ${r.when.map((c,k)=>`<div class="am-access-row" data-amaccesswhen="${i}:${k}"><input data-amaccessw="key" value="${esc(c.key)}" list="am-access-keys" placeholder="request.headers[x-env]" aria-label="Condition key" autocomplete="off" spellcheck="false"><select data-amaccessw="op" aria-label="Match">${amOpts([{value:'is',label:'is one of'},{value:'not',label:'is not one of'}],c.op)}</select><input data-amaccessw="values" value="${esc(c.values)}" placeholder="test, staging" aria-label="Values" autocomplete="off" spellcheck="false"><button class="link" data-amaccessdelwhen="${i}:${k}" aria-label="Remove condition">×</button></div>`).join('')}
       <button class="link" data-amaccessaddwhen="${i}">+ condition (and)</button></div>
   </article>`;
+  const policies=(A.result?.editable||[]).filter(e=>e.ref.kind==='AuthorizationPolicy'&&e.request?.edit&&e.request.tasks.some(t=>['access-rule','methods'].includes(t)));
   return `<section class="am-access" id="am-access">
+    ${!agw?`<label>Existing policy<select id="am-access-target">${A.edit?`<option value="${esc(A.edit.ref.namespace+'/'+A.edit.ref.name)}">${esc(A.edit.ref.namespace+'/'+A.edit.ref.name)}</option>`:`<option value="">${policies.length?'Choose the policy explicitly…':'Create a new policy'}</option><option value="new" ${A.settings.accessTarget==='new'?'selected':''}>Create a named new policy</option>${policies.map(e=>`<option value="${esc(e.ref.namespace+'/'+e.ref.name)}" ${A.settings.accessTarget===e.ref.namespace+'/'+e.ref.name?'selected':''}>${esc(e.ref.namespace+'/'+e.ref.name)}</option>`).join('')}`}</select></label><label>New policy name (when creating a named policy)<input id="am-access-name" value="${esc(A.settings.accessName||'')}"></label><label>Policy operation<select id="am-access-operation">${amOpts([{value:'append',label:'Append rules, preserving existing rules'},{value:'replace',label:'Replace all policy rules (full-policy edit)'}],A.settings.accessOperation||(A.edit?'replace':'append'))}</select></label>`:''}
     ${agw?'<div class="notice info"><div><strong>Generated for the agentgateway waypoint</strong><p>This Service uses an agentgateway waypoint, so Flightbay writes an agentgateway authorization policy (CEL), not an Istio AuthorizationPolicy, which agentgateway would ignore. Headers, methods and paths are supported.</p></div></div>':''}<fieldset class="am-choice-group"><legend>When a rule matches the request</legend>${[['DENY','Deny it','Refused even if another policy allows it.'],['ALLOW','Allow it','Requests no ALLOW rule matches are refused.'],['AUDIT','Audit it','Marked for the audit provider; not allowed or denied.'],['CUSTOM','Ask an external authorizer','Sent to an extension provider from the mesh config.']].filter(x=>!agw||['DENY','ALLOW'].includes(x[0])).map(([v,l,d])=>`<label class="am-choice"><input type="radio" name="am-access-action" value="${v}" ${a.action===v?'checked':''}><span><strong>${l}</strong><small>${d}</small><code>${v}</code></span></label>`).join('')}</fieldset>
     ${a.action==='CUSTOM'?`<label>Extension provider name <input id="am-access-provider" value="${esc(a.provider)}" placeholder="my-ext-authz" autocomplete="off"></label>`:''}
     <label class="am-access-sample">Start from a sample <select id="am-access-sample"><option value="">Choose a sample…</option>${amAccessSamples(agw,svc).map((x,i)=>`<option value="${i}">${esc(x[0])}</option>`).join('')}</select></label>
@@ -549,10 +573,13 @@ function amAccessRuleMarkup(svc){
 }
 function amCaptureAccessRule(){
   const a=amAccessDraft();
+  if($('#am-access-target'))S.ambient.settings.accessTarget=$('#am-access-target').value;
+  if($('#am-access-operation'))S.ambient.settings.accessOperation=$('#am-access-operation').value;
+  if($('#am-access-name'))S.ambient.settings.accessName=$('#am-access-name').value;
   const action=document.querySelector('input[name="am-access-action"]:checked');if(action)a.action=action.value;
   const prov=$('#am-access-provider');if(prov)a.provider=prov.value;
   const y=$('#am-access-yaml');if(y)a.yaml=y.value;
-  document.querySelectorAll('[data-amaccessrow]').forEach(el=>{const [kind,i,b,k]=el.dataset.amaccessrow.split(':');const row=a.rules[i]?.[kind]?.[b]?.rows?.[k];if(!row)return;row.field=el.querySelector('[data-amaccessf="field"]').value;row.op=el.querySelector('[data-amaccessf="op"]').value;row.values=el.querySelector('[data-amaccessf="values"]').value;});
+  document.querySelectorAll('[data-amaccessrow]').forEach(el=>{const [kind,i,b,k]=el.dataset.amaccessrow.split(':');const row=a.rules[i]?.[kind]?.[b]?.rows?.[k];if(!row)return;row.field=el.querySelector('[data-amaccessf="field"]').value;row.op=el.querySelector('[data-amaccessf="op"]').value;const values=el.querySelector('[data-amaccessf="values"]');row.values=values.multiple?[...values.selectedOptions].map(o=>o.value).join(', '):values.value;});
   document.querySelectorAll('[data-amaccesswhen]').forEach(el=>{const [i,k]=el.dataset.amaccesswhen.split(':');const c=a.rules[i]?.when?.[k];if(!c)return;c.key=el.querySelector('[data-amaccessw="key"]').value;c.op=el.querySelector('[data-amaccessw="op"]').value;c.values=el.querySelector('[data-amaccessw="values"]').value;});
 }
 // Editor draft → request (server shape).

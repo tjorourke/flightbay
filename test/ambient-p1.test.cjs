@@ -5,6 +5,16 @@ const fs=require('node:fs');
 const path=require('node:path');
 const source=fs.readFileSync(path.join(__dirname,'../web/ambient.js'),'utf8');
 
+test('JWT request keeps token subjects separate from optional workload identity',()=>{
+  const svc={cluster:'c',namespace:'app',name:'front',ports:[80]},F={issuer:'https://issuer.example',jwksUri:'https://issuer.example/keys',requestPrincipals:'https://issuer.example/alice',jwtCallerKind:'serviceAccount',jwtCaller:'app/client'};
+  const ctx=vm.createContext({S:{ambient:{settings:F,tasks:{jwt:true},inventory:{}}},amCapture(){},amTarget:()=>svc,amService:()=>svc});
+  vm.runInContext(source.slice(source.indexOf('function amRead('),source.indexOf('async function amAction(')),ctx);
+  let q=JSON.parse(JSON.stringify(ctx.amRead()));assert.deepEqual(q.requestPrincipals,['https://issuer.example/alice']);assert.deepEqual(q.jwtServiceAccounts,['app/client']);assert.equal(q.jwtPrincipals,undefined);assert.equal(q.port,80);
+  F.jwtCallerKind='principal';F.jwtCaller='mesh.local/ns/app/sa/client';q=JSON.parse(JSON.stringify(ctx.amRead()));assert.deepEqual(q.jwtPrincipals,[F.jwtCaller]);assert.equal(q.jwtServiceAccounts,undefined);
+  for(const kind of ['principal','serviceAccount']){F.jwtCallerKind=kind;F.jwtCaller='';assert.throws(()=>ctx.amRead(),/Choose a captured workload caller/);}
+  F.jwtCallerKind='any';q=JSON.parse(JSON.stringify(ctx.amRead()));assert.equal(q.jwtPrincipals,undefined);assert.equal(q.jwtServiceAccounts,undefined);
+});
+
 test('explainer bridge retains Review and scope when entering from all clusters or another cluster',async()=>{
   for(const cluster of ['', 'mesh1', 'mesh2']){
     let sent,navigation;

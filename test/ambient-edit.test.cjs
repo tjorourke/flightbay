@@ -18,6 +18,27 @@ function context(entries=[entry]){
   return ctx;
 }
 
+test('methods edits retain all captured caller alternatives and only change them explicitly',()=>{
+  const methods={ref:{cluster:'mesh1',namespace:'app',kind:'AuthorizationPolicy',name:'restricted'},rule:0,supported:true,request:{cluster:'mesh1',namespace:'app',service:'front',port:8080,tasks:['methods'],methods:['GET'],methodAction:'ALLOW',callerSources:[{principals:['mesh.local/ns/app/sa/client']},{serviceAccounts:['app/other']}],edit:{ref:{cluster:'mesh1',namespace:'app',kind:'AuthorizationPolicy',name:'restricted'},rule:0,uid:'policy-uid',fingerprint:'captured'}}};
+  const ctx=context([methods]);ctx.amOpenEdit(methods);ctx.S.ambient.settings.methods='POST';
+  const q=JSON.parse(JSON.stringify(ctx.amRead()));
+  assert.deepEqual(q.callerSources,methods.request.callerSources);assert.equal(q.callersEdited,false);assert.equal(q.edit.fingerprint,'captured');
+  ctx.S.ambient.settings.callerSources=[];ctx.S.ambient.settings.callersEdited=true;
+  const changed=JSON.parse(JSON.stringify(ctx.amRead()));assert.deepEqual(changed.callerSources,[]);assert.equal(changed.callersEdited,true);
+});
+
+test('append requests retain the explicitly selected policy identity and operation',()=>{
+  const policy={ref:{cluster:'mesh1',namespace:'app',kind:'AuthorizationPolicy',name:'old'},request:{tasks:['access-rule'],edit:{ref:{cluster:'mesh1',namespace:'app',kind:'AuthorizationPolicy',name:'old'},uid:'uid',fingerprint:'fp'}}};
+  const ctx=context([policy]);ctx.amAccessRequest=()=>({action:'ALLOW',rules:[{to:[{methods:['POST']}]}]});ctx.S.ambient.tasks={'access-rule':true};ctx.S.ambient.settings={accessTarget:'app/old'};
+  const q=JSON.parse(JSON.stringify(ctx.amRead()));assert.equal(q.accessOperation,'append');assert.deepEqual(q.edit,policy.request.edit);
+  ctx.S.ambient.settings.accessOperation='replace';assert.equal(ctx.amRead().accessOperation,'replace');
+});
+
+test('mesh STRICT request uses the root namespace without a Service or port',()=>{
+  const ctx=context([]);ctx.S.ambient.mode='mesh-strict-mtls';ctx.amService=()=>null;ctx.S.ambient.inventory.meshMtls=[{cluster:'mesh1',defaults:[]}];
+  const q=JSON.parse(JSON.stringify(ctx.amRead()));assert.deepEqual(q,{cluster:'mesh1',namespace:'istio-system',tasks:['mesh-strict-mtls']});
+});
+
 test('Service Configure presents existing resources before a closed separate-create section',()=>{
   const ctx=context();const html=ctx.amWizard(svc);
   assert.ok(html.indexOf('existing-route')<html.indexOf('new-task-cards'));

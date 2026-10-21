@@ -11,6 +11,23 @@ for (const f of ['ambient-v2.js', 'ambient-scope.js', 'ambient-table.js', 'ambie
 const g = n => vm.runInContext(n, ctx);
 const c = new Proxy({}, {get: (_, n) => g(n)});
 
+test('drawer diff renders exact before and after rules, including old raw fields',()=>{
+  const html=c.am2PlanDiff({changes:[{ref:{kind:'AuthorizationPolicy',namespace:'app',name:'access'},fields:[{path:'/spec/rules',beforePresent:true,afterPresent:true,before:[{futureField:'keep'}],after:[{futureField:'keep'},{to:[{operation:{methods:['POST']}}]}]}]}]});
+  assert.match(html,/Before/);assert.match(html,/After/);assert.match(html,/futureField/);assert.match(html,/POST/);assert.match(html,/\/spec\/rules/);
+});
+
+test('methods drawer shows restricted callers and preserves alternatives',()=>{
+  ctx.S.ambient.settings={methods:'GET',callerSources:[{principals:['mesh.local/ns/app/sa/client']},{serviceAccounts:['app/other']}]};
+  ctx.S.ambient.inventory={serviceAccounts:[{cluster:'c',namespace:'app',name:'client'}]};
+  const html=c.am2MethodsForm({cluster:'c',namespace:'app',name:'front',ports:[80]});
+  assert.match(html,/<option value="preserve">mesh.local\/ns\/app\/sa\/client or app\/other<\/option>/);assert.match(html,/value="app\/client"/);
+});
+
+test('transport denial is rendered as a connection outcome, without an HTTP 403',()=>{
+  const html=c.am2CaseRow({id:'deny',request:{method:'GET',path:'/',direct:true},expect:{transport:'connection-refused-or-reset',text:'connection refused or reset (curl 000)'}},{suite:{service:{}},last:{results:[{id:'deny',status:'pass',got:{transport:'connection-reset',text:'connection reset (curl 000)'}}]}});
+  assert.match(html,/connection refused or reset \(curl 000\)/);assert.match(html,/connection reset \(curl 000\)/);assert.doesNotMatch(html,/403/);
+});
+
 test('Add links use the task short label, with the Service name for mTLS', () => {
   assert.equal(c.am2AddLabel({id: 'methods', shortLabel: 'Allow or block methods'}, {name: 'reviews'}), 'Allow or block methods');
   assert.equal(c.am2AddLabel({id: 'strict-mtls', shortLabel: 'Require mTLS'}, {name: 'reviews'}), 'Require mTLS for reviews');

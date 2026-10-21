@@ -3,7 +3,7 @@
    It replaces the four-step wizard. The form fields, plan request, validation, apply and undo reuse the
    existing Ambient logic (amRead, amValidatePlans, amConfirmApply, amTestOperation); only the markup is new. */
 
-const AM2_MODE_TITLES = {waypoint: 'Set up a waypoint', 'enrol-namespace': 'Enrol in ambient', endpoints: 'Recover endpoints', 'route-parent': 'Repair route parent'};
+const AM2_MODE_TITLES = {waypoint: 'Set up a waypoint', 'enrol-namespace': 'Enrol in ambient', 'mesh-strict-mtls':'Mesh-wide STRICT mTLS', endpoints: 'Recover endpoints', 'route-parent': 'Repair route parent'};
 S.am2.drawer = S.am2.drawer || {key: '', phase: 1, entries: [], error: '', busy: false, plans: [], seq: 0, progress: [], results: null, task: '', demo: null, scroll: 0, drafts: {}, tests: null, status: ''};
 
 const am2D = () => S.am2.drawer;
@@ -43,7 +43,7 @@ async function am2PrepOld(route, ref, kind, arg, cfg) {
     D.task = D.task || ((A.inventory.enrolledNamespaces || []).some(n => n.cluster === ref.cluster && n.name === ref.namespace) ? 'waypoint' : 'enrol-namespace');
   }
   if (kind === 'add') {
-    if (['waypoint', 'enrol-namespace', 'endpoints', 'route-parent'].includes(arg)) A.mode = arg; else A.tasks = {[arg]: true};
+    if (['waypoint', 'enrol-namespace', 'mesh-strict-mtls', 'endpoints', 'route-parent'].includes(arg)) A.mode = arg; else A.tasks = {[arg]: true};
   } else if (kind === 'ns') A.mode = D.task;
   else if (kind === 'edit') {
     const entry = (A.result.editable || []).find(e => `${e.ref.kind}:${e.ref.namespace}/${e.ref.name}#${e.rule}` === arg);
@@ -100,10 +100,12 @@ function am2PortField(svc, F) {
 }
 function am2MethodsForm(svc) {
   const F = S.ambient.settings, action = F.methodAction || 'ALLOW', on = new Set(String(F.methods ?? 'GET,HEAD').split(',').map(x => x.trim().toUpperCase()).filter(Boolean));
+  const sources=F.callerSources||[],label=sources.length?sources.map(s=>[(s.principals||[]).join(' or '),(s.serviceAccounts||[]).join(' or '),(s.namespaces||[]).map(n=>'namespace '+n).join(' or ')].filter(Boolean).join(' and ')||'Existing caller constraints').join(' or '):'Everyone';
+  const accounts=S.ambient.inventory?.serviceAccounts||[];
   return `<div id="am2-params" class="am2-fields"><span class="am2-lbl">What should happen?</span>${
     am2Radio('am2-methodAction', 'ALLOW', action === 'ALLOW', 'Only allow the methods I pick', `Pick which HTTP methods reach ${svc.name}. Adds an ALLOW policy.`)
   }${am2Radio('am2-methodAction', 'DENY', action === 'DENY', 'Block the methods I pick', 'Everything else still works. Adds a DENY policy.')
-  }<span class="am2-lbl" style="margin-top:16px">Methods</span><div style="display:flex;gap:6px;flex-wrap:wrap" data-ammethods="methods">${AM2_METHODS.map(m => `<label class="am2-chip ${on.has(m) ? 'on' : ''}"><input type="checkbox" value="${m}" ${on.has(m) ? 'checked' : ''} hidden>${on.has(m) ? '✓ ' : ''}${m}</label>`).join('')}</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:16px">${am2PortField(svc, F)}<div><span class="am2-lbl">Callers this applies to</span><select class="am2-input am2-full" id="am2-callers"><option>Everyone</option></select></div></div></div>`;
+  }<span class="am2-lbl" style="margin-top:16px">Methods</span><div style="display:flex;gap:6px;flex-wrap:wrap" data-ammethods="methods">${AM2_METHODS.map(m => `<label class="am2-chip ${on.has(m) ? 'on' : ''}"><input type="checkbox" value="${m}" ${on.has(m) ? 'checked' : ''} hidden>${on.has(m) ? '✓ ' : ''}${m}</label>`).join('')}</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:16px">${am2PortField(svc, F)}<div><span class="am2-lbl">Callers this applies to</span><select class="am2-input am2-full" id="am2-callers"><option value="preserve">${esc(label)}</option><option value="everyone">Everyone</option>${accounts.filter(a=>a.cluster===svc.cluster).map(a=>`<option value="${esc(a.namespace+'/'+a.name)}">${esc(a.namespace+'/'+a.name)}</option>`).join('')}</select></div></div></div>`;
 }
 function am2MtlsForm(svc) {
   const F = S.ambient.settings, mode = F.mtlsMode || 'STRICT';
@@ -111,13 +113,21 @@ function am2MtlsForm(svc) {
 }
 function am2Form(svc, cfg) {
   const A = S.ambient, task = am2DrawerTask();
+  if(task==='mesh-strict-mtls'){
+    const target=amTarget(),state=(A.inventory.meshMtls||[]).find(m=>m.cluster===target.cluster),defaults=state?.defaults||[];
+    return `<div id="am-setup-parameters" class="am2-fields"><h3>Cluster-wide default in istio-system</h3><p>Applies across ${esc(target.cluster)}. Namespace, workload and port overrides remain effective.</p>${!state?.confirmed?'<p>Mesh-root evidence is missing or does not confirm istio-system. Capture mesh configuration before applying.</p>':''}${defaults.length?`<label>Existing root default<select id="am-meshPolicy"><option value="">Select the policy to edit explicitly…</option>${amOpts(defaults.map(e=>({value:e.ref.name,label:e.ref.name+' · '+(e.request?.mtlsMode||'UNSET')})),A.settings.meshPolicy)}</select></label>`:'<p>Create a selectorless PeerAuthentication with mode STRICT.</p>'}${(state?.overrides||[]).length?`<p>More-specific policies: ${state.overrides.map(r=>esc(r.namespace+'/'+r.name)).join(', ')}</p>`:''}</div>`;
+  }
   if (task === 'methods' && !A.mode) return am2MethodsForm(svc);
   if (task === 'strict-mtls' && !A.mode) return am2MtlsForm(svc);
   return am2OldFields(svc);
 }
 
 function am2YamlBlock() {
-  return `<details style="margin-top:18px" open id="am2-yamlbox"><summary class="am2-t" style="cursor:pointer">Generated YAML <span class="am2-sub" id="am2-yamlsub"></span></summary><pre id="am-live-yaml" class="am2-pre" style="margin-top:8px">Rendering…</pre></details><div class="am2-sub" style="margin-top:8px">Name is editable. Flightbay labels it so it shows as "Managed by Flightbay" and can be undone.</div>`;
+  return `<div id="am2-diff"></div><details style="margin-top:18px" open id="am2-yamlbox"><summary class="am2-t" style="cursor:pointer">Generated YAML <span class="am2-sub" id="am2-yamlsub"></span></summary><pre id="am-live-yaml" class="am2-pre" style="margin-top:8px">Rendering…</pre></details><div class="am2-sub" style="margin-top:8px">Name is editable. Flightbay labels it so it shows as "Managed by Flightbay" and can be undone.</div>`;
+}
+
+function am2PlanDiff(plan) {
+  return (plan.changes||[]).map(c=>`<details open><summary>${esc(c.ref.kind+' '+c.ref.namespace+'/'+c.ref.name)}</summary>${(c.fields||[]).map(f=>`<div class="am2-sub">${esc(f.path)}</div><div>Before</div><pre class="am2-pre">${esc(f.beforePresent?JSON.stringify(f.before,null,2):'Not set')}</pre><div>After</div><pre class="am2-pre">${esc(f.afterPresent?JSON.stringify(f.after,null,2):'Remove setting')}</pre>`).join('')}</details>`).join('');
 }
 
 // ---------- effects column ----------
@@ -167,6 +177,7 @@ async function am2DrawerLive() {
     if (seq !== D.seq || !$('#am-live-yaml')) return;
     D.plans = plans;
     const first = plans[0].plan, kinds = [...new Set(plans.flatMap(p => p.plan.objects.map(o => o.apiVersion)))];
+    if($('#am2-diff'))$('#am2-diff').innerHTML=plans.map(p=>am2PlanDiff(p.plan)).join('');
     pre.innerHTML = am2Yaml(plans.map(({cluster, plan}) => (plans.length > 1 ? '# Cluster: ' + cluster + '\n' : '') + plan.yaml).join('\n---\n'));
     pre.classList.remove('am2-bad');
     $('#am2-yamlsub').textContent = `${first.objects.length} new object${first.objects.length === 1 ? '' : 's'}${(first.changes || []).length ? ` · ${first.changes.length} update${first.changes.length === 1 ? '' : 's'}` : ''}${kinds.length ? ' · ' + kinds.join(', ') : ''}`;
@@ -184,6 +195,7 @@ async function am2DrawerLive() {
 function am2CaptureExtra() {
   const F = S.ambient.settings, r = document.querySelector('input[name="am2-methodAction"]:checked');
   if (r) F.methodAction = r.value;
+  const caller=$('#am2-callers');if(caller&&caller.value!=='preserve'){F.callerSources=caller.value==='everyone'?[]:[{serviceAccounts:[caller.value]}];F.callersEdited=true;}
   document.querySelectorAll('[data-ammethods="methods"] input').forEach(() => {});
 }
 
@@ -262,7 +274,7 @@ async function am2DrawerHost(route, data) {
   const where = kind === 'ns' ? `Namespace settings for <b>${esc(ref.namespace)}</b>` : `${kind === 'edit' ? 'Edit configuration of' : 'Add configuration to'} <b>${esc(ref.namespace)}/${esc(ref.name)}</b>`;
   const step = (n, label) => `<span class="${phase === n ? 'on' : ''}"><i>${phase > n ? '✓' : n}</i>${esc(label)}</span>`;
   const stateText = phase === 1 ? 'Draft saved · nothing written' : phase === 2 ? 'Checked · nothing written' : `Applied to ${esc(D.entries.map(e => e.cluster).join(', ') || ref.cluster)} at ${am2Time(D.entries[0]?.record?.applyFinished)}`;
-  const left = phase === 1 ? (svc || kind === 'ns' ? am2Form(svc, cfg) + am2YamlBlock() : '') : phase === 2 ? am2ProgressHtml(D) : am2ProgressHtml(D) + am2TestsTable(D);
+  const left = phase === 1 ? (svc || kind === 'ns' ? am2Form(svc, cfg) + am2YamlBlock() : '') : phase === 2 ? am2ProgressHtml(D) + D.entries.map(e=>am2PlanDiff(e.plan)).join('') : am2ProgressHtml(D) + am2TestsTable(D);
   const right = phase === 3 ? am2DoneColumn(D, cfg, ref) : am2EffectsPlaceholder(ref.name);
   const menu = am2SwitchMenu(cfg, route, kind, ref);
   const footer = am2DrawerFooter(D, cfg, ref, route, kind);
@@ -270,7 +282,7 @@ async function am2DrawerHost(route, data) {
 }
 
 function am2SwitchMenu(cfg, route, kind, ref) {
-  if (kind === 'ns') return `<details class="am2-menu"><summary class="am2-btn">Switch task ▾</summary><div class="am2-menu-list">${['enrol-namespace', 'waypoint'].map(t => `<button type="button" data-am2-nstask="${t}">${esc(AM2_MODE_TITLES[t])}</button>`).join('')}</div></details>`;
+  if (kind === 'ns') return `<details class="am2-menu"><summary class="am2-btn">Switch task ▾</summary><div class="am2-menu-list">${['enrol-namespace', 'waypoint','mesh-strict-mtls'].map(t => `<button type="button" data-am2-nstask="${t}">${esc(AM2_MODE_TITLES[t])}</button>`).join('')}</div></details>`;
   const groups = (cfg?.groups || []).filter(g => g.id !== 'multicluster');
   return `<details class="am2-menu"><summary class="am2-btn">Switch task ▾</summary><div class="am2-menu-list">${groups.map(g => `<div class="am2-menu-h">${esc(g.question)}</div>${(cfg.tasks || []).filter(t => t.group === g.id && !['unavailable', 'needs-waypoint'].includes(t.status)).map(t => `<a href="${am2Hash({...route, drawer: 'add:' + t.id})}">${esc(t.shortLabel)}</a>`).join('')}`).join('')}</div></details>`;
 }
