@@ -90,9 +90,26 @@ color:var(--am2-ink);font:13px/1.45 var(--sans)}
 .am2-toolbar{display:flex;align-items:center;gap:10px;margin-top:16px}
 .am2-ghead{display:flex;align-items:baseline;gap:12px;margin:22px 0 10px}.am2-ghead h2{font-size:15px}.am2-ghead .am2-a{color:var(--am2-muted);font-size:13px}
 .am2-tgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
-.am2-tc{background:var(--am2-card);border:1px solid var(--am2-line);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:4px;min-height:112px}
-.am2-tc.on{border-color:var(--teal);box-shadow:inset 3px 0 0 var(--teal)}.am2-tc.rec{border-color:color-mix(in srgb,var(--amber) 45%,var(--am2-line));box-shadow:inset 3px 0 0 var(--amber)}
-.am2-tc.off{background:var(--am2-grp)}.am2-tc.off .am2-tt,.am2-lr.off .am2-tt{color:var(--am2-muted);opacity:.75}
+.am2-tc{--tc-accent:transparent;--tc-tint:var(--am2-muted);background:linear-gradient(180deg,var(--am2-card),color-mix(in srgb,var(--am2-grp) 55%,var(--am2-card)));border:1px solid var(--am2-line);border-radius:14px;padding:14px 16px 14px;display:flex;flex-direction:column;gap:6px;min-height:104px;position:relative;
+box-shadow:inset 0 3px 0 var(--tc-accent),0 1px 2px rgb(15 30 45/.06),0 2px 8px rgb(15 30 45/.04);transition:border-color .15s,box-shadow .15s,transform .15s}
+.am2-tc:hover{border-color:color-mix(in srgb,var(--teal) 50%,var(--am2-line));transform:translateY(-2px);box-shadow:inset 0 3px 0 var(--tc-accent),0 10px 24px rgb(15 30 45/.12)}
+.am2-tc.on{--tc-accent:var(--teal);--tc-tint:var(--teal);border-color:color-mix(in srgb,var(--teal) 45%,var(--am2-line));background:linear-gradient(180deg,color-mix(in srgb,var(--teal) 10%,var(--am2-card)),var(--am2-card) 80%)}
+.am2-tc.rec{--tc-accent:var(--amber);--tc-tint:var(--amber);border-color:color-mix(in srgb,var(--amber) 45%,var(--am2-line));background:linear-gradient(180deg,color-mix(in srgb,var(--amber) 9%,var(--am2-card)),var(--am2-card) 80%)}
+.am2-tc.off{background:var(--am2-grp);border-style:dashed;box-shadow:none}.am2-tc.off:hover{transform:none;border-color:var(--am2-line);box-shadow:none}
+.am2-th{display:flex;align-items:center;gap:11px}.am2-tx{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.am2-ti{width:36px;height:36px;border-radius:10px;flex:none;display:grid;place-items:center;color:var(--tc-tint);background:color-mix(in srgb,var(--tc-tint) 13%,transparent);border:1px solid color-mix(in srgb,var(--tc-tint) 22%,transparent)}
+.am2-tc.on .am2-ti,.am2-tc.rec .am2-ti{background:color-mix(in srgb,var(--tc-tint) 18%,var(--am2-card));box-shadow:0 1px 3px color-mix(in srgb,var(--tc-tint) 30%,transparent)}
+.am2-tc.off .am2-ti{opacity:.55;border-style:dashed}
+.am2-tc.off .am2-tt,.am2-lr.off .am2-tt{color:var(--am2-muted);opacity:.75}
+.am2-tlayer{font:600 10px var(--mono);color:var(--am2-muted);letter-spacing:.04em}
+.am2-tc .am2-td{line-height:1.45;margin-top:2px}
+.am2-tc.on .am2-now{background:color-mix(in srgb,var(--teal) 11%,transparent);border-radius:7px;padding:5px 9px;font-weight:500;margin-top:4px}
+.am2-tc .am2-ft{margin-top:auto;padding-top:12px;gap:8px}
+.am2-tc .am2-now+.am2-ft,.am2-tc .am2-td+.am2-ft{margin-top:12px}
+.am2 .am2-tc .am2-ft .am2-lnk{display:inline-flex;align-items:center;gap:4px;font-weight:650;font-size:12px;padding:4px 11px;border-radius:7px;border:1px solid color-mix(in srgb,var(--teal) 35%,var(--am2-line));background:color-mix(in srgb,var(--teal) 8%,var(--am2-card));color:var(--teal);text-decoration:none}
+.am2 .am2-tc .am2-ft .am2-lnk:hover{background:var(--teal);border-color:var(--teal);color:var(--am2-btn-p-ink)}
+.am2 .am2-tc .am2-ft .am2-lnk-mut{background:transparent;border-color:transparent;color:var(--am2-muted);padding-left:0}
+.am2 .am2-tc .am2-ft .am2-lnk-mut:hover{background:transparent;color:var(--teal)}
 .am2-tt{font-weight:650;font-size:13.5px}.am2-lr .am2-tt{font-weight:600;font-size:13px}.am2-td{font-size:12px;color:var(--am2-muted)}
 .am2-now{font-size:12px;margin-top:2px}.am2-ft{margin-top:auto;display:flex;align-items:center;gap:12px;padding-top:6px}
 .am2-list{background:var(--am2-card);border:1px solid var(--am2-line);border-radius:10px;overflow:visible}

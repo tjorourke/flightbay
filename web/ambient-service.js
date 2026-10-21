@@ -166,10 +166,36 @@ function am2TaskActions(t, ctx) {
   return `<a class="am2-lnk" href="${drawer('add:' + t.id)}">Add →</a>`;
 }
 const am2Desc = (t, ctx) => String(t.description || '').replace(/\bthe Service\b/, ctx.ref.name);
+// Line icons (24px grid) for the task cards, keyed by task id.
+const AM2_TASK_ICONS = {
+  'access-rule': '<path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/>',
+  'methods': '<path d="M4 7h16M4 12h10M4 17h6"/>',
+  'jwt': '<circle cx="8" cy="15" r="4"/><path d="M11 12l8-8M16 7l3 3M14 9l2 2"/>',
+  'l4-default-deny': '<circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/>',
+  'require-waypoint': '<path d="M4 20V10l8-6 8 6v10"/><path d="M9 20v-6h6v6"/>',
+  'l4-allow-namespace': '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
+  'l4-allow-service-account': '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/>',
+  'weighted-routing': '<circle cx="12" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="19" r="2"/><path d="M12 7v4M12 11l-6 6M12 11l6 6"/>',
+  'header-routing': '<path d="M3 12h13M12 6l6 6-6 6"/><path d="M20 5v14"/>',
+  'mirroring': '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 00-2-2H6a2 2 0 00-2 2v8a2 2 0 002 2h2"/>',
+  'load-balancing': '<path d="M12 3v18M6 21h12M5 7h14"/><path d="M5 7l-3 7a3 3 0 006 0zM19 7l-3 7a3 3 0 006 0z"/>',
+  'locality-failover': '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/>',
+  'service-failover': '<path d="M4 8h13l-3-3M20 16H7l3 3"/>',
+  'strict-mtls': '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/>',
+  'mesh-strict-mtls': '<circle cx="6" cy="7" r="2.5"/><circle cx="18" cy="7" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M8.5 7h7M7.5 9l3.5 7M16.5 9L13 16"/>',
+  'timeouts': '<circle cx="12" cy="13" r="8"/><path d="M12 9v4l3 2M9 3h6"/>',
+  'endpoint-failover': '<path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17v.5"/>',
+  'circuit-breaker': '<path d="M13 3L5 14h6l-1 7 8-11h-6z"/>',
+  'retries': '<path d="M20 12a8 8 0 11-2.4-5.7M20 4v5h-5"/>',
+  'rate-limit': '<path d="M4 17a8 8 0 1116 0"/><path d="M12 17l4-5"/>',
+  'global-rate-limit': '<path d="M5 20V10M12 20V4M19 20v-7"/>',
+  'global-service': '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/>'
+};
+const am2TaskIcon = id => `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${AM2_TASK_ICONS[id] || '<circle cx="12" cy="12" r="3"/>'}</svg>`;
 function am2TaskCard(t, ctx) {
   const cls = t.status === 'configured' || t.status === 'differs' ? 'on' : t.status === 'recommended' ? 'rec' : ['unavailable', 'needs-waypoint'].includes(t.status) ? 'off' : '';
   const now = am2TaskNow(t);
-  return `<div class="am2-tc ${cls}"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><span class="am2-tt">${esc(t.shortLabel)}</span>${am2StatusPill(t)}</div><div class="am2-td">${esc(am2Desc(t, ctx))}</div>${now ? `<div class="am2-now ${cls === 'off' ? 'am2-sub' : ''}">${esc(now)}</div>` : ''}<div class="am2-ft">${am2TaskActions(t, ctx)}</div></div>`;
+  return `<div class="am2-tc ${cls}"><div class="am2-th"><span class="am2-ti">${am2TaskIcon(t.id)}</span><div class="am2-tx"><span class="am2-tt">${esc(t.shortLabel)}</span>${t.layer ? `<span class="am2-tlayer">${esc(t.layer)}</span>` : ''}</div>${am2StatusPill(t)}</div><div class="am2-td">${esc(am2Desc(t, ctx))}</div>${now ? `<div class="am2-now ${cls === 'off' ? 'am2-sub' : ''}">${esc(now)}</div>` : ''}<div class="am2-ft">${am2TaskActions(t, ctx)}</div></div>`;
 }
 function am2TaskRow(t, ctx) {
   const off = ['unavailable', 'needs-waypoint'].includes(t.status);

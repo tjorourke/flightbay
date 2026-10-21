@@ -271,14 +271,15 @@ async function am2DrawerHost(route, data) {
   const A = S.ambient, svc = kind === 'ns' ? null : amService();
   const task = am2DrawerTask(), title = kind === 'ns' ? am2TaskTitle(cfg, D.task) : am2TaskTitle(cfg, task);
   const phase = D.phase;
-  const where = kind === 'ns' ? `Namespace settings for <b>${esc(ref.namespace)}</b>` : `${kind === 'edit' ? 'Edit configuration of' : 'Add configuration to'} <b>${esc(ref.namespace)}/${esc(ref.name)}</b>`;
+  const where = kind === 'ns' ? `Namespace settings for <b>${esc(ref.namespace)}</b>` : `${kind === 'edit' ? 'Edit configuration of' : kind === 'copy' ? 'Copy configuration of' : 'Add configuration to'} <b>${esc(ref.namespace)}/${esc(ref.name)}</b>`;
+  const targetClusters = A.settings.applyClusters || [ref.cluster], clusterText = kind === 'copy' && !targetClusters.includes(ref.cluster) ? `from ${esc(ref.cluster)} to ${esc(targetClusters.join(', '))}` : esc(ref.cluster);
   const step = (n, label) => `<span class="${phase === n ? 'on' : ''}"><i>${phase > n ? '✓' : n}</i>${esc(label)}</span>`;
   const stateText = phase === 1 ? 'Draft saved · nothing written' : phase === 2 ? 'Checked · nothing written' : `Applied to ${esc(D.entries.map(e => e.cluster).join(', ') || ref.cluster)} at ${am2Time(D.entries[0]?.record?.applyFinished)}`;
   const left = phase === 1 ? (svc || kind === 'ns' ? am2Form(svc, cfg) + am2YamlBlock() : '') : phase === 2 ? am2ProgressHtml(D) + D.entries.map(e=>am2PlanDiff(e.plan)).join('') : am2ProgressHtml(D) + am2TestsTable(D);
   const right = phase === 3 ? am2DoneColumn(D, cfg, ref) : am2EffectsPlaceholder(ref.name);
   const menu = am2SwitchMenu(cfg, route, kind, ref);
   const footer = am2DrawerFooter(D, cfg, ref, route, kind);
-  return `<div class="am2-shade" data-am2-close></div><div class="am2-drawer" id="am2-drawer" role="dialog" aria-label="${esc(title)}"><div class="am2-dh"><div style="flex:1"><div class="am2-sub">${where} · ${esc(ref.cluster)}</div><h2 style="font-size:18px;margin-top:2px">${esc(title)}</h2></div>${menu}<button type="button" class="am2-btn g" data-am2-close aria-label="Close">✕</button></div><div class="am2-steps">${step(1, 'Choose settings')}${step(2, 'Check against the cluster')}${step(3, 'Apply and test')}<span style="margin-left:auto;font-weight:500">${stateText}</span></div>${D.error ? `<div class="am2-callout e" style="margin:12px 22px 0" role="alert"><div>✕</div><div>${esc(D.error)}</div></div>` : ''}<div class="am2-db"><div class="am2-form" id="am2-formcol">${left}</div><div class="am2-eff">${right}</div></div>${footer}</div><div hidden id="am-target-selector"></div>`;
+  return `<div class="am2-shade" data-am2-close></div><div class="am2-drawer" id="am2-drawer" role="dialog" aria-label="${esc(title)}"><div class="am2-dh"><div style="flex:1"><div class="am2-sub">${where} · ${clusterText}</div><h2 style="font-size:18px;margin-top:2px">${esc(title)}</h2></div>${menu}<button type="button" class="am2-btn g" data-am2-close aria-label="Close">✕</button></div><div class="am2-steps">${step(1, 'Choose settings')}${step(2, 'Check against the cluster')}${step(3, 'Apply and test')}<span style="margin-left:auto;font-weight:500">${stateText}</span></div>${D.error ? `<div class="am2-callout e" style="margin:12px 22px 0" role="alert"><div>✕</div><div>${esc(D.error)}</div></div>` : ''}<div class="am2-db"><div class="am2-form" id="am2-formcol">${left}</div><div class="am2-eff">${right}</div></div>${footer}</div><div hidden id="am-target-selector"></div>`;
 }
 
 function am2SwitchMenu(cfg, route, kind, ref) {
@@ -290,17 +291,25 @@ function am2SwitchMenu(cfg, route, kind, ref) {
 function am2DrawerFooter(D, cfg, ref, route, kind) {
   const A = S.ambient, close = `data-am2-close`;
   if (D.phase === 3) return `<div class="am2-df"><button type="button" class="am2-btn" ${close}>Close</button><span style="flex:1"></span><a class="am2-btn" href="${am2Hash({svc: route.svc, stab: 'changes'})}">View change in Changes</a><button type="button" class="am2-btn p" ${close}>Back to ${esc(ref.name)}</button></div>`;
-  const clusters = (cfg?.clusters || S.am2.data?.summary?.clusters?.names || []), selected = A.settings.applyClusters || [ref.cluster], others = clusters.filter(c => c !== ref.cluster);
-  const ctxs = (A.contexts || []), live = amLiveContext(ref.cluster, ctxs);
+  const clusters = (cfg?.clusters || S.am2.data?.summary?.clusters?.names || []), selected = A.settings.applyClusters || [ref.cluster], others = clusters.filter(c => c !== ref.cluster || !selected.includes(c));
+  const ctxs = (A.contexts || []);
+  // Write to the clusters that are selected. A copy to another cluster must not
+  // show (or use) the source cluster's connection.
+  const writeClusters = selected.length ? selected : [ref.cluster], writesSource = writeClusters.includes(ref.cluster);
+  const live = amLiveContext(ref.cluster, ctxs);
   // Only contexts that reach a connected cluster can be written to (never the rest of the kubeconfig).
   const reach = ctxs.filter(c => c.liveCluster === ref.cluster);
-  if (live && A.context !== live.name && !reach.some(c => c.name === A.context)) A.context = live.name;
-  const sel = live ? `<span class="am2-writeto" title="${esc(live.name)} · ${esc(live.server || '')}"><b>${esc(ref.cluster)}</b> <span class="am2-sub">live connection</span></span><input type="hidden" id="am2-context" value="${esc(live.name)}">`
+  if (writesSource && live && A.context !== live.name && !reach.some(c => c.name === A.context)) A.context = live.name;
+  const writeTag = (cluster, ctx) => `<span class="am2-writeto" title="${esc(ctx.name)} · ${esc(ctx.server || '')}"><b>${esc(cluster)}</b> <span class="am2-sub">live connection</span></span>`;
+  const missing = writeClusters.filter(c => c !== ref.cluster && !amLiveContext(c, ctxs));
+  const sourceSel = !writesSource ? '' : live ? writeTag(ref.cluster, live) + `<input type="hidden" id="am2-context" value="${esc(live.name)}">`
     : reach.length ? `<select class="am2-sel" id="am2-context" aria-label="Write to"><option value="">Choose the context for ${esc(ref.cluster)}…</option>${reach.map(c => `<option value="${esc(c.name)}" ${A.context === c.name ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select>`
     : `<span class="am2-sub">No kubeconfig context reaches ${esc(ref.cluster)}. Open with --kubeconfig to change it.</span>`;
+  const peerSel = writeClusters.filter(c => c !== ref.cluster).map(c => { const ctx = amLiveContext(c, ctxs); return ctx ? writeTag(c, ctx) : `<span class="am2-sub">No live connection reaches ${esc(c)}.</span>`; }).join(' ');
+  const sel = sourceSel + (sourceSel && peerSel ? ' ' : '') + peerSel;
   const chips = others.map(c => `<button type="button" class="am2-chip ${selected.includes(c) ? 'on' : ''}" data-am2-addcluster="${esc(c)}">${selected.includes(c) ? '✓ ' : '+ '}${esc(c)}</button>`).join('');
   const primary = D.phase === 2 ? `Apply to ${esc(D.entries.map(e => e.cluster).join(', '))} →` : 'Check against cluster →';
-  const writer = !!(live || A.context);
+  const writer = (!writesSource || !!(live || A.context)) && !missing.length;
   return `<div class="am2-df"><button type="button" class="am2-btn" ${close}>Cancel</button><span class="am2-sub" style="margin-left:8px">Write to</span>${sel}${chips}<span style="flex:1"></span><button type="button" class="am2-btn" data-am2-download>Download YAML</button><button type="button" class="am2-btn p" id="am2-primary" data-am2-primary ${D.busy ? 'disabled' : ''} title="${writer ? '' : 'Open with --kubeconfig to write to this cluster'}">${D.busy ? 'Working…' : primary}</button></div>`;
 }
 

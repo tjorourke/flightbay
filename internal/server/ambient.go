@@ -262,7 +262,7 @@ func (s *Server) ambientPreflight(ctx context.Context, c ambientConnection, p *a
 			}
 			values := map[string]any{}
 			for _, o := range list.Items {
-				values[o.GetNamespace()+"/"+o.GetName()] = ambient.L4DependencyObject(o.Object)
+				values[o.GetNamespace()+"/"+o.GetName()] = ambient.L4DependencyObject(e.Ref.Resource, o.GetName(), o.Object)
 			}
 			b, _ := json.Marshal(values)
 			if string(b) != e.Value {

@@ -214,11 +214,31 @@ func l4DependencyEvidence(ws *store.Workspace, cluster string) []Evidence {
 func l4DependencyValue(ws *store.Workspace, cluster, group, resource string) any {
 	values := map[string]any{}
 	for _, o := range ws.List(cluster, group, resource, "", nil) {
-		values[o.Namespace+"/"+o.Name] = L4DependencyObject(o.Obj)
+		values[o.Namespace+"/"+o.Name] = L4DependencyObject(resource, o.Name, o.Obj)
 	}
 	return values
 }
 
-func L4DependencyObject(obj map[string]any) any {
-	return map[string]any{"uid": Path(obj, "metadata", "uid"), "spec": obj["spec"], "labels": Path(obj, "metadata", "labels"), "data": obj["data"]}
+// L4DependencyObject reduces an object to the fields the L4 analysis reads.
+// The captured workspace holds redacted copies (secret-looking Pod args and
+// embedded JSON are rewritten), so comparing whole specs or ConfigMap data with
+// the raw live object reports drift that never happened. Both the capture and
+// the server preflight must call this with the same arguments.
+func L4DependencyObject(resource, name string, obj map[string]any) any {
+	uid, labels := Path(obj, "metadata", "uid"), Path(obj, "metadata", "labels")
+	switch resource {
+	case "pods":
+		ports := []any{}
+		for _, c := range L(Path(obj, "spec", "containers")) {
+			ports = append(ports, M(c)["ports"])
+		}
+		return map[string]any{"uid": uid, "labels": labels, "serviceAccountName": Path(obj, "spec", "serviceAccountName"), "ports": ports}
+	case "configmaps":
+		// Only the Istio mesh config (root namespace, trust domain) is read.
+		if name != "istio" && !strings.HasPrefix(name, "istio-") {
+			return map[string]any{"uid": uid}
+		}
+		return map[string]any{"uid": uid, "mesh": Path(obj, "data", "mesh")}
+	}
+	return map[string]any{"uid": uid, "spec": obj["spec"], "labels": labels, "data": obj["data"]}
 }

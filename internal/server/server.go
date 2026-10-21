@@ -269,6 +269,9 @@ func (s *Server) Handler() http.Handler {
 			http.Error(w, "unauthorised", http.StatusUnauthorized)
 			return
 		}
+		// Embedded files carry no validators, so without this a browser can keep a
+		// stale script or stylesheet across a rebuild.
+		w.Header().Set("Cache-Control", "no-cache")
 		r2 := r.Clone(r.Context())
 		r2.URL.Path = strings.TrimPrefix(r.URL.Path, "/static")
 		files.ServeHTTP(w, r2)
