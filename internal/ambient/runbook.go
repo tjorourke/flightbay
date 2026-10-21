@@ -34,6 +34,12 @@ func Runbook(ws *store.Workspace, target *store.Object) []RunbookCommand {
 	}
 	add("istioctl"+ctx+" analyze"+scope, "Captured resources and controller conditions", "ops/diagnostic-tools/istioctl-analyze/", false)
 	add("istioctl"+ctx+" proxy-status", "Captured istiod sync diagnostics in Proxy diagnostics", "ops/diagnostic-tools/proxy-cmd/", false)
+	if target.Kind == "Service" {
+		if warning := waypointL4Warning(ws, target); warning != "" {
+			add("kubectl"+ctx+" get authorizationpolicies.security.istio.io --all-namespaces -o yaml", warning, "ambient/usage/l4-policy/#considerations", false)
+			add("kubectl"+ctx+" get pods --all-namespaces -o wide", "Compare the captured waypoint service account with downstream workload ALLOW and DENY policies. 503/UC alone is not proof of policy denial.", "ambient/usage/troubleshoot-waypoint/", false)
+		}
+	}
 	for _, pod := range ws.List(target.Cluster, "", "pods", "", nil) {
 		zt := pod.Labels()["app"] == "ztunnel" || pod.Labels()["app.kubernetes.io/name"] == "ztunnel"
 		if !zt {
@@ -104,6 +110,9 @@ func inspectJWT(ws *store.Workspace, r *Investigation, svc *store.Object, wpNS, 
 			continue
 		}
 		state, detail := "warning", "This authorization rule requires a validated JWT request principal. Requests without a matching principal cannot use this ALLOW rule; other ALLOW policies are additive. Token signature and claims remain request-dependent."
+		if acc, ok := accessFromPolicy(ap); ok {
+			detail += " Captured matches: " + strings.Join(accessPhrases(acc, false), " or ") + "."
+		}
 		if len(ras) == 0 {
 			state = missing(ws, svc.Cluster, "security.istio.io", "requestauthentications", "RequestAuthentication", svc.Namespace)
 			if wpNS != svc.Namespace && missing(ws, svc.Cluster, "security.istio.io", "requestauthentications", "RequestAuthentication", wpNS) == "unknown" {

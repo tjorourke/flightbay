@@ -35,9 +35,9 @@ func TaskDocs(e Environment, id string) []DocLink {
 	switch id {
 	case "global-service":
 		return []DocLink{{"Publish services across clusters", enterpriseIstioDocs + "multicluster/multi-apps/multi-apps/", "Enterprise Istio"}, {"Service DNS", kubeDocs + "concepts/services-networking/dns-pod-service/", "Kubernetes"}}
-	case "l4-default-deny", "l4-allow-namespace", "require-waypoint":
+	case "l4-default-deny", "l4-allow-namespace", "l4-allow-service-account", "require-waypoint":
 		return istioGuide(e, "ambient/usage/l4-policy/", "security/authorization/ztunnel-authz/", "L4 authorization")
-	case "strict-mtls":
+	case "strict-mtls", "mesh-strict-mtls":
 		return istioGuide(e, "ambient/usage/verify-mtls-enabled/", "security/verify-mtls/", "Ambient mutual TLS")
 	case "methods", "access-rule":
 		return append(istioGuide(e, "ambient/usage/l7-features/", "security/authorization/waypoint-authz/", "L7 waypoint authorization"), DocLink{"AuthorizationPolicy reference", istioDocs + "reference/config/security/authorization-policy/", "Istio shared API"})

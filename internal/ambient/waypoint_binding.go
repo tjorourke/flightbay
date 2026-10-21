@@ -189,18 +189,27 @@ type PolicyEntry struct {
 }
 
 func rootNamespace(ws *store.Workspace, cluster string) string {
-	for _, cm := range ws.List(cluster, "", "configmaps", "istio-system", nil) {
+	root, _ := capturedRootNamespace(ws, cluster)
+	return defaultString(root, "istio-system")
+}
+
+func capturedRootNamespace(ws *store.Workspace, cluster string) (string, bool) {
+	root := ""
+	for _, cm := range ws.List(cluster, "", "configmaps", "", nil) {
 		if cm.Name != "istio" && !strings.HasPrefix(cm.Name, "istio-") {
 			continue
 		}
 		var mesh map[string]any
-		if yaml.Unmarshal([]byte(S(Path(cm.Obj, "data", "mesh"))), &mesh) == nil {
-			if v := S(mesh["rootNamespace"]); v != "" {
-				return v
+		raw := S(Path(cm.Obj, "data", "mesh"))
+		if raw != "" && yaml.Unmarshal([]byte(raw), &mesh) == nil {
+			v := defaultString(S(mesh["rootNamespace"]), "istio-system")
+			if root != "" && root != v {
+				return "", false
 			}
+			root = v
 		}
 	}
-	return "istio-system"
+	return root, root != ""
 }
 
 // servicePolicies lists AuthorizationPolicy, PeerAuthentication and
@@ -247,7 +256,10 @@ func servicePolicies(ws *store.Workspace, svc *store.Object) []PolicyEntry {
 						}
 					}
 				case len(sel) > 0:
-					if o.Namespace != svc.Namespace {
+					if o.Kind == "PeerAuthentication" && o.Namespace == root {
+						break
+					}
+					if o.Namespace != svc.Namespace && o.Namespace != root {
 						break
 					}
 					for _, lb := range podLabels {

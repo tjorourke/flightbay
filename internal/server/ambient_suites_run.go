@@ -246,7 +246,7 @@ func runSuiteWith(ctx context.Context, suite *ambient.Suite, ids []string, runne
 		var skip skipCase
 		var res ambient.CaseResult
 		switch {
-		case ctx.Err() != nil && (len(obs.Samples) < samples || (samples == 0 && obs.Status == 0)):
+		case ctx.Err() != nil && (len(obs.Samples) < samples || (samples == 0 && obs.Status == 0 && obs.Transport == "")):
 			// Cut short by the stop: nothing to judge.
 			res = ambient.CaseResult{ID: id, Status: ambient.StatusSkipped, Message: msgInterrupted, Connection: obs.Connection, At: now()}
 		case errors.As(err, &skip):
@@ -627,10 +627,11 @@ func (r *meshSuiteRunner) Send(ctx context.Context, req suiteSendRequest) (ambie
 	}
 	res := results[0]
 	obs.Status, obs.Error, obs.DurationMs = res.Status, res.Error, res.DurationMS
-	obs.Backend, obs.Pod = r.backendOf(res)
-	if res.Status != 0 {
+	if res.Status == 0 && (res.Error == "curl transport: connection-reset" || res.Error == "curl transport: connection-refused") {
+		obs.Transport = strings.TrimPrefix(res.Error, "curl transport: ")
 		obs.Error = ""
 	}
+	obs.Backend, obs.Pod = r.backendOf(res)
 	return obs, nil
 }
 

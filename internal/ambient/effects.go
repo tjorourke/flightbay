@@ -41,8 +41,27 @@ func Effects(ws *store.Workspace, req Request, p *Plan) (effects []string, inter
 	if ws == nil || req.Demo != nil || req.Explain != nil || req.Scorecard != nil {
 		return
 	}
+	if contains(req.Tasks, "mesh-strict-mtls") {
+		effects = append(effects, "Sets the cluster-wide mesh default to STRICT mTLS in istio-system. More-specific namespace, workload and port policies remain effective.")
+		if p != nil {
+			for _, note := range p.Notes {
+				if strings.Contains(note, "override") {
+					interactions = append(interactions, Interaction{Level: "warn", Text: note})
+				}
+			}
+		}
+		return
+	}
 	svc := ws.Get(req.Cluster, "", "services", req.Namespace, req.Service)
 	if svc == nil {
+		if req.Waypoint != nil && p != nil {
+			effects = append(effects, "Sets the selected namespace defaults to waypoint "+req.Waypoint.Name+". Preserved Service overrides remain effective.")
+			for _, note := range p.Notes {
+				if strings.Contains(note, "downstream ztunnel") {
+					interactions = append(interactions, Interaction{Level: "warn", Text: note})
+				}
+			}
+		}
 		return
 	}
 	e := &effectBuilder{ws: ws, req: req, svc: svc, plan: p, policies: servicePolicies(ws, svc)}
@@ -197,16 +216,26 @@ func (e *effectBuilder) task(task string) {
 	case "l4-allow-namespace":
 		e.say("Callers in %s can reach %s.", defaultString(r.SourceNamespace, "the chosen namespace"), s)
 		e.say("Once an ALLOW exists on these Pods, callers it does not match are refused.")
+	case "l4-allow-service-account":
+		e.say("This L4 ALLOW admits service account %s without a waypoint. Other ALLOW policies remain additive.", r.SourceServiceAccount)
 	case "require-waypoint":
-		e.say("Only the waypoint can call the Pods of %s.", s)
-		e.say("Callers that go straight to a pod IP are refused.")
-	case "jwt":
-		who := "a valid JWT"
-		if r.Issuer != "" {
-			who = "a valid JWT from " + r.Issuer
+		e.say("The waypoint can call the Pods of %s. Other ALLOW policies remain additive.", s)
+		e.say("Direct Pod-IP callers are refused only when no other ALLOW rule admits them. Remove or narrow conflicting caller-allowing rules.")
+		for _, pe := range e.policies {
+			if pe.Action == "ALLOW" && pe.Enforced == "ztunnel" {
+				e.tell("warn", "Review conflicting ALLOW policy "+pe.Ref.Namespace+"/"+pe.Ref.Name+"; remove or narrow rules that admit direct callers.")
+			}
 		}
-		e.say("Requests to %s need %s.", s, who)
-		e.say("Requests with no token get 403, and requests with an invalid token get 401.")
+	case "jwt":
+		e.say("This ALLOW branch admits JWT subjects %s from %s.", strings.Join(r.RequestPrincipals, ", "), r.Issuer)
+		if len(r.JWTPrincipals) > 0 {
+			e.say("The same request must also have source principal %s.", strings.Join(r.JWTPrincipals, ", "))
+		}
+		if len(r.JWTServiceAccounts) > 0 {
+			e.say("The same request must also come from service account %s.", strings.Join(r.JWTServiceAccounts, ", "))
+		}
+		e.say("The policy targets all requests to %s through the waypoint, constrained by explicit matches: paths %s; methods %s; headers %s.", s, defaultString(strings.Join(r.Paths, ", "), "any"), defaultString(strings.Join(r.Methods, ", "), "any"), stringJSON(r.Headers))
+		e.say("Requests without a matching validated JWT cannot use this ALLOW branch. Other ALLOW rules may admit them; DENY rules still run first. Invalid tokens are rejected by matching RequestAuthentication.")
 	case "global-service":
 		e.globalService()
 	case "waypoint":
@@ -455,6 +484,13 @@ func (e *effectBuilder) waypoint() {
 		e.say("%s sends its traffic through %s.", defaultString(e.req.TargetName, e.req.Service), name)
 	}
 	e.say("L7 policies and routes now apply to that traffic.")
+	if e.plan != nil {
+		for _, note := range e.plan.Notes {
+			if strings.Contains(note, "downstream ztunnel") {
+				e.tell("warn", note)
+			}
+		}
+	}
 }
 
 // ---- interactions ---------------------------------------------------------
@@ -472,6 +508,13 @@ func (e *effectBuilder) interact() {
 		e.interactions = append(e.interactions, Interaction{Level: "warn", Text: s + " does not use a waypoint, so this " + noun(policy) + " is not applied to its traffic. Set up a waypoint for it first.", FollowUpTask: "waypoint", FollowUpLabel: "Set up a waypoint"})
 	} else if l7 && e.wp == nil {
 		e.tell("warn", fmt.Sprintf("%s points at the waypoint %s, but that Gateway was not captured, so this %s may not be applied.", s, e.wpName, noun(policy)))
+	}
+	if e.has("jwt") {
+		for _, pe := range e.policies {
+			if pe.Action == "ALLOW" && pe.Enforced == "waypoint" {
+				e.tell("warn", "Review additive ALLOW policy "+pe.Ref.Namespace+"/"+pe.Ref.Name+"; requests without a matching JWT may use its other branches.")
+			}
+		}
 	}
 
 	// First ALLOW on the Service.
@@ -518,29 +561,7 @@ func (e *effectBuilder) hasWaypointAllow() bool {
 
 // bypassBlocked reports an enforced ztunnel ALLOW that admits only the waypoint identity.
 func (e *effectBuilder) bypassBlocked() bool {
-	want := waypointPrincipal(e.ws, e.svc)
-	if want == "" {
-		return false
-	}
-	for _, pe := range e.policies {
-		if pe.Action != "ALLOW" || pe.Enforced != "ztunnel" || pe.Warning != "" {
-			continue
-		}
-		o := e.ws.Get(pe.Ref.Cluster, pe.Ref.Group, pe.Ref.Resource, pe.Ref.Namespace, pe.Ref.Name)
-		if o == nil {
-			continue
-		}
-		for _, rv := range L(Path(o.Obj, "spec", "rules")) {
-			for _, fv := range L(M(rv)["from"]) {
-				for _, p := range L(Path(M(fv), "source", "principals")) {
-					if S(p) == want {
-						return true
-					}
-				}
-			}
-		}
-	}
-	return false
+	return serviceWaypointLock(e.ws, e.svc)
 }
 
 func (e *effectBuilder) routing() {

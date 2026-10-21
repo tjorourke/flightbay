@@ -255,7 +255,7 @@ func TestGenerateAuthz(t *testing.T) {
 		{
 			name: "ALLOW with no rules refuses everything",
 			in:   azIn(ParseAuthzPolicy(azRef("p"), map[string]any{"action": "ALLOW"}, "waypoint")),
-			want: []want{{"deny-all", 403, "No rules, so nothing is allowed", nil}},
+			want: []want{{"deny-all", 403, "This policy matches nothing; other ALLOW policies may admit the caller", nil}},
 		},
 		{
 			name:   "DENY with no rules never denies",
@@ -264,9 +264,13 @@ func TestGenerateAuthz(t *testing.T) {
 			notes:  []string{"never denies anything"},
 		},
 		{
-			name:   "ztunnel-enforced policy has no waypoint bypass case",
-			in:     azIn(ParseAuthzPolicy(azRef("p"), spec("DENY", rule("from", src("namespaces", list("other")))), "ztunnel")),
-			want:   []want{{"r1-match", 403, "Rule matches", nil}},
+			name: "ztunnel-enforced policy has no waypoint bypass case",
+			in:   azIn(ParseAuthzPolicy(azRef("p"), spec("DENY", rule("from", src("namespaces", list("other")))), "ztunnel")),
+			want: []want{{"r1-match", 0, "Rule matches", func(t *testing.T, c *Case) {
+				if c.Expect.Transport != "connection-refused-or-reset" {
+					t.Fatal(c.Expect)
+				}
+			}}},
 			absent: []string{"bypass"},
 		},
 		{
@@ -327,14 +331,45 @@ func TestWaypointBypassExpectation(t *testing.T) {
 	for _, lock := range []bool{false, true} {
 		in := azIn(deny)
 		in.WaypointLock = lock
+		if lock {
+			in.Others = append(in.Others, ParseAuthzPolicy(azRef("l4-lock"), spec("ALLOW", rule("from", src("principals", list("cluster.local/ns/bookinfo/sa/waypoint")))), "ztunnel"))
+		}
 		c := caseByID(GenerateAuthzSuite(in), "bypass")
 		want := 200
 		if lock {
-			want = 403
+			want = 0
 		}
 		if c == nil || c.Expect.Status != want || !c.Request.Direct {
 			t.Errorf("lock=%v: %+v", lock, c)
 		}
+		if lock && c != nil && c.Expect.Transport != "connection-refused-or-reset" {
+			t.Fatal(c.Expect)
+		}
+	}
+}
+
+func TestLayeredAuthorizationOutcomes(t *testing.T) {
+	r := reqModel{Port: 80, Principal: "cluster.local/ns/app/sa/client", Namespace: "app", SourceKnown: true, Method: "GET"}
+	l4 := ParseAuthzPolicy(azRef("deny-all"), map[string]any{"action": "ALLOW"}, "ztunnel")
+	l7 := ParseAuthzPolicy(azRef("l7"), spec("ALLOW", map[string]any{}), "waypoint")
+	v := decideLayers(AuthzInput{Policy: l4}, []AuthzPolicy{l4}, r, false)
+	if v.Status != 0 || v.Transport != "connection-refused-or-reset" {
+		t.Fatal(v)
+	}
+	in := AuthzInput{Policy: l7, WaypointPrincipal: "cluster.local/ns/app/sa/wp"}
+	v = decideLayers(in, []AuthzPolicy{l7, l4}, r, false)
+	if v.Status != 503 || v.Transport != "" {
+		t.Fatal(v)
+	}
+	l7.Action = "DENY"
+	v = decideLayers(in, []AuthzPolicy{l7, l4}, r, false)
+	if v.Status != 403 {
+		t.Fatal(v)
+	}
+	l4allow := ParseAuthzPolicy(azRef("caller"), spec("ALLOW", rule("from", src("serviceAccounts", list("app/client")))), "ztunnel")
+	v = decideLayers(in, []AuthzPolicy{l7, l4, l4allow}, r, true)
+	if v.Status != 200 {
+		t.Fatal(v)
 	}
 }
 
@@ -449,7 +484,7 @@ func TestRuleInWords(t *testing.T) {
 		{"allow methods", ParseAuthzPolicy(azRef("a"), spec("ALLOW", rule("to", op("methods", list("GET", "HEAD")))), "waypoint"), "Allow GET or HEAD requests to reviews."},
 		{"allow ns and path", ParseAuthzPolicy(azRef("a"), spec("ALLOW", rule("from", src("namespaces", list("web")), "to", op("paths", list("/api/*")))), "waypoint"), "Allow any request to reviews for /api/* from namespace web."},
 		{"principal", ParseAuthzPolicy(azRef("a"), spec("ALLOW", rule("from", src("principals", list("cluster.local/ns/b/sa/productpage")))), "waypoint"), "Allow any request to reviews from productpage."},
-		{"no rules allow", ParseAuthzPolicy(azRef("a"), map[string]any{}, "waypoint"), "Allow nothing. With no rules, every request to reviews is refused."},
+		{"no rules allow", ParseAuthzPolicy(azRef("a"), map[string]any{}, "waypoint"), "This ALLOW policy permits nothing. Other ALLOW policies can still admit requests to reviews."},
 		{"two rules", ParseAuthzPolicy(azRef("a"), spec("DENY", rule("to", op("methods", list("DELETE"))), rule("to", op("methods", list("PUT")))), "waypoint"), "Deny DELETE requests to reviews, or PUT requests to reviews."},
 		{"not values", ParseAuthzPolicy(azRef("a"), spec("DENY", rule("when", whenNot("request.headers[x]", "1"))), "waypoint"), "Deny any request to reviews when header x does not equal 1."},
 		{"custom", ParseAuthzPolicy(azRef("a"), spec("CUSTOM"), "waypoint"), "CUSTOM rules are decided by an external provider, so there is no sentence for them."},

@@ -484,11 +484,36 @@ func runMeshCurl(ctx context.Context, cfg *rest.Config, client kubernetes.Interf
 	parseMeshCurl(stdout.String(), marker, q.Profile, &out)
 	if err != nil {
 		out.Error = probeRedact(strings.TrimSpace(stderr.String()+" "+err.Error()), q.Profile)
+		if out.Status == 0 && strings.Contains(stdout.String(), "\n"+marker+" 000 ") {
+			if transport := classifyMeshCurlTransport(stderr.String(), err); transport != "" {
+				out.Error = "curl transport: " + transport
+			}
+		}
+	}
+	if out.Status == 0 && out.Error == "" {
+		out.Error = "Client returned curl 000 without a classified connection refusal"
 	}
 	out.Truncated = out.Truncated || stdout.Overflow
 	out.Finished = time.Now().UTC()
 	out.DurationMS = out.Finished.Sub(out.Started).Milliseconds()
 	return out
+}
+
+// An exec/RBAC error, DNS failure or timeout is never a successful denial.
+// Require both curl's remote exit status and its matching diagnostic.
+func classifyMeshCurlTransport(stderr string, err error) string {
+	exit, ok := err.(interface{ ExitStatus() int })
+	if !ok {
+		return ""
+	}
+	message := strings.ToLower(stderr)
+	if exit.ExitStatus() == 56 && strings.Contains(message, "curl: (56)") && strings.Contains(message, "connection reset") {
+		return "connection-reset"
+	}
+	if exit.ExitStatus() == 7 && strings.Contains(message, "curl: (7)") && strings.Contains(message, "connection refused") {
+		return "connection-refused"
+	}
+	return ""
 }
 
 func meshRouteEvidence(ctx context.Context, c ambientConnection, target ambient.Ref, port int) ([]meshRouteRule, map[string]bool, []string) {

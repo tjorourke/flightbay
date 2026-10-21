@@ -38,6 +38,27 @@ func TestParseSuiteRef(t *testing.T) {
 	}
 }
 
+func TestTransportDenialOnlyAcceptsClassifiedResetOrRefusal(t *testing.T) {
+	c := Case{ID: "deny", Request: CaseRequest{Method: "GET", Path: "/"}, Expect: CaseExpect{Transport: "connection-refused-or-reset"}}
+	for _, tc := range []struct {
+		o    Observation
+		want string
+	}{
+		{Observation{Transport: "connection-reset"}, StatusPass},
+		{Observation{Transport: "connection-refused"}, StatusPass},
+		{Observation{Status: 403}, StatusFail},
+		{Observation{Error: "DNS lookup failed"}, StatusError},
+		{Observation{Error: "timeout"}, StatusError},
+		{Observation{Error: "exec forbidden", Transport: "connection-reset"}, StatusError},
+		{Observation{}, StatusFail},
+	} {
+		r := Evaluate(c, tc.o, time.Now())
+		if r.Status != tc.want {
+			t.Fatalf("%+v: %+v", tc, r)
+		}
+	}
+}
+
 func TestSuitePath(t *testing.T) {
 	dir := t.TempDir()
 	ref, _ := ParseSuiteRef("kind-mesh2/AuthorizationPolicy/bookinfo/deny")
@@ -211,7 +232,7 @@ func TestEvaluate(t *testing.T) {
 		{"status pass", status(403), Observation{Status: 403}, StatusPass, "403", ""},
 		{"status fail (the Red case)", status(403), Observation{Status: 200, DecidedBy: "reviews-methods", DecidedByKind: "policy"}, StatusFail, "200", "Expected 403, got 200."},
 		{"status error from transport", status(200), Observation{Error: "connection refused"}, StatusError, "", "connection refused"},
-		{"transport error with a status is still compared", status(503), Observation{Status: 503, Error: "x"}, StatusPass, "503", ""},
+		{"runner errors are not successful HTTP denials", status(503), Observation{Status: 503, Error: "x"}, StatusError, "", "x"},
 		{"rule pass", rule, Observation{Status: 200, Backend: "reviews-v1"}, StatusPass, "rule 1 → reviews-v1", ""},
 		{"rule fail", rule, Observation{Status: 200, Backend: "reviews-v3"}, StatusFail, "200 · reviews-v3", "Expected rule 1 (reviews-v1, reviews-v2), but reviews-v3 answered."},
 		{"rule unidentified backend", rule, Observation{Status: 404}, StatusUnknown, GotUnknownBackend, "could not tell which backend answered"},

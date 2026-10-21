@@ -255,6 +255,21 @@ func (s *Server) ambientPreflight(ctx context.Context, c ambientConnection, p *a
 		return s.bookinfoPreflight(ctx, c, p)
 	}
 	for _, e := range p.Evidence {
+		if e.Field == "l4-dependencies" {
+			list, err := c.client.Resource(schema.GroupVersionResource{Group: e.Ref.Group, Version: "v1", Resource: e.Ref.Resource}).List(ctx, metav1.ListOptions{})
+			if err != nil {
+				return fmt.Errorf("recheck L4 evidence: %w", err)
+			}
+			values := map[string]any{}
+			for _, o := range list.Items {
+				values[o.GetNamespace()+"/"+o.GetName()] = ambient.L4DependencyObject(o.Object)
+			}
+			b, _ := json.Marshal(values)
+			if string(b) != e.Value {
+				return errors.New("L4 policy or waypoint identity dependencies changed; refresh the preview")
+			}
+			continue
+		}
 		if e.Field != "spec.serviceAccountName" && e.Field != "data.mesh" {
 			continue
 		}

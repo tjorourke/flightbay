@@ -200,6 +200,31 @@ func generateWaypoint(ws *store.Workspace, req Request) (*Plan, error) {
 		change(p, ns, "Enrol the target namespace in ambient", map[string]any{"/metadata/labels/istio.io~1dataplane-mode": "ambient"})
 	}
 	p.Notes = append(p.Notes, "There is no automatic global waypoint default. Shared scope enrols only the selected namespaces. Service/object overrides remain effective unless explicitly cleared.", "A new Gateway is created and must report Programmed before bindings are changed. Undo restores the previous bindings before removing the new Gateway. Refresh a live inventory or take a new capture to investigate the resulting state.")
+	p.Evidence = append(p.Evidence, l4DependencyEvidence(ws, req.Cluster)...)
+	for _, svc := range ws.List(req.Cluster, "", "services", "", nil) {
+		affected := (w.Scope == "service" || w.Scope == "object") && target != nil && svc.Namespace == target.Namespace && svc.Name == target.Name
+		if w.Scope == "namespace" || w.Scope == "shared" {
+			affected = contains(names, svc.Namespace) && svc.Labels()["istio.io/use-waypoint"] == ""
+			if target != nil && svc.Name == target.Name && svc.Namespace == target.Namespace && w.ClearOverride {
+				affected = true
+			}
+		}
+		if !affected {
+			continue
+		}
+		proposed := *svc
+		proposed.Obj = M(Copy(svc.Obj))
+		meta := M(proposed.Obj["metadata"])
+		lb := M(meta["labels"])
+		if lb == nil {
+			lb = map[string]any{}
+			meta["labels"] = lb
+		}
+		lb["istio.io/use-waypoint"], lb["istio.io/use-waypoint-namespace"] = w.Name, wpNS
+		if warning := waypointL4Warning(ws, &proposed); warning != "" {
+			p.Notes = append(p.Notes, warning)
+		}
+	}
 	return finishPlan(p)
 }
 func namespaceAllowed(ws *store.Workspace, c, wpNS, ns string, ar map[string]any) bool {

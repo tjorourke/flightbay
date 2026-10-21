@@ -628,6 +628,13 @@ func (b *cfgBuilder) collectPolicies(policies []PolicyEntry) {
 				b.facts.Access.JWTIssuers = append(b.facts.Access.JWTIssuers, issuers...)
 			}
 		case "PeerAuthentication":
+			if pe.Scope == "mesh" {
+				r := base
+				r.Action = "Inherited"
+				r.Label = "Mesh default: " + defaultString(S(Path(o.Obj, "spec", "mtls", "mode")), "UNSET")
+				r.Summary = r.Label + ". More-specific namespace, workload and port settings remain effective."
+				b.add("mesh-strict-mtls", r, o)
+			}
 			b.peerAuthentication(o, pe, base)
 		default: // agentgateway policies
 			b.agentgatewayPolicy(o, pe, base, inherited, enforced)
@@ -794,14 +801,14 @@ func (b *cfgBuilder) authorization(o *store.Object, pe PolicyEntry, base ConfigR
 		}
 	case action == "ALLOW" && b.isWaypointLock(rules):
 		task = "require-waypoint"
-		r.Label, r.Summary = "Only the waypoint can reach the Pods", "ALLOW only the waypoint identity "+b.wpPrinc
+		r.Label, r.Summary = "Allow the waypoint to reach the Pods", "ALLOW the waypoint identity "+b.wpPrinc+"; other ALLOW policies remain additive"
 		b.wpOnly = true
 		if enforced {
 			b.facts.Access.WaypointOnly = true
 		}
 	case action == "ALLOW" && b.isJWTRule(rules):
 		task = "jwt"
-		r.Label, r.Summary = "Require a valid JWT", "ALLOW only callers with a request principal"
+		r.Label, r.Summary = "Allow matching JWT requests", strings.Join(accessPhrases(acc, false), " or ")+"; other ALLOW rules remain additive"
 		if enforced {
 			b.facts.Access.JWTRequired = true
 		}
@@ -809,6 +816,9 @@ func (b *cfgBuilder) authorization(o *store.Object, pe PolicyEntry, base ConfigR
 		task = "l4-allow-namespace"
 		ns := rules[0].From[0].Namespaces[0]
 		r.Label, r.Summary = "Allow callers in "+ns, "ALLOW callers from namespace "+ns
+	case action == "ALLOW" && pe.Enforced == "ztunnel" && !hasTargets && len(rules) == 1 && len(rules[0].From) == 1 && len(rules[0].From[0].ServiceAccounts) == 1:
+		task = "l4-allow-service-account"
+		r.Label, r.Summary = "Allow service account "+rules[0].From[0].ServiceAccounts[0], ruleSummary(rules[0])
 	case action == "ALLOW" && hasTargets && onlyMethods(rules):
 		task = "methods"
 		r.Label = accessLabel(action, rules)
@@ -838,7 +848,7 @@ func (b *cfgBuilder) authorization(o *store.Object, pe PolicyEntry, base ConfigR
 		b.l4Idents = true
 	}
 	switch {
-	case task == "require-waypoint", task == "jwt", len(rawRules) == 0:
+	case task == "require-waypoint", len(rawRules) == 0:
 		// carried by their own facts (WaypointOnly, JWTRequired, DefaultDeny)
 	case custom:
 		b.facts.Access.Custom += len(rawRules)
@@ -964,6 +974,39 @@ func (b *cfgBuilder) collectPublication() {
 // ---- facts that need every resource seen ------------------------------------
 
 func (b *cfgBuilder) finishFacts() {
+	b.facts.Access.WaypointOnly = b.facts.Access.WaypointOnly && serviceWaypointLock(b.ws, b.svc)
+	// JWT is required only if every effective waypoint ALLOW branch demands
+	// a request principal and matching validation has been captured.
+	jwtRequired, seenAllow := true, false
+	for _, pe := range servicePolicies(b.ws, b.svc) {
+		if pe.Enforced != "waypoint" || pe.Warning != "" || pe.Ref.Kind != "AuthorizationPolicy" || pe.Action != "ALLOW" {
+			continue
+		}
+		o := b.ws.Get(pe.Ref.Cluster, pe.Ref.Group, pe.Ref.Resource, pe.Ref.Namespace, pe.Ref.Name)
+		acc, ok := accessFromPolicy(o)
+		if len(L(Path(o.Obj, "spec", "rules"))) == 0 {
+			continue
+		}
+		seenAllow = true
+		if !ok || acc.RulesYAML != "" || !b.isJWTRule(acc.Rules) {
+			jwtRequired = false
+			continue
+		}
+		for _, r := range acc.Rules {
+			for _, src := range r.From {
+				for _, principal := range src.RequestPrincipals {
+					matched := false
+					for _, issuer := range b.facts.Access.JWTIssuers {
+						if strings.HasPrefix(principal, issuer+"/") {
+							matched = true
+						}
+					}
+					jwtRequired = jwtRequired && matched
+				}
+			}
+		}
+	}
+	b.facts.Access.JWTRequired = jwtRequired && seenAllow
 	b.facts.Transport.Mode = b.mtls.mode
 	if b.mtls.res != nil {
 		b.add("strict-mtls", *b.mtls.res, b.ws.Get(b.mtls.res.Ref.Cluster, b.mtls.res.Ref.Group, b.mtls.res.Ref.Resource, b.mtls.res.Ref.Namespace, b.mtls.res.Ref.Name))

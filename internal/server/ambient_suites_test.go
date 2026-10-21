@@ -33,6 +33,7 @@ const (
 
 func addObjs(ws *store.Workspace, group, resource, kind string, namespaced bool, objs ...map[string]any) {
 	ws.AddObjects("c1", bundle.APIResource{Group: group, Version: "v1", Resource: resource, Kind: kind, Namespaced: namespaced}, objs, "fx-"+resource)
+	ws.SetCoverage(bundle.Coverage{ID: resource, Cluster: "c1", Type: bundle.CoverageResource, Group: group, Version: "v1", Resource: resource, State: bundle.StateComplete})
 }
 
 func k8sObj(kind, ns, name string, spec map[string]any, labels map[string]any) map[string]any {
@@ -742,6 +743,20 @@ func TestRunSuiteLoop(t *testing.T) {
 			t.Errorf("%q", run.Results[1].Message)
 		}
 	})
+}
+
+func TestRunSuiteTransportDenialAndRunnerFailure(t *testing.T) {
+	suite := &ambient.Suite{Cases: []ambient.Case{{ID: "reset", Expect: ambient.CaseExpect{Transport: "connection-refused-or-reset"}}, {ID: "dns", Expect: ambient.CaseExpect{Transport: "connection-refused-or-reset"}}}}
+	runner := &fakeRunner{script: func(req suiteSendRequest) (ambient.Observation, error) {
+		if req.Case.ID == "reset" {
+			return ambient.Observation{Transport: "connection-reset"}, nil
+		}
+		return ambient.Observation{}, errors.New("DNS lookup failed")
+	}}
+	run := runSuite(context.Background(), suite, []string{"reset", "dns"}, runner, nil, time.Now)
+	if run.Summary.Passed != 1 || run.Summary.Errored != 1 {
+		t.Fatal(run.Summary)
+	}
 }
 
 func TestSelectCasesMergeAndKeep(t *testing.T) {

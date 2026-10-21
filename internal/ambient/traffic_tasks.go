@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/tjorourke/flightbay/internal/store"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/yaml"
 )
 
@@ -131,14 +132,38 @@ func generateJWT(req Request, target []any, obj func(string, string, string, map
 			return fmt.Errorf("request principals must name the selected issuer and subject, or issuer/*")
 		}
 	}
-	op := map[string]any{"ports": []string{fmt.Sprint(req.Port)}}
+	if len(req.JWTPrincipals) > 0 && len(req.JWTServiceAccounts) > 0 {
+		return fmt.Errorf("choose caller principals or service accounts, not both")
+	}
+	for _, p := range req.JWTPrincipals {
+		if strings.TrimSpace(p) == "" || !strings.Contains(p, "/ns/") || !strings.Contains(p, "/sa/") {
+			return fmt.Errorf("choose a source principal in trust-domain/ns/namespace/sa/account form")
+		}
+	}
+	for _, sa := range req.JWTServiceAccounts {
+		parts := strings.Split(sa, "/")
+		if len(parts) != 2 || len(validation.IsDNS1123Label(parts[0])) > 0 || len(validation.IsDNS1123Subdomain(parts[1])) > 0 {
+			return fmt.Errorf("choose a service account as namespace/account without wildcards")
+		}
+	}
+	op := map[string]any{}
 	if len(req.Paths) > 0 {
 		op["paths"] = req.Paths
 	}
 	if len(req.Methods) > 0 {
 		op["methods"] = req.Methods
 	}
-	rule := map[string]any{"from": []any{map[string]any{"source": map[string]any{"requestPrincipals": req.RequestPrincipals}}}, "to": []any{map[string]any{"operation": op}}}
+	source := map[string]any{"requestPrincipals": req.RequestPrincipals}
+	if len(req.JWTPrincipals) > 0 {
+		source["principals"] = req.JWTPrincipals
+	}
+	if len(req.JWTServiceAccounts) > 0 {
+		source["serviceAccounts"] = req.JWTServiceAccounts
+	}
+	rule := map[string]any{"from": []any{map[string]any{"source": source}}}
+	if len(op) > 0 {
+		rule["to"] = []any{map[string]any{"operation": op}}
+	}
 	keys := []string{}
 	for k := range req.Headers {
 		keys = append(keys, k)

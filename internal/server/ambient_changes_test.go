@@ -2,6 +2,9 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -122,6 +125,73 @@ func TestWaypointBindingDryRunApplyAndUndoPreservesOtherLabels(t *testing.T) {
 	undone, _ := nsres.Get(context.Background(), "app", metav1.GetOptions{})
 	if undone.GetLabels()["team"] != "ops" || undone.GetLabels()["istio.io/use-waypoint"] != "" {
 		t.Fatalf("undo lost unrelated labels: %+v", undone.GetLabels())
+	}
+}
+
+func TestWaypointPreflightRejectsNewL4Policy(t *testing.T) {
+	s, dc, _, _ := ambientFixture(t)
+	supportAmbientChanges(t, s, dc)
+	req := ambient.Request{Cluster: "captured", Namespace: "app", TargetKind: "Namespace", TargetName: "app", Tasks: []string{"waypoint"}, Waypoint: &ambient.WaypointRequest{Mode: "new", Scope: "namespace", Namespace: "app", Name: "new-wp", Class: "istio-waypoint"}}
+	p, err := ambient.Generate(s.WS, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "security.istio.io/v1", "kind": "AuthorizationPolicy", "metadata": map[string]any{"name": "new-allow", "namespace": "app", "uid": "new-uid"}, "spec": map[string]any{"rules": []any{map[string]any{}}}}}
+	if err = dc.Tracker().Add(policy); err != nil {
+		t.Fatal(err)
+	}
+	c, _ := s.ambientConnect("chosen")
+	if err = s.ambientPreflight(context.Background(), c, p); err == nil {
+		t.Fatal("policy added after preview was ignored")
+	}
+}
+
+func TestAppendAccessRulesDryRunApplyAndUndo(t *testing.T) {
+	s, dc, srv, _ := ambientFixture(t)
+	supportAmbientChanges(t, s, dc)
+	ctx := context.Background()
+	nsr := dc.Resource(schema.GroupVersionResource{Version: "v1", Resource: "namespaces"})
+	ns, _ := nsr.Get(ctx, "app", metav1.GetOptions{})
+	lb := ns.GetLabels()
+	lb["istio.io/use-waypoint"] = "wp"
+	ns.SetLabels(lb)
+	if _, err := nsr.Update(ctx, ns, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	s.WS.AddObjects("captured", bundle.APIResource{Version: "v1", Resource: "namespaces", Kind: "Namespace"}, []map[string]any{ns.Object}, "namespace-binding")
+	gw := map[string]any{"apiVersion": ambient.GatewayGroup + "/v1", "kind": "Gateway", "metadata": map[string]any{"namespace": "app", "name": "wp", "uid": "wpuid"}, "spec": map[string]any{"gatewayClassName": "istio-waypoint", "listeners": []any{map[string]any{"name": "mesh", "port": int64(15008), "protocol": "HBONE"}}}}
+	s.WS.AddObjects("captured", bundle.APIResource{Group: ambient.GatewayGroup, Version: "v1", Resource: "gateways", Kind: "Gateway", Namespaced: true}, []map[string]any{gw}, "waypoint")
+	if err := dc.Tracker().Create(schema.GroupVersionResource{Group: ambient.GatewayGroup, Version: "v1", Resource: "gateways"}, &unstructured.Unstructured{Object: gw}, "app"); err != nil {
+		t.Fatal(err)
+	}
+	rules := []any{map[string]any{"to": []any{map[string]any{"operation": map[string]any{"methods": []any{"GET"}}}}}, map[string]any{"to": []any{map[string]any{"operation": map[string]any{"methods": []any{"HEAD"}}}}}}
+	policy := map[string]any{"apiVersion": "security.istio.io/v1", "kind": "AuthorizationPolicy", "metadata": map[string]any{"namespace": "app", "name": "access", "uid": "accessuid", "resourceVersion": "1"}, "spec": map[string]any{"action": "ALLOW", "targetRefs": []any{map[string]any{"kind": "Service", "group": "", "name": "web"}}, "rules": rules}}
+	s.WS.AddObjects("captured", bundle.APIResource{Group: ambient.SecurityGroup, Version: "v1", Resource: "authorizationpolicies", Kind: "AuthorizationPolicy", Namespaced: true}, []map[string]any{policy}, "access")
+	if err := dc.Tracker().Add(&unstructured.Unstructured{Object: policy}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(policy["spec"])
+	sum := sha256.Sum256(b)
+	req := ambient.Request{Cluster: "captured", Namespace: "app", Service: "web", Port: 80, Tasks: []string{"access-rule"}, AccessOperation: "append", Access: &ambient.AccessRequest{Action: "ALLOW", Rules: []ambient.AccessRule{{Methods: []string{"POST"}}}}, Edit: &ambient.EditTarget{Ref: ambient.Ref{Cluster: "captured", Group: ambient.SecurityGroup, Resource: "authorizationpolicies", Kind: "AuthorizationPolicy", Namespace: "app", Name: "access"}, UID: "accessuid", Fingerprint: hex.EncodeToString(sum[:])}}
+	token := validateAmbient(t, srv, req)
+	resource := dc.Resource(schema.GroupVersionResource{Group: ambient.SecurityGroup, Version: "v1", Resource: "authorizationpolicies"}).Namespace("app")
+	before, _ := resource.Get(ctx, "access", metav1.GetOptions{})
+	if len(ambient.L(ambient.Path(before.Object, "spec", "rules"))) != 2 {
+		t.Fatal("dry-run wrote rules")
+	}
+	if code, out := ambientPost(t, srv, map[string]any{"operation": "apply", "context": "chosen", "validation": token}); code != 200 {
+		t.Fatalf("%d %+v", code, out)
+	}
+	after, _ := resource.Get(ctx, "access", metav1.GetOptions{})
+	if len(ambient.L(ambient.Path(after.Object, "spec", "rules"))) != 3 {
+		t.Fatal(after.Object)
+	}
+	if code, out := ambientPost(t, srv, map[string]any{"operation": "cleanup", "context": "chosen", "validation": token}); code != 200 {
+		t.Fatalf("%d %+v", code, out)
+	}
+	undone, _ := resource.Get(ctx, "access", metav1.GetOptions{})
+	if !ambient.Equal(ambient.Path(undone.Object, "spec", "rules"), rules) {
+		t.Fatal("undo lost original rules", undone.Object)
 	}
 }
 

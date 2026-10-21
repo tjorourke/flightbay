@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http/httptest"
 	"strings"
@@ -17,6 +18,30 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic/fake"
 )
+
+type curlExit int
+
+func (e curlExit) Error() string   { return "remote exit" }
+func (e curlExit) ExitStatus() int { return int(e) }
+
+func TestCurlTransportClassificationRequiresExitAndDiagnostic(t *testing.T) {
+	for _, tc := range []struct {
+		stderr string
+		err    error
+		want   string
+	}{
+		{"curl: (56) Recv failure: Connection reset by peer", curlExit(56), "connection-reset"},
+		{"curl: (7) Failed to connect: Connection refused", curlExit(7), "connection-refused"},
+		{"curl: (6) Could not resolve host", curlExit(6), ""},
+		{"curl: (28) Operation timed out", curlExit(28), ""},
+		{"curl: (56) Connection reset by peer", errors.New("exec forbidden"), ""},
+		{"curl: (56) SSL read failed", curlExit(56), ""},
+	} {
+		if got := classifyMeshCurlTransport(tc.stderr, tc.err); got != tc.want {
+			t.Fatalf("%+v: %q", tc, got)
+		}
+	}
+}
 
 func TestMeshProbeAttributionUsesExactLivePodAndBackendSelectors(t *testing.T) {
 	pods := []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "reviews-v1-real", Namespace: "bookinfo", UID: "uid-v1", Labels: map[string]string{"app": "reviews", "version": "v1"}}}}

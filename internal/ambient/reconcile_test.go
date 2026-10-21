@@ -91,6 +91,12 @@ func TestConfigureGeneratedResourcesAreReapplyable(t *testing.T) {
 			first := p.Objects[0]
 			current := Target(ws, req.Cluster, S(first["kind"]), req.Namespace, S(Path(first, "metadata", "name")))
 			current.Obj["spec"] = map[string]any{"customerField": "keep"}
+			if tc.task == "access-rule" {
+				if _, err := Generate(ws, req); err == nil {
+					t.Fatal("implicit destructive access replacement accepted")
+				}
+				return
+			}
 			updated, err := Generate(ws, req)
 			if err != nil || len(updated.Objects) != 0 || len(updated.Changes) != 1 {
 				t.Fatalf("update: %v %+v", err, updated)
@@ -109,6 +115,36 @@ func TestReconcilePreservesOwnershipAndRejectsForeignResources(t *testing.T) {
 	delete(labels, "flightbay.dev/test-id")
 	if _, err := Generate(ws, req); err == nil {
 		t.Fatal("adopted a foreign split")
+	}
+}
+
+func TestAccessAppendPreservesRawRulesAndRejectsStaleOrIncompatibleEdits(t *testing.T) {
+	ws := fixture(t)
+	old := object("AuthorizationPolicy", "existing", map[string]any{"action": "ALLOW", "targetRefs": []any{map[string]any{"group": "", "kind": "Service", "name": "front"}}, "rules": []any{map[string]any{"to": []any{map[string]any{"operation": map[string]any{"methods": []any{"GET"}}}}}, map[string]any{"futureField": map[string]any{"keep": true}}}})
+	put(ws, SecurityGroup, "authorizationpolicies", "AuthorizationPolicy", old)
+	o := Target(ws, "c", "AuthorizationPolicy", "app", "existing")
+	req := Request{Cluster: "c", Namespace: "app", Service: "front", Port: 80, Tasks: []string{"access-rule"}, Access: &AccessRequest{Action: "ALLOW", Rules: []AccessRule{{Methods: []string{"POST"}}}}, Edit: &EditTarget{Ref: reference(o), UID: S(Path(o.Obj, "metadata", "uid")), Fingerprint: configurationFingerprint(o)}, AccessOperation: "append"}
+	p, err := Generate(ws, req)
+	if err != nil || len(p.Objects) != 0 || len(p.Changes) != 1 {
+		t.Fatalf("%v %+v", err, p)
+	}
+	f := p.Changes[0].Fields[0]
+	if f.Path != "/spec/rules" || len(L(f.Before)) != 2 || len(L(f.After)) != 3 || !Equal(L(f.After)[:2], L(Path(o.Obj, "spec", "rules"))) {
+		t.Fatal(f)
+	}
+	M(o.Obj["spec"])["rules"] = Copy(f.After)
+	req.Edit.Fingerprint = configurationFingerprint(o)
+	if again, err := Generate(ws, req); err != nil || len(again.Changes) != 0 {
+		t.Fatalf("duplicate append %v %+v", err, again)
+	}
+	req.Access.Action = "DENY"
+	if _, err := Generate(ws, req); err == nil {
+		t.Fatal("append changed action")
+	}
+	req.Access.Action = "ALLOW"
+	req.Edit.Fingerprint = "stale"
+	if _, err := Generate(ws, req); err == nil {
+		t.Fatal("stale append accepted")
 	}
 }
 

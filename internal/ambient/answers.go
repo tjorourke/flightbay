@@ -166,6 +166,9 @@ func ruleParts(r AccessRule) (what, who string) {
 	}
 	var ns, sa, svc, ip []string
 	for _, s := range r.From {
+		if len(s.RequestPrincipals) > 0 {
+			callers = append(callers, "JWT subjects "+codeList(s.RequestPrincipals))
+		}
 		ns = append(ns, s.Namespaces...)
 		for _, p := range s.Principals {
 			sa = append(sa, principalName(p))
@@ -263,6 +266,9 @@ func accessAnswer(a AccessFacts) string {
 			from = " from " + orJoin(codes(a.JWTIssuers))
 		}
 		base = "Only callers with a valid JWT" + from
+		if len(allow) > 0 {
+			base += ", matching " + orJoin(allow)
+		}
 	case a.WaypointOnly && len(allow) == 0:
 		base = "Only the waypoint can reach the Pods"
 	case len(allow) > 0:
@@ -279,6 +285,9 @@ func accessAnswer(a AccessFacts) string {
 		base += ". Tokens from " + orJoin(codes(a.JWTIssuers)) + " are checked, not required"
 	}
 	if visibleLen(base) > maxAnswer {
+		if a.JWTRequired {
+			return "Only callers with a valid JWT and matching access rules"
+		}
 		n := len(a.Allow) + len(a.Deny)
 		switch {
 		case len(a.Allow) > 0 && len(a.Deny) > 0:

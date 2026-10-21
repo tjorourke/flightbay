@@ -19,6 +19,33 @@ func cfgTask(t *testing.T, c *ServiceConfig, id string) ConfigTask {
 	return ConfigTask{}
 }
 
+func TestJWTAndWaypointSummariesRespectAdditiveAllow(t *testing.T) {
+	ws := fixture(t)
+	withWaypointIdentity(ws)
+	put(ws, SecurityGroup, "requestauthentications", "RequestAuthentication")
+	req := Request{Cluster: "c", Namespace: "app", Service: "front", Port: 80, Tasks: []string{"jwt"}, Issuer: "https://issuer.example", JWKSURI: "https://issuer.example/keys", RequestPrincipals: []string{"https://issuer.example/alice"}, JWTServiceAccounts: []string{"app/client"}}
+	p, err := Generate(ws, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	capturePlanObjects(t, ws, p)
+	cfg, err := NewServiceConfig(ws, "c", "app", "front")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(cfg.Answers.Access, "JWT") {
+		t.Fatal(cfg.Answers.Access)
+	}
+	put(ws, SecurityGroup, "authorizationpolicies", "AuthorizationPolicy", object("AuthorizationPolicy", "tokenless", map[string]any{"targetRefs": []any{map[string]any{"group": "", "kind": "Service", "name": "front"}}, "rules": []any{map[string]any{}}}))
+	cfg, err = NewServiceConfig(ws, "c", "app", "front")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(cfg.Answers.Access, "Only callers with a valid JWT") {
+		t.Fatal(cfg.Answers.Access)
+	}
+}
+
 // withWaypointIdentity captures the waypoint's service account and the mesh
 // trust domain, which the require-waypoint task needs before it is offered.
 func withWaypointIdentity(ws *store.Workspace) {

@@ -151,7 +151,28 @@ func editableConfigurations(ws *store.Workspace, svc *store.Object) []Editable {
 					if len(req.Methods) > 0 {
 						req.Tasks = []string{"methods"}
 						req.MethodAction = defaultString(S(Path(o.Obj, "spec", "action")), "ALLOW")
-						entry.Supported = true
+						entry.Supported = req.MethodAction == "ALLOW" || req.MethodAction == "DENY"
+						if acc, ok := accessFromPolicy(o); ok && acc.RulesYAML == "" {
+							req.CallerSources = acc.Rules[0].From
+							// The simple caller picker must not flatten OR sources or
+							// discard JWT/IP/negative constraints when choosing a caller.
+							if len(req.CallerSources) > 1 {
+								entry.Supported = false
+							}
+							for _, raw := range L(M(rules[0])["from"]) {
+								src := M(M(raw)["source"])
+								if len(src) > 1 {
+									entry.Supported = false
+								}
+								for key := range src {
+									if key != "principals" && key != "serviceAccounts" && key != "namespaces" {
+										entry.Supported = false
+									}
+								}
+							}
+						} else {
+							entry.Supported = false
+						}
 					}
 				}
 				entry.Reason = "Only Service-targeted policies whose rules use caller namespaces or principals, methods, paths and request headers are edited here; other policy shapes remain evidence-only."
@@ -159,6 +180,7 @@ func editableConfigurations(ws *store.Workspace, svc *store.Object) []Editable {
 					if access, ok := accessFromPolicy(o); ok {
 						req.Tasks = []string{"access-rule"}
 						req.Access = access
+						req.AccessOperation = "replace"
 						entry.Supported = true
 					}
 				}
@@ -170,6 +192,13 @@ func editableConfigurations(ws *store.Workspace, svc *store.Object) []Editable {
 					if len(rules) == 1 && len(L(M(rules[0])["from"])) == 1 {
 						from := M(L(M(rules[0])["from"])[0])
 						namespaces := L(Path(from, "source", "namespaces"))
+						accounts := strs(Path(from, "source", "serviceAccounts"))
+						if len(accounts) == 1 {
+							req.Tasks = []string{"l4-allow-service-account"}
+							req.SourceServiceAccount = accounts[0]
+							entry.Supported = true
+							entry.Reason = "Edit the allowed service account, preserving other constraints"
+						}
 						if len(namespaces) == 1 {
 							req.Tasks = []string{"l4-allow-namespace"}
 							req.SourceNamespace = S(namespaces[0])
@@ -191,6 +220,13 @@ func editableConfigurations(ws *store.Workspace, svc *store.Object) []Editable {
 					entry.Supported = true
 				}
 				entry.Reason = "Edits one local request bucket; keys, targetRefs and other policy fields are preserved."
+			}
+			if !entry.Supported && o.Kind == "AuthorizationPolicy" && len(targets) > 0 {
+				// Raw/empty policies can still be selected explicitly for a
+				// non-destructive append, even when no full editor can load them.
+				req.Tasks = []string{"access-rule"}
+				req.AccessOperation = "append"
+				entry.Request = &req
 			}
 			if entry.Supported {
 				entry.Request = &req
@@ -318,6 +354,23 @@ func editGenerated(ws *store.Workspace, p *Plan) error {
 	}
 	allowed := false
 	svc := Target(ws, req.Cluster, "Service", req.Namespace, req.Service)
+	if contains(req.Tasks, "access-rule") && req.AccessOperation == "append" {
+		if edit.UID == "" || edit.Fingerprint == "" {
+			return fmt.Errorf("reload the existing policy with its captured UID and fingerprint before appending")
+		}
+		if len(p.Objects) != 1 || o.Kind != "AuthorizationPolicy" {
+			return fmt.Errorf("append requires one AuthorizationPolicy")
+		}
+		fresh := M(p.Objects[0]["spec"])
+		old := M(o.Obj["spec"])
+		if defaultString(S(old["action"]), "ALLOW") != defaultString(S(fresh["action"]), "ALLOW") || !Equal(old["provider"], fresh["provider"]) || !authzScopeEqual(old, fresh) {
+			return fmt.Errorf("append requires the same action, provider and attachment scope")
+		}
+		rules := appendUniqueRules(L(Copy(old["rules"])), L(fresh["rules"]))
+		change(p, o, "Append reviewed rules; preserve existing rules, order, attachment and metadata", map[string]any{"/spec/rules": rules})
+		p.Objects = []map[string]any{}
+		return nil
+	}
 	for _, e := range editableConfigurations(ws, svc) {
 		if e.Ref == edit.Ref && e.Rule == edit.Rule && e.Supported {
 			allowed = true
@@ -441,10 +494,25 @@ func editGenerated(ws *store.Workspace, p *Plan) error {
 		change(p, o, "Edit selected traffic-policy fields while preserving TLS and other settings", map[string]any{"/spec/trafficPolicy": tp})
 	case "AuthorizationPolicy":
 		if contains(req.Tasks, "access-rule") {
-			change(p, o, "Replace this policy's action and rules with the reviewed ones; targetRefs and metadata are preserved", map[string]any{"/spec/rules": Copy(Path(generated, "spec", "rules")), "/spec/action": S(Path(generated, "spec", "action"))})
+			if req.AccessOperation != "replace" {
+				return fmt.Errorf("explicit full-policy replacement is required")
+			}
+			values := map[string]any{"/spec/rules": Copy(Path(generated, "spec", "rules")), "/spec/action": S(Path(generated, "spec", "action"))}
+			var remove []string
+			if provider := Path(generated, "spec", "provider"); provider != nil {
+				values["/spec/provider"] = provider
+			} else if Path(o.Obj, "spec", "provider") != nil {
+				remove = append(remove, "/spec/provider")
+			}
+			change(p, o, "Explicitly replace this policy's action and rules; targetRefs and metadata are preserved", values, remove...)
 			break
 		}
 		rules := L(Copy(Path(o.Obj, "spec", "rules")))
+		if contains(req.Tasks, "l4-allow-service-account") {
+			M(Path(M(L(M(rules[0])["from"])[0]), "source"))["serviceAccounts"] = []string{req.SourceServiceAccount}
+			change(p, o, "Edit the allowed service account", map[string]any{"/spec/rules": rules})
+			break
+		}
 		if contains(req.Tasks, "l4-allow-namespace") {
 			from := M(L(M(rules[0])["from"])[0])
 			M(from["source"])["namespaces"] = []string{req.SourceNamespace}
@@ -458,6 +526,14 @@ func editGenerated(ws *store.Workspace, p *Plan) error {
 			M(to[0])["operation"] = op
 		}
 		op["methods"] = req.Methods
+		if req.CallersEdited {
+			fresh := M(L(Path(generated, "spec", "rules"))[0])
+			if from, ok := fresh["from"]; ok {
+				M(rules[0])["from"] = from
+			} else {
+				delete(M(rules[0]), "from")
+			}
+		}
 		change(p, o, "Edit method constraints while preserving source, path and other rules", map[string]any{"/spec/rules": rules, "/spec/action": defaultString(req.MethodAction, "ALLOW")})
 	case "PeerAuthentication":
 		change(p, o, "Edit the existing mTLS mode while preserving selector and port-level overrides", map[string]any{"/spec/mtls/mode": req.MTLSMode})
@@ -474,4 +550,22 @@ func editGenerated(ws *store.Workspace, p *Plan) error {
 	p.Objects = []map[string]any{}
 	p.Notes = append(p.Notes, "Editing existing "+o.Kind+" "+o.Namespace+"/"+o.Name+". Its existing attachment scope is retained; a Gateway-scoped policy can affect several Services.")
 	return nil
+}
+
+func authzScopeEqual(a, b map[string]any) bool {
+	if !Equal(a["selector"], b["selector"]) || !Equal(a["targetRef"], b["targetRef"]) {
+		return false
+	}
+	normalise := func(raw any) []any {
+		out := []any{}
+		for _, t := range L(raw) {
+			m := M(Copy(t))
+			if S(m["group"]) == "" || S(m["group"]) == "core" {
+				m["group"] = ""
+			}
+			out = append(out, m)
+		}
+		return out
+	}
+	return Equal(normalise(a["targetRefs"]), normalise(b["targetRefs"]))
 }

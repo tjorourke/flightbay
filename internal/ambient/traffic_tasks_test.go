@@ -130,6 +130,46 @@ func TestJWTGeneratorAndInvestigation(t *testing.T) {
 	}
 }
 
+func TestJWTIdentityIsANDedAndPortIsNotImplicit(t *testing.T) {
+	for _, kind := range []string{"jwt", "principal", "account"} {
+		ws := fixture(t)
+		put(ws, SecurityGroup, "requestauthentications", "RequestAuthentication")
+		req := Request{Cluster: "c", Namespace: "app", Service: "front", Port: 80, Tasks: []string{"jwt"}, Issuer: "https://issuer.example", JWKSURI: "https://issuer.example/keys", RequestPrincipals: []string{"https://issuer.example/alice"}}
+		if kind == "principal" {
+			req.JWTPrincipals = []string{"cluster.local/ns/app/sa/client"}
+		}
+		if kind == "account" {
+			req.JWTServiceAccounts = []string{"app/client"}
+		}
+		p, err := Generate(ws, req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rule := M(L(Path(p.Objects[1], "spec", "rules"))[0])
+		from := L(rule["from"])
+		if len(from) != 1 || rule["to"] != nil || len(strs(Path(M(from[0]), "source", "requestPrincipals"))) != 1 {
+			t.Fatal(rule)
+		}
+		if kind == "account" && len(strs(Path(M(from[0]), "source", "serviceAccounts"))) != 1 {
+			t.Fatal(rule)
+		}
+		if kind == "principal" && len(strs(Path(M(from[0]), "source", "principals"))) != 1 {
+			t.Fatal(rule)
+		}
+		req.Methods = []string{"GET"}
+		req.Paths = []string{"/private/*"}
+		p, err = Generate(ws, req)
+		if err != nil || strings.Contains(p.YAML, "ports:") || !strings.Contains(p.YAML, "/private/*") {
+			t.Fatalf("%v %+v", err, p)
+		}
+		req.JWTPrincipals = []string{"cluster.local/ns/app/sa/client"}
+		req.JWTServiceAccounts = []string{"app/client"}
+		if _, err := Generate(ws, req); err == nil {
+			t.Fatal("mixed caller identity accepted")
+		}
+	}
+}
+
 func TestEnterpriseChoicesRequireCorrespondingAPIs(t *testing.T) {
 	ws := store.New()
 	defer ws.Close()

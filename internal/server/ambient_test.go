@@ -37,7 +37,12 @@ func ambientFixture(t *testing.T) (*Server, *fake.FakeDynamicClient, *httptest.S
 	}{{bundle.APIResource{Version: "v1", Resource: "namespaces", Kind: "Namespace"}, []map[string]any{ns}}, {bundle.APIResource{Version: "v1", Resource: "services", Kind: "Service", Namespaced: true}, []map[string]any{svc}}, {bundle.APIResource{Group: "security.istio.io", Version: "v1", Resource: "authorizationpolicies", Kind: "AuthorizationPolicy", Namespaced: true}, nil}, {bundle.APIResource{Group: "security.istio.io", Version: "v1", Resource: "peerauthentications", Kind: "PeerAuthentication", Namespaced: true}, nil}} {
 		ws.AddObjects("captured", v.r, v.items, "fixture-"+v.r.Resource)
 	}
-	dc := fake.NewSimpleDynamicClient(runtime.NewScheme(), &unstructured.Unstructured{Object: ns}, &unstructured.Unstructured{Object: svc})
+	dc := fake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
+		{Group: "security.istio.io", Version: "v1", Resource: "authorizationpolicies"}: "AuthorizationPolicyList",
+		{Version: "v1", Resource: "pods"}:                                              "PodList", {Version: "v1", Resource: "configmaps"}: "ConfigMapList",
+		{Version: "v1", Resource: "services"}: "ServiceList", {Version: "v1", Resource: "namespaces"}: "NamespaceList",
+		{Group: "security.istio.io", Version: "v1", Resource: "peerauthentications"}: "PeerAuthenticationList",
+	}, &unstructured.Unstructured{Object: ns}, &unstructured.Unstructured{Object: svc})
 	seq := 0
 	dc.PrependReactor("create", "*", func(a ktesting.Action) (bool, runtime.Object, error) {
 		act := a.(ktesting.CreateAction)

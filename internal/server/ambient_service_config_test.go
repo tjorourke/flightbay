@@ -1,5 +1,7 @@
 package server
 
+import "github.com/tjorourke/flightbay/internal/ambient"
+
 import (
 	"encoding/json"
 	"net/http/httptest"
@@ -41,7 +43,7 @@ func TestAmbientServiceConfigEndpoint(t *testing.T) {
 		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
 			t.Fatal(err)
 		}
-		if out.Subject.Name != "reviews" || len(out.Tasks) != 20 || out.Answers["access"] == "" {
+		if out.Subject.Name != "reviews" || len(out.Tasks) != len(ambient.TaskTable) || out.Answers["access"] == "" {
 			t.Fatalf("%+v", out)
 		}
 	}

@@ -36,6 +36,9 @@ func ReconcilePlan(ws *store.Workspace, p *Plan) (*Plan, error) {
 		if !flightbayOwned(current) {
 			return nil, fmt.Errorf("A %s named %s/%s already exists and is not managed by Flightbay. Choose another name.", kind, ns, name)
 		}
+		if kind == "AuthorizationPolicy" && contains(p.Request.Tasks, "access-rule") && !Equal(Path(current.Obj, "spec", "rules"), Path(desired, "spec", "rules")) {
+			return nil, fmt.Errorf("select the existing access policy explicitly to append rules or review a full-policy replacement")
+		}
 		values := map[string]any{}
 		configurationFields(kind, "/spec", current.Obj["spec"], desired["spec"], values)
 		for _, field := range []string{"labels", "annotations"} {
@@ -54,6 +57,22 @@ func ReconcilePlan(ws *store.Workspace, p *Plan) (*Plan, error) {
 	}
 	p.Objects = creates
 	return finishPlan(p)
+}
+
+func appendUniqueRules(before, fresh []any) []any {
+	for _, rule := range fresh {
+		found := false
+		for _, old := range before {
+			if Equal(old, rule) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			before = append(before, Copy(rule))
+		}
+	}
+	return before
 }
 
 func configurationFields(kind, path string, before, desired any, values map[string]any) {

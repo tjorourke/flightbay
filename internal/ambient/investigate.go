@@ -70,20 +70,26 @@ type Service struct {
 	Publication *ServiceDNS       `json:"publication,omitempty"`
 }
 type Inventory struct {
-	Issues         []AmbientIssue   `json:"issues"`
-	FixGuides      []FixGuide       `json:"fixGuides"`
-	Topology       Topology         `json:"topology"`
-	Environments   []Environment    `json:"environments"`
-	Objects        []Ref            `json:"objects"`
-	Waypoints      []WaypointChoice `json:"waypoints"`
-	GatewayClasses []string         `json:"gatewayClasses"`
-	Services       []Service        `json:"services"`
-	Routes         []Ref            `json:"routes"`
-	Namespaces     []Ref            `json:"namespaces"`
+	MeshMTLS        []MeshMTLSState        `json:"meshMtls"`
+	ServiceAccounts []ServiceAccountChoice `json:"serviceAccounts"`
+	Issues          []AmbientIssue         `json:"issues"`
+	FixGuides       []FixGuide             `json:"fixGuides"`
+	Topology        Topology               `json:"topology"`
+	Environments    []Environment          `json:"environments"`
+	Objects         []Ref                  `json:"objects"`
+	Waypoints       []WaypointChoice       `json:"waypoints"`
+	GatewayClasses  []string               `json:"gatewayClasses"`
+	Services        []Service              `json:"services"`
+	Routes          []Ref                  `json:"routes"`
+	Namespaces      []Ref                  `json:"namespaces"`
 	// EnrolledNamespaces carry istio.io/dataplane-mode=ambient.
 	EnrolledNamespaces    []Ref                  `json:"enrolledNamespaces"`
 	RateLimitQuotas       []RateLimitQuota       `json:"rateLimitQuotas,omitempty"`
 	PublishedGRPCServices []PublishedGRPCService `json:"publishedGRPCServices,omitempty"`
+}
+type ServiceAccountChoice struct {
+	Ref
+	Principal string `json:"principal,omitempty"`
 }
 type WaypointChoice struct {
 	Ref
@@ -139,6 +145,29 @@ func defaultString(s, d string) string {
 func List(ws *store.Workspace) Inventory {
 	r := Inventory{FixGuides: CommonFixes(), Services: []Service{}, Routes: []Ref{}, Namespaces: []Ref{}, EnrolledNamespaces: []Ref{}}
 	for _, c := range ws.Clusters() {
+		r.MeshMTLS = append(r.MeshMTLS, meshMTLSState(ws, c))
+		td := clusterTrustDomain(ws, c)
+		seen := map[string]bool{}
+		for _, a := range ws.List(c, "", "serviceaccounts", "", nil) {
+			p := ""
+			if td != "" {
+				p = td + "/ns/" + a.Namespace + "/sa/" + a.Name
+			}
+			r.ServiceAccounts = append(r.ServiceAccounts, ServiceAccountChoice{reference(a), p})
+			seen[a.Namespace+"/"+a.Name] = true
+		}
+		for _, pod := range ws.List(c, "", "pods", "", nil) {
+			sa := defaultString(S(Path(pod.Obj, "spec", "serviceAccountName")), "default")
+			if seen[pod.Namespace+"/"+sa] {
+				continue
+			}
+			seen[pod.Namespace+"/"+sa] = true
+			p := ""
+			if td != "" {
+				p = td + "/ns/" + pod.Namespace + "/sa/" + sa
+			}
+			r.ServiceAccounts = append(r.ServiceAccounts, ServiceAccountChoice{Ref{Cluster: c, Resource: "serviceaccounts", Kind: "ServiceAccount", Namespace: pod.Namespace, Name: sa}, p})
+		}
 		for _, n := range ws.List(c, "", "namespaces", "", nil) {
 			r.Namespaces = append(r.Namespaces, reference(n))
 			if n.Labels()["istio.io/dataplane-mode"] == "ambient" {
@@ -212,6 +241,17 @@ func Investigate(ws *store.Workspace, c, ns, name, routeName string) (*Investiga
 		return nil, fmt.Errorf("Service %s/%s is not in this workspace", ns, name)
 	}
 	r := &Investigation{Cluster: c, Namespace: ns, Service: name, Steps: []Step{}, Counts: map[string]int{}, Notes: []string{"Results describe the captured configuration, not proof of a successful request. Missing or reviewed-out evidence remains unknown.", "A Gateway parent can be valid for waypoint-wide routes. A Service parent scopes a route to that Service. Policy targetRefs have their own attachment rules."}}
+	if _, wp, _ := Waypoint(ws, svc); wp != "" {
+		a := analyseL4(ws, svc, waypointPrincipal(ws, svc))
+		state, detail := "pass", "Captured L4 policies admit the waypoint identity on every captured destination. Runtime enforcement remains unverified."
+		if a.State != "admitted" {
+			state, detail = "warning", waypointL4Warning(ws, svc)
+		}
+		if a.State == "unknown" {
+			state = "unknown"
+		}
+		add(r, "waypoint-l4-access", "Downstream L4 access from the waypoint", state, detail, l4DependencyEvidence(ws, c)...)
+	}
 	if serviceTakeoverEnabled(ws, svc, nil) {
 		env := DetectEnvironment(ws, c, svc)
 		prereq := env.TakeoverPrerequisite

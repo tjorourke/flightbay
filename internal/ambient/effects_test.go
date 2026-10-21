@@ -91,9 +91,9 @@ func TestEffectSentences(t *testing.T) {
 		{"default deny", effectReq("l4-default-deny", Request{}), nil,
 			[]string{"Callers are refused unless another ALLOW policy admits them."}},
 		{"require waypoint", effectReq("require-waypoint", Request{}), nil,
-			[]string{"Only the waypoint can call the Pods of front.", "Callers that go straight to a pod IP are refused."}},
+			[]string{"The waypoint can call the Pods of front. Other ALLOW policies remain additive.", "Direct Pod-IP callers are refused only when no other ALLOW rule admits them. Remove or narrow conflicting caller-allowing rules."}},
 		{"jwt", effectReq("jwt", Request{Issuer: "https://issuer.example"}), nil,
-			[]string{"Requests to front need a valid JWT from https://issuer.example."}},
+			[]string{"Requests without a matching validated JWT cannot use this ALLOW branch. Other ALLOW rules may admit them; DENY rules still run first. Invalid tokens are rejected by matching RequestAuthentication."}},
 		{"access deny", effectReq("access-rule", Request{Access: &AccessRequest{Action: "DENY", Rules: []AccessRule{{Headers: []HeaderMatch{{Name: "color", Values: []string{"red"}}}}}}}), nil,
 			[]string{"Requests with `color: red` get 403 from the waypoint.", "Everything else still works."}},
 		{"access allow", effectReq("access-rule", Request{Access: &AccessRequest{Action: "ALLOW", Rules: []AccessRule{{SourceNamespaces: []string{"shop"}}}}}), nil,
@@ -181,10 +181,17 @@ func TestInteractions(t *testing.T) {
 		{"existing waypoint lock silences bypass", get, nil, func(ws *store.Workspace) {
 			withWaypointIdentity(ws)
 			put(ws, "security.istio.io", "authorizationpolicies", "AuthorizationPolicy", allowLock())
+			ws.Get("c","discovery.k8s.io","endpointslices","app","front-1").Obj["endpoints"]=[]any{map[string]any{"targetRef":map[string]any{"kind":"Pod","namespace":"app","name":"front-1"}}}
 		}, func(t *testing.T, is []Interaction) {
 			if findInteraction(is, bypass) != nil {
 				t.Fatalf("%+v", is)
 			}
+		}},
+		{"partial endpoint coverage does not prove a waypoint lock", get, nil, func(ws *store.Workspace) {
+			withWaypointIdentity(ws)
+			put(ws, "security.istio.io", "authorizationpolicies", "AuthorizationPolicy", allowLock())
+		}, func(t *testing.T, is []Interaction) {
+			if findInteraction(is, bypass)==nil {t.Fatalf("missing coverage became a confirmed lock: %+v",is)}
 		}},
 		{"require-waypoint in the same request", effectReq("require-waypoint", Request{}), nil, withWaypointIdentity, func(t *testing.T, is []Interaction) {
 			if findInteraction(is, bypass) != nil {

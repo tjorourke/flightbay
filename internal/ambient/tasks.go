@@ -37,10 +37,11 @@ var TaskGroups = []GroupDef{
 var TaskTable = []TaskDef{
 	{"access-rule", "Allow or deny requests", "Allow or deny requests", "access", "L7", "Allow or deny requests", "By caller, header, path or method"},
 	{"methods", "Control HTTP methods", "Allow or block methods", "access", "L7", "Allow only some methods", "Pick which HTTP methods can reach the Service"},
-	{"jwt", "Require a JWT", "Require a JWT", "access", "L7", "Require a JWT", "Reject requests without a valid token"},
+	{"jwt", "Require a JWT", "Require a JWT", "access", "L7", "Require a JWT", "Require a matching JWT on this ALLOW branch; other ALLOW rules remain additive"},
 	{"l4-default-deny", "Deny by default", "Deny by default", "access", "L4", "Deny by default", "Callers need an explicit allow rule"},
-	{"require-waypoint", "Block traffic that skips the waypoint", "Block traffic that skips the waypoint", "access", "L4", "Block traffic that skips the waypoint", "Only the waypoint may reach the Pods"},
+	{"require-waypoint", "Block traffic that skips the waypoint", "Block traffic that skips the waypoint", "access", "L4", "Block traffic that skips the waypoint", "Allow the waypoint; remove or narrow conflicting additive ALLOW rules to block bypass"},
 	{"l4-allow-namespace", "Allow a namespace", "Allow a namespace", "access", "L4", "Allow a namespace", "Direct traffic without a waypoint"},
+	{"l4-allow-service-account", "Allow one service account", "Allow one service account", "access", "L4", "Allow one service account", "Direct L4 traffic without a waypoint; other ALLOW rules remain additive"},
 
 	{"weighted-routing", "Split traffic", "Split traffic", "routing", "L7", "Split traffic", "Send a share of requests to each backend"},
 	{"header-routing", "Route matching requests", "Route by header or path", "routing", "L7", "Route by header or path", "Send matching requests to another backend"},
@@ -50,6 +51,7 @@ var TaskTable = []TaskDef{
 	{"service-failover", "Primary and backup Services", "Primary and backup Services", "routing", "L7", "Primary and backup Services", "Use another Service only on failure"},
 
 	{"strict-mtls", "Require mutual TLS", "Require mTLS", "transport", "L4", "Require mTLS for {service}", "Reject callers outside the mesh"},
+	{"mesh-strict-mtls", "Mesh-wide STRICT mTLS", "Mesh-wide STRICT mTLS", "transport", "L4", "Mesh-wide STRICT mTLS", "Cluster-wide default in istio-system; more-specific overrides remain effective"},
 
 	{"timeouts", "Set a timeout", "Set a timeout", "resilience", "L7", "Set a timeout", "Stop waiting after a set time"},
 	{"endpoint-failover", "Eject failing endpoints", "Eject failing endpoints", "resilience", "L7", "Eject failing endpoints", "Stop sending to Pods that keep failing"},

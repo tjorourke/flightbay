@@ -99,11 +99,12 @@ var bodyMethods = map[string]bool{"POST": true, "PUT": true, "PATCH": true, "DEL
 
 // CaseExpect is one of: a status, a rule and backend set, or weights.
 type CaseExpect struct {
-	Status   int      `json:"status,omitempty"`
-	Rule     int      `json:"rule,omitempty"` // 1-based
-	Backend  string   `json:"backend,omitempty"`
-	Backends []string `json:"backends,omitempty"`
-	NotRoute bool     `json:"notRoute,omitempty"`
+	Transport string   `json:"transport,omitempty"`
+	Status    int      `json:"status,omitempty"`
+	Rule      int      `json:"rule,omitempty"` // 1-based
+	Backend   string   `json:"backend,omitempty"`
+	Backends  []string `json:"backends,omitempty"`
+	NotRoute  bool     `json:"notRoute,omitempty"`
 	// Weights are percentages that add up to 100.
 	Weights   map[string]int `json:"weights,omitempty"`
 	Tolerance int            `json:"tolerance,omitempty"`
@@ -125,15 +126,16 @@ type Case struct {
 }
 
 type CaseGot struct {
-	Status   int                `json:"status,omitempty"`
-	Backend  string             `json:"backend,omitempty"`
-	Rule     int                `json:"rule,omitempty"`
-	Weights  map[string]float64 `json:"weights,omitempty"`
-	Samples  int                `json:"samples,omitempty"`
-	Statuses map[string]int     `json:"statuses,omitempty"`
-	P50Ms    int64              `json:"p50Ms,omitempty"`
-	P95Ms    int64              `json:"p95Ms,omitempty"`
-	Text     string             `json:"text"`
+	Transport string             `json:"transport,omitempty"`
+	Status    int                `json:"status,omitempty"`
+	Backend   string             `json:"backend,omitempty"`
+	Rule      int                `json:"rule,omitempty"`
+	Weights   map[string]float64 `json:"weights,omitempty"`
+	Samples   int                `json:"samples,omitempty"`
+	Statuses  map[string]int     `json:"statuses,omitempty"`
+	P50Ms     int64              `json:"p50Ms,omitempty"`
+	P95Ms     int64              `json:"p95Ms,omitempty"`
+	Text      string             `json:"text"`
 }
 
 // WeightRow is one line of a route rule's expected-vs-observed table.
@@ -454,7 +456,10 @@ func (c *Case) Validate() error {
 	if e.Status < 0 || e.Status > 599 {
 		return errors.New("expected status is out of range")
 	}
-	if e.Status == 0 && e.Rule == 0 && !e.NotRoute && len(e.Weights) == 0 {
+	if e.Transport != "" && (e.Transport != "connection-refused-or-reset" || e.Status != 0 || e.Rule != 0 || e.NotRoute || len(e.Weights) > 0 || e.Backend != "" || len(e.Backends) > 0) {
+		return errors.New("transport expectation must be connection-refused-or-reset, without an HTTP or route expectation")
+	}
+	if e.Status == 0 && e.Rule == 0 && !e.NotRoute && len(e.Weights) == 0 && e.Transport == "" {
 		return errors.New("the case expects nothing: set a status, a rule or weights")
 	}
 	if e.Samples > 1000 {
@@ -535,6 +540,8 @@ func sortedKeys[V any](m map[string]V) []string {
 
 func ExpectText(e CaseExpect) string {
 	switch {
+	case e.Transport != "":
+		return "connection refused or reset (curl 000)"
 	case len(e.Weights) > 0:
 		parts := []string{}
 		for _, k := range sortedKeys(e.Weights) {
@@ -559,6 +566,8 @@ func ExpectText(e CaseExpect) string {
 
 func GotText(g CaseGot) string {
 	switch {
+	case g.Transport != "":
+		return strings.ReplaceAll(g.Transport, "-", " ") + " (curl 000)"
 	case len(g.Weights) > 0:
 		parts := []string{}
 		for _, k := range sortedKeys(g.Weights) {
@@ -593,6 +602,7 @@ type Sample struct {
 
 // Observation is what a runner saw for one case.
 type Observation struct {
+	Transport  string
 	Status     int
 	Backend    string // backend Service, when it could be told
 	Pod        string
@@ -628,9 +638,25 @@ func Evaluate(c Case, o Observation, at time.Time) CaseResult {
 		return r
 	}
 	r.Got.Status, r.Got.Backend, r.Got.Rule = o.Status, o.Backend, o.Rule
-	if o.Error != "" && o.Status == 0 {
+	r.Got.Transport = o.Transport
+	if o.Error != "" {
 		r.Status, r.Message = StatusError, o.Error
 		r.Got.Text = ""
+		return r
+	}
+	if e.Transport != "" || o.Transport != "" {
+		r.Status = StatusFail
+		if e.Transport == "connection-refused-or-reset" && o.Status == 0 && (o.Transport == "connection-reset" || o.Transport == "connection-refused") {
+			r.Status = StatusPass
+		}
+		r.Got.Text = GotText(r.Got)
+		if r.Status != StatusPass {
+			r.Message = "Expected " + ExpectText(e) + ", got " + r.Got.Text
+		}
+		return r
+	}
+	if o.Status == 0 {
+		r.Status, r.Message = StatusError, "No HTTP response or classified transport refusal was observed"
 		return r
 	}
 	switch {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/tjorourke/flightbay/internal/store"
@@ -78,24 +79,30 @@ type Request struct {
 	// When set it replaces the exact-only Headers map.
 	RouteMatch *RouteMatch `json:"routeMatch,omitempty"`
 	// Access builds a Service-targeted AuthorizationPolicy from rules.
-	Access          *AccessRequest `json:"access,omitempty"`
-	TargetPort      int            `json:"targetPort,omitempty"`
-	Route           string         `json:"route,omitempty"`
-	Edit            *EditTarget    `json:"edit,omitempty"`
-	Cluster         string         `json:"cluster"`
-	Namespace       string         `json:"namespace"`
-	Service         string         `json:"service"`
-	Port            int            `json:"port"`
-	Tasks           []string       `json:"tasks"`
-	Backends        []Backend      `json:"backends,omitempty"`
-	SourceNamespace string         `json:"sourceNamespace,omitempty"`
-	Methods         []string       `json:"methods,omitempty"`
-	Requests        int            `json:"requests,omitempty"`
-	Unit            string         `json:"unit,omitempty"`
-	Algorithm       string         `json:"algorithm,omitempty"`
-	Timeout         string         `json:"timeout,omitempty"`
-	FromRegion      string         `json:"fromRegion,omitempty"`
-	ToRegion        string         `json:"toRegion,omitempty"`
+	Access               *AccessRequest `json:"access,omitempty"`
+	AccessOperation      string         `json:"accessOperation,omitempty"` // append (default) or replace (explicit full-policy edit)
+	CallerSources        []AccessSource `json:"callerSources,omitempty"`
+	CallersEdited        bool           `json:"callersEdited,omitempty"`
+	JWTPrincipals        []string       `json:"jwtPrincipals,omitempty"`
+	JWTServiceAccounts   []string       `json:"jwtServiceAccounts,omitempty"`
+	SourceServiceAccount string         `json:"sourceServiceAccount,omitempty"`
+	TargetPort           int            `json:"targetPort,omitempty"`
+	Route                string         `json:"route,omitempty"`
+	Edit                 *EditTarget    `json:"edit,omitempty"`
+	Cluster              string         `json:"cluster"`
+	Namespace            string         `json:"namespace"`
+	Service              string         `json:"service"`
+	Port                 int            `json:"port"`
+	Tasks                []string       `json:"tasks"`
+	Backends             []Backend      `json:"backends,omitempty"`
+	SourceNamespace      string         `json:"sourceNamespace,omitempty"`
+	Methods              []string       `json:"methods,omitempty"`
+	Requests             int            `json:"requests,omitempty"`
+	Unit                 string         `json:"unit,omitempty"`
+	Algorithm            string         `json:"algorithm,omitempty"`
+	Timeout              string         `json:"timeout,omitempty"`
+	FromRegion           string         `json:"fromRegion,omitempty"`
+	ToRegion             string         `json:"toRegion,omitempty"`
 }
 
 type CircuitBreakerRequest struct {
@@ -183,7 +190,9 @@ func Capabilities(ws *store.Workspace, c, ns, service string) []Task {
 		{"global-service", "Publish as a global Service", "Multicluster", globalSupported, globalReason},
 		{"l4-default-deny", "Deny by default for the selected workload", "L4 ztunnel", security && selector, "Creates an empty ALLOW policy on the Service's workload selector. Other ALLOW policies are additive; this does not override them."},
 		{"l4-allow-namespace", "Allow calls from a namespace", "L4 ztunnel", security && selector && wpName == "", "For direct ambient traffic without a selected waypoint. Behind a waypoint, ztunnel sees the waypoint identity; use an L7 policy for original callers."},
+		{"l4-allow-service-account", "Allow one service account", "L4 ztunnel", security && selector && wpName == "", "For direct ambient traffic without a waypoint. Allows one captured namespace/account. Other ALLOW policies remain additive."},
 		{"strict-mtls", "Require mutual TLS", "L4 ztunnel", selector && hasResource(ws, c, "security.istio.io", "peerauthentications"), "STRICT PeerAuthentication for the selected workload. Ambient does not support DISABLE mode."},
+		{"mesh-strict-mtls", "Mesh-wide STRICT mTLS", "L4 ztunnel", meshRootConfirmed(ws, c) && hasResource(ws, c, SecurityGroup, "peerauthentications"), "Cluster-wide default in istio-system. Requires captured mesh-root evidence; namespace and workload overrides remain effective."},
 		{"access-rule", "Allow or deny requests by caller, header, path or method", map[bool]string{true: "L7 agentgateway waypoint", false: "L7 Istio waypoint"}[agent], (istio && security) || (agent && agentPolicyAvailable), map[bool]string{true: "Service-targeted agentgateway authorization (CEL) with your rules: request headers, methods and paths. Allow or Deny. Caller identity rules need an Istio waypoint.", false: "Service-targeted AuthorizationPolicy with your own rules: caller namespaces, caller Services or principals, methods, paths and request headers. ALLOW, DENY, AUDIT or CUSTOM."}[agent]},
 		{"methods", "Allow selected HTTP methods", "L7 Istio waypoint", istio && security, "Service-targeted AuthorizationPolicy on an Istio waypoint. Other ALLOW policies remain additive."},
 		{"weighted-routing", "Balance traffic between Services", "L7 waypoint", (istio || agent) && hasResource(ws, c, GatewayGroup, "httproutes"), "Service-parent HTTPRoute with weighted backends in the same namespace. Weight zero is not primary/backup failover."},
@@ -206,11 +215,16 @@ func Capabilities(ws *store.Workspace, c, ns, service string) []Task {
 			continue // these tasks describe their evidence and implementation prerequisites
 		case "global-service":
 			continue // the support check already supplied the exact prerequisite
+		case "mesh-strict-mtls":
+			why = "Captured mesh configuration must confirm istio-system as the mesh root. Configure this cluster-wide default from Namespace settings."
+			if !hasResource(ws, c, SecurityGroup, "peerauthentications") {
+				why = "PeerAuthentication was not found in captured API discovery. Capture the installed security API and mesh-root configuration."
+			}
 		case "service-failover":
 			why = "Not implemented in Flightbay. Enabling this task requires a tested generator for the selected controller's priority-failover API; installing more CRDs or changing weights will not enable it."
 		case "global-rate-limit":
 			why = "This generator requires Solo Enterprise Istio waypoint EnvoyFilter support and an existing external Envoy Rate Limit Service with a shared quota store. A CRD alone does not establish that integration."
-		case "l4-allow-namespace":
+		case "l4-allow-namespace", "l4-allow-service-account":
 			if wpName != "" {
 				why = "This direct-path template is disabled because a waypoint is selected. For this topology, use a waypoint policy that checks the original caller; Flightbay does not generate that namespace rule here. Do not remove the waypoint just to enable this card."
 			}
@@ -262,6 +276,9 @@ func Generate(ws *store.Workspace, req Request) (*Plan, error) {
 }
 
 func generate(ws *store.Workspace, req Request) (*Plan, error) {
+	if contains(req.Tasks, "mesh-strict-mtls") {
+		return generateMeshStrictMTLS(ws, req)
+	}
 	if req.Resilience != nil {
 		return generateResilience(ws, req)
 	}
@@ -280,6 +297,36 @@ func generate(ws *store.Workspace, req Request) (*Plan, error) {
 	}
 	if !hasPort(svc, req.Port) {
 		return nil, fmt.Errorf("select a Service port, not its container targetPort")
+	}
+	if contains(req.Tasks, "access-rule") && !agentWaypoint(ws, req) {
+		if req.AccessOperation == "" {
+			req.AccessOperation = "append"
+		}
+		if req.AccessOperation != "append" && req.AccessOperation != "replace" {
+			return nil, fmt.Errorf("choose append or explicit full-policy replacement")
+		}
+		if req.AccessOperation == "replace" && req.Edit == nil {
+			return nil, fmt.Errorf("select the existing policy explicitly before replacing its rules")
+		}
+		if req.Edit == nil && req.Name == "" {
+			var candidates []*store.Object
+			for _, o := range ws.List(req.Cluster, SecurityGroup, "authorizationpolicies", req.Namespace, nil) {
+				if !jwtTargets(o, svc, "", "") {
+					continue
+				}
+				candidates = append(candidates, o)
+			}
+			if len(candidates) > 1 {
+				return nil, fmt.Errorf("several policies target this Service; select the policy to append to, or choose a new policy name")
+			}
+			if len(candidates) == 1 {
+				o := candidates[0]
+				if !flightbayOwned(o) {
+					return nil, fmt.Errorf("select existing policy %s/%s explicitly before appending to a policy not managed by Flightbay", o.Namespace, o.Name)
+				}
+				req.Edit = &EditTarget{Ref: reference(o), UID: S(Path(o.Obj, "metadata", "uid")), Fingerprint: configurationFingerprint(o)}
+			}
+		}
 	}
 	if len(req.Tasks) == 0 || len(req.Tasks) > 10 {
 		return nil, fmt.Errorf("select between one and ten tasks")
@@ -348,13 +395,33 @@ func generate(ws *store.Workspace, req Request) (*Plan, error) {
 	if selected["require-waypoint"] {
 		p.Evidence = append(p.Evidence, waypointIdentityEvidence(ws, svc)...)
 		obj("security.istio.io/v1", "AuthorizationPolicy", "-waypoint", map[string]any{"selector": sel, "action": "ALLOW", "rules": []any{map[string]any{"from": []any{map[string]any{"source": map[string]any{"principals": []string{waypointPrincipal(ws, svc)}}}}}}})
-		p.Notes = append(p.Notes, "This workload-wide ALLOW admits only the waypoint identity unless another ALLOW policy admits other callers. Review all additive policies. Direct Pod-IP callers will be refused.")
+		p.Notes = append(p.Notes, "This workload-wide ALLOW admits the waypoint identity. Direct Pod-IP callers are refused only if no other ALLOW rule admits them. Remove or narrow conflicting caller-allowing rules.")
+		p.Evidence = append(p.Evidence, l4DependencyEvidence(ws, req.Cluster)...)
+		for _, pe := range servicePolicies(ws, svc) {
+			if pe.Action == "ALLOW" && pe.Enforced == "ztunnel" {
+				p.Notes = append(p.Notes, "Review additive ALLOW policy "+pe.Ref.Namespace+"/"+pe.Ref.Name+"; remove or narrow any rules admitting direct callers.")
+			}
+		}
 	}
 	if selected["l4-allow-namespace"] {
 		if req.SourceNamespace == "" || ws.Get(req.Cluster, "", "namespaces", "", req.SourceNamespace) == nil {
 			return nil, fmt.Errorf("choose a captured source namespace")
 		}
 		obj("security.istio.io/v1", "AuthorizationPolicy", "-allow", map[string]any{"selector": sel, "action": "ALLOW", "rules": []any{map[string]any{"from": []any{map[string]any{"source": map[string]any{"namespaces": []string{req.SourceNamespace}}}}}}})
+	}
+	if selected["l4-allow-service-account"] {
+		parts := strings.Split(req.SourceServiceAccount, "/")
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" || strings.Contains(req.SourceServiceAccount, "*") {
+			return nil, fmt.Errorf("choose one captured service account as namespace/account")
+		}
+		captured := ws.Get(req.Cluster, "", "serviceaccounts", parts[0], parts[1]) != nil
+		for _, pod := range ws.List(req.Cluster, "", "pods", parts[0], nil) {
+			captured = captured || defaultString(S(Path(pod.Obj, "spec", "serviceAccountName")), "default") == parts[1]
+		}
+		if !captured {
+			return nil, fmt.Errorf("choose a captured service account")
+		}
+		obj("security.istio.io/v1", "AuthorizationPolicy", "-allow", map[string]any{"selector": sel, "action": "ALLOW", "rules": []any{map[string]any{"from": []any{map[string]any{"source": map[string]any{"serviceAccounts": []string{req.SourceServiceAccount}}}}}}})
 	}
 	if selected["strict-mtls"] {
 		mode := defaultString(req.MTLSMode, "STRICT")
@@ -386,7 +453,13 @@ func generate(ws *store.Workspace, req Request) (*Plan, error) {
 		if action != "ALLOW" && action != "DENY" {
 			return nil, fmt.Errorf("method action must be ALLOW or DENY")
 		}
-		obj("security.istio.io/v1", "AuthorizationPolicy", "-methods", map[string]any{"targetRefs": target, "action": action, "rules": []any{map[string]any{"to": []any{map[string]any{"operation": map[string]any{"methods": req.Methods}}}}}})
+		methodReq := req
+		methodReq.Access = &AccessRequest{Action: action, Rules: []AccessRule{{From: req.CallerSources, To: []AccessOperation{{Methods: req.Methods}}}}}
+		spec, _, err := generateAccessRule(ws, methodReq, svc)
+		if err != nil {
+			return nil, err
+		}
+		obj("security.istio.io/v1", "AuthorizationPolicy", "-methods", spec)
 	}
 	if selected["access-rule"] && agentWaypoint(ws, req) {
 		api, kind, err := ratePolicy(ws, req.Cluster, req.Namespace, req.Service)
@@ -665,4 +738,88 @@ func agentWaypoint(ws *store.Workspace, req Request) bool {
 	}
 	e := DetectEnvironment(ws, req.Cluster, svc)
 	return e.Selected != nil && e.Selected.Product == "agentgateway"
+}
+
+func meshRootConfirmed(ws *store.Workspace, cluster string) bool {
+	found := false
+	for _, cm := range ws.List(cluster, "", "configmaps", "", nil) {
+		if cm.Name != "istio" && !strings.HasPrefix(cm.Name, "istio-") {
+			continue
+		}
+		raw := S(Path(cm.Obj, "data", "mesh"))
+		var mesh map[string]any
+		if raw == "" || yaml.Unmarshal([]byte(raw), &mesh) != nil {
+			continue
+		}
+		if defaultString(S(mesh["rootNamespace"]), "istio-system") != "istio-system" {
+			return false
+		}
+		found = true
+	}
+	return found
+}
+
+type MeshMTLSState struct {
+	Cluster   string     `json:"cluster"`
+	Confirmed bool       `json:"confirmed"`
+	Defaults  []Editable `json:"defaults"`
+	Overrides []Ref      `json:"overrides"`
+}
+
+func meshMTLSState(ws *store.Workspace, cluster string) MeshMTLSState {
+	s := MeshMTLSState{Cluster: cluster, Confirmed: meshRootConfirmed(ws, cluster), Defaults: []Editable{}, Overrides: []Ref{}}
+	for _, o := range ws.List(cluster, SecurityGroup, "peerauthentications", "", nil) {
+		if o.Namespace == "istio-system" && len(M(Path(o.Obj, "spec", "selector"))) == 0 {
+			req := Request{Cluster: cluster, Namespace: "istio-system", Tasks: []string{"mesh-strict-mtls"}, MTLSMode: S(Path(o.Obj, "spec", "mtls", "mode")), Edit: &EditTarget{Ref: reference(o), UID: S(Path(o.Obj, "metadata", "uid")), Fingerprint: configurationFingerprint(o)}}
+			s.Defaults = append(s.Defaults, Editable{Ref: reference(o), Supported: true, Request: &req, Tasks: req.Tasks, Reason: "Mesh default; more-specific overrides remain effective"})
+		} else {
+			s.Overrides = append(s.Overrides, reference(o))
+		}
+	}
+	return s
+}
+
+func generateMeshStrictMTLS(ws *store.Workspace, req Request) (*Plan, error) {
+	if len(req.Tasks) != 1 || req.Namespace != "istio-system" || !meshRootConfirmed(ws, req.Cluster) {
+		return nil, fmt.Errorf("mesh-wide STRICT requires captured evidence that istio-system is the mesh root; choose the cluster-wide task in namespace settings")
+	}
+	if !hasResource(ws, req.Cluster, SecurityGroup, "peerauthentications") {
+		return nil, fmt.Errorf("PeerAuthentication API was not captured")
+	}
+	ns := ws.Get(req.Cluster, "", "namespaces", "", "istio-system")
+	if ns == nil {
+		return nil, fmt.Errorf("capture the istio-system namespace")
+	}
+	p := basePlan(req, ns)
+	state := meshMTLSState(ws, req.Cluster)
+	if len(state.Defaults) > 0 && req.Edit == nil {
+		return nil, fmt.Errorf("an existing root default is captured; select it explicitly instead of creating a competing PeerAuthentication")
+	}
+	if req.Edit != nil {
+		var selected *store.Object
+		for _, e := range state.Defaults {
+			if e.Ref == req.Edit.Ref {
+				selected = ws.Get(req.Cluster, SecurityGroup, "peerauthentications", "istio-system", e.Ref.Name)
+			}
+		}
+		if selected == nil || req.Edit.UID != S(Path(selected.Obj, "metadata", "uid")) || req.Edit.Fingerprint != configurationFingerprint(selected) {
+			return nil, fmt.Errorf("root default changed; reload its current settings")
+		}
+		change(p, selected, "Set the explicitly selected mesh default to STRICT; preserve other fields", map[string]any{"/spec/mtls/mode": "STRICT"})
+	} else {
+		name := defaultString(req.Name, "mesh-strict-mtls")
+		if !ValidResourceName(name) {
+			return nil, fmt.Errorf("choose a valid policy name")
+		}
+		p.Objects = append(p.Objects, map[string]any{"apiVersion": "security.istio.io/v1", "kind": "PeerAuthentication", "metadata": map[string]any{"name": name, "namespace": "istio-system"}, "spec": map[string]any{"mtls": map[string]any{"mode": "STRICT"}}})
+	}
+	p.Notes = append(p.Notes, "Cluster-wide mesh default: STRICT mTLS in the captured root namespace istio-system. More-specific namespace, workload and port overrides remain effective.")
+	for _, ref := range state.Overrides {
+		p.Notes = append(p.Notes, "Review more-specific override "+ref.Namespace+"/"+ref.Name)
+	}
+	for _, k := range []struct{ group, resource, kind string }{{SecurityGroup, "peerauthentications", "PeerAuthentication"}, {"", "configmaps", "ConfigMap"}} {
+		b, _ := json.Marshal(l4DependencyValue(ws, req.Cluster, k.group, k.resource))
+		p.Evidence = append(p.Evidence, Evidence{Ref: Ref{Cluster: req.Cluster, Group: k.group, Resource: k.resource, Kind: k.kind}, Field: "l4-dependencies", Value: string(b)})
+	}
+	return finishPlan(p)
 }

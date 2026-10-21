@@ -48,8 +48,12 @@ type Workload struct {
 // AuthzInput is everything the generator needs. It holds no store, so tests
 // can state it directly.
 type AuthzInput struct {
-	Policy  AuthzPolicy
-	Service Ref
+	L4Targets         [][]AuthzPolicy
+	L4Unknown         bool
+	WaypointPrincipal string
+	DownstreamPort    int
+	Policy            AuthzPolicy
+	Service           Ref
 	// Port is the Service port requests go to; Ports lists all of them.
 	Port        int
 	Ports       []int
@@ -83,7 +87,7 @@ func strs(v any) []string {
 }
 
 var (
-	sourceFields    = map[string]bool{"principals": true, "notPrincipals": true, "namespaces": true, "notNamespaces": true}
+	sourceFields    = map[string]bool{"principals": true, "notPrincipals": true, "namespaces": true, "notNamespaces": true, "serviceAccounts": true, "notServiceAccounts": true}
 	operationFields = map[string]bool{"methods": true, "notMethods": true, "paths": true, "notPaths": true, "ports": true, "notPorts": true}
 )
 
@@ -100,9 +104,30 @@ func ParseAuthzPolicy(ref Ref, spec map[string]any, enforced string) AuthzPolicy
 		bad := func(field string) {
 			p.Unsupported = append(p.Unsupported, UnsupportedField{i + 1, field})
 		}
+		for k := range rm {
+			if k != "from" && k != "to" && k != "when" {
+				bad(k)
+			}
+		}
 		for _, fv := range L(rm["from"]) {
+			for k := range M(fv) {
+				if k != "source" {
+					bad("from." + k)
+				}
+			}
 			src := M(M(fv)["source"])
 			s := AccessSource{Principals: strs(src["principals"]), NotPrincipals: strs(src["notPrincipals"]), Namespaces: strs(src["namespaces"]), NotNamespaces: strs(src["notNamespaces"])}
+			s.ServiceAccounts, s.NotServiceAccounts = strs(src["serviceAccounts"]), strs(src["notServiceAccounts"])
+			for j, sa := range s.ServiceAccounts {
+				if !strings.Contains(sa, "/") {
+					s.ServiceAccounts[j] = ref.Namespace + "/" + sa
+				}
+			}
+			for j, sa := range s.NotServiceAccounts {
+				if !strings.Contains(sa, "/") {
+					s.NotServiceAccounts[j] = ref.Namespace + "/" + sa
+				}
+			}
 			for _, k := range sortedKeys(src) {
 				if !sourceFields[k] {
 					bad("from.source." + k)
@@ -122,6 +147,11 @@ func ParseAuthzPolicy(ref Ref, spec map[string]any, enforced string) AuthzPolicy
 			rule.From = append(rule.From, s)
 		}
 		for _, tv := range L(rm["to"]) {
+			for k := range M(tv) {
+				if k != "operation" {
+					bad("to." + k)
+				}
+			}
 			op := M(M(tv)["operation"])
 			o := AccessOperation{Methods: strs(op["methods"]), NotMethods: strs(op["notMethods"]), Paths: strs(op["paths"]), NotPaths: strs(op["notPaths"]), Ports: strs(op["ports"]), NotPorts: strs(op["notPorts"])}
 			for _, k := range sortedKeys(op) {
@@ -232,7 +262,7 @@ func (r reqModel) clone() reqModel {
 func strMatch(pattern, v string) bool {
 	switch {
 	case pattern == "*":
-		return true
+		return v != ""
 	case strings.HasPrefix(pattern, "*"):
 		return strings.HasSuffix(v, pattern[1:])
 	case strings.HasSuffix(pattern, "*"):
@@ -251,13 +281,23 @@ func anyMatch(patterns []string, v string) bool {
 }
 
 func sourceMatch(s AccessSource, r reqModel) tri {
-	if len(s.IPBlocks)+len(s.RemoteIPBlocks)+len(s.NotIPBlocks)+len(s.NotRemoteIPBlocks)+len(s.RequestPrincipals)+len(s.NotRequestPrincipals)+len(s.Services)+len(s.ServiceAccounts)+len(s.NotServiceAccounts) > 0 {
+	if len(s.IPBlocks)+len(s.RemoteIPBlocks)+len(s.NotIPBlocks)+len(s.NotRemoteIPBlocks)+len(s.RequestPrincipals)+len(s.NotRequestPrincipals)+len(s.Services) > 0 {
 		return triUnknown
 	}
-	if len(s.Principals)+len(s.NotPrincipals)+len(s.Namespaces)+len(s.NotNamespaces) > 0 && !r.SourceKnown {
+	if len(s.Principals)+len(s.NotPrincipals)+len(s.Namespaces)+len(s.NotNamespaces)+len(s.ServiceAccounts)+len(s.NotServiceAccounts) > 0 && !r.SourceKnown {
 		return triUnknown
 	}
 	parts := []tri{}
+	account := ""
+	if p := strings.Split(r.Principal, "/ns/"); len(p) == 2 {
+		account = strings.Replace(p[1], "/sa/", "/", 1)
+	}
+	if len(s.ServiceAccounts) > 0 {
+		parts = append(parts, b2t(contains(s.ServiceAccounts, account)))
+	}
+	if len(s.NotServiceAccounts) > 0 {
+		parts = append(parts, b2t(!contains(s.NotServiceAccounts, account)))
+	}
 	if len(s.Principals) > 0 {
 		parts = append(parts, b2t(anyMatch(s.Principals, r.Principal)))
 	}
@@ -347,19 +387,81 @@ func ruleMatch(rule AccessRule, r reqModel) tri {
 
 func policyMatch(p AuthzPolicy, r reqModel) tri {
 	xs := []tri{}
-	for _, rule := range p.Rules {
-		xs = append(xs, ruleMatch(rule, r))
+	for i, rule := range p.Rules {
+		if len(p.unsupportedIn(i+1)) > 0 {
+			xs = append(xs, triUnknown)
+		} else {
+			xs = append(xs, ruleMatch(rule, r))
+		}
 	}
 	return or(xs...)
 }
 
 // verdict is the outcome of every policy together.
 type verdict struct {
-	Status int
-	By     *AuthzPolicy // nil when no policy decided (nothing denied, no ALLOW)
-	Known  bool
+	Transport string
+	Status    int
+	By        *AuthzPolicy // nil when no policy decided (nothing denied, no ALLOW)
+	Known     bool
 	// Blocker names a policy whose fields could not be evaluated.
 	Blocker string
+}
+
+func decideLayers(in AuthzInput, policies []AuthzPolicy, r reqModel, direct bool) verdict {
+	var l4, l7 []AuthzPolicy
+	var waypointVerdict verdict
+	for _, p := range policies {
+		if p.Enforced == "ztunnel" {
+			l4 = append(l4, p)
+		} else if !direct {
+			l7 = append(l7, p)
+		}
+	}
+	if !direct && len(l7) > 0 {
+		v := decide(l7, r)
+		if !v.Known || v.Status != 200 {
+			return v
+		}
+		waypointVerdict = v
+	}
+	downstream := r
+	if in.DownstreamPort > 0 {
+		downstream.Port = in.DownstreamPort
+	}
+	viaWaypoint := !direct && (in.Policy.Enforced == "waypoint" || in.WaypointPrincipal != "")
+	if viaWaypoint {
+		downstream.Principal, downstream.SourceKnown = in.WaypointPrincipal, in.WaypointPrincipal != ""
+		if parts := strings.Split(in.WaypointPrincipal, "/ns/"); len(parts) == 2 {
+			downstream.Namespace = strings.Split(parts[1], "/sa/")[0]
+		}
+	}
+	v := decide(l4, downstream)
+	if in.L4Unknown {
+		return verdict{Blocker: "missing destination policy or port coverage"}
+	}
+	if in.L4Targets != nil {
+		first := true
+		for _, policies := range in.L4Targets {
+			pv := decide(policies, downstream)
+			if first {
+				v = pv
+				first = false
+			} else if pv.Known != v.Known || pv.Status != v.Status {
+				return verdict{Blocker: "different destination workload policies"}
+			}
+		}
+	}
+	if v.Known && v.Status != 200 {
+		if viaWaypoint {
+			v.Status = 503
+		} else {
+			v.Status, v.Transport = 0, "connection-refused-or-reset"
+		}
+	}
+	if v.Known && v.Status == 200 && waypointVerdict.By != nil {
+		return waypointVerdict
+	}
+	return v
 }
 
 func decide(policies []AuthzPolicy, r reqModel) verdict {
@@ -378,6 +480,11 @@ func decide(policies []AuthzPolicy, r reqModel) verdict {
 	}
 	if unknownBy != nil {
 		return verdict{Blocker: unknownBy.Ref.Name}
+	}
+	for _, p := range policies {
+		if p.Action == "CUSTOM" && policyMatch(p, r) != triNo {
+			return verdict{Blocker: p.Ref.Name}
+		}
 	}
 	allows := 0
 	for i := range policies {
@@ -479,7 +586,7 @@ func (g *authzGen) toCase(id, label, why string, r reqModel, from *CaseFrom, v v
 	}
 	return Case{ID: id, Label: label, Why: why, Rule: rule, From: from,
 		Request: CaseRequest{Method: r.Method, Path: r.Path, Headers: headers, Port: r.Port},
-		Expect:  CaseExpect{Status: v.Status}}
+		Expect:  CaseExpect{Status: v.Status, Transport: v.Transport}}
 }
 
 // headerCase restores the header name as the policy wrote it.
@@ -635,7 +742,7 @@ func (g *authzGen) ruleLabel(n int, what string) string { return fmt.Sprintf("Ru
 // verdictOrNote returns the verdict, and notes why a case was dropped when it
 // cannot be predicted.
 func (g *authzGen) verdictOrNote(r reqModel, why string) (verdict, bool) {
-	v := decide(g.all, r)
+	v := decideLayers(g.in, g.all, r, false)
 	if !v.Known {
 		g.note(fmt.Sprintf("Not generated: %q, because the result depends on a field of %s that Flightbay cannot evaluate", why, v.Blocker))
 		return v, false
@@ -660,7 +767,7 @@ func GenerateAuthzSuite(in AuthzInput) *Suite {
 			// An ALLOW policy with no rules matches nothing: everything is refused.
 			r := g.base()
 			if v, ok := g.verdictOrNote(r, "Nothing is allowed"); ok {
-				g.add(g.toCase("deny-all", "Nothing is allowed", "No rules, so nothing is allowed", r, nil, v, 0))
+				g.add(g.toCase("deny-all", "Default-deny policy with additive ALLOW evaluation", "This policy matches nothing; other ALLOW policies may admit the caller", r, nil, v, 0))
 			}
 		} else {
 			g.note("Not generated: this DENY policy has no rules, so it never denies anything")
@@ -902,12 +1009,15 @@ func (g *authzGen) waypointBypass(match reqModel, n int) {
 	if g.in.Policy.Enforced != "waypoint" {
 		return
 	}
-	status := 200
-	if g.in.WaypointLock {
-		// A ztunnel policy refuses anything that is not the waypoint.
-		status = 403
+	// The bypass is sent from the suite source, not a synthetic caller chosen
+	// merely to make the waypoint rule match.
+	match = g.base()
+	v := decideLayers(g.in, g.all, match, true)
+	if !v.Known {
+		g.note("Not generated: direct caller admission depends on unsupported or missing L4 evidence")
+		return
 	}
-	c := g.toCase("bypass", "Straight to a Pod, skipping the waypoint", "Waypoint bypass", match, nil, verdict{Status: status, Known: true}, n)
+	c := g.toCase("bypass", "Straight to a Pod, skipping the waypoint", "Waypoint bypass", match, nil, v, n)
 	c.Request.Direct = true
 	g.add(c)
 }
@@ -951,7 +1061,7 @@ func RuleInWords(p AuthzPolicy, service string) string {
 	}
 	if len(p.Rules) == 0 {
 		if p.Action == "ALLOW" {
-			return "Allow nothing. With no rules, every request to " + service + " is refused."
+			return "This ALLOW policy permits nothing. Other ALLOW policies can still admit requests to " + service + "."
 		}
 		return "Deny nothing. With no rules, this policy never refuses a request."
 	}
@@ -1110,7 +1220,7 @@ func PredictDecision(in AuthzInput, c Case) (by *Ref, status int, ok bool) {
 	case in.Source != nil:
 		r.Namespace, r.Principal, r.SourceKnown = in.Source.Namespace, in.Source.Principal, true
 	}
-	v := decide(append([]AuthzPolicy{in.Policy}, in.Others...), r)
+	v := decideLayers(in, append([]AuthzPolicy{in.Policy}, in.Others...), r, c.Request.Direct)
 	if !v.Known {
 		return nil, 0, false
 	}
@@ -1291,8 +1401,56 @@ func AuthzInputFor(ws *store.Workspace, cluster string, obj map[string]any, svc 
 		in.Port = in.Ports[0]
 	}
 	in.DefaultPath = defaultProbePath(ws, svc)
+	in.WaypointPrincipal = waypointPrincipal(ws, svc)
+	for _, sp := range L(Path(svc.Obj, "spec", "ports")) {
+		if N(M(sp)["port"]) == in.Port {
+			in.DownstreamPort = N(M(sp)["targetPort"])
+			if S(M(sp)["targetPort"]) != "" && in.DownstreamPort == 0 {
+				in.L4Unknown = true
+			}
+		}
+	}
 	in.Workloads = CaptureWorkloads(ws, cluster)
 	in.Source = pickSource(ws, cluster, svc, in.Workloads)
+	in.L4Targets = [][]AuthzPolicy{}
+	for _, pod := range ws.List(cluster, "", "pods", svc.Namespace, nil) {
+		if len(M(Path(svc.Obj, "spec", "selector"))) == 0 || !matches(M(Path(svc.Obj, "spec", "selector")), pod.Labels()) {
+			continue
+		}
+		policies := l4Policies(ws, svc, pod, in.DownstreamPort)
+		for _, d := range append(append([]map[string]any{}, drafts...), obj) {
+			if S(d["kind"]) != "AuthorizationPolicy" || policyEnforcedAt(M(d["spec"])) != "ztunnel" {
+				continue
+			}
+			ref := objectRef(d, cluster, KindAuthorizationPolicy, svc.Namespace)
+			if ref.Namespace != svc.Namespace && ref.Namespace != rootNamespace(ws, cluster) {
+				continue
+			}
+			if sel := M(Path(d, "spec", "selector", "matchLabels")); len(sel) > 0 && !matches(sel, pod.Labels()) {
+				continue
+			}
+			fresh := ParseAuthzPolicy(ref, M(d["spec"]), "ztunnel")
+			replaced := false
+			for i, p := range policies {
+				if p.Ref.Namespace == ref.Namespace && p.Ref.Name == ref.Name {
+					policies[i] = fresh
+					replaced = true
+				}
+			}
+			if !replaced {
+				policies = append(policies, fresh)
+			}
+		}
+		in.L4Targets = append(in.L4Targets, policies)
+	}
+	in.L4Unknown = in.L4Unknown || len(in.L4Targets) == 0 || ws.CollectionState(cluster, SecurityGroup, "authorizationpolicies", "AuthorizationPolicy", true).State != store.StateComplete || ws.CollectionState(cluster, "", "pods", "Pod", true).State != store.StateComplete
+	if _, known := capturedRootNamespace(ws, cluster); !known {
+		for _, o := range ws.List(cluster, SecurityGroup, "authorizationpolicies", "", nil) {
+			if o.Namespace != svc.Namespace && policyEnforcedAt(M(o.Obj["spec"])) == "ztunnel" {
+				in.L4Unknown = true
+			}
+		}
+	}
 	draftByKey := map[string]map[string]any{}
 	for _, d := range drafts {
 		if S(d["kind"]) == KindAuthorizationPolicy {
@@ -1357,20 +1515,7 @@ func AuthzInputFor(ws *store.Workspace, cluster string, obj map[string]any, svc 
 // hasWaypointLock reports a ztunnel ALLOW policy that admits only the
 // waypoint's identity.
 func hasWaypointLock(ws *store.Workspace, svc *store.Object, policies []AuthzPolicy) bool {
-	principal := waypointPrincipal(ws, svc)
-	if principal == "" {
-		return false
-	}
-	for _, p := range policies {
-		if p.Action != "ALLOW" || p.Enforced != "ztunnel" || len(p.Rules) != 1 {
-			continue
-		}
-		r := p.Rules[0]
-		if len(r.To) == 0 && len(r.When) == 0 && len(r.From) == 1 && len(r.From[0].Principals) == 1 && r.From[0].Principals[0] == principal {
-			return true
-		}
-	}
-	return false
+	return l4ExclusiveWaypoint(policies, waypointPrincipal(ws, svc)) && serviceWaypointLock(ws, svc)
 }
 
 // defaultSource is the workload the suite is sent from, or a temporary Pod in
