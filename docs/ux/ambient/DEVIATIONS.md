@@ -12,7 +12,7 @@ Every difference that is not data and is accepted must be listed here (PLAN.md Â
 | 01 | The Summary multicluster footer does not carry a "Publish as a global Service" link | The mockup footer has only Compare and Copy; the task is reachable from All tasks |
 | 01 | Add links use the task short labels from the mockup ("Allow or block methods"), not PLAN 3.2's example "Allow only some methods" | Mockup is the authority |
 | 01c, 01d | Unavailable-task reasons show the first sentence; the full reason is in the Why? popover (no docs link yet) | One line per the mockup |
-| 03 | "Callers this applies to" has the single option Everyone | The methods task has no caller field in the plan request. Callers are set with Allow or deny requests |
+| 03 | "Callers this applies to" loads existing caller restrictions and offers captured service accounts and an explicit Everyone choice | Tom approved caller controls for the wizard fixes; restricted policies must not load as Everyone |
 | 03 | The resource name is not an input; the plan request accepts `name` and the default is `<service>-<task>` | The mockup shows no input, only the sentence "Name is editable" |
 | 03 | The Check button stays enabled in read-only and reports the missing connection inline | Lets a reader draft and download YAML |
 | 03b | "Service UID unchanged" is only appended to the identity row when editing a resource | The check only has a UID for existing resources |
@@ -42,3 +42,7 @@ Every difference that is not data and is accepted must be listed here (PLAN.md Â
 | 02 | Rows for ambient enrolment, waypoint use and global publication (label-based configuration) and inherited mesh-wide policies are listed, with Configure / Settings actions | Tom: "where is configuration?" |
 | Map | Waypoint lines are drawn only after **Show its Services** on the waypoint card | Always-on lines ran round the cluster boxes and made the map hard to read |
 | 03 | "Write to" shows the live connection for the cluster, or only the kubeconfig contexts that reach a connected cluster | It listed every context in the kubeconfig |
+| 01, 01c, 01d, 03 | Two new tasks: Allow one service account, and Mesh-wide STRICT mTLS (also in Namespace settings) | Tom approved both tasks for the config wizard bug specification |
+| 03 | JWT token subjects and optional workload principal/service-account controls; explicit append/full-policy replacement choice and existing-policy picker; exact before/after drawer diff | Tom approved the UI required by the config wizard bug specification; existing components and flow are retained |
+| 01b, 03, 03b, 04 | Policy summaries qualify additive ALLOW behaviour; checks warn about downstream waypoint identity; denial tests can show connection refused or reset instead of 403 | Correct enforcement-layer semantics required by the approved bug specification |
+| all affected screens | Visual comparison commands, per-screen approval gates and independent screenshot review were skipped | Explicit instruction from Tom for this job. Visual verification remains UNVERIFIED |

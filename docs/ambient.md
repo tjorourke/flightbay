@@ -34,6 +34,22 @@ Publication distinguishes the export label from generated alias/address evidence
 
 ## Testing a service
 
+### Access policy scope and edits
+
+Adding an access rule appends to an explicitly selected existing policy by default. Full-policy replacement is a labelled choice. The drawer shows the exact before/after field diff, preserves existing attachment and metadata, and undo restores the previous rules. Appending across a different action, provider or attachment is rejected.
+
+Before a waypoint binding, Flightbay checks captured L4 policies against the waypoint identity on the downstream hop. Missing identity or policy coverage remains unknown. An existing caller-only ALLOW can block the new waypoint. A 503 with UC may be a symptom, but UC alone does not identify the cause. The preview does not rewrite access policies automatically.
+
+**Block traffic that skips the waypoint** adds an ALLOW for the waypoint. Other ALLOW rules are additive: remove or narrow rules that still admit direct callers before relying on it to block Pod-IP access.
+
+**Require a JWT** can also require a source principal or service account in the same source block. Token subjects and workload identity are separate fields. Other matching ALLOW rules may still admit tokenless requests. No port restriction is added implicitly: the selected Service port is for probes, while explicit methods, paths and headers constrain the Service-targeted policy.
+
+**Allow one service account** creates a direct L4 workload-selector policy without a waypoint. **Mesh-wide STRICT mTLS**, in Namespace settings, creates or explicitly edits the selectorless root default in `istio-system`. Captured mesh configuration must confirm that root; more-specific overrides remain effective.
+
+Generated denial tests distinguish an HTTP 403 at a reached waypoint from a ztunnel connection refusal or reset (`curl 000`). DNS errors, timeouts, exec failures and unclassified `000` results are not successful denial tests. A downstream L4 refusal through a waypoint may instead surface as 503.
+
+These semantics were checked against the [Istio 1.30 AuthorizationPolicy reference](https://istio.io/v1.30/docs/reference/config/security/authorization-policy/), [ambient L4 policy guide](https://istio.io/v1.30/docs/ambient/usage/l4-policy/) and [PeerAuthentication reference](https://istio.io/v1.30/docs/reference/config/security/peer_authentication/). Live Istio 1.30.6 enforcement, installed schema acceptance and visual verification are **UNVERIFIED**.
+
 **Test service** runs saved HTTP-header profiles from Flightbay's native client, directly or through a temporary port-forward to existing Pods, or uses curl in an explicitly selected existing client Pod. Native reachable-endpoint requests need no Kubernetes connection; optional read-only metadata lookup identifies existing application responders. The temporary-Pod mode deploys one short-lived `flightbay-http` Pod that Flightbay deletes when the test finishes. The other modes deploy nothing.
 
 Both clients support up to 1,000 sequential requests with streaming Results, Stop and Run again. Results distinguish the request origin, destination and actual authority, and group identified responders by cluster and version. Ambiguous or missing identities stay unverified. Backend-only port-forward bypasses mesh routing; existing-Pod mode uses cluster DNS and the mesh path. **Back to HTTP test** restores the originating map or wizard, profile and results without rerunning the request. Investigation status badges filter the checks.
