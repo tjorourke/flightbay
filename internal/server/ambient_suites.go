@@ -49,6 +49,10 @@ type suiteResponse struct {
 	// Regenerated is true when the cases are a fresh generation merged with
 	// the cases a person added.
 	Regenerated bool `json:"regenerated,omitempty"`
+	// Refreshed is true when saved generated cases were brought in line with
+	// the object as it is now (ambient.RefreshGenerated). Not saved until the
+	// next run or save.
+	Refreshed bool `json:"refreshed,omitempty"`
 }
 
 func (s *Server) suiteGuard(w http.ResponseWriter) bool {
@@ -110,6 +114,9 @@ func (s *Server) suiteGet(w http.ResponseWriter, r *http.Request) {
 	case saved != nil && !regenerate:
 		out.Suite = *saved
 		if g != nil {
+			if fresh, changed := ambient.RefreshGenerated(saved, g.Suite, false); changed {
+				out.Suite, out.Refreshed = *fresh, true
+			}
 			out.Suite.Notes, out.Suite.Checks = g.Suite.Notes, g.Suite.Checks
 			out.Suite.Service = g.Suite.Service
 		}
@@ -365,6 +372,10 @@ type suiteRunBody struct {
 	Suite *ambient.Suite `json:"suite"`
 	// Save is true unless explicitly false.
 	Save *bool `json:"save"`
+	// AddGenerated also adds generated cases the saved suite does not have.
+	// The drawer sets it after Flightbay changed the object, so a rule the
+	// change added is tested straight away.
+	AddGenerated bool `json:"addGenerated"`
 }
 
 type suiteRunResponse struct {
@@ -430,6 +441,11 @@ func (s *Server) ambientSuitesRun(w http.ResponseWriter, r *http.Request) {
 	g, gerr := ambient.GenerateForRef(s.WS, ref, nil)
 	if gerr == nil {
 		gen = g
+	}
+	// Saved generated cases follow the object as it is now, so an edited
+	// split is tested against its new weights. A person's cases stand.
+	if in.Suite == nil && suite != nil && gen != nil {
+		suite, _ = ambient.RefreshGenerated(suite, gen.Suite, in.AddGenerated)
 	}
 	if suite == nil {
 		if gerr != nil {

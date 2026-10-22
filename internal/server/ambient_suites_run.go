@@ -888,6 +888,7 @@ func (d *meshDecider) Decide(ctx context.Context, suite *ambient.Suite, c ambien
 	if d.wpApp != "" && d.s.WS != nil {
 		det, line, ok, avail := d.findWaypointLine(ctx, c, obs.Status, sentAt)
 		logAvailable = avail
+		obs.WaypointLogOff = !ok && !avail
 		if ok {
 			obs.Log = &ambient.LogRef{Cluster: d.spec.Cluster, Namespace: line.Namespace, Pod: line.Pod, At: line.At, ID: line.ID, Line: line.Raw}
 			if obs.Backend == "" {

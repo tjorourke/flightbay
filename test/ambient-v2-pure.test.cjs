@@ -6,7 +6,7 @@ const path = require('node:path');
 const load = f => fs.readFileSync(path.join(__dirname, '../web', f), 'utf8');
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 const ctx = vm.createContext({document: {addEventListener() {}}, S: {cluster: '', ambient: {}}, esc, URLSearchParams, location: {search: '', hash: ''}, localStorage: {getItem: () => null, setItem() {}}, LIVE: {}, render() {}, api: async () => ({}), apiPost: async () => ({}), amLiveContext: () => null});
-for (const f of ['ambient-v2.js', 'ambient-scope.js', 'ambient-table.js', 'ambient-service.js', 'ambient-drawer.js', 'ambient-policies.js', 'ambient-object.js']) vm.runInContext(load(f), ctx, {filename: f});
+for (const f of ['ambient-v2.js', 'ambient-scope.js', 'ambient-table.js', 'ambient-service.js', 'ambient-drawer.js', 'ambient-policies.js', 'ambient-object.js', 'ambient-home.js']) vm.runInContext(load(f), ctx, {filename: f});
 
 const g = n => vm.runInContext(n, ctx);
 const c = new Proxy({}, {get: (_, n) => g(n)});
@@ -64,6 +64,62 @@ test('search and drawer links open the right v2 page', () => {
   assert.equal(c.am2OpenHash({kind: 'Service', cluster: 'c1', namespace: 'a', name: 'b'}), '#ambient?svc=c1/a/b&stab=configuration');
   assert.equal(c.am2OpenHash({kind: 'HTTPRoute', cluster: 'c1', namespace: 'a', name: 'r'}), '#ambient?obj=c1/HTTPRoute/a/r&otab=summary');
   assert.equal(c.am2OpenHash({kind: 'Pod', cluster: 'c1', namespace: 'a', name: 'p'}), '');
+});
+test('the header reaches the Bookinfo demo from every home tab and marks it while it is open', () => {
+  const sc = ctx.S.am2.scope, saved = {ns: sc.ns, svcs: sc.svcs};
+  sc.ns = ['bookinfo', 'kagent']; sc.svcs = [];
+  try {
+    const demoLink = h => (h.match(/<a [^>]*id="am2-demo"[^>]*>[^<]*<\/a>/) || [''])[0];
+    for (const tab of ['overview', 'policies', 'map', 'path', 'changes']) {
+      const link = demoLink(c.am2Header({tab}, null));
+      assert.match(link, />Bookinfo demo<\/a>$/, tab);
+      assert.match(link, /href="#ambient\?tab=demo&ns=bookinfo,kagent"/, tab);
+      assert.doesNotMatch(link, /\bon\b|aria-current/, tab);
+    }
+    const open = c.am2Header({tab: 'demo'}, null);
+    assert.match(demoLink(open), /class="am2-btn on"/);
+    assert.match(demoLink(open), /aria-current="page"/);
+    assert.doesNotMatch(open.match(/<nav class="am2-tabs"[^]*?<\/nav>/)[0], /class="on"/, 'no inventory tab is current on the demo page');
+    assert.doesNotMatch(open, /am2-scopebtn/, 'the namespace scope does not apply to the demo page');
+    // Scope, demo and Docs wrap together, so on a narrow window they stay right-aligned under the tabs.
+    assert.match(c.am2Header({tab: 'map'}, null), /<div class="am2-head-acts"><button[^>]*id="am2-scopebtn"[^]*id="am2-demo"[^]*Docs ↗<\/a><\/div><\/div>$/);
+  } finally { sc.ns = saved.ns; sc.svcs = saved.svcs; }
+});
+test('the demo page keeps the request-path colours the Bookinfo form is drawn with', async () => {
+  ctx.bookinfoPage = async () => '<section class="bd-setup"></section>';
+  const html = await c.am2DemoPage({tab: 'demo'}, {});
+  assert.match(html, /^<div class="am2-oldwrap am-shell am-mode-demo am-mode-path"><section class="bd-setup">/);
+  const css = fs.readFileSync(path.join(__dirname, '../web/request-path.css'), 'utf8');
+  const used = new Set([...css.matchAll(/\.bd-[^{]*\{[^}]*\}/g)].flatMap(m => [...m[0].matchAll(/var\((--rp-[\w-]+)\)/g)].map(v => v[1])));
+  const defined = new Set([...css.match(/^\.am-mode-path\{[^}]*\}/m)[0].matchAll(/(--rp-[\w-]+):/g)].map(v => v[1]));
+  assert.ok(used.size > 0);
+  for (const v of used) assert.ok(defined.has(v), v + ' is used by the Bookinfo form but not defined on .am-mode-path');
+});
+test('drawer verdict: a case Flightbay could not check is not a mismatch and leaves the change Live', () => {
+  const v = s => { const r = c.am2TestsVerdict(s); return {text: r.text, verified: r.verified}; };
+  assert.deepEqual(v(['pass', 'pass', 'pass', 'pass']), {text: 'All matched what we expected', verified: true});
+  // Tom's first run: /health could not be attributed without the waypoint log.
+  assert.deepEqual(v(['pass', 'unknown', 'pass', 'pass']), {text: '1 could not be checked', verified: null});
+  assert.deepEqual(v(['pass', 'fail', 'pass', 'pass']), {text: '1 did not match what we expected', verified: false});
+  assert.deepEqual(v(['error', 'unknown', 'skipped', 'pass']), {text: '1 did not match what we expected · 2 could not be checked', verified: false});
+  assert.deepEqual(v([]), {text: '', verified: null});
+  assert.equal(c.am2CaseFailed('unknown'), false);
+  assert.equal(c.am2CaseFailed('error'), true);
+});
+test('cases sent to another Service or a Pod say so before the path', () => {
+  assert.equal(c.am2CaseHost({request: {method: 'GET', path: '/reviews/0', host: 'reviews-v1', port: 9080}}), 'reviews-v1:9080');
+  assert.equal(c.am2CaseHost({request: {path: '/reviews/0', host: 'reviews-v1'}}), 'reviews-v1');
+  assert.equal(c.am2CaseHost({request: {path: '/', direct: true, port: 9080, host: 'ignored'}}), 'pod-ip:9080');
+  assert.equal(c.am2CaseHost({request: {path: '/reviews/0'}}), '');
+  assert.equal(c.am2CaseHost({}), '');
+});
+test('an edit that changes nothing is a note, not an error', () => {
+  assert.equal(c.am2PlanWritesNothing({plan: {objects: [], changes: []}}), true);
+  assert.equal(c.am2PlanWritesNothing({plan: {objects: [], changes: [{}]}}), false);
+  assert.equal(c.am2PlanWritesNothing({plan: {objects: [{}]}}), false);
+  assert.equal(c.am2NothingToChange(['kind-mesh1'], 0), 'Nothing to change: kind-mesh1 already has this configuration.');
+  assert.equal(c.am2NothingToChange(['kind-mesh1', 'kind-mesh2'], 0), 'Nothing to change: kind-mesh1 and kind-mesh2 already have this configuration.');
+  assert.equal(c.am2NothingToChange(['kind-mesh2'], 1), 'kind-mesh2 already has this configuration, so nothing is written there.');
 });
 test('key=value tokens in check text are set in monospace', () => {
   assert.match(c.am2Mono('selector app=details matches 0 Pods'), /<span class="am2-mono">app=details<\/span>/);

@@ -609,6 +609,99 @@ func TestSuitesRunRoute(t *testing.T) {
 	}
 }
 
+func caseByID(m map[string]any, id string) map[string]any {
+	for _, c := range m["cases"].([]any) {
+		if c.(map[string]any)["id"] == id {
+			return c.(map[string]any)
+		}
+	}
+	return nil
+}
+
+// A split edited from 90/10 to 80/20 (the fixture route is 80/20) is tested for
+// 80/20: saved generated cases follow the route on load and on run, a person's
+// own case stands, and the run saves the refreshed cases.
+func TestSuitesFollowAnEditedRoute(t *testing.T) {
+	_, srv := suiteServer(t)
+	_, gen := suiteCall(t, srv, "GET", "/api/ambient/suites?ref="+routeRef, nil)
+	caseByID(gen, "r1-weights")["expect"].(map[string]any)["weights"] = map[string]any{"reviews-v1": 90, "reviews-v2": 10}
+	gen["cases"] = append(gen["cases"].([]any), map[string]any{"id": "mine", "label": "mine", "generated": false, "why": "I said so",
+		"request": map[string]any{"method": "GET", "path": "/reviews/1", "port": 9080}, "expect": map[string]any{"status": 200}})
+	if code, out := suiteCall(t, srv, "POST", "/api/ambient/suites", gen); code != 200 {
+		t.Fatalf("%d %v", code, out)
+	}
+	weight := func(m map[string]any) any {
+		return caseByID(m, "r1-weights")["expect"].(map[string]any)["weights"].(map[string]any)["reviews-v1"]
+	}
+	_, got := suiteCall(t, srv, "GET", "/api/ambient/suites?ref="+routeRef, nil)
+	if got["refreshed"] != true || got["saved"] != true || weight(got) != float64(80) || caseByID(got, "mine") == nil {
+		t.Fatalf("load must show the route as it is now: refreshed=%v weight=%v ids=%v", got["refreshed"], weight(got), caseIDs(got))
+	}
+	// The cluster splits 80/20, as the live route does.
+	runner := &fakeRunner{script: func(req suiteSendRequest) (ambient.Observation, error) {
+		if req.Case.ID != "r1-weights" {
+			return echo(nil)(req)
+		}
+		o := ambient.Observation{Status: 200, Connection: "fake"}
+		for i := 0; i < req.Samples; i++ {
+			b := "reviews-v1"
+			if i%5 == 0 {
+				b = "reviews-v2"
+			}
+			o.Samples = append(o.Samples, ambient.Sample{Status: 200, Backend: b, DurationMs: 5})
+		}
+		return o, nil
+	}}
+	withFakeRunner(t, runner, nil)
+	code, out := suiteCall(t, srv, "POST", "/api/ambient/suites/run", map[string]any{"ref": routeRef, "all": true, "context": "kind-c1"})
+	if code != 200 {
+		t.Fatalf("%d %v", code, out)
+	}
+	for _, r := range out["results"].([]any) {
+		if m := r.(map[string]any); m["id"] == "r1-weights" && m["status"] != "pass" {
+			t.Errorf("the 80/20 split must pass against 80/20: %v", m)
+		}
+	}
+	for _, sent := range runner.sent {
+		if sent.Case.ID == "r1-weights" && sent.Case.Expect.Weights["reviews-v1"] != 80 {
+			t.Errorf("sent the old expectation %v", sent.Case.Expect.Weights)
+		}
+	}
+	_, again := suiteCall(t, srv, "GET", "/api/ambient/suites?ref="+routeRef, nil)
+	if again["refreshed"] == true || weight(again) != float64(80) || caseByID(again, "mine") == nil {
+		t.Errorf("the run must save the refreshed cases: refreshed=%v weight=%v ids=%v", again["refreshed"], weight(again), caseIDs(again))
+	}
+}
+
+// A generated case a person removed stays removed on a plain run; the run the
+// drawer makes after Flightbay changed the object adds it back.
+func TestSuitesRunAddGenerated(t *testing.T) {
+	_, srv := suiteServer(t)
+	_, gen := suiteCall(t, srv, "GET", "/api/ambient/suites?ref="+routeRef, nil)
+	var keep []any
+	for _, c := range gen["cases"].([]any) {
+		if c.(map[string]any)["id"] != "r1-m1-sub" {
+			keep = append(keep, c)
+		}
+	}
+	if len(keep) == len(gen["cases"].([]any)) {
+		t.Fatalf("fixture has no r1-m1-sub: %v", caseIDs(gen))
+	}
+	gen["cases"] = keep
+	if code, out := suiteCall(t, srv, "POST", "/api/ambient/suites", gen); code != 200 {
+		t.Fatalf("%d %v", code, out)
+	}
+	withFakeRunner(t, &fakeRunner{script: echo(nil)}, nil)
+	_, out := suiteCall(t, srv, "POST", "/api/ambient/suites/run", map[string]any{"ref": routeRef, "all": true, "context": "kind-c1"})
+	if contains(caseIDs(out["suite"].(map[string]any)), "r1-m1-sub") {
+		t.Error("a plain run must not bring back a removed case")
+	}
+	_, out = suiteCall(t, srv, "POST", "/api/ambient/suites/run", map[string]any{"ref": routeRef, "all": true, "context": "kind-c1", "addGenerated": true})
+	if !contains(caseIDs(out["suite"].(map[string]any)), "r1-m1-sub") {
+		t.Errorf("addGenerated must add it: %v", caseIDs(out["suite"].(map[string]any)))
+	}
+}
+
 func TestSuitesRunRequests(t *testing.T) {
 	_, srv := suiteServer(t)
 	runner := &fakeRunner{script: echo(nil)}

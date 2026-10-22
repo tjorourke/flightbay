@@ -215,6 +215,105 @@ func TestMergeGenerated(t *testing.T) {
 	}
 }
 
+// A split edited from 90/10 to 80/20 is tested for 80/20: generated cases follow
+// the route, a person's cases stand, and stale results are dropped.
+func TestRefreshGenerated(t *testing.T) {
+	w := func(v1, v2 int) CaseExpect {
+		return CaseExpect{Weights: map[string]int{"reviews-v1": v1, "reviews-v2": v2}}
+	}
+	split := []string{"reviews-v1", "reviews-v2"}
+	ref, _ := ParseSuiteRef("c/HTTPRoute/bookinfo/split")
+	saved := &Suite{Target: ref, Saved: true, Cases: []Case{
+		{ID: "r1-weights", Generated: true, Request: CaseRequest{Path: "/reviews/0"}, Expect: w(90, 10)},
+		{ID: "r1-m1", Generated: true, Request: CaseRequest{Path: "/reviews/0", Headers: map[string]string{}}, Expect: CaseExpect{Rule: 1, Backends: split}},
+		{ID: "mine", Request: CaseRequest{Path: "/m"}, Expect: CaseExpect{Status: 200}},
+		{ID: "r2-m1", Generated: true, Request: CaseRequest{Path: "/gone"}, Expect: CaseExpect{Rule: 2, Backends: []string{"reviews-v2"}}},
+		// Edited by a person, so it is theirs even though the rule generates the same id.
+		{ID: "not-route", Request: CaseRequest{Host: "reviews-v1", Path: "/reviews/0"}, Expect: CaseExpect{NotRoute: true, Backend: "reviews-v2"}},
+	}}
+	saved.Normalize()
+	at := time.Date(2026, 10, 22, 13, 54, 9, 0, time.UTC)
+	saved.Last = &SuiteRun{At: at, Results: []CaseResult{{ID: "r1-weights", Status: StatusFail}, {ID: "r1-m1", Status: StatusPass}, {ID: "mine", Status: StatusPass}, {ID: "r2-m1", Status: StatusPass}}}
+	saved.Last.Summary = Summarize(saved.Last.Results, at)
+	fresh := &Suite{Target: ref, Cases: []Case{
+		{ID: "r1-m1", Generated: true, Request: CaseRequest{Path: "/reviews/0"}, Expect: CaseExpect{Rule: 1, Backends: split}},
+		{ID: "r1-weights", Generated: true, Request: CaseRequest{Path: "/reviews/0"}, Expect: w(80, 20)},
+		{ID: "not-route", Generated: true, Request: CaseRequest{Host: "reviews-v1", Path: "/reviews/0"}, Expect: CaseExpect{NotRoute: true, Backend: "reviews-v1"}},
+		{ID: "r3-m1", Generated: true, Request: CaseRequest{Path: "/new"}, Expect: CaseExpect{Rule: 3, Backends: []string{"reviews-v1"}}},
+	}}
+	fresh.Normalize()
+	before := caseKey(saved.Cases[0])
+	ids := func(s *Suite) (out []string) {
+		for _, c := range s.Cases {
+			out = append(out, c.ID)
+		}
+		return
+	}
+
+	got, changed := RefreshGenerated(saved, fresh, false)
+	if !changed {
+		t.Fatal("a changed split must refresh")
+	}
+	// In place, the vanished rule dropped, and the new rule left to "Generate from rule".
+	if !reflect.DeepEqual(ids(got), []string{"r1-weights", "r1-m1", "mine", "not-route"}) {
+		t.Errorf("ids %v", ids(got))
+	}
+	if c := got.Cases[0]; c.Expect.Weights["reviews-v1"] != 80 || !c.Generated || c.Expect.Text != "reviews-v1 80% · reviews-v2 20%" {
+		t.Errorf("weights case %+v", c)
+	}
+	if c := got.Cases[3]; c.Generated || c.Expect.Backend != "reviews-v2" {
+		t.Errorf("a person's edit must stand: %+v", c)
+	}
+	var kept []string
+	for _, r := range got.Last.Results {
+		kept = append(kept, r.ID)
+	}
+	if !reflect.DeepEqual(kept, []string{"r1-m1", "mine"}) || got.Last.Summary.Total != 2 || got.Last.Summary.Passed != 2 || got.Last.Summary.Failed != 0 || !got.Last.Summary.At.Equal(at) {
+		t.Errorf("stale results must go: %v %+v", kept, got.Last.Summary)
+	}
+	if !got.Saved || got.Target != ref {
+		t.Errorf("suite identity %+v", got)
+	}
+	if caseKey(saved.Cases[0]) != before || len(saved.Cases) != 5 || len(saved.Last.Results) != 4 {
+		t.Error("the saved suite must not be modified")
+	}
+
+	// After Flightbay changed the object, rules it added are tested too.
+	if got, _ := RefreshGenerated(saved, fresh, true); !reflect.DeepEqual(ids(got), []string{"r1-weights", "r1-m1", "mine", "not-route", "r3-m1"}) {
+		t.Errorf("addNew ids %v", ids(got))
+	}
+
+	// Nothing changed: the same suite comes back, and an empty map is not a change.
+	same := &Suite{Target: ref, Cases: []Case{
+		{ID: "r1-weights", Generated: true, Request: CaseRequest{Path: "/reviews/0", Headers: map[string]string{}}, Expect: w(90, 10)},
+		{ID: "r1-m1", Generated: true, Request: CaseRequest{Path: "/reviews/0"}, Expect: CaseExpect{Rule: 1, Backends: split}},
+		{ID: "r2-m1", Generated: true, Request: CaseRequest{Method: "get", Path: "/gone"}, Expect: CaseExpect{Rule: 2, Backends: []string{"reviews-v2"}}},
+	}}
+	if out, changed := RefreshGenerated(saved, same, false); changed || out != saved {
+		t.Errorf("unchanged suite reported as changed: %v", changed)
+	}
+	if out, changed := RefreshGenerated(nil, fresh, true); changed || out != nil {
+		t.Error("nothing saved")
+	}
+	if out, changed := RefreshGenerated(saved, nil, true); changed || out != saved {
+		t.Error("nothing generated")
+	}
+}
+
+// When nothing names the backend, the message says whether the waypoint's logs
+// are there at all, which is what to fix.
+func TestUnknownBackendWhy(t *testing.T) {
+	if m := unknownBackendWhy(Observation{Status: 200, WaypointLogOff: true}); !strings.Contains(m, "holds no access log lines from the waypoint") || !strings.Contains(m, "this desk is not collecting its logs") {
+		t.Error(m)
+	}
+	if m := unknownBackendWhy(Observation{Status: 200}); !strings.Contains(m, "no waypoint log line was found for the request") {
+		t.Error(m)
+	}
+	if m := unknownBackendWhy(Observation{Status: 200, Log: &LogRef{}}); !strings.Contains(m, "had no upstream Service") {
+		t.Error(m)
+	}
+}
+
 func TestEvaluate(t *testing.T) {
 	at := time.Now()
 	status := func(n int) Case { return Case{ID: "s", Expect: CaseExpect{Status: n}} }

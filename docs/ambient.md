@@ -9,7 +9,7 @@ The **Ambient** page investigates and configures Istio ambient from a capture or
 - **Investigate.** Search Namespace, Service, Pod, Gateway, HTTPRoute and ServiceEntry entry points, and follow failed checks into an evidence-aware recovery wizard.
 - **Change.** Edit captured routing weights and policies, or set up shared waypoints.
 - **Trace a request path.** Choose a caller and destination Service across captured clusters. Steps and Map show reconstructed dataplane hops, with amber east-west gateways; address/routing configuration, traffic and policy evidence remain inspectable separately.
-- **Deploy the Bookinfo demo.** Review namespace preparation and workloads separately, follow readiness, recover recorded installations and remove only installer-owned resources after confirmation.
+- **Deploy the Bookinfo demo.** Open **Bookinfo demo** in the Ambient header. One confirmation creates the namespace and then the workloads, each dry-run first; follow readiness, recover recorded installations and remove only installer-owned resources after confirmation.
 - **Apply safely.** Preview the YAML and field diffs, dry-run, then confirm Apply to an explicitly selected real context. Scoped test changes can be undone.
 
 Configuration runs **Target → Configurations → Configure → Review**. Current configuration cards load actual resource/rule values. Shared breadcrumbs and a rule switcher retain separate drafts within the selected target; switching configuration requires a fresh review and validation. Detected controller and API evidence selects the matching OSS or Enterprise policy shape, and labelled **Official docs** links accompany tasks and debugging steps.

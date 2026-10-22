@@ -18,7 +18,8 @@ test('service, object and drawer routes round-trip', () => {
     '#ambient?svc=kind-mesh1/bookinfo/reviews&stab=checks&drawer=fix:workloads',
     '#ambient?obj=kind-mesh1/AuthorizationPolicy/bookinfo/p&otab=tests',
     '#ambient?tab=policies&ns=bookinfo&problems=1&drift=1&group=service',
-    '#ambient?svc=kind-mesh1/bookinfo/reviews&stab=configuration&drawer=add:methods&dphase=3&demo=1']) {
+    '#ambient?svc=kind-mesh1/bookinfo/reviews&stab=configuration&drawer=add:methods&dphase=3&demo=1',
+    '#ambient?tab=demo&ns=bookinfo,kagent']) {
     assert.equal(ctx.am2Hash(parse(h)), h);
   }
 });

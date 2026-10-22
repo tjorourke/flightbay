@@ -17,7 +17,9 @@ color:var(--am2-ink);font:13px/1.45 var(--sans)}
 .am2 tr.am2-dim td{color:var(--am2-muted)}
 .am2 h1{margin:0;font-size:20px;letter-spacing:0;font-weight:700}.am2 h2{font-size:15px;margin:0;font-weight:700}.am2 h3{font-size:13px;margin:0;font-weight:600}
 .am2 a{color:var(--teal)}.am2 a.am2-btn{color:var(--am2-ink)}.am2 a.am2-btn.p{color:var(--am2-btn-p-ink)}
-.am2-head{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.am2-head{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+.am2-head-acts{display:flex;align-items:center;gap:10px;margin-left:auto}
+.am2 a.am2-btn.on{background:var(--am2-navy);border-color:var(--am2-navy);color:var(--am2-navy-ink)}
 .am2-head h1{margin-right:10px}
 .am2-tabs{display:flex;gap:2px}
 .am2 .am2-tabs a{padding:7px 12px;border-radius:7px;font-weight:600;color:var(--am2-ink);text-decoration:none}
@@ -29,6 +31,8 @@ color:var(--am2-ink);font:13px/1.45 var(--sans)}
 .am2-btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--am2-line);background:var(--am2-card);border-radius:7px;padding:6px 11px;font-weight:600;font-size:12px;color:var(--am2-ink);white-space:nowrap;cursor:pointer;text-decoration:none;line-height:1.45}
 .am2-btn:hover{border-color:var(--teal);text-decoration:none;background:var(--am2-card)}
 .am2-btn.p{background:var(--teal);border-color:var(--teal);color:var(--am2-btn-p-ink)}.am2-btn.d{background:var(--am2-bad);border-color:var(--am2-bad);color:#fff}
+/* A filled button keeps its colour under the pointer: the light theme's generic button:hover (0,2,1) would turn it grey with white text. */
+button.am2-btn.p:hover{background:var(--teal);border-color:var(--teal);color:var(--am2-btn-p-ink);filter:brightness(1.08)}button.am2-btn.d:hover{background:var(--am2-bad);border-color:var(--am2-bad);color:#fff;filter:brightness(1.08)}
 .am2-btn.g{border-color:transparent;background:transparent;color:var(--teal)}.am2-btn.sm{padding:3px 8px;font-size:11px}
 .am2-btn[disabled]{opacity:.5;cursor:not-allowed}
 .am2-pill{display:inline-flex;align-items:center;gap:4px;border-radius:10px;padding:1px 8px;font-size:11px;font-weight:600;white-space:nowrap}

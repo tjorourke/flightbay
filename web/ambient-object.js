@@ -139,11 +139,17 @@ function am2AuthzLeft(O, ref) {
 function am2CaseActs(c) {
   return `<span class="am2-caseacts"><button type="button" class="am2-btn sm g" data-am2-editcase="${esc(c.id)}" title="Edit">Edit</button><button type="button" class="am2-btn sm g" data-am2-dupcase="${esc(c.id)}" title="Duplicate">Duplicate</button>${c.generated ? '' : `<button type="button" class="am2-btn sm g" data-am2-delcase="${esc(c.id)}" title="Delete">Delete</button>`}</span>`;
 }
+// Where a case is sent, before the path: "reviews-v1:9080" for another Service, "pod-ip:9080" for a direct
+// request, nothing for the Service under test. The drawer's results table uses it too.
+function am2CaseHost(c) {
+  const q = c?.request || {};
+  return q.direct ? 'pod-ip' + (q.port ? ':' + q.port : '') : q.host ? q.host + (q.port ? ':' + q.port : '') : '';
+}
 function am2CaseRow(c, O) {
   const res = O.live?.results[c.id] || am2ResById(O, c.id), fail = res?.status === 'fail';
   const exp = c.expect?.status ? am2Pill(am2HttpTone(c.expect.status), c.expect.status) : `<span class="am2-sub">${esc(c.expect?.text || '')}</span>`;
   const got = res ? (res.got?.status ? am2Pill(am2HttpTone(res.got.status), res.got.status) : `<span class="am2-sub">${esc(res.got?.text || res.status)}</span>`) : '<span class="am2-muted">—</span>';
-  const host = c.request?.direct ? 'pod-ip' + (c.request.port ? ':' + c.request.port : '') : c.request?.host ? c.request.host + (c.request.port ? ':' + c.request.port : '') : '';
+  const host = am2CaseHost(c);
   const decided = res ? (res.decidedBy ? esc(res.decidedBy) : `<span class="am2-muted" title="${esc(res.decisionNote || '')}">${esc(res.decisionNote ? 'Not attributed' : '')}</span>`) : '';
   return `<tr ${fail ? 'class="am2-failrow"' : ''}><td>${am2Mark(res, O, c.id)}</td><td class="am2-mono">${esc(c.request?.method || 'GET')} ${esc(host + (c.request?.path || '/'))}<div class="am2-sub">${esc(am2Hdrs(c))}</div></td><td class="am2-sub">${esc(c.why || c.label || '')}</td><td>${exp}</td><td>${got}</td><td class="am2-sub">${decided}</td><td class="am2-right am2-nowrap">${am2CaseActs(c)}<button type="button" class="am2-btn sm g" data-am2-log='${esc(JSON.stringify(res?.logRef || {namespace: (O.suite.service || {}).namespace}))}'>Log</button></td></tr>`;
 }
@@ -193,7 +199,7 @@ function am2RouteLeft(O, ref) {
   const p50 = live ? prog.p50Ms : res?.got?.p50Ms, p95 = live ? prog.p95Ms : res?.got?.p95Ms;
   const progBar = live ? `<div class="am2-bar" style="height:4px;margin-top:10px"><i class="am2-grow" style="width:${Math.round(prog.completed / Math.max(1, prog.requested) * 100)}%;background:var(--teal)"></i></div>` : '';
   const msg = res?.message || '';
-  const verdict = res ? `<div class="am2-callout ${okAll ? 's' : 'e'}" style="margin-top:12px"><div>${okAll ? '✓' : '✕'}</div><div><b>${esc(msg.split('. ')[0])}.</b> ${esc(msg.split('. ').slice(1).join('. '))}</div></div>` : live ? '' : O.busy ? '<div class="am2-sub" style="margin-top:12px">Starting…</div>' : '<div class="am2-sub" style="margin-top:12px">Not run yet. Run measures the split by sending requests and identifying the responding Pod.</div>';
+  const verdict = res ? `<div class="am2-callout ${okAll ? 's' : 'e'}" style="margin-top:12px"><div>${okAll ? '✓' : '✕'}</div><div><b>${esc(msg.split('. ')[0].replace(/\.$/, ''))}.</b> ${esc(msg.split('. ').slice(1).join('. '))}</div></div>` : live ? '' : O.busy ? '<div class="am2-sub" style="margin-top:12px">Starting…</div>' : '<div class="am2-sub" style="margin-top:12px">Not run yet. Run measures the split by sending requests and identifying the responding Pod.</div>';
   return `<div class="am2-card" style="overflow:hidden">${head}<div class="am2-pad"><div class="am2-rrow" style="font-size:11px;color:var(--am2-muted);font-weight:600"><span>Backend</span><span>Expected vs observed</span><span class="am2-right">Expected</span><span class="am2-right">Observed</span><span></span></div>${rows}${other.length ? `<div class="am2-sub" style="margin-top:6px">Also answered: ${esc(other.map(b => b + ' ' + prog.backends[b]).join(', '))}</div>` : ''}${progBar}${verdict}${statuses || p50 ? `<div class="am2-sub" style="margin-top:12px">Status codes: ${esc(statuses)}${p50 ? ` · p50 ${p50} ms · p95 ${p95} ms` : ''}</div>` : ''}${O.error ? `<div class="am2-callout e" style="margin-top:12px"><div>✕</div><div>${esc(O.error)}</div></div>` : ''}</div></div>`;
 }
 function am2RouteRight(O, ref) {
@@ -202,7 +208,7 @@ function am2RouteRight(O, ref) {
     const res = O.live?.results[c.id] || (!O.busy ? am2ResById(O, c.id) : null);
     const mark = O.busy && O.live && !O.live.results[c.id] ? am2Mark(null, O, c.id) : res ? (res.status === 'pass' ? am2Pill('ok', '✓') : res.status === 'fail' ? am2Pill('bad', '✕') : `<span title="${esc(res.message || '')}">${am2Pill('mut', '?')}</span>`) : '';
     const got = res ? `${esc(res.got?.text || '')}${res.status === 'unknown' && res.got?.rule ? ` <span class="am2-sub">(matches rule ${esc(res.got.rule)})</span>` : ''}` : '';
-    return `<tr><td class="am2-mono">${esc(c.request?.method || 'GET')} ${esc(c.request?.host ? c.request.host + ':' + (c.request.port || '') : '')}${esc(c.request?.path || '/')}<div class="am2-sub">${esc(am2Hdrs(c) === 'no header' ? '' : am2Hdrs(c))}</div></td><td>${esc(c.expect?.text || '')}</td><td>${got}</td><td>${mark}</td><td class="am2-right am2-nowrap">${am2CaseActs(c)}</td></tr>`;
+    return `<tr><td class="am2-mono">${esc(c.request?.method || 'GET')} ${esc(am2CaseHost(c))}${esc(c.request?.path || '/')}<div class="am2-sub">${esc(am2Hdrs(c) === 'no header' ? '' : am2Hdrs(c))}</div></td><td>${esc(c.expect?.text || '')}</td><td>${got}</td><td>${mark}</td><td class="am2-right am2-nowrap">${am2CaseActs(c)}</td></tr>`;
   }).join('');
   const checks = (O.suite.checks || []).map(c => {
     const tone = {pass: 'ok', warn: 'warn', info: 'mut', fail: 'bad'}[c.status] || 'mut', mark = {pass: '✓', warn: '!', info: '–', fail: '✕'}[c.status] || '–';

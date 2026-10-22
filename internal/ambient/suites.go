@@ -505,6 +505,88 @@ func (s *Suite) Normalize() {
 	}
 }
 
+// RefreshGenerated keeps a saved suite's generated cases in step with a fresh
+// set generated from the object as it is now, so a route edited from 90/10 to
+// 80/20 is tested for 80/20. Cases a person added, edited or marked have
+// Generated false and are never touched. A generated case that changed is
+// replaced where it stands, and one whose rule has gone is dropped; the last
+// run's results for those cases go too, because they were judged against the
+// old expectation. Generated cases the saved suite does not have are added
+// only with addNew (after Flightbay itself changed the object): otherwise they
+// may be cases a person removed, which "Generate from rule" brings back.
+// It reports whether anything changed and never modifies saved.
+func RefreshGenerated(saved, fresh *Suite, addNew bool) (*Suite, bool) {
+	if saved == nil || fresh == nil {
+		return saved, false
+	}
+	byID := make(map[string]Case, len(fresh.Cases))
+	for _, c := range fresh.Cases {
+		byID[c.ID] = c
+	}
+	out := *saved
+	out.Cases = make([]Case, 0, len(saved.Cases))
+	have, stale := map[string]bool{}, map[string]bool{}
+	for _, c := range saved.Cases {
+		have[c.ID] = true
+		if !c.Generated {
+			out.Cases = append(out.Cases, c)
+			continue
+		}
+		f, ok := byID[c.ID]
+		if !ok {
+			stale[c.ID] = true
+			continue
+		}
+		f.Generated = true
+		if caseKey(f) != caseKey(c) {
+			stale[c.ID] = true
+		}
+		out.Cases = append(out.Cases, f)
+	}
+	if addNew {
+		for _, c := range fresh.Cases {
+			if !have[c.ID] {
+				c.Generated = true
+				out.Cases = append(out.Cases, c)
+				stale[c.ID] = true
+			}
+		}
+	}
+	if len(stale) == 0 {
+		return saved, false
+	}
+	if saved.Last != nil {
+		last := *saved.Last
+		last.Results = nil
+		for _, r := range saved.Last.Results {
+			if !stale[r.ID] {
+				last.Results = append(last.Results, r)
+			}
+		}
+		if last.Results == nil {
+			last.Results = []CaseResult{}
+		}
+		sum := Summarize(last.Results, saved.Last.Summary.At)
+		sum.Cancelled = saved.Last.Summary.Cancelled
+		last.Summary = sum
+		out.Last = &last
+	}
+	out.Normalize()
+	return &out, true
+}
+
+// caseKey is what a case asks for and expects, for telling whether a generated
+// case changed. Normalize's defaults are applied and the derived text and the
+// Generated flag are left out; empty maps and lists encode the same as nil.
+func caseKey(c Case) string {
+	s := Suite{Cases: []Case{c}}
+	s.Normalize()
+	k := s.Cases[0]
+	k.Generated, k.Expect.Text = false, ""
+	b, _ := json.Marshal(k)
+	return string(b)
+}
+
 // MergeGenerated replaces generated cases with a fresh set and keeps cases a
 // person added. The last run is dropped: its results no longer line up.
 func MergeGenerated(saved, fresh *Suite) *Suite {
@@ -623,6 +705,10 @@ type Observation struct {
 	DecidedByRef  *Ref
 	DecisionNote  string
 	Log           *LogRef
+	// WaypointLogOff is true when the workspace holds no access log lines
+	// from the Service's waypoint at all: access logging is off, or the desk
+	// is not collecting the waypoint's logs.
+	WaypointLogOff bool
 }
 
 // Evaluate compares an observation with the case's expectation.
@@ -711,6 +797,8 @@ func unknownBackendWhy(o Observation) string {
 	switch {
 	case o.Log != nil:
 		s += " and the matching waypoint log line had no upstream Service"
+	case o.WaypointLogOff:
+		s += " and Flightbay holds no access log lines from the waypoint: its access logging is off, or this desk is not collecting its logs"
 	default:
 		s += " and no waypoint log line was found for the request"
 	}

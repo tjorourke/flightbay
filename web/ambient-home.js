@@ -120,11 +120,12 @@ function am2ChangesAfter(route) {
 }
 AM2_AFTER.push(am2ChangesAfter);
 
-// ---------- Bookinfo demo (reached from the Overview empty state) ----------
+// ---------- Bookinfo demo (the header's Bookinfo demo button, and the Overview empty state) ----------
+// am-mode-path carries the --rp-* colours the Bookinfo form is drawn with, as on the previous Ambient page.
 async function am2DemoPage(route, data) {
   S.ambient.tab = 'demo';
   await am2EnsureOld();
-  return `<div class="am2-oldwrap am-shell am-mode-demo">${await bookinfoPage()}</div>`;
+  return `<div class="am2-oldwrap am-shell am-mode-demo am-mode-path">${await bookinfoPage()}</div>`;
 }
 function am2DemoAfter(route) { if (route.tab === 'demo' && typeof bookinfoAfter === 'function') bookinfoAfter(); }
 AM2_AFTER.push(am2DemoAfter);

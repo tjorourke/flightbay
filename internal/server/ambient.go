@@ -75,7 +75,10 @@ type ambientTestRequest struct {
 	Context    string          `json:"context"`
 	Validation string          `json:"validation"`
 	Request    ambient.Request `json:"request"`
-	Verified   bool            `json:"verified"`
+	// Verified is the tests' verdict for operation "verified": true when
+	// they all passed, false when one failed, and null to clear the verdict
+	// when the tests could not tell (a case Flightbay could not check).
+	Verified *bool `json:"verified"`
 }
 
 func (s *Server) ambientInventory(w http.ResponseWriter, r *http.Request) {
@@ -692,8 +695,7 @@ func (s *Server) ambientTest(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, 200, map[string]any{"test": rec, "message": "Configuration applied. Workload readiness and request connectivity have not yet been verified."})
 	case "verified":
-		ok := req.Verified
-		rec.Verified = &ok
+		rec.Verified = req.Verified
 		rec.VerifiedAt = time.Now().UTC()
 		if err := s.saveAmbientRecord(rec); err != nil {
 			jerr(w, 500, err.Error())

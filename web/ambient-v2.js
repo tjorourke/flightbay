@@ -93,7 +93,10 @@ function am2Header(route, data) {
   const sp = am2ScopeParams();
   const tab = (id, label, count) => `<a href="${am2Hash({tab: id === 'overview' ? '' : id, ns: sp.ns, svcs: sp.svcs})}" class="${cur === id ? 'on' : ''}">${esc(label)}${count === undefined || count === null ? '' : `<span class="am2-c">${esc(count)}</span>`}</a>`;
   const scoped = ['overview', 'policies', 'map', 'path'].includes(cur);
-  return `<div class="am2-head"><h1>Istio Ambient</h1><nav class="am2-tabs" aria-label="Istio Ambient">${tab('overview', 'Overview')}${tab('policies', 'Policies & routes')}${tab('map', 'Map')}${tab('path', 'Request path')}${tab('changes', 'Changes', changes)}</nav><span class="am2-spacer"></span>${scoped ? am2ScopeButton({services: cur === 'map' || cur === 'path'}) : ''}<a class="am2-btn" href="/docs/desk/ambient/" target="_blank" rel="noopener">Docs ↗</a></div>`;
+  // The Bookinfo installer is not an inventory tab, so it sits beside Docs, on every home tab (DEVIATIONS: header).
+  // The right-hand controls wrap as one group and stay right-aligned when the tabs fill the row.
+  const demo = cur === 'demo';
+  return `<div class="am2-head"><h1>Istio Ambient</h1><nav class="am2-tabs" aria-label="Istio Ambient">${tab('overview', 'Overview')}${tab('policies', 'Policies & routes')}${tab('map', 'Map')}${tab('path', 'Request path')}${tab('changes', 'Changes', changes)}</nav><span class="am2-spacer"></span><div class="am2-head-acts">${scoped ? am2ScopeButton({services: cur === 'map' || cur === 'path'}) : ''}<a class="am2-btn${demo ? ' on' : ''}" id="am2-demo" href="${am2Hash({tab: 'demo', ns: sp.ns, svcs: sp.svcs})}"${demo ? ' aria-current="page"' : ''}>Bookinfo demo</a><a class="am2-btn" href="/docs/desk/ambient/" target="_blank" rel="noopener">Docs ↗</a></div></div>`;
 }
 
 // ---------- Overview (mockup 00, scoped and paged for real data volume: REVIEW R2) ----------

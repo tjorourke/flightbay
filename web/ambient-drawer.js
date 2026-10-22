@@ -223,11 +223,33 @@ function am2ProgressHtml(D, extra = '') {
   return `<h3>Progress</h3><div style="margin-top:10px">${rows.map(r => `<div class="am2-case">${am2Pill(r.tone, r.mark)}<b style="width:210px">${esc(r.title)}</b><span class="am2-sub">${esc(r.sub)}</span></div>`).join('')}${D.testsRow || ''}</div>`;
 }
 
+// Pure: a case that ran and did not behave as expected. "unknown" (Flightbay could not tell, for example which
+// backend answered) and "skipped" are not failures.
+const am2CaseFailed = status => status === 'fail' || status === 'error';
+
+// Pure: the drawer's verdict on a run. verified is true when every case passed, false when one failed, and null
+// when some could not be checked: the change then stays Live in Changes rather than Verified or Failed.
+function am2TestsVerdict(statuses) {
+  const total = statuses.length, passed = statuses.filter(x => x === 'pass').length, failed = statuses.filter(am2CaseFailed).length, unchecked = total - passed - failed;
+  const parts = [];
+  if (failed) parts.push(`${failed} did not match what we expected`);
+  if (unchecked) parts.push(`${unchecked} could not be checked`);
+  return {total, passed, failed, unchecked, text: total && passed === total ? 'All matched what we expected' : parts.join(' · '), verified: failed ? false : total && passed === total ? true : null};
+}
+
+// Pure: a plan with nothing to create or change.
+const am2PlanWritesNothing = e => !(e.plan?.objects || []).length && !(e.plan?.changes || []).length;
+function am2NothingToChange(clusters, left) {
+  const list = clusters.join(' and ');
+  if (!left) return `Nothing to change: ${list} already ${clusters.length === 1 ? 'has' : 'have'} this configuration.`;
+  return `${list} already ${clusters.length === 1 ? 'has' : 'have'} this configuration, so nothing is written there.`;
+}
+
 function am2TestsTable(D) {
   const r = D.results;
   if (!r) return '';
   const rows = r.rows || [];
-  return `<h3 style="margin-top:20px">Test results <span class="am2-sub">${esc(r.from || '')}</span></h3><table style="margin-top:8px"><thead><tr><th>Request</th><th>Expected</th><th>Got</th><th>Decided by</th><th></th></tr></thead><tbody>${rows.map(x => `<tr ${x.ok ? '' : 'class="am2-warnrow"'}><td class="am2-mono">${esc(x.request)}${x.note ? ` <span class="am2-sub">${esc(x.note)}</span>` : ''}</td><td>${esc(x.expect)}</td><td>${am2Pill(x.gotTone, x.got)}</td><td class="am2-sub">${esc(x.decided)}</td><td>${x.ok ? '✓' : '✕'}</td></tr>`).join('')}</tbody></table>${r.failure ? `<div class="am2-callout e" style="margin-top:12px"><div>✕</div><div>${r.failure}</div></div>` : ''}`;
+  return `<h3 style="margin-top:20px">Test results <span class="am2-sub">${esc(r.from || '')}</span></h3><table style="margin-top:8px"><thead><tr><th>Request</th><th>Expected</th><th>Got</th><th>Decided by</th><th></th></tr></thead><tbody>${rows.map(x => `<tr ${x.ok ? '' : 'class="am2-warnrow"'}><td class="am2-mono">${esc(x.request)}${x.note ? ` <span class="am2-sub">${esc(x.note)}</span>` : ''}</td><td>${esc(x.expect)}</td><td>${am2Pill(x.gotTone, x.got)}</td><td class="am2-sub">${esc(x.decided)}</td><td>${x.ok ? '✓' : am2CaseFailed(x.status) || !x.status ? '✕' : '?'}</td></tr>`).join('')}</tbody></table>${r.failure ? `<div class="am2-callout ${r.failureTone || 'e'}" style="margin-top:12px"><div>${r.failureTone === 'w' ? '!' : '✕'}</div><div>${r.failure}</div></div>` : ''}`;
 }
 
 const AM2_STATUS_WORDS = [['mut', 'Draft', 'only in this browser'], ['info', 'Checked', 'dry-run passed, nothing written'], ['tl', 'Applied', 'written, waiting for status'], ['ok', 'Live', 'accepted by the waypoint / ztunnel'], ['ok', 'Verified', 'live and its tests pass'], ['bad', 'Failed', 'rolled back automatically']];
@@ -258,7 +280,7 @@ async function am2DrawerHost(route, data) {
     // otherwise it would render while the draft is reset and show an empty form.
     if (D.prepKey === key && D.prep) await D.prep;
     if (D.key !== key) {
-      D.key = key; D.phase = 1; D.entries = []; D.plans = []; D.error = ''; D.results = null; D.progress = []; D.task = '';
+      D.key = key; D.phase = 1; D.entries = []; D.plans = []; D.error = ''; D.note = ''; D.results = null; D.progress = []; D.task = '';
       D.prepKey = key; D.prep = am2PrepOld(route, ref, kind, arg, cfg);
       let redirect;
       try { redirect = await D.prep; } finally { D.prep = null; }
@@ -279,7 +301,7 @@ async function am2DrawerHost(route, data) {
   const right = phase === 3 ? am2DoneColumn(D, cfg, ref) : am2EffectsPlaceholder(ref.name);
   const menu = am2SwitchMenu(cfg, route, kind, ref);
   const footer = am2DrawerFooter(D, cfg, ref, route, kind);
-  return `<div class="am2-shade" data-am2-close></div><div class="am2-drawer" id="am2-drawer" role="dialog" aria-label="${esc(title)}"><div class="am2-dh"><div style="flex:1"><div class="am2-sub">${where} · ${clusterText}</div><h2 style="font-size:18px;margin-top:2px">${esc(title)}</h2></div>${menu}<button type="button" class="am2-btn g" data-am2-close aria-label="Close">✕</button></div><div class="am2-steps">${step(1, 'Choose settings')}${step(2, 'Check against the cluster')}${step(3, 'Apply and test')}<span style="margin-left:auto;font-weight:500">${stateText}</span></div>${D.error ? `<div class="am2-callout e" style="margin:12px 22px 0" role="alert"><div>✕</div><div>${esc(D.error)}</div></div>` : ''}<div class="am2-db"><div class="am2-form" id="am2-formcol">${left}</div><div class="am2-eff">${right}</div></div>${footer}</div><div hidden id="am-target-selector"></div>`;
+  return `<div class="am2-shade" data-am2-close></div><div class="am2-drawer" id="am2-drawer" role="dialog" aria-label="${esc(title)}"><div class="am2-dh"><div style="flex:1"><div class="am2-sub">${where} · ${clusterText}</div><h2 style="font-size:18px;margin-top:2px">${esc(title)}</h2></div>${menu}<button type="button" class="am2-btn g" data-am2-close aria-label="Close">✕</button></div><div class="am2-steps">${step(1, 'Choose settings')}${step(2, 'Check against the cluster')}${step(3, 'Apply and test')}<span style="margin-left:auto;font-weight:500">${stateText}</span></div>${D.error ? `<div class="am2-callout e" style="margin:12px 22px 0" role="alert"><div>✕</div><div>${esc(D.error)}</div></div>` : ''}${D.note && !D.error ? `<div class="am2-callout i" style="margin:12px 22px 0" role="status"><div>i</div><div>${esc(D.note)}</div></div>` : ''}<div class="am2-db"><div class="am2-form" id="am2-formcol">${left}</div><div class="am2-eff">${right}</div></div>${footer}</div><div hidden id="am-target-selector"></div>`;
 }
 
 function am2SwitchMenu(cfg, route, kind, ref) {
@@ -319,7 +341,7 @@ const am2Rerender = () => render();
 async function am2Check() {
   const D = am2D(), A = S.ambient;
   if (D.busy) return;
-  D.busy = true; D.error = ''; am2Rerender();
+  D.busy = true; D.error = ''; D.note = ''; am2Rerender();
   try {
     amCapture(); am2CaptureExtra();
     const req = amRead();
@@ -335,6 +357,16 @@ async function am2Check() {
       }
     }
     for (const e of entries) if (!e.plan) throw new Error(e.error || 'The preview failed.');
+    // A cluster that already has this configuration gets no plan to dry-run or apply (the server refuses an
+    // empty one). Say so plainly instead of showing the refusal as an error.
+    if (!A.tasks['global-service'] || A.mode) {
+      const same = entries.filter(am2PlanWritesNothing);
+      if (same.length) {
+        entries = entries.filter(e => !am2PlanWritesNothing(e));
+        D.note = am2NothingToChange(same.map(e => e.cluster), entries.length);
+        if (!entries.length) { D.entries = []; D.phase = 1; D.busy = false; am2Rerender(); return; }
+      }
+    }
     D.entries = entries;
     await amValidatePlans(entries, true);
     D.phase = 2;
@@ -391,22 +423,24 @@ async function am2RunTests() {
   if (!e) return;
   for (const ref of am2TestRefs(e)) {
     try {
-      const r = await apiPost('api/ambient/suites/run', {ref, all: true, context: e.context, save: true});
+      const r = await apiPost('api/ambient/suites/run', {ref, all: true, context: e.context, save: true, addGenerated: true});
       const cases = Object.fromEntries((r.suite?.cases || []).map(c => [c.id, c]));
       from = from || (r.suite?.source?.ref ? `from ${r.suite.source.ref.namespace}/${r.suite.source.ref.name} · in-mesh curl` : '');
       for (const res of r.results || []) {
         const c = cases[res.id] || {}, pass = res.status === 'pass', hdr = Object.entries(c.request?.headers || {}).map(([k, v]) => `${k}: ${v}`).join(', ');
         const status = res.got?.status;
-        rows.push({request: `${c.request?.method || 'GET'} ${c.request?.path || '/'}`, note: hdr, expect: c.expect?.text || String(c.expect?.status || ''), got: res.got?.text || String(status || res.status), gotTone: status ? (status < 400 ? 'ok' : 'bad') : 'mut', decided: res.decidedBy || '', ok: pass, message: res.message});
+        rows.push({request: `${c.request?.method || 'GET'} ${typeof am2CaseHost === 'function' ? am2CaseHost(c) : ''}${c.request?.path || '/'}`, note: hdr, expect: c.expect?.text || String(c.expect?.status || ''), got: res.got?.text || String(status || res.status), gotTone: res.status === 'unknown' ? 'warn' : status ? (status < 400 ? 'ok' : 'bad') : 'mut', decided: res.decidedBy || '', ok: pass, status: res.status, message: res.message});
         total++; if (pass) passed++;
       }
     } catch (err) { D.testsError = err.message; }
   }
-  const bad = rows.find(x => !x.ok && x.message);
+  // A mismatch explains itself first; a case Flightbay could not check is a warning, not a failure.
+  const bad = rows.find(x => am2CaseFailed(x.status) && x.message) || rows.find(x => !x.ok && x.message);
   if (bad) failure = `<b>${esc(bad.message.split('. ')[0].replace(/\.$/, ''))}.</b> ${esc(bad.message.split('. ').slice(1).join('. '))}`;
-  D.results = rows.length ? {rows, from, failure} : null;
-  if (total && e?.record?.token && e.context) apiPost('api/ambient/test', {operation: 'verified', context: e.context, validation: e.record.token, verified: passed === total}).then(r => { e.record.verified = passed === total; }).catch(() => {});
-  D.testsRow = total ? `<div class="am2-case">${am2Pill(passed === total ? 'ok' : 'warn', `${passed} / ${total}`)}<b style="width:210px">Tests</b><span class="am2-sub">${passed === total ? 'All matched what we expected' : `${total - passed} did not match what we expected`}</span></div>` : '';
+  const verdict = am2TestsVerdict(rows.map(x => x.status));
+  D.results = rows.length ? {rows, from, failure, failureTone: bad && !am2CaseFailed(bad.status) ? 'w' : 'e'} : null;
+  if (total && e?.record?.token && e.context) apiPost('api/ambient/test', {operation: 'verified', context: e.context, validation: e.record.token, verified: verdict.verified}).then(r => { e.record.verified = verdict.verified; }).catch(() => {});
+  D.testsRow = total ? `<div class="am2-case">${am2Pill(passed === total ? 'ok' : 'warn', `${passed} / ${total}`)}<b style="width:210px">Tests</b><span class="am2-sub">${esc(verdict.text)}</span></div>` : '';
 }
 
 async function am2DemoPhase3(route, ref, cfg) {
